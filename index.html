@@ -475,7 +475,7 @@
         <button id="send-btn" class="btn btn-primary">Send</button>
       </div>
     </div>
-    <input type="file" id="file-input" accept=".json" style="display: none;" />
+    <input id="db-file" type="file" accept="application/json" style="display:none">
   </div>
 
   <script>
@@ -490,6 +490,9 @@
       DEFAULT_MODEL: 'gpt-4o-mini',
       ESTIMATED_COST_PER_API_CALL: 0.02,
     };
+
+    const TOKEN_CACHE_PREFIX = 'hlsf_token_';
+    const DB_INDEX_KEY = 'hlsf_db_index';
 
     // Symbolic glyphs for complex number representation
     const GLYPH_LIBRARY = [
@@ -547,7 +550,7 @@
       cacheHitRate: document.getElementById('cache-hit-rate'),
       cachedTokens: document.getElementById('cached-tokens'),
       sessionCost: document.getElementById('session-cost'),
-      fileInput: document.getElementById('file-input'),
+      dbFileInput: document.getElementById('db-file'),
     };
 
     // ============================================
@@ -572,7 +575,7 @@
     }
 
     function getCachedTokenCount() {
-      return Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_')).length;
+      return Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX)).length;
     }
 
     // ============================================
@@ -615,7 +618,7 @@
     function generateGlyphLedger() {
       const ledger = new Map();
       const reverseMap = new Map(); // glyph -> tokens
-      const keys = Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_'));
+      const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
       
       for (const key of keys) {
         try {
@@ -863,23 +866,47 @@
       const { totalApiCalls, totalCacheHits, totalCostCents } = state.sessionStats;
       const total = totalApiCalls + totalCacheHits;
       const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) + '%' : '—';
-      
+
       const cachedCount = getCachedTokenCount();
-      
+
       elements.cacheHitRate.textContent = hitRate;
       elements.cachedTokens.textContent = cachedCount;
       elements.sessionCost.textContent = formatCurrency(totalCostCents);
-      
+
       // Visual feedback for database growth
       if (cachedCount > 0) {
         elements.cachedTokens.style.color = cachedCount > 50 ? '#00ff88' : '#ffd54f';
       }
     }
 
+    function updateHeaderCounts() {
+      updateStats();
+    }
+
     // ============================================
     // CACHE
     // ============================================
-    function getCacheKey(token) { return `hlsf_token_${token.toLowerCase()}`; }
+    function getCacheKey(token) {
+      const normalized = token == null ? '' : String(token);
+      return `${TOKEN_CACHE_PREFIX}${normalized.toLowerCase()}`;
+    }
+
+    function updateTokenIndex(token) {
+      if (!token) return;
+
+      let index;
+      try {
+        index = JSON.parse(localStorage.getItem(DB_INDEX_KEY) || '[]');
+      } catch {
+        index = [];
+      }
+
+      if (!Array.isArray(index)) index = [];
+      if (!index.includes(token)) {
+        index.push(token);
+        localStorage.setItem(DB_INDEX_KEY, JSON.stringify(index));
+      }
+    }
 
     function getFromCache(token) {
       try {
@@ -897,6 +924,7 @@
           ...data,
           cached_at: new Date().toISOString()
         }));
+        updateTokenIndex(token);
       } catch (err) {
         if (err.name === 'QuotaExceededError') {
           logWarning('Cache full. Use /reset to clear old data.');
@@ -1107,7 +1135,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     // ============================================
 
     function buildHLSFNodes() {
-      const keys = Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_'));
+      const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
       const nodes = [];
       
       console.log(`Building HLSF nodes from ${keys.length} cached tokens`);
@@ -1548,7 +1576,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
     function analyzeDatabaseMetadata() {
-      const keys = Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_'));
+      const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
       const tokens = [];
       const relationshipCounts = new Map();
       const tokenFrequency = new Map();
@@ -1763,40 +1791,26 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       logSuccess(`Database metadata exported: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships, ${(new Blob([JSON.stringify(exportData)]).size / 1024).toFixed(1)}KB`);
     }
 
-    function importDatabaseFromFile(file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = JSON.parse(e.target.result);
-          importDatabaseData(data);
-        } catch (err) {
-          logError(`Failed to parse import file: ${err.message}`);
-        }
-      };
-      reader.onerror = () => {
-        logError('Failed to read file');
-      };
-      reader.readAsText(file);
-    }
-
     function importDatabaseData(data, source = 'file') {
       try {
         // Validate the data structure
         if (!data.full_token_data || !Array.isArray(data.full_token_data)) {
           logError('Invalid database format. Expected full_token_data array.');
-          return;
+          return null;
         }
 
         const tokenData = data.full_token_data;
         let imported = 0;
         let skipped = 0;
         let updated = 0;
+        const seen = new Set();
 
         for (const token of tokenData) {
           if (!token.token) continue;
 
           const key = getCacheKey(token.token);
           const existing = localStorage.getItem(key);
+          seen.add(token.token);
 
           if (existing) {
             // Check if imported data is newer
@@ -1816,6 +1830,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           }
         }
 
+        localStorage.setItem(DB_INDEX_KEY, JSON.stringify(Array.from(seen)));
         updateStats();
 
         const summary = [];
@@ -1834,8 +1849,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             • Estimated value: ${data.database_stats.estimated_value_usd}
           </div>`);
         }
+
+        return { imported, skipped, updated, seen: Array.from(seen) };
       } catch (err) {
         logError(`Import failed: ${err.message}`);
+        return null;
       }
     }
 
@@ -1856,11 +1874,129 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     // ============================================
     // COMMANDS
     // ============================================
+    const COMMANDS = Object.create(null);
+
+    function registerCommand(name, handler) {
+      if (!name || typeof handler !== 'function') return;
+      const key = name.startsWith('/') ? name.toLowerCase() : `/${name.toLowerCase()}`;
+      COMMANDS[key] = handler;
+    }
+
+    function cmd_import() {
+      elements.dbFileInput.click();
+    }
+
+    function getRelationshipPriority(relType) {
+      if (RELATIONSHIP_PRIORITIES instanceof Map) {
+        return RELATIONSHIP_PRIORITIES.get(relType) ?? 1;
+      }
+      if (typeof RELATIONSHIP_PRIORITIES === 'object' && RELATIONSHIP_PRIORITIES !== null) {
+        return RELATIONSHIP_PRIORITIES[relType] ?? 1;
+      }
+      return 1;
+    }
+
+    function cmd_hlsf() {
+      let index;
+      try {
+        index = JSON.parse(localStorage.getItem(DB_INDEX_KEY) || '[]');
+      } catch {
+        index = [];
+      }
+
+      if (!Array.isArray(index)) index = [];
+
+      const keys = index.length
+        ? index.map(token => getCacheKey(token))
+        : Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+
+      if (keys.length === 0) {
+        logWarning('No cached tokens found for HLSF. Use /import to load the database.');
+        return;
+      }
+
+      const nodes = [];
+      const edges = [];
+
+      for (const key of keys) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+
+        let record;
+        try {
+          record = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+
+        if (!record || !record.token || !record.relationships) continue;
+
+        let attention = 0;
+        for (const relType of Object.keys(record.relationships)) {
+          const rels = Array.isArray(record.relationships[relType]) ? record.relationships[relType] : [];
+          const priority = getRelationshipPriority(relType);
+
+          for (const rel of rels) {
+            const weight = rel?.weight ?? 0;
+            attention += weight * priority;
+            if (rel?.token) {
+              edges.push({ source: record.token, target: rel.token, type: relType, w: weight });
+            }
+          }
+        }
+
+        nodes.push({ id: record.token, attention });
+      }
+
+      if (nodes.length === 0) {
+        logWarning('No cached tokens found for HLSF. Use /import to load the database.');
+        return;
+      }
+
+      const maxAttention = nodes.reduce((max, node) => Math.max(max, node.attention), 0) || 1;
+      for (const node of nodes) {
+        node.attention = +(node.attention / maxAttention).toFixed(3);
+      }
+
+      const HLSF = {
+        nodes,
+        edges,
+        meta: { nodeCount: nodes.length, edgeCount: edges.length }
+      };
+
+      window.HLSF_GRAPH = HLSF;
+      logSuccess(`HLSF ready: ${HLSF.meta.nodeCount} nodes, ${HLSF.meta.edgeCount} edges.`);
+
+      try {
+        stopHLSFAnimation();
+        initHLSFCanvas();
+      } catch (err) {
+        logError(`HLSF initialization failed: ${err.message}`);
+        console.error('HLSF visualization error:', err);
+      }
+    }
+
+    registerCommand('/import', cmd_import);
+    registerCommand('/hlsf', cmd_hlsf);
+    registerCommand('/visualize', cmd_hlsf);
+
     function isCommand(input) { return input.startsWith('/'); }
 
     async function handleCommand(cmd) {
-      const [command] = cmd.slice(1).split(/\s+/);
-      
+      const [command, ...args] = cmd.slice(1).split(/\s+/);
+
+      if (!command) {
+        logError('Unknown command');
+        return;
+      }
+
+      const normalized = `/${command.toLowerCase()}`;
+      const mapped = COMMANDS[normalized];
+      if (mapped) {
+        await mapped(args, cmd);
+        return;
+      }
+
       switch (command.toLowerCase()) {
         case 'clear':
           elements.log.innerHTML = '';
@@ -1868,8 +2004,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           break;
         case 'reset':
           if (confirm('Clear all cached data?')) {
-            const keys = Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_'));
+            const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
             keys.forEach(k => localStorage.removeItem(k));
+            localStorage.removeItem(DB_INDEX_KEY);
             updateStats();
             logSuccess(`Cleared ${keys.length} tokens`);
           }
@@ -1891,9 +2028,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           break;
         case 'export':
           exportDatabaseMetadata();
-          break;
-        case 'import':
-          elements.fileInput.click();
           break;
         case 'glyph':
         case 'ledger':
@@ -1930,16 +2064,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         case 'exportledger':
           const ledgerData = exportGlyphLedger();
           logSuccess(`Glyph ledger exported: ${ledgerData.statistics.total_tokens} tokens, ${ledgerData.statistics.unique_glyphs} glyphs`);
-          break;
-        case 'hlsf':
-        case 'visualize':
-          try {
-            stopHLSFAnimation();
-            initHLSFCanvas();
-          } catch (err) {
-            logError(`HLSF initialization failed: ${err.message}`);
-            console.error('HLSF error:', err);
-          }
           break;
         case 'help':
           addLog(`<strong>Commands:</strong><br>
@@ -2140,11 +2264,25 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     });
 
-    elements.fileInput.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        importDatabaseFromFile(file);
-        e.target.value = ''; // Reset file input
+    elements.dbFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      try {
+        const txt = await file.text();
+        const db = JSON.parse(txt);
+
+        addLog(`Importing ${db.database_stats?.total_tokens ?? '?'} tokens...`);
+
+        const summary = importDatabaseData(db, file.name || 'import');
+        if (summary) {
+          addLog(`Imported ${summary.seen.length} tokens into cache.`);
+          updateHeaderCounts();
+        }
+      } catch (err) {
+        logError(`Import failed: ${err.message}`);
+      } finally {
+        e.target.value = '';
       }
     });
 
