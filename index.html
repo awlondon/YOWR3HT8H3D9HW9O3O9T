@@ -491,6 +491,42 @@
       ESTIMATED_COST_PER_API_CALL: 0.02,
     };
 
+    window.HLSF = window.HLSF || {
+      config: {
+        rotationSpeed: 0.5,
+        alpha: 0.3,
+        scale: 1,
+        tx: 0,
+        ty: 0,
+        rotationActive: false,
+        emergentActive: false,
+        globalRotation: 0,
+        showEdges: true,
+        showLabels: true,
+        whiteBg: false,
+      },
+      canvas: null,
+      ctx: null,
+      nodes: [],
+      animationFrame: null,
+      geometry: {},
+      rendering: {},
+    };
+
+    window.CognitionEngine = window.CognitionEngine || {
+      state: {},
+      cache: {},
+      api: {},
+      processing: {},
+    };
+
+    window.GlyphSystem = window.GlyphSystem || {
+      ledger: null,
+      encode: () => '',
+      decode: () => '',
+      export: () => ({}),
+    };
+
     // ---- HLSF constants
     const TOKEN_CACHE_PREFIX = 'hlsf_token_';
     const DB_RAW_KEY = 'hlsf_db_raw';        // stores JSON export text
@@ -537,6 +573,7 @@
     };
 
     state.hlsfReady = false;
+    window.CognitionEngine.state = state;
 
     let currentAbortController = null;
 
@@ -567,6 +604,60 @@
       return div.innerHTML;
     }
 
+    function validatePrompt(prompt) {
+      if (!prompt || typeof prompt !== 'string') {
+        throw new Error('Invalid prompt: must be non-empty string');
+      }
+      if (prompt.length > 10000) {
+        throw new Error('Prompt too long: max 10000 characters');
+      }
+      return prompt.trim();
+    }
+
+    function safeStorageGet(key, defaultValue = null) {
+      try {
+        const item = localStorage.getItem(key);
+        if (item == null) return defaultValue;
+        try {
+          return JSON.parse(item);
+        } catch {
+          return item;
+        }
+      } catch (err) {
+        console.warn(`Storage read failed for ${key}:`, err);
+        return defaultValue;
+      }
+    }
+
+    function safeStorageSet(key, value) {
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch (err) {
+        console.warn(`Storage write failed for ${key}:`, err);
+        return false;
+      }
+    }
+
+    function safeStorageRemove(key) {
+      try {
+        localStorage.removeItem(key);
+        return true;
+      } catch (err) {
+        console.warn(`Storage remove failed for ${key}:`, err);
+        return false;
+      }
+    }
+
+    function safeStorageKeys(prefix = '') {
+      try {
+        return Object.keys(localStorage).filter(k => k.startsWith(prefix));
+      } catch (err) {
+        console.warn('Storage keys enumeration failed:', err);
+        return [];
+      }
+    }
+
     function tokenize(text) {
       if (!text) return [];
       return text.trim()
@@ -580,7 +671,7 @@
     }
 
     function getCachedTokenCount() {
-      return Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX)).length;
+      return safeStorageKeys(TOKEN_CACHE_PREFIX).length;
     }
 
     // ============================================
@@ -610,6 +701,18 @@
       return { real, imaginary, magnitude, phase };
     }
 
+    const memoizedComplexNumber = (() => {
+      const cache = new Map();
+      return (token, tokenData) => {
+        const score = tokenData?.attention_score ?? 0;
+        const key = `${token}_${score}`;
+        if (cache.has(key)) return cache.get(key);
+        const result = tokenToComplexNumber(token, tokenData);
+        cache.set(key, result);
+        return result;
+      };
+    })();
+
     // Map complex number to glyph from library
     function complexToGlyph(complex) {
       // Use magnitude and phase to select glyph
@@ -623,15 +726,16 @@
     function generateGlyphLedger() {
       const ledger = new Map();
       const reverseMap = new Map(); // glyph -> tokens
-      const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
-      
+      const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
+
       for (const key of keys) {
         try {
-          const tokenData = JSON.parse(localStorage.getItem(key));
+          const tokenData = safeStorageGet(key);
+          if (!tokenData?.token) continue;
           const token = tokenData.token;
-          const complex = tokenToComplexNumber(token, tokenData);
+          const complex = memoizedComplexNumber(token, tokenData);
           const glyph = complexToGlyph(complex);
-          
+
           ledger.set(token, {
             glyph,
             complex: {
@@ -750,6 +854,18 @@
       return exportData;
     }
 
+    window.GlyphSystem.ledger = null;
+    window.GlyphSystem.encode = function encode(message) {
+      const { ledger } = generateGlyphLedger();
+      window.GlyphSystem.ledger = ledger;
+      return encodeMessage(message, ledger);
+    };
+    window.GlyphSystem.decode = function decode(encoded) {
+      const { reverseMap } = generateGlyphLedger();
+      return decodeMessage(encoded, reverseMap);
+    };
+    window.GlyphSystem.export = exportGlyphLedger;
+
     function generateEncryptionExamples(ledger, reverseMap) {
       const examples = [
         "hello world",
@@ -850,12 +966,18 @@
     // ============================================
     // LOGGING
     // ============================================
+    function batchLogUpdates(entries) {
+      const fragment = document.createDocumentFragment();
+      entries.forEach(entry => fragment.appendChild(entry));
+      elements.log.appendChild(fragment);
+      elements.log.scrollTop = elements.log.scrollHeight;
+    }
+
     function addLog(content, type = 'info') {
       const entry = document.createElement('div');
       entry.className = `log-entry ${type}`;
       entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>${content}`;
-      elements.log.appendChild(entry);
-      elements.log.scrollTop = elements.log.scrollHeight;
+      batchLogUpdates([entry]);
       return entry;
     }
 
@@ -863,6 +985,24 @@
     function logError(msg) { return addLog(`🔴 ${sanitize(msg)}`, 'error'); }
     function logSuccess(msg) { return addLog(`✅ ${sanitize(msg)}`, 'success'); }
     function logWarning(msg) { return addLog(`⚠️ ${sanitize(msg)}`, 'warning'); }
+
+    function debounce(fn, delay) {
+      let timeout;
+      return function debounced(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fn.apply(this, args), delay);
+      };
+    }
+
+    async function safeAsync(fn, errorMsg) {
+      try {
+        return await fn();
+      } catch (err) {
+        logError(`${errorMsg}: ${err.message}`);
+        console.error(errorMsg, err);
+        return null;
+      }
+    }
 
     // ============================================
     // STATS
@@ -899,36 +1039,32 @@
     function updateTokenIndex(token) {
       if (!token) return;
 
-      let index;
-      try {
-        index = JSON.parse(localStorage.getItem(DB_INDEX_KEY) || '[]');
-      } catch {
-        index = [];
-      }
-
+      let index = safeStorageGet(DB_INDEX_KEY, []);
       if (!Array.isArray(index)) index = [];
       if (!index.includes(token)) {
         index.push(token);
-        localStorage.setItem(DB_INDEX_KEY, JSON.stringify(index));
+        safeStorageSet(DB_INDEX_KEY, JSON.stringify(index));
       }
     }
 
     function getFromCache(token) {
       try {
-        const raw = localStorage.getItem(getCacheKey(token));
+        const raw = safeStorageGet(getCacheKey(token));
         if (!raw) return null;
         state.sessionStats.totalCacheHits++;
         updateStats();
-        return JSON.parse(raw);
+        return raw;
       } catch { return null; }
     }
 
     function saveToCache(token, data) {
       try {
-        localStorage.setItem(getCacheKey(token), JSON.stringify({
+        const payload = JSON.stringify({
           ...data,
           cached_at: new Date().toISOString()
-        }));
+        });
+        const ok = safeStorageSet(getCacheKey(token), payload);
+        if (!ok) return;
         updateTokenIndex(token);
       } catch (err) {
         if (err.name === 'QuotaExceededError') {
@@ -936,6 +1072,12 @@
         }
       }
     }
+
+    window.CognitionEngine.cache = {
+      get: getFromCache,
+      set: saveToCache,
+      key: getCacheKey,
+    };
 
     // ============================================
     // OPENAI API
@@ -1008,9 +1150,36 @@
       }
     }
 
+    window.CognitionEngine.api = {
+      callOpenAI,
+    };
+
     // ============================================
     // ADJACENCY
     // ============================================
+    class ProgressTracker {
+      constructor(total, label) {
+        this.total = total;
+        this.current = 0;
+        this.label = label;
+        this.element = logStatus(`⏳ ${label} (0/${total})`);
+      }
+
+      increment(count = 1) {
+        this.current += count;
+        const percent = this.total === 0 ? 100 : Math.round((this.current / this.total) * 100);
+        if (this.element) {
+          this.element.innerHTML = `⏳ ${this.label} (${this.current}/${this.total}) - ${percent}%`;
+        }
+      }
+
+      complete(message) {
+        if (this.element) {
+          this.element.innerHTML = `✅ ${message || `${this.label} complete`}`;
+        }
+      }
+    }
+
     async function fetchAdjacency(token, context) {
       if (currentAbortController?.signal.aborted) {
         throw new Error('AbortError');
@@ -1030,10 +1199,25 @@ Relationship types: ≡ Identity, ⊃ Contains, ⊂ Is Contained By, ≈ Variant
 
 Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "weight": 0.95}], ...}}`;
 
-      const content = await callOpenAI([
-        { role: 'system', content: 'You are an HLSF token adjacency analyzer.' },
-        { role: 'user', content: prompt },
-      ]);
+      let safePrompt;
+      try {
+        safePrompt = validatePrompt(prompt);
+      } catch (err) {
+        logError(`Prompt validation failed for ${token}: ${err.message}`);
+        return { token, relationships: {}, error: 'invalid_prompt' };
+      }
+
+      const content = await safeAsync(
+        () => callOpenAI([
+          { role: 'system', content: 'You are an HLSF token adjacency analyzer.' },
+          { role: 'user', content: safePrompt },
+        ]),
+        `Adjacency fetch failed for ${token}`
+      );
+
+      if (!content) {
+        return { token, relationships: {}, error: 'request_failed' };
+      }
 
       try {
         const jsonStart = content.indexOf('{');
@@ -1047,17 +1231,18 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     async function batchFetchAdjacencies(tokens, context, label) {
-      const status = logStatus(`⏳ Fetching ${label} adjacencies...`);
       const results = new Map();
       const unique = [...new Set(tokens)];
-      
+
+      const progress = new ProgressTracker(unique.length, label);
+
       let processed = 0;
       for (let i = 0; i < unique.length; i += CONFIG.MAX_CONCURRENCY) {
         if (currentAbortController?.signal.aborted) {
-          status.innerHTML = `⚠️ ${label} cancelled (${processed}/${unique.length})`;
+          progress.complete(`${label} cancelled (${processed}/${unique.length})`);
           break;
         }
-        
+
         const batch = unique.slice(i, i + CONFIG.MAX_CONCURRENCY);
         const settled = await Promise.allSettled(batch.map(t => fetchAdjacency(t, context)));
         
@@ -1066,15 +1251,20 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             results.set(batch[idx], result.value);
           }
         });
-        
+
         processed += batch.length;
-        status.innerHTML = `⏳ ${label} (${processed}/${unique.length})`;
+        progress.increment(batch.length);
       }
-      
+
       const hits = Array.from(results.values()).filter(r => r.cache_hit).length;
-      status.innerHTML = `✅ ${label} complete (${hits} cached, ${results.size - hits} new)`;
+      progress.complete(`${label}: ${hits} cached, ${results.size - hits} new`);
       return results;
     }
+
+    window.CognitionEngine.processing = {
+      fetchAdjacency,
+      batchFetchAdjacencies,
+    };
 
     function calculateAttention(matrices) {
       for (const entry of matrices.values()) {
@@ -1139,6 +1329,54 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     // HLSF VISUALIZATION
     // ============================================
 
+    function polygonVertices(center, radius, sides) {
+      const vertices = [];
+      const angleStep = (2 * Math.PI) / sides;
+      for (let i = 0; i < sides; i++) {
+        const angle = i * angleStep - Math.PI / 2;
+        vertices.push([
+          center[0] + radius * Math.cos(angle),
+          center[1] + radius * Math.sin(angle)
+        ]);
+      }
+      return vertices;
+    }
+
+    function buildBaseTriangles(vertices, sides) {
+      if (sides < 3) return [];
+      const triangles = [];
+      const center = vertices.reduce((acc, v) =>
+        [acc[0] + v[0] / sides, acc[1] + v[1] / sides], [0, 0]);
+
+      for (let i = 0; i < sides; i++) {
+        const next = (i + 1) % sides;
+        triangles.push([center, vertices[i], vertices[next]]);
+      }
+      return triangles;
+    }
+
+    function rotateTrianglesAround(triangles, center, angle) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+
+      return triangles.map(tri => tri.map(vertex => {
+        const dx = vertex[0] - center[0];
+        const dy = vertex[1] - center[1];
+        return [
+          center[0] + dx * cos - dy * sin,
+          center[1] + dx * sin + dy * cos
+        ];
+      }));
+    }
+
+    window.HLSF.geometry = {
+      polygonVertices,
+      buildBaseTriangles,
+      rotateTrianglesAround,
+    };
+
+    let hlsfNodes = [];
+
     function buildHLSFNodes() {
       const graph = window.HLSF_GRAPH;
       let tokenRecords = [];
@@ -1152,14 +1390,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       let sourceLabel = '';
 
       if (tokenRecords.length === 0) {
-        const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+        const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
         console.log(`Scanning ${keys.length} cached tokens from storage for HLSF build`);
 
         for (const key of keys) {
           try {
-            const raw = localStorage.getItem(key);
-            if (!raw) continue;
-            const tokenData = JSON.parse(raw);
+            const tokenData = safeStorageGet(key);
             if (!tokenData?.token) {
               console.warn('Token missing from data:', key);
               continue;
@@ -1203,7 +1439,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           const attention = typeof tokenData.attention_score === 'number'
             ? tokenData.attention_score
             : 0.5;
-          const complex = tokenToComplexNumber(token, { ...tokenData, attention_score: attention });
+          const complex = memoizedComplexNumber(token, { ...tokenData, attention_score: attention });
           const glyph = complexToGlyph(complex);
 
           // Determine polygon sides based on adjacency count (4-12 sides)
@@ -1347,30 +1583,32 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       speedSlider.addEventListener('input', (e) => {
         window.HLSF.config.rotationSpeed = parseFloat(e.target.value);
         speedVal.textContent = window.HLSF.config.rotationSpeed.toFixed(1);
+        debouncedRender();
       });
-      
+
       const alphaSlider = document.getElementById('hlsf-alpha');
       const alphaVal = document.getElementById('hlsf-alpha-val');
       alphaSlider.addEventListener('input', (e) => {
         window.HLSF.config.alpha = parseFloat(e.target.value);
         alphaVal.textContent = window.HLSF.config.alpha.toFixed(2);
+        debouncedRender();
       });
       
       document.getElementById('hlsf-zoom-in').addEventListener('click', () => {
         window.HLSF.config.scale *= 1.2;
-        renderHLSF();
+        debouncedRender();
       });
-      
+
       document.getElementById('hlsf-zoom-out').addEventListener('click', () => {
         window.HLSF.config.scale *= 0.8;
-        renderHLSF();
+        debouncedRender();
       });
-      
+
       document.getElementById('hlsf-reset-view').addEventListener('click', () => {
         window.HLSF.config.scale = 1;
         window.HLSF.config.tx = window.HLSF.canvas.width / 2;
         window.HLSF.config.ty = window.HLSF.canvas.height / 2;
-        renderHLSF();
+        debouncedRender();
       });
       
       const rotationBtn = document.getElementById('hlsf-toggle-rotation');
@@ -1393,21 +1631,21 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       edgesBtn.addEventListener('click', () => {
         window.HLSF.config.showEdges = !window.HLSF.config.showEdges;
         edgesBtn.textContent = window.HLSF.config.showEdges ? 'Edges: On' : 'Edges: Off';
-        renderHLSF();
+        debouncedRender();
       });
-      
+
       const labelsBtn = document.getElementById('hlsf-toggle-labels');
       labelsBtn.addEventListener('click', () => {
         window.HLSF.config.showLabels = !window.HLSF.config.showLabels;
         labelsBtn.textContent = window.HLSF.config.showLabels ? 'Labels: On' : 'Labels: Off';
-        renderHLSF();
+        debouncedRender();
       });
-      
+
       const bgBtn = document.getElementById('hlsf-toggle-bg');
       bgBtn.addEventListener('click', () => {
         window.HLSF.config.whiteBg = !window.HLSF.config.whiteBg;
         bgBtn.textContent = window.HLSF.config.whiteBg ? 'BG: Light' : 'BG: Dark';
-        renderHLSF();
+        debouncedRender();
       });
       
       // Mouse interaction
@@ -1429,7 +1667,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           window.HLSF.config.ty += dy;
           lastX = e.clientX;
           lastY = e.clientY;
-          renderHLSF();
+          debouncedRender();
         }
       });
       
@@ -1445,7 +1683,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         e.preventDefault();
         const factor = e.deltaY < 0 ? 1.1 : 0.9;
         window.HLSF.config.scale *= factor;
-        renderHLSF();
+        debouncedRender();
       }, { passive: false });
       
       // Center view
@@ -1579,6 +1817,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
 
+    const debouncedRender = debounce(() => renderHLSF(), 16);
+
     function animateHLSF() {
       if (!window.HLSF.canvas || !window.HLSF.ctx) {
         console.warn('Canvas not ready for animation');
@@ -1618,8 +1858,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         console.warn('Error stopping HLSF animation:', err);
       }
     }
+
+    window.HLSF.rendering = {
+      render: renderHLSF,
+      animate: animateHLSF,
+      stop: stopHLSFAnimation,
+    };
     function analyzeDatabaseMetadata() {
-      const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+      const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
       const tokens = [];
       const relationshipCounts = new Map();
       const tokenFrequency = new Map();
@@ -1630,7 +1876,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       for (const key of keys) {
         try {
-          const data = JSON.parse(localStorage.getItem(key));
+          const data = safeStorageGet(key);
           tokens.push(data);
 
           // Track oldest and newest
@@ -1837,14 +2083,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     async function importHLSFDBFromFile(file) {
       const txt = await file.text();
       const db = JSON.parse(txt);
-      localStorage.setItem(DB_RAW_KEY, txt);
+      safeStorageSet(DB_RAW_KEY, txt);
 
       const seen = [];
       for (const rec of db.full_token_data || []) {
-        localStorage.setItem(TOKEN_CACHE_PREFIX + rec.token, JSON.stringify(rec));
+        safeStorageSet(TOKEN_CACHE_PREFIX + rec.token, JSON.stringify(rec));
         seen.push(rec.token);
       }
-      localStorage.setItem(DB_INDEX_KEY, JSON.stringify(seen));
+      safeStorageSet(DB_INDEX_KEY, JSON.stringify(seen));
       state.hlsfReady = false;
       window.HLSF_GRAPH = null;
       updateStats();
@@ -1861,10 +2107,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
 
         state.hlsfReady = false;
-        try {
-          localStorage.setItem(DB_RAW_KEY, JSON.stringify(data));
-        } catch (err) {
-          console.warn('Failed to persist raw DB snapshot:', err);
+        const persisted = safeStorageSet(DB_RAW_KEY, JSON.stringify(data));
+        if (!persisted) {
+          console.warn('Failed to persist raw DB snapshot');
         }
 
         const tokenData = data.full_token_data;
@@ -1877,28 +2122,28 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           if (!token.token) continue;
 
           const key = getCacheKey(token.token);
-          const existing = localStorage.getItem(key);
+          const existing = safeStorageGet(key);
           seen.add(token.token);
 
           if (existing) {
             // Check if imported data is newer
-            const existingData = JSON.parse(existing);
+            const existingData = typeof existing === 'string' ? JSON.parse(existing) : existing;
             const importedDate = new Date(token.cached_at || 0);
             const existingDate = new Date(existingData.cached_at || 0);
 
             if (importedDate > existingDate) {
-              localStorage.setItem(key, JSON.stringify(token));
+              safeStorageSet(key, JSON.stringify(token));
               updated++;
             } else {
               skipped++;
             }
           } else {
-            localStorage.setItem(key, JSON.stringify(token));
+            safeStorageSet(key, JSON.stringify(token));
             imported++;
           }
         }
 
-        localStorage.setItem(DB_INDEX_KEY, JSON.stringify(Array.from(seen)));
+        safeStorageSet(DB_INDEX_KEY, JSON.stringify(Array.from(seen)));
         updateStats();
 
         const summary = [];
@@ -1965,19 +2210,20 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     function* iterTokenRecords() {
-      const raw = localStorage.getItem(DB_RAW_KEY);
+      const raw = safeStorageGet(DB_RAW_KEY);
       if (raw) {
-        const db = JSON.parse(raw);
+        const db = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (db.full_token_data && db.full_token_data.length) {
           for (const rec of db.full_token_data) yield rec;
           return;
         }
       }
-      const idx = JSON.parse(localStorage.getItem(DB_INDEX_KEY) || '[]');
+      const idxRaw = safeStorageGet(DB_INDEX_KEY, []);
+      const idx = Array.isArray(idxRaw) ? idxRaw : [];
       const keys = idx.length ? idx.map(t => TOKEN_CACHE_PREFIX + t)
-                              : Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+                              : safeStorageKeys(TOKEN_CACHE_PREFIX);
       for (const k of keys) {
-        const rec = JSON.parse(localStorage.getItem(k));
+        const rec = safeStorageGet(k);
         if (rec) yield rec;
       }
     }
@@ -2074,7 +2320,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     async function handleCommand(cmd) {
       const trimmed = cmd.trim();
-      await dispatchCommand(trimmed);
+      await safeAsync(() => dispatchCommand(trimmed), `Command dispatch failed for ${trimmed}`);
       if (trimmed === '/hlsf') return;
 
       const [command, ...args] = trimmed.slice(1).split(/\s+/);
@@ -2098,9 +2344,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           break;
         case 'reset':
           if (confirm('Clear all cached data?')) {
-            const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
-            keys.forEach(k => localStorage.removeItem(k));
-            localStorage.removeItem(DB_INDEX_KEY);
+            const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
+            keys.forEach(k => safeStorageRemove(k));
+            safeStorageRemove(DB_INDEX_KEY);
             state.hlsfReady = false;
             window.HLSF_GRAPH = null;
             updateStats();
@@ -2135,8 +2381,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             logError('Usage: /encrypt <message>');
             break;
           }
-          const { ledger: encLedger } = generateGlyphLedger();
-          const encResult = encodeMessage(encryptMsg, encLedger);
+          const encResult = window.GlyphSystem.encode(encryptMsg);
           addLog(`<div class="adjacency-insight">
             <strong>🔐 Encrypted:</strong><br>
             <div style="font-size: 1.5em; letter-spacing: 0.15em; color: var(--accent); margin: 0.5rem 0;">${encResult.encoded}</div>
@@ -2150,15 +2395,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             logError('Usage: /decrypt <encrypted glyphs>');
             break;
           }
-          const { reverseMap: decReverse } = generateGlyphLedger();
-          const decoded = decodeMessage(decryptMsg, decReverse);
+          const decoded = window.GlyphSystem.decode(decryptMsg);
           addLog(`<div class="adjacency-insight">
             <strong>🔓 Decrypted:</strong><br>
             ${decoded}
           </div>`);
           break;
         case 'exportledger':
-          const ledgerData = exportGlyphLedger();
+          const ledgerData = window.GlyphSystem.export();
           logSuccess(`Glyph ledger exported: ${ledgerData.statistics.total_tokens} tokens, ${ledgerData.statistics.unique_glyphs} glyphs`);
           break;
         case 'help':
