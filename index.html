@@ -1342,6 +1342,70 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return vertices;
     }
 
+    function deriveAdjacencyPolygon(center, baseRadius, relationships) {
+      const entries = Object.entries(relationships || {})
+        .filter(([, edges]) => Array.isArray(edges) && edges.length > 0)
+        .map(([relType, edges]) => {
+          const weightSum = edges.reduce((sum, edge) => {
+            const weight = typeof edge.weight === 'number' ? edge.weight : 0;
+            return sum + weight;
+          }, 0);
+          const avgWeight = edges.length > 0 ? weightSum / edges.length : 0;
+          return {
+            relType,
+            count: edges.length,
+            avgWeight
+          };
+        })
+        .sort((a, b) => a.relType.localeCompare(b.relType));
+
+      if (entries.length === 0) {
+        return {
+          vertices: polygonVertices(center, baseRadius * 0.8, 3),
+          anchorIndex: 0,
+          adjacencyTypes: 0
+        };
+      }
+
+      const vertexCount = Math.max(entries.length + 1, 3);
+      const baseAngle = -Math.PI / 2;
+      const angleStep = (2 * Math.PI) / vertexCount;
+      const maxCount = Math.max(...entries.map(entry => entry.count));
+
+      const vertices = [];
+      const anchor = [center[0], center[1] - baseRadius];
+      vertices.push(anchor);
+
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        const normalizedWeight = Math.min(1, Math.max(0, entry.avgWeight));
+        const countFactor = maxCount > 0 ? entry.count / maxCount : 0;
+        const radialFactor = 0.85 + normalizedWeight * 0.35 + countFactor * 0.25;
+        const radius = baseRadius * radialFactor;
+        const angle = baseAngle + angleStep * (i + 1);
+        vertices.push([
+          center[0] + radius * Math.cos(angle),
+          center[1] + radius * Math.sin(angle)
+        ]);
+      }
+
+      let fillerIndex = entries.length;
+      while (vertices.length < 3) {
+        const angle = baseAngle + angleStep * (fillerIndex + 1);
+        vertices.push([
+          center[0] + baseRadius * 0.75 * Math.cos(angle),
+          center[1] + baseRadius * 0.75 * Math.sin(angle)
+        ]);
+        fillerIndex++;
+      }
+
+      return {
+        vertices,
+        anchorIndex: 0,
+        adjacencyTypes: entries.length
+      };
+    }
+
     function buildBaseTriangles(vertices, sides) {
       if (sides < 3) return [];
       const triangles = [];
@@ -1369,10 +1433,26 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }));
     }
 
+    function rotatePointsAround(points, center, angle) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+
+      return points.map(vertex => {
+        const dx = vertex[0] - center[0];
+        const dy = vertex[1] - center[1];
+        return [
+          center[0] + dx * cos - dy * sin,
+          center[1] + dx * sin + dy * cos
+        ];
+      });
+    }
+
     window.HLSF.geometry = {
       polygonVertices,
       buildBaseTriangles,
       rotateTrianglesAround,
+      rotatePointsAround,
+      deriveAdjacencyPolygon,
     };
 
     let hlsfNodes = [];
@@ -1435,6 +1515,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           for (const edges of Object.values(rels)) {
             if (Array.isArray(edges)) adjacencyCount += edges.length;
           }
+          const adjacencyTypes = Object.values(rels)
+            .filter(edges => Array.isArray(edges) && edges.length > 0)
+            .length;
 
           const attention = typeof tokenData.attention_score === 'number'
             ? tokenData.attention_score
@@ -1442,15 +1525,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           const complex = memoizedComplexNumber(token, { ...tokenData, attention_score: attention });
           const glyph = complexToGlyph(complex);
 
-          // Determine polygon sides based on adjacency count (4-12 sides)
-          const sides = Math.min(12, Math.max(4, Math.floor(adjacencyCount / 3) + 4));
-
           // Position based on complex number
           const x = complex.real * 2;
           const y = complex.imaginary * 2;
 
           // Radius based on attention
           const radius = 0.3 + attention * 0.4;
+
+          // Build polygon derived from adjacency structure
+          const shape = deriveAdjacencyPolygon([x, y], radius, rels);
+          const sides = shape.vertices.length;
 
           // Color based on attention
           let color;
@@ -1466,8 +1550,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             sides,
             attention,
             adjacencyCount,
+            adjacencyTypes,
+            anchorIndex: shape.anchorIndex,
             color,
-            vertices: polygonVertices([x, y], radius, sides),
+            vertices: shape.vertices,
             triangles: null, // Will be computed
             localRotation: 0,
             rotationSpeed: attention * 0.02
@@ -1512,8 +1598,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         <div style="margin-bottom: 1rem;">
           <div class="section-title">🌌 HLSF: Hierarchical-Level Semantic Framework</div>
           <div style="font-size: 0.9rem; opacity: 0.8; margin-top: 0.5rem;">
-            Geometric token visualization. Each polygon represents a token matrix with sides proportional 
-            to adjacency count. Triangular subdivisions show hierarchical structure.
+            Geometric token visualization. Each polygon fans outward from a primary corner based on
+            adjacency types, forming unique base-level shapes per matrix. Triangular subdivisions show
+            hierarchical structure.
           </div>
         </div>
         <canvas id="hlsf-canvas" width="1200" height="600"></canvas>
@@ -1557,8 +1644,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           </div>
         </div>
         <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,255,136,0.05); border-radius: 8px; font-size: 0.85rem;">
-          <strong>Controls:</strong> Drag to pan • Scroll to zoom • Each polygon = token matrix • 
-          Sides = adjacency count • Color = attention score<br>
+          <strong>Controls:</strong> Drag to pan • Scroll to zoom • Each polygon = token matrix •
+          Fan vertices = adjacency types • Color = attention score<br>
           <strong>Modes:</strong> Global rotation = all polygons rotate around center • 
           Emergent rotation = each polygon rotates around its own center
         </div>
@@ -1774,31 +1861,50 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const [r, g, b] = node.color;
         const fillColor = `rgba(${r}, ${g}, ${b}, ${window.HLSF.config.alpha})`;
         const strokeColor = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.3)';
-        
+
         let triangles = node.triangles;
-        
+        let vertices = node.vertices;
+
         // Apply rotation if active
         if (window.HLSF.config.emergentActive) {
           triangles = rotateTrianglesAround(node.triangles, node.center, node.localRotation);
+          vertices = rotatePointsAround(node.vertices, node.center, node.localRotation);
         } else if (window.HLSF.config.rotationActive) {
           triangles = rotateTrianglesAround(node.triangles, [0, 0], window.HLSF.config.globalRotation);
+          vertices = rotatePointsAround(node.vertices, [0, 0], window.HLSF.config.globalRotation);
         }
-        
+
         for (const tri of triangles) {
           drawTriangle(tri, fillColor, strokeColor);
         }
-        
+
+        if (window.HLSF.config.showEdges && vertices.length > 1) {
+          const anchorIndex = typeof node.anchorIndex === 'number' ? node.anchorIndex : 0;
+          const anchor = vertices[anchorIndex];
+          const [ax, ay] = worldToScreen(anchor[0], anchor[1]);
+          ctx.strokeStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.4)' : 'rgba(255, 255, 255, 0.35)';
+          ctx.lineWidth = 1.2;
+          for (let i = 0; i < vertices.length; i++) {
+            if (i === anchorIndex) continue;
+            const [vx, vy] = worldToScreen(vertices[i][0], vertices[i][1]);
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(vx, vy);
+            ctx.stroke();
+          }
+        }
+
         // Draw glyph and label
         if (window.HLSF.config.showLabels) {
           const [sx, sy] = worldToScreen(node.center[0], node.center[1]);
-          
+
           // Draw glyph
           ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
           ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(node.glyph, sx, sy);
-          
+
           // Draw token name
           ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
           ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
