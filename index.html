@@ -530,7 +530,8 @@
         totalApiCalls: 0,
         totalCacheHits: 0,
         totalCostCents: 0,
-      }
+      },
+      hlsfReady: false,
     };
 
     let currentAbortController = null;
@@ -1799,6 +1800,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           return null;
         }
 
+        state.hlsfReady = false;
+
         const tokenData = data.full_token_data;
         let imported = 0;
         let skipped = 0;
@@ -1874,7 +1877,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     // ============================================
     // COMMANDS
     // ============================================
-    const COMMANDS = Object.create(null);
+    const COMMANDS = window.COMMANDS = window.COMMANDS || Object.create(null);
 
     function registerCommand(name, handler) {
       if (!name || typeof handler !== 'function') return;
@@ -1897,75 +1900,65 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     function cmd_hlsf() {
-      let index;
+      let idx;
       try {
-        index = JSON.parse(localStorage.getItem(DB_INDEX_KEY) || '[]');
+        idx = JSON.parse(localStorage.getItem(DB_INDEX_KEY) || '[]');
       } catch {
-        index = [];
+        idx = [];
       }
 
-      if (!Array.isArray(index)) index = [];
+      if (!Array.isArray(idx)) idx = [];
 
-      const keys = index.length
-        ? index.map(token => getCacheKey(token))
+      const keys = idx.length
+        ? idx.map(token => getCacheKey(token))
         : Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
 
       if (keys.length === 0) {
-        logWarning('No cached tokens found for HLSF. Use /import to load the database.');
-        return;
+        if (!state.hlsfReady) {
+          logWarning('No cached tokens found for HLSF. Use /import to load the database.');
+        }
+        state.hlsfReady = false;
+        return; // important: stop here if empty
       }
 
+      const pri = RELATIONSHIP_PRIORITIES;
       const nodes = [];
       const edges = [];
-
-      for (const key of keys) {
-        const raw = localStorage.getItem(key);
+      for (const k of keys) {
+        const raw = localStorage.getItem(k);
         if (!raw) continue;
 
-        let record;
+        let rec;
         try {
-          record = JSON.parse(raw);
+          rec = JSON.parse(raw);
         } catch {
           continue;
         }
 
-        if (!record || !record.token || !record.relationships) continue;
+        if (!rec || !rec.token || !rec.relationships) continue;
 
         let attention = 0;
-        for (const relType of Object.keys(record.relationships)) {
-          const rels = Array.isArray(record.relationships[relType]) ? record.relationships[relType] : [];
-          const priority = getRelationshipPriority(relType);
-
+        for (const t of Object.keys(rec.relationships)) {
+          const rels = Array.isArray(rec.relationships[t]) ? rec.relationships[t] : [];
+          const p = pri instanceof Map
+            ? (pri.get(t) ?? 1)
+            : (pri && typeof pri === 'object' ? (pri[t] ?? 1) : 1);
           for (const rel of rels) {
             const weight = rel?.weight ?? 0;
-            attention += weight * priority;
+            attention += weight * p;
             if (rel?.token) {
-              edges.push({ source: record.token, target: rel.token, type: relType, w: weight });
+              edges.push({ source: rec.token, target: rel.token, type: t, w: weight });
             }
           }
         }
-
-        nodes.push({ id: record.token, attention });
+        nodes.push({ id: rec.token, attention });
       }
+      const maxA = nodes.reduce((m, n) => Math.max(m, n.attention), 0) || 1;
+      for (const n of nodes) n.attention = +(n.attention / maxA).toFixed(3);
 
-      if (nodes.length === 0) {
-        logWarning('No cached tokens found for HLSF. Use /import to load the database.');
-        return;
-      }
-
-      const maxAttention = nodes.reduce((max, node) => Math.max(max, node.attention), 0) || 1;
-      for (const node of nodes) {
-        node.attention = +(node.attention / maxAttention).toFixed(3);
-      }
-
-      const HLSF = {
-        nodes,
-        edges,
-        meta: { nodeCount: nodes.length, edgeCount: edges.length }
-      };
-
-      window.HLSF_GRAPH = HLSF;
-      logSuccess(`HLSF ready: ${HLSF.meta.nodeCount} nodes, ${HLSF.meta.edgeCount} edges.`);
+      window.HLSF_GRAPH = { nodes, edges, meta: { nodeCount: nodes.length, edgeCount: edges.length } };
+      state.hlsfReady = true;
+      logSuccess(`HLSF ready: ${window.HLSF_GRAPH.meta.nodeCount} nodes, ${window.HLSF_GRAPH.meta.edgeCount} edges.`);
 
       try {
         stopHLSFAnimation();
@@ -1974,10 +1967,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         logError(`HLSF initialization failed: ${err.message}`);
         console.error('HLSF visualization error:', err);
       }
+      return; // important: hard return so no later warning can log
     }
 
     registerCommand('/import', cmd_import);
-    registerCommand('/hlsf', cmd_hlsf);
+    window.COMMANDS = COMMANDS;
+    if (!COMMANDS.__hlsf_bound) {
+      COMMANDS['/hlsf'] = cmd_hlsf;
+      COMMANDS.__hlsf_bound = true;
+    }
     registerCommand('/visualize', cmd_hlsf);
 
     function isCommand(input) { return input.startsWith('/'); }
@@ -2007,6 +2005,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
             keys.forEach(k => localStorage.removeItem(k));
             localStorage.removeItem(DB_INDEX_KEY);
+            state.hlsfReady = false;
+            window.HLSF_GRAPH = null;
             updateStats();
             logSuccess(`Cleared ${keys.length} tokens`);
           }
