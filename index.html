@@ -491,6 +491,295 @@
       ESTIMATED_COST_PER_API_CALL: 0.02,
     };
 
+    // ---------------- HLSF matrix builder ----------------
+    const ADJ10 = ["≡","⊃","⊂","≈","∈","⊛","⇝","∝","⇌","↔"];
+    const RELKEY_ALIASES = new Map([
+      ["≡ Identity","≡"],["⊃ Contains","⊃"],["⊂ Is Contained By","⊂"],["≈ Variant","≈"],
+      ["∈ Is Instance Of","∈"],["⊛ Associated With","⊛"],["⇝ Causes","⇝"],["∝ Correlates With","∝"],
+      ["⇌ Inverts","⇌"],["↔ Mirrors","↔"],["∼ Adjacent To","∼"],["→ Next","→"],["⇄ Co-occurs With","⇄"],
+      ["⇐ Preceded By","⇐"],["↠ Follows","↠"],["⊕ Complements","⊕"],["⊏ Part Of","⊂"],["⊐ Composes","⊃"]
+    ]);
+
+    function normRelKey(k) {
+      if (ADJ10.includes(k)) return k;
+      const cleaned = (k || '').trim();
+      const alias = RELKEY_ALIASES.get(cleaned)
+        || RELKEY_ALIASES.get(cleaned.replace(/\s+/g, ' '))
+        || cleaned.split(' ')[0];
+      return ADJ10.includes(alias) ? alias : null;
+    }
+
+    function buildMatrixForRecord(rec) {
+      const edges = [];
+      const rels = rec?.relationships || {};
+      const keys = Object.keys(rels);
+      for (const rawKey of keys) {
+        const key = normRelKey(rawKey);
+        if (!key) continue;
+        const arr = Array.isArray(rels[rawKey]) ? rels[rawKey] : [];
+        const items = arr
+          .filter(x => x && typeof x.weight === 'number')
+          .sort((a, b) => b.weight - a.weight);
+        if (!items.length) continue;
+        const agg = {
+          rtype: key,
+          aggWeight: items[0].weight,
+          sizeWeight: items.reduce((s, x) => s + x.weight, 0),
+          count: items.length,
+          items
+        };
+        edges.push(agg);
+        if (edges.length === 10) break;
+      }
+      const freq = typeof rec?.f === 'number'
+        ? rec.f
+        : typeof rec?.frequency === 'number'
+          ? rec.frequency
+          : typeof rec?.freq === 'number'
+            ? rec.freq
+            : 1;
+      return { token: rec?.token || '', edges, f: freq };
+    }
+
+    function buildHLSFMatrices(db) {
+      const raw = db?.full_token_data || [];
+      const matrices = new Map();
+      const freqs = [];
+      for (const rec of raw) {
+        const matrix = buildMatrixForRecord(rec);
+        matrices.set(matrix.token, matrix);
+        if (typeof matrix.f === 'number') freqs.push(matrix.f);
+      }
+
+      freqs.sort((a, b) => a - b);
+      const freqStats = freqs.length
+        ? {
+            min: freqs[0],
+            max: freqs[freqs.length - 1],
+            p90: freqs[Math.max(0, Math.floor(freqs.length * 0.9) - 1)]
+          }
+        : { min: 0, max: 1, p90: 1 };
+
+      window.HLSF = window.HLSF || {};
+      window.HLSF.matrices = matrices;
+      window.HLSF.metrics = Object.assign({}, window.HLSF.metrics, { freqStats });
+
+      return matrices;
+    }
+
+    // ---------------- O20 layout ----------------
+    function buildO20Layout(width, height, margin = 32) {
+      const cx = width / 2;
+      const cy = height / 2;
+      const R = Math.min(cx, cy) - margin;
+      const slots = [];
+      for (let i = 0; i < 20; i++) {
+        const theta = Math.PI * (i / 19);
+        slots.push({
+          x: cx + R * Math.cos(theta),
+          y: cy - R * Math.sin(theta),
+          theta
+        });
+      }
+      return { cx, cy, R, slots };
+    }
+
+    function getCachedO20Layout(width, height, margin = 32) {
+      window.HLSF = window.HLSF || {};
+      const cache = window.HLSF.layoutCache;
+      if (cache && cache.width === width && cache.height === height && cache.margin === margin) {
+        return cache.layout;
+      }
+      const layout = buildO20Layout(width, height, margin);
+      window.HLSF.layoutCache = { width, height, margin, layout };
+      return layout;
+    }
+
+    function applyFrequencyVisuals(f) {
+      const value = typeof f === 'number' ? f : 0;
+      const stats = window.HLSF?.metrics?.freqStats;
+      if (!stats || typeof stats.min !== 'number' || typeof stats.max !== 'number') {
+        const clamped = Math.min(1, Math.max(0, value));
+        return { norm: clamped, isHigh: value >= 1 };
+      }
+      const range = stats.max - stats.min;
+      const norm = range === 0 ? 0 : (value - stats.min) / range;
+      const clamped = Math.min(1, Math.max(0, norm));
+      const threshold = typeof stats.p90 === 'number' ? stats.p90 : stats.max;
+      return { norm: clamped, isHigh: value >= threshold };
+    }
+
+    // ---------------- Canvas renderer ----------------
+    function drawHLSFMatrix(matrix, opts = {}) {
+      if (!matrix) return;
+      const cfg = window.HLSF.config;
+      const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
+      if (!canvas) {
+        console.warn('HLSF canvas element not found');
+        return;
+      }
+      const ctx = window.HLSF.ctx || (window.HLSF.ctx = canvas.getContext('2d'));
+      if (!ctx) return;
+
+      const w = canvas.width = canvas.clientWidth || canvas.width;
+      const h = canvas.height = canvas.clientHeight || canvas.height;
+
+      const theme = cfg.whiteBg
+        ? { bg: '#fff', fg: '#000', hint: '#444' }
+        : { bg: '#000', fg: '#fff', hint: '#bbb' };
+
+      ctx.save();
+      ctx.fillStyle = theme.bg;
+      ctx.fillRect(0, 0, w, h);
+
+      const geo = getCachedO20Layout(w, h);
+      const rotation = cfg.globalRotation || 0;
+      const cosR = Math.cos(rotation);
+      const sinR = Math.sin(rotation);
+
+      ctx.strokeStyle = theme.fg;
+      ctx.fillStyle = theme.fg;
+      ctx.lineWidth = 1.2;
+      ctx.font = "12px 'Fira Code', monospace";
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      ctx.beginPath();
+      ctx.arc(geo.cx, geo.cy, 10, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillText(matrix.token, geo.cx, geo.cy - 20);
+
+      const edges = [...matrix.edges]
+        .sort((a, b) => (b.aggWeight ?? 0) - (a.aggWeight ?? 0))
+        .slice(0, 10);
+
+      const r0 = 6;
+      const k = 12;
+      const scale = cfg.scale || 1;
+      const freqInfo = applyFrequencyVisuals(matrix.f);
+      const edgeWidth = 0.6 + 2.4 * freqInfo.norm;
+
+      edges.forEach((edge, i) => {
+        const slot = geo.slots[i];
+        if (!slot) return;
+
+        const dx = slot.x - geo.cx;
+        const dy = slot.y - geo.cy;
+        const rx = geo.cx + dx * cosR - dy * sinR;
+        const ry = geo.cy + dx * sinR + dy * cosR;
+
+        const normalizedWeight = Math.sqrt(Math.max(0, edge.sizeWeight));
+        const radius = (r0 + k * (normalizedWeight + 0.75 * edge.count) / (Math.sqrt(10) + 7.5)) * scale;
+
+        ctx.globalAlpha = Math.min(1, Math.max(0.15, edge.aggWeight ?? 0));
+        ctx.lineWidth = edgeWidth;
+        ctx.beginPath();
+        ctx.moveTo(geo.cx, geo.cy);
+        ctx.lineTo(rx, ry);
+        ctx.stroke();
+
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = edgeWidth;
+
+        if (freqInfo.isHigh) {
+          ctx.beginPath();
+          ctx.arc(rx, ry, radius + 2, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        ctx.beginPath();
+        ctx.arc(rx, ry, radius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const top = edge.items?.[0]?.token || '';
+        const label = `${edge.rtype} · ${top}${edge.count > 1 ? ` (+${edge.count - 1})` : ''}`;
+        ctx.fillStyle = theme.hint;
+        ctx.fillText(label, rx, ry - (radius + 12));
+        ctx.fillStyle = theme.fg;
+      });
+
+      ctx.restore();
+    }
+
+    let _anim = null;
+    function animateHLSF(matrix) {
+      if (!matrix) return;
+      const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
+      if (!canvas) {
+        console.warn('HLSF canvas element not found for animation');
+        return;
+      }
+
+      window.HLSF.currentMatrix = matrix;
+      cancelAnimationFrame(_anim);
+
+      const start = performance.now();
+      (function loop(time) {
+        const dt = (time - start) / 1000;
+        if (window.HLSF.config.rotationActive) {
+          window.HLSF.config.globalRotation = (dt * (window.HLSF.config.rotationSpeed || 0.5)) % (2 * Math.PI);
+        }
+
+        const breathe = 1 + 0.05 * Math.sin(dt * 2);
+        const originalScale = window.HLSF.config.scale;
+        window.HLSF.config.scale = breathe;
+        drawHLSFMatrix(matrix);
+        window.HLSF.config.scale = originalScale;
+
+        _anim = requestAnimationFrame(loop);
+      })(performance.now());
+    }
+
+    function stopHLSFAnimation() {
+      if (_anim) {
+        cancelAnimationFrame(_anim);
+        _anim = null;
+      }
+      if (typeof stopLegacyHLSFAnimation === 'function') {
+        try {
+          stopLegacyHLSFAnimation();
+        } catch (err) {
+          console.warn('Legacy HLSF animation stop failed:', err);
+        }
+      }
+    }
+
+    function ensureHLSFCanvas() {
+      let canvas = document.getElementById('hlsf-canvas');
+      if (canvas) {
+        window.HLSF.canvas = canvas;
+        window.HLSF.ctx = canvas.getContext('2d');
+        return canvas;
+      }
+
+      if (!elements?.log) {
+        console.warn('Log element not ready for HLSF canvas');
+        return null;
+      }
+
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
+
+      const container = document.createElement('div');
+      container.className = 'hlsf-canvas-container';
+      container.innerHTML = `
+        <div class="section-title">🔭 HLSF Matrix Visualizer</div>
+        <canvas id="hlsf-canvas"></canvas>
+      `;
+
+      entry.appendChild(container);
+      elements.log.appendChild(entry);
+      elements.log.scrollTop = elements.log.scrollHeight;
+
+      canvas = container.querySelector('#hlsf-canvas');
+      if (canvas) {
+        window.HLSF.canvas = canvas;
+        window.HLSF.ctx = canvas.getContext('2d');
+      }
+      return canvas;
+    }
+
     window.HLSF = window.HLSF || {
       config: {
         rotationSpeed: 0.5,
@@ -981,10 +1270,18 @@
       return entry;
     }
 
-    function logStatus(msg) { return addLog(`<div class="processing-indicator"><span class="spinner"></span>${msg}</div>`, 'status'); }
-    function logError(msg) { return addLog(`🔴 ${sanitize(msg)}`, 'error'); }
-    function logSuccess(msg) { return addLog(`✅ ${sanitize(msg)}`, 'success'); }
-    function logWarning(msg) { return addLog(`⚠️ ${sanitize(msg)}`, 'warning'); }
+    function appendLog(msg, type = 'info') {
+      if (typeof msg === 'string') return addLog(msg, type);
+      return addLog(sanitize(String(msg)), type);
+    }
+
+    function logStatus(msg) {
+      return appendLog(`<div class="processing-indicator"><span class="spinner"></span>${sanitize(msg)}</div>`, 'status');
+    }
+    function logError(msg) { return appendLog(`🔴 ${sanitize(msg)}`, 'error'); }
+    function logSuccess(msg) { return appendLog(`✅ ${sanitize(msg)}`, 'success'); }
+    function logWarning(msg) { return appendLog(`⚠️ ${sanitize(msg)}`, 'warning'); }
+    function logFinal(msg) { return appendLog(`✅ ${sanitize(msg)}`, 'success'); }
 
     function debounce(fn, delay) {
       let timeout;
@@ -1670,7 +1967,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       speedSlider.addEventListener('input', (e) => {
         window.HLSF.config.rotationSpeed = parseFloat(e.target.value);
         speedVal.textContent = window.HLSF.config.rotationSpeed.toFixed(1);
-        debouncedRender();
+        debouncedLegacyRender();
       });
 
       const alphaSlider = document.getElementById('hlsf-alpha');
@@ -1678,24 +1975,24 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       alphaSlider.addEventListener('input', (e) => {
         window.HLSF.config.alpha = parseFloat(e.target.value);
         alphaVal.textContent = window.HLSF.config.alpha.toFixed(2);
-        debouncedRender();
+        debouncedLegacyRender();
       });
       
       document.getElementById('hlsf-zoom-in').addEventListener('click', () => {
         window.HLSF.config.scale *= 1.2;
-        debouncedRender();
+        debouncedLegacyRender();
       });
 
       document.getElementById('hlsf-zoom-out').addEventListener('click', () => {
         window.HLSF.config.scale *= 0.8;
-        debouncedRender();
+        debouncedLegacyRender();
       });
 
       document.getElementById('hlsf-reset-view').addEventListener('click', () => {
         window.HLSF.config.scale = 1;
         window.HLSF.config.tx = window.HLSF.canvas.width / 2;
         window.HLSF.config.ty = window.HLSF.canvas.height / 2;
-        debouncedRender();
+        debouncedLegacyRender();
       });
       
       const rotationBtn = document.getElementById('hlsf-toggle-rotation');
@@ -1718,21 +2015,21 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       edgesBtn.addEventListener('click', () => {
         window.HLSF.config.showEdges = !window.HLSF.config.showEdges;
         edgesBtn.textContent = window.HLSF.config.showEdges ? 'Edges: On' : 'Edges: Off';
-        debouncedRender();
+        debouncedLegacyRender();
       });
 
       const labelsBtn = document.getElementById('hlsf-toggle-labels');
       labelsBtn.addEventListener('click', () => {
         window.HLSF.config.showLabels = !window.HLSF.config.showLabels;
         labelsBtn.textContent = window.HLSF.config.showLabels ? 'Labels: On' : 'Labels: Off';
-        debouncedRender();
+        debouncedLegacyRender();
       });
 
       const bgBtn = document.getElementById('hlsf-toggle-bg');
       bgBtn.addEventListener('click', () => {
         window.HLSF.config.whiteBg = !window.HLSF.config.whiteBg;
         bgBtn.textContent = window.HLSF.config.whiteBg ? 'BG: Light' : 'BG: Dark';
-        debouncedRender();
+        debouncedLegacyRender();
       });
       
       // Mouse interaction
@@ -1754,7 +2051,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           window.HLSF.config.ty += dy;
           lastX = e.clientX;
           lastY = e.clientY;
-          debouncedRender();
+          debouncedLegacyRender();
         }
       });
       
@@ -1770,7 +2067,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         e.preventDefault();
         const factor = e.deltaY < 0 ? 1.1 : 0.9;
         window.HLSF.config.scale *= factor;
-        debouncedRender();
+        debouncedLegacyRender();
       }, { passive: false });
       
       // Center view
@@ -1781,10 +2078,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       window.HLSF.nodes = hlsfNodes;
       
       // Initial render
-      renderHLSF();
-      
+      renderLegacyHLSF();
+
       // Start animation
-      animateHLSF();
+      animateLegacyHLSF();
       
       logSuccess(`HLSF visualization initialized with ${hlsfNodes.length} token matrices`);
       
@@ -1825,7 +2122,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
 
-    function renderHLSF() {
+    function renderLegacyHLSF() {
       if (!window.HLSF.canvas || !window.HLSF.ctx) {
         console.warn('Canvas not initialized for renderHLSF');
         return;
@@ -1923,9 +2220,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
 
-    const debouncedRender = debounce(() => renderHLSF(), 16);
+    const debouncedLegacyRender = debounce(() => renderLegacyHLSF(), 16);
 
-    function animateHLSF() {
+    function animateLegacyHLSF() {
       if (!window.HLSF.canvas || !window.HLSF.ctx) {
         console.warn('Canvas not ready for animation');
         return;
@@ -1941,16 +2238,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
         
         if (window.HLSF.config.rotationActive || window.HLSF.config.emergentActive) {
-          renderHLSF();
+          renderLegacyHLSF();
         }
       } catch (err) {
         console.error('Error in HLSF animation:', err);
       }
       
-      window.HLSF.animationFrame = requestAnimationFrame(animateHLSF);
+      window.HLSF.animationFrame = requestAnimationFrame(animateLegacyHLSF);
     }
 
-    function stopHLSFAnimation() {
+    function stopLegacyHLSFAnimation() {
       try {
         if (window.HLSF && window.HLSF.animationFrame) {
           cancelAnimationFrame(window.HLSF.animationFrame);
@@ -1966,9 +2263,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     window.HLSF.rendering = {
-      render: renderHLSF,
-      animate: animateHLSF,
-      stop: stopHLSFAnimation,
+      render: renderLegacyHLSF,
+      animate: animateLegacyHLSF,
+      stop: stopLegacyHLSFAnimation,
     };
     function analyzeDatabaseMetadata() {
       const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
@@ -2218,6 +2515,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           console.warn('Failed to persist raw DB snapshot');
         }
 
+        window.HLSF.dbCache = data;
+
         const tokenData = data.full_token_data;
         let imported = 0;
         let skipped = 0;
@@ -2283,6 +2582,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (response.ok) {
           const data = await response.json();
           importDatabaseData(data, 'database.json');
+          buildHLSFMatrices(data);
         }
       } catch (err) {
         // Silently fail - file might not exist, which is fine
@@ -2301,8 +2601,102 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       COMMANDS[key] = handler;
     }
 
-    function cmd_import() {
+    async function loadDbFromFile(file) {
+      const text = await file.text();
+      safeStorageSet(DB_RAW_KEY, text);
+      const db = JSON.parse(text);
+      const index = (db.full_token_data || []).map(r => r.token).filter(Boolean);
+      safeStorageSet(DB_INDEX_KEY, JSON.stringify(index));
+      window.HLSF.matrices = null;
+      window.HLSF.layoutCache = null;
+      window.HLSF.dbCache = db;
+      logStatus(`DB loaded. Tokens: ${index.length}`);
+      return db;
+    }
+
+    function getDb() {
+      if (window.HLSF.dbCache) return window.HLSF.dbCache;
+      const raw = safeStorageGet(DB_RAW_KEY);
+      if (!raw) return null;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          window.HLSF.dbCache = parsed;
+          return parsed;
+        } catch {
+          return null;
+        }
+      }
+      window.HLSF.dbCache = raw;
+      return raw;
+    }
+
+    function cmdImport() {
+      if (!elements?.dbFileInput) {
+        logError('File input unavailable');
+        return;
+      }
+      elements.dbFileInput.value = '';
       elements.dbFileInput.click();
+    }
+
+    function cmdHlsf(token) {
+      const target = (token || '').trim();
+      if (!target) {
+        logError('Usage: /hlsf <token>');
+        return;
+      }
+
+      const db = getDb();
+      if (!db) {
+        logError('No DB loaded. Use /import.');
+        return;
+      }
+
+      let matrices = window.HLSF.matrices;
+      if (!matrices || !matrices.size) {
+        matrices = buildHLSFMatrices(db);
+      }
+
+      let matrix = matrices.get(target);
+      if (!matrix) {
+        const altKey = [...matrices.keys()].find(k => k.toLowerCase() === target.toLowerCase());
+        if (altKey) matrix = matrices.get(altKey);
+      }
+      if (!matrix) {
+        logError(`Token not found: ${target}`);
+        return;
+      }
+
+      if (!ensureHLSFCanvas()) {
+        logError('Unable to initialize canvas for HLSF rendering.');
+        return;
+      }
+
+      animateHLSF(matrix);
+      logFinal(`HLSF matrix for "${target}" ready. Edges: ${matrix.edges.length}`);
+    }
+
+    function cmdScheme(arg) {
+      const mode = (arg || '').toLowerCase();
+      window.HLSF.config.whiteBg = mode === 'white';
+      if (window.HLSF.currentMatrix) {
+        animateHLSF(window.HLSF.currentMatrix);
+      }
+      logStatus(`Scheme: ${window.HLSF.config.whiteBg ? 'Black lines on white' : 'White lines on black'}`);
+    }
+
+    function cmdSpin(arg) {
+      const value = (arg || '').toLowerCase();
+      window.HLSF.config.rotationActive = /^(on|true|1)$/i.test(value) || (!value && true);
+      if (window.HLSF.currentMatrix && !_anim) {
+        animateHLSF(window.HLSF.currentMatrix);
+      }
+      logStatus(`Rotation: ${window.HLSF.config.rotationActive ? 'on' : 'off'}`);
+    }
+
+    function cmd_import() {
+      cmdImport();
     }
 
     function getRelationshipPriority(relType) {
@@ -2332,12 +2726,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const rec = safeStorageGet(k);
         if (rec) yield rec;
       }
-    }
-
-    function normRelKey(k) {
-      // accept "∼ Adjacent To", "→ Next", bare "⊛", etc.
-      const first = (k || '').trim().split(/\s+/)[0];
-      return first || k;
     }
 
     function buildHLSF() {
@@ -2417,17 +2805,29 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
     registerCommand('/visualize', cmd_hlsf);
 
-    async function dispatchCommand(cmd) {
-      if (cmd === '/hlsf') { await cmd_hlsf(); return; }  // hard return
-      // ...other commands
+    async function dispatchCommand(input) {
+      const trimmed = (input || '').trim();
+      if (!trimmed) return false;
+
+      const [raw, ...rest] = trimmed.split(/\s+/);
+      const command = raw.startsWith('/') ? raw.toLowerCase() : `/${raw.toLowerCase()}`;
+      const arg = rest.join(' ').trim();
+
+      if (command === '/import') { cmdImport(); return true; }
+      if (command === '/hlsf' && arg) { cmdHlsf(arg); return true; }
+      if (command === '/scheme') { cmdScheme(arg || 'black'); return true; }
+      if (command === '/spin') { cmdSpin(arg || 'on'); return true; }
+      if (command === '/hlsf') { await cmd_hlsf(); return true; }
+
+      return false;
     }
 
     function isCommand(input) { return input.startsWith('/'); }
 
     async function handleCommand(cmd) {
       const trimmed = cmd.trim();
-      await safeAsync(() => dispatchCommand(trimmed), `Command dispatch failed for ${trimmed}`);
-      if (trimmed === '/hlsf') return;
+      const handled = await safeAsync(() => dispatchCommand(trimmed), `Command dispatch failed for ${trimmed}`);
+      if (handled) return;
 
       const [command, ...args] = trimmed.slice(1).split(/\s+/);
 
@@ -2455,6 +2855,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             safeStorageRemove(DB_INDEX_KEY);
             state.hlsfReady = false;
             window.HLSF_GRAPH = null;
+            if (window.HLSF) {
+              window.HLSF.matrices = null;
+              window.HLSF.layoutCache = null;
+              window.HLSF.dbCache = null;
+              window.HLSF.currentMatrix = null;
+            }
             updateStats();
             logSuccess(`Cleared ${keys.length} tokens`);
           }
@@ -2715,7 +3121,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (!file) return;
 
       try {
-        await importHLSFDBFromFile(file);
+        const db = await loadDbFromFile(file);
+        if (db) {
+          importDatabaseData(db, file.name || 'file');
+          buildHLSFMatrices(db);
+        }
       } catch (err) {
         logError(`Import failed: ${err.message}`);
       } finally {
