@@ -1136,50 +1136,88 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     // ============================================
 
     function buildHLSFNodes() {
-      const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+      const graph = window.HLSF_GRAPH;
+      let tokenRecords = [];
+
+      if (graph?.tokens instanceof Map) {
+        tokenRecords = Array.from(graph.tokens.values());
+      } else if (graph?.tokens && typeof graph.tokens === 'object') {
+        tokenRecords = Object.values(graph.tokens);
+      }
+
+      let sourceLabel = '';
+
+      if (tokenRecords.length === 0) {
+        const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+        console.log(`Scanning ${keys.length} cached tokens from storage for HLSF build`);
+
+        for (const key of keys) {
+          try {
+            const raw = localStorage.getItem(key);
+            if (!raw) continue;
+            const tokenData = JSON.parse(raw);
+            if (!tokenData?.token) {
+              console.warn('Token missing from data:', key);
+              continue;
+            }
+            tokenRecords.push(tokenData);
+          } catch (err) {
+            console.error('Failed to process token:', key, err);
+          }
+        }
+
+        if (graph) {
+          graph.tokens = new Map(tokenRecords.map(record => [record.token, record]));
+        }
+
+        sourceLabel = '(storage scan)';
+      } else {
+        sourceLabel = '(graph cache)';
+      }
+
+      console.log(`Building HLSF nodes from ${tokenRecords.length} cached tokens ${sourceLabel}`.trim());
+
       const nodes = [];
-      
-      console.log(`Building HLSF nodes from ${keys.length} cached tokens`);
-      
-      for (const key of keys) {
+
+      for (const tokenData of tokenRecords) {
         try {
-          const tokenData = JSON.parse(localStorage.getItem(key));
           const token = tokenData.token;
-          
+
           if (!token) {
-            console.warn('Token missing from data:', key);
+            console.warn('Token missing from data:', tokenData);
             continue;
           }
-          
+
           const rels = tokenData.relationships || {};
-          
+
           // Count adjacencies
           let adjacencyCount = 0;
           for (const edges of Object.values(rels)) {
             if (Array.isArray(edges)) adjacencyCount += edges.length;
           }
-          
-          // Map token properties to polygon properties
-          const attention = tokenData.attention_score || 0.5;
-          const complex = tokenToComplexNumber(token, tokenData);
+
+          const attention = typeof tokenData.attention_score === 'number'
+            ? tokenData.attention_score
+            : 0.5;
+          const complex = tokenToComplexNumber(token, { ...tokenData, attention_score: attention });
           const glyph = complexToGlyph(complex);
-          
+
           // Determine polygon sides based on adjacency count (4-12 sides)
           const sides = Math.min(12, Math.max(4, Math.floor(adjacencyCount / 3) + 4));
-          
+
           // Position based on complex number
           const x = complex.real * 2;
           const y = complex.imaginary * 2;
-          
+
           // Radius based on attention
           const radius = 0.3 + attention * 0.4;
-          
+
           // Color based on attention
           let color;
           if (attention >= 0.8) color = [0, 255, 136];
           else if (attention >= 0.5) color = [255, 213, 79];
           else color = [255, 119, 119];
-          
+
           nodes.push({
             token,
             glyph,
@@ -1195,10 +1233,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             rotationSpeed: attention * 0.02
           });
         } catch (err) {
-          console.error('Failed to process token:', key, err);
+          console.error('Failed to process token for HLSF:', tokenData, err);
         }
       }
-      
+
       console.log(`Built ${nodes.length} HLSF nodes`);
       
       // Generate triangles for each node
@@ -1924,6 +1962,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const pri = RELATIONSHIP_PRIORITIES;
       const nodes = [];
       const edges = [];
+      const tokenRecords = new Map();
       for (const k of keys) {
         const raw = localStorage.getItem(k);
         if (!raw) continue;
@@ -1936,6 +1975,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
 
         if (!rec || !rec.token || !rec.relationships) continue;
+
+        tokenRecords.set(rec.token, rec);
 
         let attention = 0;
         for (const t of Object.keys(rec.relationships)) {
@@ -1954,9 +1995,18 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         nodes.push({ id: rec.token, attention });
       }
       const maxA = nodes.reduce((m, n) => Math.max(m, n.attention), 0) || 1;
-      for (const n of nodes) n.attention = +(n.attention / maxA).toFixed(3);
+      for (const n of nodes) {
+        n.attention = +(n.attention / maxA).toFixed(3);
+        const record = tokenRecords.get(n.id);
+        if (record) record.attention_score = n.attention;
+      }
 
-      window.HLSF_GRAPH = { nodes, edges, meta: { nodeCount: nodes.length, edgeCount: edges.length } };
+      window.HLSF_GRAPH = {
+        nodes,
+        edges,
+        meta: { nodeCount: nodes.length, edgeCount: edges.length },
+        tokens: tokenRecords
+      };
       state.hlsfReady = true;
       logSuccess(`HLSF ready: ${window.HLSF_GRAPH.meta.nodeCount} nodes, ${window.HLSF_GRAPH.meta.edgeCount} edges.`);
 
