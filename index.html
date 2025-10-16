@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HLSF Cognition Engine v1.0</title>
+  <title>HLSF Cognition Engine v2.0</title>
   <style>
     :root {
       color-scheme: dark;
@@ -13,14 +13,11 @@
       --accent: #00ff88;
       --error: #ff4444;
       --success: #44ff44;
-      --medium: #ffd54f;
-      --low: #ff7777;
+      --warning: #ffd54f;
       --scrollbar: #1f1f1f;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -50,6 +47,31 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .header-stats {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.9rem;
+      font-weight: normal;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      opacity: 0.6;
+    }
+
+    .stat-value {
+      font-weight: bold;
+      color: var(--accent);
     }
 
     #log {
@@ -63,16 +85,11 @@
       flex-direction: column;
       gap: 1rem;
       box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);
+      min-height: 400px;
     }
 
-    #log::-webkit-scrollbar {
-      width: 10px;
-    }
-
-    #log::-webkit-scrollbar-thumb {
-      background: var(--scrollbar);
-      border-radius: 10px;
-    }
+    #log::-webkit-scrollbar { width: 10px; }
+    #log::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 10px; }
 
     #input-area {
       margin-top: 1rem;
@@ -97,24 +114,30 @@
       box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.2);
     }
 
-    #send-btn {
+    .button-group {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .btn {
       padding: 0.75rem 1.5rem;
       border: none;
       border-radius: 8px;
       font-size: 1rem;
-      background: var(--accent);
-      color: #022d15;
       font-weight: bold;
       cursor: pointer;
       transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
 
-    #send-btn:hover {
+    .btn-primary { background: var(--accent); color: #022d15; }
+    .btn-secondary { background: #333; color: var(--text); }
+
+    .btn:hover:not(:disabled) {
       transform: translateY(-1px);
       box-shadow: 0 10px 25px rgba(0, 255, 136, 0.25);
     }
 
-    #send-btn:disabled {
+    .btn:disabled {
       opacity: 0.6;
       cursor: not-allowed;
       box-shadow: none;
@@ -132,17 +155,66 @@
       opacity: 0.6;
     }
 
-    .log-entry.status {
+    .log-entry.status { font-style: italic; }
+    .log-entry.error { border-left-color: var(--error); color: var(--error); }
+    .log-entry.success { border-left-color: var(--success); color: var(--success); }
+    .log-entry.warning { border-left-color: var(--warning); color: var(--warning); }
+
+    .cost-estimate {
+      background: rgba(255, 213, 79, 0.1);
+      border: 1px solid var(--warning);
+      border-radius: 8px;
+      padding: 0.75rem;
+      margin: 0.5rem 0;
+    }
+
+    .section-divider {
+      margin: 1.5rem 0 0.5rem 0;
+      border-top: 2px solid #222;
+      padding-top: 1rem;
+    }
+
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+
+    .thought-stream {
+      background: rgba(0, 255, 136, 0.05);
+      border: 1px solid rgba(0, 255, 136, 0.2);
+      border-radius: 8px;
+      padding: 1rem;
       font-style: italic;
+      line-height: 1.6;
     }
 
-    .log-entry.error {
-      border-left-color: var(--error);
-      color: var(--error);
+    .adjacency-insight {
+      background: rgba(255, 213, 79, 0.05);
+      border: 1px solid rgba(255, 213, 79, 0.2);
+      border-radius: 8px;
+      padding: 0.75rem;
+      margin: 0.5rem 0;
+      font-size: 0.9rem;
     }
 
-    .log-entry.success {
-      border-left-color: var(--success);
+    .token-highlight {
+      background: rgba(0, 255, 136, 0.2);
+      padding: 0.1rem 0.3rem;
+      border-radius: 3px;
+      font-weight: bold;
+    }
+
+    .final-output {
+      border-left: 3px solid var(--success);
+      padding: 1rem;
+      background: rgba(68, 255, 68, 0.05);
+      border-radius: 8px;
+    }
+
+    .final-output h3 {
+      margin-top: 0;
       color: var(--success);
     }
 
@@ -151,6 +223,7 @@
       border: 1px solid #222;
       border-radius: 8px;
       padding: 0.5rem 0.75rem;
+      margin: 0.5rem 0;
       transition: border 0.2s ease;
     }
 
@@ -166,80 +239,20 @@
       gap: 0.5rem;
       list-style: none;
       font-weight: 600;
+      padding: 0.3rem 0;
     }
 
-    summary::-webkit-details-marker {
-      display: none;
-    }
+    summary::-webkit-details-marker { display: none; }
 
-    .status-badge {
-      font-size: 0.75rem;
-      padding: 0.1rem 0.35rem;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--text);
-    }
-
-    .token-entry {
-      margin-top: 0.5rem;
-      display: grid;
-      gap: 0.35rem;
-    }
-
-    .token-entry pre {
-      margin: 0;
+    pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      background: rgba(0, 0, 0, 0.3);
       padding: 0.75rem;
-      background: rgba(255, 255, 255, 0.02);
-      border-radius: 8px;
-      overflow-x: auto;
+      border-radius: 6px;
       font-size: 0.9rem;
       line-height: 1.5;
-      border: 1px solid rgba(0, 255, 136, 0.1);
-    }
-
-    .json-key {
-      color: #64b5f6;
-    }
-
-    .json-string {
-      color: #f48fb1;
-    }
-
-    .json-number {
-      color: #ffb74d;
-    }
-
-    .json-boolean {
-      color: #81c784;
-    }
-
-    .attention-badge {
-      font-weight: bold;
-      padding: 0.15rem 0.45rem;
-      border-radius: 999px;
-      color: #011;
-    }
-
-    .attention-high {
-      background: #00ff88;
-    }
-
-    .attention-medium {
-      background: #ffd54f;
-    }
-
-    .attention-low {
-      background: #ff7777;
-    }
-
-    .attention-hub {
-      background: #4aa3ff;
-      color: #021226;
-    }
-
-    .attention-bridge {
-      background: #bf7fff;
-      color: #220031;
+      margin: 0.5rem 0;
     }
 
     .modal {
@@ -253,9 +266,7 @@
       z-index: 999;
     }
 
-    .modal.hidden {
-      display: none;
-    }
+    .modal.hidden { display: none; }
 
     .modal-content {
       background: #111;
@@ -269,9 +280,92 @@
       box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
     }
 
-    .modal-content h2 {
-      margin: 0;
-      color: var(--accent);
+    .modal-content h2 { margin: 0; color: var(--accent); }
+
+    .hlsf-canvas-container {
+      background: var(--panel);
+      border: 2px solid var(--accent);
+      border-radius: 12px;
+      padding: 1rem;
+      margin: 1rem 0;
+      box-shadow: 0 0 30px rgba(0, 255, 136, 0.15);
+    }
+
+    #hlsf-canvas {
+      width: 100%;
+      height: 600px;
+      background: radial-gradient(circle at center, #0a0a0a 0%, #000 100%);
+      border-radius: 8px;
+      cursor: grab;
+    }
+
+    #hlsf-canvas:active {
+      cursor: grabbing;
+    }
+
+    .hlsf-controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .hlsf-control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .hlsf-control-group label {
+      font-size: 0.85rem;
+      opacity: 0.7;
+    }
+
+    .hlsf-control-group input[type="range"] {
+      width: 100%;
+    }
+
+    .hlsf-control-group input[type="number"] {
+      width: 80px;
+      padding: 0.5rem;
+      background: var(--panel);
+      border: 1px solid #222;
+      border-radius: 6px;
+      color: var(--text);
+    }
+
+    .hlsf-button-row {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .hlsf-button-row button {
+      flex: 1;
+      min-width: 80px;
+    }
+
+    .hlsf-legend {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      font-size: 0.85rem;
+      padding: 0.75rem;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 6px;
+      margin-top: 0.5rem;
+    }
+
+    .hlsf-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .hlsf-legend-color {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
     }
 
     .modal-content input {
@@ -298,37 +392,12 @@
       transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
 
-    .pill-button.primary {
-      background: var(--accent);
-      color: #022d15;
-    }
-
-    .pill-button.secondary {
-      background: transparent;
-      border: 1px solid #333;
-      color: var(--text);
-    }
-
-    .pill-button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-      transform: none;
-      box-shadow: none;
-    }
+    .pill-button.primary { background: var(--accent); color: #022d15; }
+    .pill-button.secondary { background: transparent; border: 1px solid #333; color: var(--text); }
 
     .pill-button:not(:disabled):hover {
       transform: translateY(-1px);
       box-shadow: 0 10px 25px rgba(0, 255, 136, 0.18);
-    }
-
-    .hidden {
-      display: none;
-    }
-
-    .processing-indicator {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
     }
 
     .spinner {
@@ -340,94 +409,29 @@
       animation: spin 0.8s linear infinite;
     }
 
-    .status-line {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 0.75rem;
-      flex-wrap: wrap;
-    }
-
-    .status-line span {
+    .processing-indicator {
       display: inline-flex;
       align-items: center;
-      gap: 0.4rem;
-    }
-
-    .status-line small {
-      opacity: 0.6;
-    }
-
-    .final-output {
-      border-left: 3px solid var(--success);
-      padding-left: 1rem;
-      background: rgba(68, 255, 68, 0.05);
-    }
-
-    .final-output h3 {
-      margin-top: 0;
-      color: var(--success);
-    }
-
-    .final-output pre {
-      background: rgba(0, 0, 0, 0.35);
-      padding: 0.75rem;
-      border-radius: 8px;
-      overflow-x: auto;
-    }
-
-    .final-output details {
-      background: rgba(0, 0, 0, 0.2);
-      border-color: rgba(0, 255, 136, 0.1);
-    }
-
-    .final-output details summary {
-      font-weight: 600;
-    }
-
-    .output-divider {
-      margin: 1rem 0;
-      border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+      gap: 0.35rem;
     }
 
     @media (max-width: 720px) {
-      #app {
-        padding: 1rem;
-      }
-
-      #header {
-        flex-direction: column;
-        gap: 0.5rem;
-        align-items: flex-start;
-      }
-
-      #input-area {
-        flex-direction: column;
-      }
-
-      #send-btn {
-        width: 100%;
-      }
+      #app { padding: 1rem; }
+      #header { flex-direction: column; align-items: flex-start; }
+      .header-stats { flex-direction: column; gap: 0.5rem; }
+      #input-area { flex-direction: column; }
+      .button-group { flex-direction: column; }
+      .btn { width: 100%; }
     }
 
     @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(6px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     @keyframes spin {
-      from {
-        transform: rotate(0deg);
-      }
-      to {
-        transform: rotate(360deg);
-      }
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
   </style>
 </head>
@@ -436,47 +440,68 @@
     <div class="modal-content" role="dialog" aria-modal="true">
       <h2>Enter OpenAI API Key</h2>
       <p>Provide your OpenAI API key (sk-...) to begin using the HLSF Cognition Engine.</p>
-      <input id="api-key-input" type="password" placeholder="sk-..." aria-label="OpenAI API key" />
+      <input id="api-key-input" type="password" placeholder="sk-..." />
       <div class="modal-actions">
         <button id="api-cancel" class="pill-button secondary">Continue offline</button>
         <button id="api-confirm" class="pill-button primary">Save key</button>
       </div>
-      <small style="opacity:0.65">The key is stored only in memory for this session and never persisted.</small>
+      <small style="opacity:0.65">⚠️ Note: Download this HTML file and run locally for API calls to work.</small>
     </div>
   </div>
 
-  <div id="app" aria-live="polite">
+  <div id="app">
     <div id="header">
-      <div>HLSF Cognition Engine v1.0</div>
-      <div id="recursion-depth">Recursion depth: <strong>1</strong></div>
+      <div>HLSF Cognition Engine v2.0</div>
+      <div class="header-stats">
+        <div class="stat-item">
+          <span class="stat-label">Cache Hit Rate</span>
+          <span class="stat-value" id="cache-hit-rate">—</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Cached Tokens</span>
+          <span class="stat-value" id="cached-tokens">—</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Session Cost</span>
+          <span class="stat-value" id="session-cost">$0.00</span>
+        </div>
+      </div>
     </div>
-    <div id="log" aria-label="Command log"></div>
+    <div id="log"></div>
     <div id="input-area">
-      <input id="command-input" type="text" placeholder="> Enter a prompt or /command" maxlength="600" autocomplete="off" aria-label="Command input" />
-      <button id="send-btn">Send</button>
+      <input id="command-input" type="text" placeholder="> Enter a prompt or /command" maxlength="600" autocomplete="off" />
+      <div class="button-group">
+        <button id="cancel-btn" class="btn btn-secondary" style="display: none;">Cancel</button>
+        <button id="send-btn" class="btn btn-primary">Send</button>
+      </div>
     </div>
+    <input type="file" id="file-input" accept=".json" style="display: none;" />
   </div>
-
-  <template id="token-entry-template">
-    <details class="token-entry">
-      <summary></summary>
-      <pre></pre>
-    </details>
-  </template>
 
   <script>
-    const logContainer = document.getElementById('log');
-    const commandInput = document.getElementById('command-input');
-    const sendBtn = document.getElementById('send-btn');
-    const apiModal = document.getElementById('api-modal');
-    const apiKeyInput = document.getElementById('api-key-input');
-    const apiConfirmBtn = document.getElementById('api-confirm');
-    const apiCancelBtn = document.getElementById('api-cancel');
-    const recursionDepthDisplay = document.getElementById('recursion-depth').querySelector('strong');
+    // ============================================
+    // CONFIGURATION
+    // ============================================
+    const CONFIG = {
+      MAX_TOKENS_PER_PROMPT: 100,
+      MAX_CONCURRENCY: 5,
+      MAX_RETRY_ATTEMPTS: 3,
+      RETRY_BASE_DELAY_MS: 500,
+      DEFAULT_MODEL: 'gpt-4o-mini',
+      ESTIMATED_COST_PER_API_CALL: 0.02,
+    };
 
-    let apiKey = '';
-    let recursionDepth = 1;
-    let isProcessing = false;
+    // Symbolic glyphs for complex number representation
+    const GLYPH_LIBRARY = [
+      '◉', '◈', '◇', '◆', '◊', '○', '●', '◐', '◑', '◒',
+      '◓', '☉', '⊙', '⊚', '⊛', '⊜', '⊝', '◎', '◍', '◌',
+      '△', '▲', '▽', '▼', '◁', '▷', '◀', '▶', '⬟', '⬠',
+      '⬡', '⬢', '⬣', '⬤', '⬥', '⬦', '⬧', '⬨', '⬩', '⬪',
+      '⬫', '⬬', '⬭', '⬮', '⬯', '⭐', '★', '☆', '✦', '✧',
+      '✶', '✷', '✸', '✹', '✺', '✻', '✼', '✽', '✾', '✿',
+      '❀', '❁', '❂', '❃', '❄', '❅', '❆', '❇', '❈', '❉',
+      '⚙', '⚛', '⚝', '⚞', '⚟', '⚬', '⚭', '⚮', '⚯', '⚰'
+    ];
 
     const RELATIONSHIP_PRIORITIES = new Map([
       ['≡', 1.0], ['⊃', 1.0], ['⊂', 0.8], ['≈', 0.7], ['∈', 0.9], ['∋', 0.9],
@@ -492,727 +517,1670 @@
       ['↭', 0.6], ['▷◁', 0.6]
     ]);
 
-    const relationshipPriorityFallback = 0.3;
+    // ============================================
+    // STATE
+    // ============================================
+    const state = {
+      apiKey: '',
+      isProcessing: false,
+      sessionStats: {
+        totalApiCalls: 0,
+        totalCacheHits: 0,
+        totalCostCents: 0,
+      }
+    };
 
-    function addLogEntry(content, type = 'info') {
-      const entry = document.createElement('div');
-      entry.className = `log-entry ${type}`;
-      const timestamp = new Date().toLocaleTimeString();
-      entry.innerHTML = `<div class="timestamp">${timestamp}</div>${content}`;
-      logContainer.appendChild(entry);
-      logContainer.scrollTo({ top: logContainer.scrollHeight, behavior: 'smooth' });
-      return entry;
-    }
+    let currentAbortController = null;
 
-    function logStatus(message) {
-      return addLogEntry(`<div class="processing-indicator"><span class="spinner"></span>${message}</div>`, 'status');
-    }
+    // ============================================
+    // DOM ELEMENTS
+    // ============================================
+    const elements = {
+      log: document.getElementById('log'),
+      input: document.getElementById('command-input'),
+      sendBtn: document.getElementById('send-btn'),
+      cancelBtn: document.getElementById('cancel-btn'),
+      apiModal: document.getElementById('api-modal'),
+      apiKeyInput: document.getElementById('api-key-input'),
+      apiConfirmBtn: document.getElementById('api-confirm'),
+      apiCancelBtn: document.getElementById('api-cancel'),
+      cacheHitRate: document.getElementById('cache-hit-rate'),
+      cachedTokens: document.getElementById('cached-tokens'),
+      sessionCost: document.getElementById('session-cost'),
+      fileInput: document.getElementById('file-input'),
+    };
 
-    function logError(message) {
-      return addLogEntry(`🔴 ${message}`, 'error');
-    }
-
-    function logSuccess(message) {
-      return addLogEntry(`✅ ${message}`, 'success');
-    }
-
-    function highlightJSON(json) {
-      const jsonString = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
-      return jsonString
-        .replace(/(&)/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\"(.*?)\"(?=\s*:)/g, '<span class="json-key">"$1"</span>')
-        .replace(/:"(.*?)"/g, ':<span class="json-string">"$1"</span>')
-        .replace(/:(\s*)(-?\d+(?:\.\d+)?)/g, ':$1<span class="json-number">$2</span>')
-        .replace(/:(\s*)(true|false)/gi, ':$1<span class="json-boolean">$2</span>')
-        .replace(/:(\s*)(null)/gi, ':$1<span class="json-boolean">$2</span>');
+    // ============================================
+    // UTILITIES
+    // ============================================
+    function sanitize(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
     }
 
     function tokenize(text) {
       if (!text) return [];
-      return text
-        .trim()
+      return text.trim()
         .split(/[^\p{L}\p{N}\-']+/u)
-        .filter(Boolean);
+        .filter(Boolean)
+        .map(t => t.toLowerCase());
     }
 
-    function countTokens(text) {
-      return tokenize(text).length;
+    function formatCurrency(cents) {
+      return `$${(cents / 100).toFixed(2)}`;
     }
 
-    function isCommand(input) {
-      return input.startsWith('/');
+    function getCachedTokenCount() {
+      return Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_')).length;
     }
 
-    function commandHelp() {
-      addLogEntry(`<strong>Available commands:</strong><br>/clear - clear the log<br>/export - export adjacency matrices<br>/reset - clear stored data<br>/depth [n] - set recursion depth`, 'info');
-    }
-
-    apiConfirmBtn.addEventListener('click', () => {
-      const key = apiKeyInput.value.trim();
-      if (!key.startsWith('sk-')) {
-        logError('Invalid API key format. Expected to start with "sk-".');
-        return;
+    // ============================================
+    // COMPLEX NUMBER ENCODING & GLYPH SYSTEM
+    // ============================================
+    
+    // Convert token to complex number representation
+    // Magnitude = attention score, Phase = semantic hash
+    function tokenToComplexNumber(token, tokenData) {
+      const attentionScore = tokenData?.attention_score || 0.5;
+      const magnitude = attentionScore; // 0.0 to 1.0
+      
+      // Generate phase from token's semantic properties
+      let phaseHash = 0;
+      for (let i = 0; i < token.length; i++) {
+        phaseHash = ((phaseHash << 5) - phaseHash) + token.charCodeAt(i);
+        phaseHash = phaseHash & phaseHash;
       }
-      apiKey = key;
-      apiModal.classList.add('hidden');
-      logSuccess('OpenAI API key stored in memory for this session.');
-    });
-
-    apiCancelBtn.addEventListener('click', () => {
-      apiKey = '';
-      apiModal.classList.add('hidden');
-      logError('Proceeding without API key. Live processing will be unavailable.');
-    });
-
-    function formatStatusLine(label, detail = '') {
-      return `<div class="status-line"><span>${label}</span>${detail ? `<small>${detail}</small>` : ''}</div>`;
+      
+      // Normalize phase to 0-2π
+      const phase = (Math.abs(phaseHash) % 360) * (Math.PI / 180);
+      
+      // Calculate real and imaginary parts
+      const real = magnitude * Math.cos(phase);
+      const imaginary = magnitude * Math.sin(phase);
+      
+      return { real, imaginary, magnitude, phase };
     }
 
-    async function handleCommand(command) {
-      const [cmd, ...args] = command.slice(1).split(/\s+/);
-      switch (cmd.toLowerCase()) {
-        case 'clear':
-          logContainer.innerHTML = '';
-          logSuccess('Command log cleared.');
-          break;
-        case 'export':
-          exportMatrices();
-          break;
-        case 'reset':
-          localStorage.clear();
-          logSuccess('All stored adjacency matrices cleared.');
-          break;
-        case 'depth':
-          if (args.length === 0) {
-            logError('Usage: /depth [n]');
-            break;
+    // Map complex number to glyph from library
+    function complexToGlyph(complex) {
+      // Use magnitude and phase to select glyph
+      const magnitudeIndex = Math.floor(complex.magnitude * 7); // 0-7 range
+      const phaseIndex = Math.floor((complex.phase / (2 * Math.PI)) * 10); // 0-9 range
+      const glyphIndex = (magnitudeIndex * 10 + phaseIndex) % GLYPH_LIBRARY.length;
+      return GLYPH_LIBRARY[glyphIndex];
+    }
+
+    // Generate glyph ledger for all cached tokens
+    function generateGlyphLedger() {
+      const ledger = new Map();
+      const reverseMap = new Map(); // glyph -> tokens
+      const keys = Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_'));
+      
+      for (const key of keys) {
+        try {
+          const tokenData = JSON.parse(localStorage.getItem(key));
+          const token = tokenData.token;
+          const complex = tokenToComplexNumber(token, tokenData);
+          const glyph = complexToGlyph(complex);
+          
+          ledger.set(token, {
+            glyph,
+            complex: {
+              real: complex.real.toFixed(4),
+              imaginary: complex.imaginary.toFixed(4),
+              magnitude: complex.magnitude.toFixed(4),
+              phase: complex.phase.toFixed(4)
+            },
+            attention_score: tokenData.attention_score || 0
+          });
+          
+          // Track consolidation - multiple tokens per glyph
+          if (!reverseMap.has(glyph)) {
+            reverseMap.set(glyph, []);
           }
-          const depth = parseInt(args[0], 10);
-          if (Number.isNaN(depth) || depth < 1 || depth > 5) {
-            logError('Recursion depth must be an integer between 1 and 5.');
-            break;
-          }
-          recursionDepth = depth;
-          recursionDepthDisplay.textContent = depth;
-          logSuccess(`Recursion depth set to ${depth}.`);
-          break;
-        case 'help':
-          commandHelp();
-          break;
-        default:
-          logError(`Unknown command: ${cmd}`);
-          commandHelp();
+          reverseMap.get(glyph).push(token);
+        } catch (err) {
+          console.error('Failed to process token:', key, err);
+        }
       }
+      
+      return { ledger, reverseMap };
     }
 
-    async function fetchOpenAI(messages, options = {}) {
-      if (!apiKey) {
-        throw new Error('Missing API key. Provide a key to enable API requests.');
+    // Consolidate similar tokens to same glyph
+    function findConsolidatedTokens(reverseMap) {
+      const consolidated = [];
+      for (const [glyph, tokens] of reverseMap.entries()) {
+        if (tokens.length > 1) {
+          consolidated.push({ glyph, tokens, count: tokens.length });
+        }
       }
-      const body = {
-        model: options.model ?? 'gpt-4',
-        messages,
-        max_tokens: options.max_tokens ?? 1000,
-        temperature: options.temperature ?? 0.7,
+      return consolidated.sort((a, b) => b.count - a.count);
+    }
+
+    // Encode message using glyph ledger
+    function encodeMessage(message, ledger) {
+      const tokens = tokenize(message);
+      const encoded = [];
+      const unknown = [];
+      
+      for (const token of tokens) {
+        const entry = ledger.get(token);
+        if (entry) {
+          encoded.push(entry.glyph);
+        } else {
+          encoded.push('◌'); // Unknown token marker
+          unknown.push(token);
+        }
+      }
+      
+      return {
+        encoded: encoded.join(''),
+        coverage: ((tokens.length - unknown.length) / tokens.length * 100).toFixed(1),
+        unknown
       };
-      const maxAttempts = options.retries ?? 3;
-      let attempt = 0;
-      while (attempt < maxAttempts) {
-        attempt += 1;
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify(body),
-          signal: options.signal,
-        });
-        if (response.status === 429 && attempt < maxAttempts) {
-          const delay = 500 * Math.pow(2, attempt - 1);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
+    }
+
+    // Decode message using reverse glyph map
+    function decodeMessage(encoded, reverseMap) {
+      const glyphs = Array.from(encoded);
+      const decoded = [];
+      
+      for (const glyph of glyphs) {
+        const tokens = reverseMap.get(glyph);
+        if (tokens && tokens.length > 0) {
+          // Use first token (could use most common or context-aware selection)
+          decoded.push(tokens[0]);
+        } else {
+          decoded.push('[?]');
         }
-        if (!response.ok) {
-          const errText = await response.text();
-          throw new Error(`OpenAI API error (${response.status}): ${errText}`);
-        }
-        const data = await response.json();
-        return data.choices?.[0]?.message?.content?.trim() ?? '';
       }
-      throw new Error('OpenAI API request failed after retries.');
+      
+      return decoded.join(' ');
     }
 
-    function getLocalAdjacencyKey(token) {
-      return `hlsf_token_${token}`;
+    // Export glyph ledger for inter-system transmission
+    function exportGlyphLedger() {
+      const { ledger, reverseMap } = generateGlyphLedger();
+      const consolidated = findConsolidatedTokens(reverseMap);
+      
+      const exportData = {
+        export_timestamp: new Date().toISOString(),
+        ledger_version: "1.0",
+        description: "HLSF Symbolic Glyph Encryption Ledger - Complex Number Token Encoding",
+        specification: {
+          encoding: "Complex numbers (magnitude=attention, phase=semantic_hash)",
+          glyph_library_size: GLYPH_LIBRARY.length,
+          representation: "Unicode symbolic glyphs",
+          consolidation: "Similar tokens map to same glyph based on complex number proximity"
+        },
+        statistics: {
+          total_tokens: ledger.size,
+          unique_glyphs: reverseMap.size,
+          consolidation_ratio: (ledger.size / reverseMap.size).toFixed(2),
+          consolidated_groups: consolidated.length
+        },
+        glyph_ledger: Object.fromEntries(ledger),
+        reverse_mapping: Object.fromEntries(
+          Array.from(reverseMap.entries()).map(([glyph, tokens]) => [glyph, tokens])
+        ),
+        consolidated_tokens: consolidated,
+        encryption_examples: generateEncryptionExamples(ledger, reverseMap)
+      };
+      
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `HLSF_Glyph_Ledger_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      return exportData;
     }
 
-    function getStoredAdjacency(token) {
-      const raw = localStorage.getItem(getLocalAdjacencyKey(token));
-      if (!raw) return null;
-      try {
-        return JSON.parse(raw);
-      } catch (err) {
-        console.error('Failed to parse adjacency for token', token, err);
-        return null;
-      }
-    }
-
-    function storeAdjacency(token, data) {
-      try {
-        localStorage.setItem(getLocalAdjacencyKey(token), JSON.stringify(data));
-      } catch (err) {
-        logError(`Failed to store adjacency for ${token}: ${err.message}`);
-      }
-    }
-
-    async function requestAdjacency(token, context, signal) {
-      const prompt = `Token: "${token}"
-Context: "${context}"
-
-For this token, identify the most relevant adjacent tokens across the 50 Pentacognon relationship types. For each relationship type that applies, provide 0-10 related tokens with weights from 0.01 to 1.00.
-
-Relationship types:
-≡ Identity, ⊃ Contains, ⊂ Is Contained By, ≈ Variant, ∈ Is Instance Of, ∋ Has Instance, ⊤ Is Type Of, ⊥ Has Type, ⊏ Part Of, ⊐ Composes, ↔ Mirrors, ⇌ Inverts, ∥ Parallel To, ∼ Adjacent To, → Next, ⇒ Sequence Of, ⇐ Preceded By, ↠ Follows, ↗ Spatially Above, ↘ Spatially Below, ⇝ Symbolically Supports, ⇂ Symbolically Depends, ≠ Contrasts, ⊕ Complements, ⊛ Associated With, ∝ Correlates With, ⇝ Causes, ⇐ Caused By, ∗ Evokes, ≜ Represents, ⋆ Symbolizes, 7→ Refers To, ⊢ Defines, ⊣ Is Defined By, ↷ Transforms To, ↶ Transformed From, ◦ Functions As, |= Interpreted As, ◁ Used With, ⇄ Co-occurs With, ⊗ Synthesizes, ÷ Divides Into, ⊘ Opposes, × Rejects, ¬ Negates, † Destroys, ⊠ Blocks, /∈ Invalidates, ⊬ Contradicts, ⊩ Asserts, ⊨ Provides Evidence, ? Uncertainty, ⚡ Memory, ⇒ Attention, ↶ Self-Reference, ∧ Perspective, ↭ Continuity, ▷◁ Relationality
-
-Return as JSON:
-{
-  "token": "${token}",
-  "relationships": {
-    "≡": [{"token": "...", "weight": 0.95}],
-    ...
-  }
-}
-
-Only include relationship types that apply. Leave others empty or omit.`;
-      const controller = new AbortController();
-      if (signal) {
-        signal.addEventListener('abort', () => controller.abort(), { once: true });
-      }
-      const content = await fetchOpenAI([
-        { role: 'system', content: 'You are an HLSF token adjacency analyzer.' },
-        { role: 'user', content: prompt },
-      ], { signal: controller.signal });
-      try {
-        const jsonStart = content.indexOf('{');
-        const jsonEnd = content.lastIndexOf('}');
-        const jsonText = jsonStart >= 0 ? content.slice(jsonStart, jsonEnd + 1) : content;
-        const parsed = JSON.parse(jsonText);
-        return parsed;
-      } catch (err) {
-        logError(`Failed to parse adjacency JSON for token "${token}": ${err.message}`);
+    function generateEncryptionExamples(ledger, reverseMap) {
+      const examples = [
+        "hello world",
+        "consciousness",
+        "quantum entanglement"
+      ];
+      
+      return examples.map(msg => {
+        const result = encodeMessage(msg, ledger);
         return {
-          token,
-          relationships: {},
-          error: 'Failed to parse adjacency JSON.',
-          raw: content,
+          plaintext: msg,
+          encoded: result.encoded,
+          coverage: result.coverage + '%',
+          decoded: decodeMessage(result.encoded, reverseMap)
         };
-      }
-    }
-
-    async function getAdjacencyForTokens(tokens, context, categoryLabel, abortSignal) {
-      const statusEntry = logStatus(`⏳ Downloading ${categoryLabel} token weights and adjacencies...`);
-      const results = new Map();
-      const queue = [...new Set(tokens.map((t) => t.toLowerCase()))];
-      const concurrency = 5;
-      let active = 0;
-      let index = 0;
-
-      return new Promise((resolve) => {
-        const processNext = async () => {
-          if (abortSignal?.aborted) {
-            resolve(results);
-            return;
-          }
-          if (index >= queue.length && active === 0) {
-            statusEntry.innerHTML = formatStatusLine(`✅ Completed adjacency retrieval for ${categoryLabel}.`, `${results.size} tokens.`);
-            resolve(results);
-            return;
-          }
-          while (active < concurrency && index < queue.length) {
-            const token = queue[index++];
-            active++;
-            (async () => {
-              try {
-                const cached = getStoredAdjacency(token);
-                if (cached) {
-                  results.set(token, cached);
-                } else if (apiKey) {
-                  const adjacency = await requestAdjacency(token, context, abortSignal);
-                  if (adjacency) {
-                    storeAdjacency(token, adjacency);
-                    results.set(token, adjacency);
-                  }
-                } else {
-                  results.set(token, { token, relationships: {}, offline: true });
-                }
-              } catch (err) {
-                logError(`Adjacency fetch failed for ${token}: ${err.message}`);
-              } finally {
-                active--;
-                processNext();
-              }
-            })();
-          }
-        };
-        processNext();
       });
     }
 
-    function calculateAttentionScores(matrices) {
-      for (const entry of matrices.values()) {
-        const relationships = entry?.relationships ?? {};
-        let weightSum = 0;
-        let prioritySum = 0;
-        let totalEdges = 0;
-        for (const [relation, edges] of Object.entries(relationships)) {
-          const priority = RELATIONSHIP_PRIORITIES.get(relation) ?? RELATIONSHIP_PRIORITIES.get(relation.split(' ')[0]) ?? relationshipPriorityFallback;
-          if (Array.isArray(edges)) {
-            for (const edge of edges) {
-              const weight = Number(edge.weight) || 0;
-              weightSum += weight * priority;
-              prioritySum += priority;
-              totalEdges += 1;
+    function showGlyphLedger() {
+      const { ledger, reverseMap } = generateGlyphLedger();
+      const consolidated = findConsolidatedTokens(reverseMap);
+      
+      // Show sample encoded messages
+      const sampleMessages = [
+        "What is consciousness?",
+        "Explain quantum mechanics",
+        "The nature of reality"
+      ];
+      
+      const encodedSamples = sampleMessages.map(msg => {
+        const result = encodeMessage(msg, ledger);
+        return {
+          original: msg,
+          encoded: result.encoded,
+          coverage: result.coverage,
+          decoded: decodeMessage(result.encoded, reverseMap)
+        };
+      });
+      
+      addLog(`
+        <div class="section-divider"></div>
+        <div class="section-title">🔐 Symbolic Glyph Encryption Ledger</div>
+        
+        <div class="adjacency-insight">
+          <strong>📐 Complex Number Encoding:</strong><br>
+          • Each token → Complex number (magnitude + phase)<br>
+          • Magnitude = Attention score (0.0-1.0)<br>
+          • Phase = Semantic hash (0-2π radians)<br>
+          • Glyph = Visual representation of complex coordinates
+        </div>
+
+        <div class="adjacency-insight">
+          <strong>📊 Ledger Statistics:</strong><br>
+          • Total tokens: <strong>${ledger.size}</strong><br>
+          • Unique glyphs: <strong>${reverseMap.size}</strong><br>
+          • Consolidation ratio: <strong>${(ledger.size / reverseMap.size).toFixed(2)}:1</strong><br>
+          • Efficiency gain: <strong>${(100 - (reverseMap.size / ledger.size * 100)).toFixed(1)}%</strong>
+        </div>
+
+        <div class="adjacency-insight">
+          <strong>🔄 Token Consolidation (Similar tokens → Same glyph):</strong><br>
+          ${consolidated.slice(0, 5).map(c => 
+            `• <span style="font-size: 1.5em;">${c.glyph}</span> → ${c.tokens.slice(0, 3).join(', ')}${c.tokens.length > 3 ? '...' : ''} (${c.count} tokens)`
+          ).join('<br>')}
+          ${consolidated.length === 0 ? '<em>No consolidation yet - need more diverse tokens</em>' : ''}
+        </div>
+
+        <div class="adjacency-insight">
+          <strong>🔐 Encrypted Message Examples:</strong><br>
+          ${encodedSamples.map(s => `
+            <div style="margin: 0.75rem 0; padding: 0.5rem; background: rgba(0,0,0,0.3); border-radius: 6px;">
+              <div style="opacity: 0.7; font-size: 0.85em;">Original:</div>
+              <div style="margin: 0.25rem 0;">${s.original}</div>
+              <div style="opacity: 0.7; font-size: 0.85em; margin-top: 0.5rem;">Encrypted (${s.coverage}% coverage):</div>
+              <div style="font-size: 1.3em; letter-spacing: 0.1em; color: var(--accent); margin: 0.25rem 0;">${s.encoded}</div>
+              <div style="opacity: 0.7; font-size: 0.85em; margin-top: 0.5rem;">Decoded:</div>
+              <div style="margin: 0.25rem 0;">${s.decoded}</div>
+            </div>
+          `).join('')}
+        </div>
+
+        <details>
+          <summary>📖 View full glyph mapping (first 20 tokens)</summary>
+          <pre>${JSON.stringify(
+            Object.fromEntries(Array.from(ledger.entries()).slice(0, 20)),
+            null, 2
+          )}</pre>
+        </details>
+
+        <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,255,136,0.05); border-radius: 8px; font-size: 0.9rem;">
+          💡 <strong>Usage:</strong> This ledger enables secure inter-system communication. 
+          Messages encoded with glyphs can be transmitted efficiently and decoded by any system 
+          with the same ledger. The consolidation reduces message size while maintaining semantic meaning.
+        </div>
+      `);
+    }
+
+    // ============================================
+    // LOGGING
+    // ============================================
+    function addLog(content, type = 'info') {
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>${content}`;
+      elements.log.appendChild(entry);
+      elements.log.scrollTop = elements.log.scrollHeight;
+      return entry;
+    }
+
+    function logStatus(msg) { return addLog(`<div class="processing-indicator"><span class="spinner"></span>${msg}</div>`, 'status'); }
+    function logError(msg) { return addLog(`🔴 ${sanitize(msg)}`, 'error'); }
+    function logSuccess(msg) { return addLog(`✅ ${sanitize(msg)}`, 'success'); }
+    function logWarning(msg) { return addLog(`⚠️ ${sanitize(msg)}`, 'warning'); }
+
+    // ============================================
+    // STATS
+    // ============================================
+    function updateStats() {
+      const { totalApiCalls, totalCacheHits, totalCostCents } = state.sessionStats;
+      const total = totalApiCalls + totalCacheHits;
+      const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) + '%' : '—';
+      
+      const cachedCount = getCachedTokenCount();
+      
+      elements.cacheHitRate.textContent = hitRate;
+      elements.cachedTokens.textContent = cachedCount;
+      elements.sessionCost.textContent = formatCurrency(totalCostCents);
+      
+      // Visual feedback for database growth
+      if (cachedCount > 0) {
+        elements.cachedTokens.style.color = cachedCount > 50 ? '#00ff88' : '#ffd54f';
+      }
+    }
+
+    // ============================================
+    // CACHE
+    // ============================================
+    function getCacheKey(token) { return `hlsf_token_${token.toLowerCase()}`; }
+
+    function getFromCache(token) {
+      try {
+        const raw = localStorage.getItem(getCacheKey(token));
+        if (!raw) return null;
+        state.sessionStats.totalCacheHits++;
+        updateStats();
+        return JSON.parse(raw);
+      } catch { return null; }
+    }
+
+    function saveToCache(token, data) {
+      try {
+        localStorage.setItem(getCacheKey(token), JSON.stringify({
+          ...data,
+          cached_at: new Date().toISOString()
+        }));
+      } catch (err) {
+        if (err.name === 'QuotaExceededError') {
+          logWarning('Cache full. Use /reset to clear old data.');
+        }
+      }
+    }
+
+    // ============================================
+    // OPENAI API
+    // ============================================
+    async function callOpenAI(messages, options = {}) {
+      if (!state.apiKey) throw new Error('No API key configured');
+
+      const body = {
+        model: options.model || CONFIG.DEFAULT_MODEL,
+        messages,
+        max_tokens: options.max_tokens || 1000,
+        temperature: options.temperature || 0.7,
+      };
+
+      let attempt = 0;
+      while (attempt < CONFIG.MAX_RETRY_ATTEMPTS) {
+        if (currentAbortController?.signal.aborted) {
+          const error = new Error('Cancelled');
+          error.name = 'AbortError';
+          throw error;
+        }
+
+        attempt++;
+        try {
+          const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${state.apiKey}`,
+            },
+            body: JSON.stringify(body),
+          });
+
+          if (response.status === 429 && attempt < CONFIG.MAX_RETRY_ATTEMPTS) {
+            await new Promise(r => setTimeout(r, CONFIG.RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)));
+            continue;
+          }
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = `API error (${response.status})`;
+            
+            try {
+              const errorData = JSON.parse(errorText);
+              if (errorData.error?.message) errorMessage = errorData.error.message;
+            } catch (e) {
+              if (errorText) errorMessage = errorText;
             }
+            
+            if (response.status === 401) errorMessage = 'Invalid API key';
+            else if (response.status === 403) errorMessage = 'Access forbidden - check billing setup';
+            else if (response.status === 429) errorMessage = 'Rate limit exceeded';
+            
+            throw new Error(errorMessage);
+          }
+
+          const data = await response.json();
+          state.sessionStats.totalApiCalls++;
+          state.sessionStats.totalCostCents += Math.ceil(CONFIG.ESTIMATED_COST_PER_API_CALL * 100);
+          updateStats();
+
+          return data.choices?.[0]?.message?.content?.trim() || '';
+        } catch (err) {
+          if (err.name === 'AbortError') throw err;
+          if (err.message === 'Failed to fetch') {
+            throw new Error('Network error - check connection or download HTML to run locally');
+          }
+          if (attempt === CONFIG.MAX_RETRY_ATTEMPTS) throw err;
+        }
+      }
+    }
+
+    // ============================================
+    // ADJACENCY
+    // ============================================
+    async function fetchAdjacency(token, context) {
+      if (currentAbortController?.signal.aborted) {
+        throw new Error('AbortError');
+      }
+
+      const cached = getFromCache(token);
+      if (cached) return { ...cached, cache_hit: true };
+
+      if (!state.apiKey) return { token, relationships: {}, offline: true };
+
+      const prompt = `Token: "${token}"
+Context: "${context}"
+
+For this token, identify the most relevant adjacent tokens across relationship types. For each that applies, provide related tokens with weights 0.01-1.00.
+
+Relationship types: ≡ Identity, ⊃ Contains, ⊂ Is Contained By, ≈ Variant, ∈ Is Instance Of, ∋ Has Instance, ⊤ Is Type Of, ⊥ Has Type, ⊏ Part Of, ⊐ Composes, ↔ Mirrors, ⇌ Inverts, ∥ Parallel To, ∼ Adjacent To, → Next, ⇒ Sequence Of, ⇐ Preceded By, ↠ Follows, ↗ Spatially Above, ↘ Spatially Below, ⇝ Symbolically Supports, ⇂ Symbolically Depends, ≠ Contrasts, ⊕ Complements, ⊛ Associated With, ∝ Correlates With, ⇝ Causes, ⇐ Caused By, ∗ Evokes, ≜ Represents, ⋆ Symbolizes, 7→ Refers To, ⊢ Defines, ⊣ Is Defined By, ↷ Transforms To, ↶ Transformed From, ◦ Functions As, |= Interpreted As, ◁ Used With, ⇄ Co-occurs With, ⊗ Synthesizes, ÷ Divides Into, ⊘ Opposes, × Rejects, ¬ Negates, † Destroys, ⊠ Blocks, /∈ Invalidates, ⊬ Contradicts, ⊩ Asserts, ⊨ Provides Evidence, ? Uncertainty, ⚡ Memory, ⇒ Attention, ↶ Self-Reference, ∧ Perspective, ↭ Continuity, ▷◁ Relationality
+
+Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "weight": 0.95}], ...}}`;
+
+      const content = await callOpenAI([
+        { role: 'system', content: 'You are an HLSF token adjacency analyzer.' },
+        { role: 'user', content: prompt },
+      ]);
+
+      try {
+        const jsonStart = content.indexOf('{');
+        const jsonEnd = content.lastIndexOf('}');
+        const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
+        saveToCache(token, parsed);
+        return { ...parsed, cache_hit: false };
+      } catch {
+        return { token, relationships: {}, error: 'Parse failed' };
+      }
+    }
+
+    async function batchFetchAdjacencies(tokens, context, label) {
+      const status = logStatus(`⏳ Fetching ${label} adjacencies...`);
+      const results = new Map();
+      const unique = [...new Set(tokens)];
+      
+      let processed = 0;
+      for (let i = 0; i < unique.length; i += CONFIG.MAX_CONCURRENCY) {
+        if (currentAbortController?.signal.aborted) {
+          status.innerHTML = `⚠️ ${label} cancelled (${processed}/${unique.length})`;
+          break;
+        }
+        
+        const batch = unique.slice(i, i + CONFIG.MAX_CONCURRENCY);
+        const settled = await Promise.allSettled(batch.map(t => fetchAdjacency(t, context)));
+        
+        settled.forEach((result, idx) => {
+          if (result.status === 'fulfilled') {
+            results.set(batch[idx], result.value);
+          }
+        });
+        
+        processed += batch.length;
+        status.innerHTML = `⏳ ${label} (${processed}/${unique.length})`;
+      }
+      
+      const hits = Array.from(results.values()).filter(r => r.cache_hit).length;
+      status.innerHTML = `✅ ${label} complete (${hits} cached, ${results.size - hits} new)`;
+      return results;
+    }
+
+    function calculateAttention(matrices) {
+      for (const entry of matrices.values()) {
+        let weightSum = 0, totalEdges = 0;
+        const rels = entry?.relationships || {};
+        
+        for (const [rel, edges] of Object.entries(rels)) {
+          const priority = RELATIONSHIP_PRIORITIES.get(rel) || 0.3;
+          if (Array.isArray(edges)) {
+            edges.forEach(edge => {
+              weightSum += (edge.weight || 0) * priority;
+              totalEdges++;
+            });
           }
         }
-        const attention = totalEdges > 0 ? weightSum / totalEdges : 0;
-        entry.attention_score = Number(attention.toFixed(3));
+        
+        entry.attention_score = totalEdges > 0 ? Number((weightSum / totalEdges).toFixed(3)) : 0;
         entry.total_relationships = totalEdges;
       }
       return matrices;
     }
 
-    function identifyHighFrequencyHubs(allMatrices) {
-      const tokenFrequency = new Map();
-      for (const matrix of allMatrices.values()) {
-        const relationships = matrix?.relationships ?? {};
-        for (const edges of Object.values(relationships)) {
-          if (!Array.isArray(edges)) continue;
-          for (const edge of edges) {
-            const token = edge.token?.toLowerCase();
-            if (!token) continue;
-            tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
-          }
-        }
-      }
-      const hubs = Array.from(tokenFrequency.entries())
-        .filter(([, count]) => count > 5)
-        .map(([token, count]) => ({ token, count }));
-      hubs.sort((a, b) => b.count - a.count);
-      return hubs;
-    }
-
-    function identifyCrossRelationshipBridges(allMatrices) {
-      const relationshipParticipation = new Map();
-      for (const matrix of allMatrices.values()) {
-        const relationships = matrix?.relationships ?? {};
-        for (const [relationship, edges] of Object.entries(relationships)) {
-          if (!Array.isArray(edges)) continue;
-          for (const edge of edges) {
-            const token = edge.token?.toLowerCase();
-            if (!token) continue;
-            if (!relationshipParticipation.has(token)) {
-              relationshipParticipation.set(token, new Set());
-            }
-            relationshipParticipation.get(token).add(relationship);
-          }
-        }
-      }
-      const bridges = [];
-      for (const [token, set] of relationshipParticipation) {
-        if (set.size >= 3) {
-          bridges.push({ token, relationships: Array.from(set).sort() });
-        }
-      }
-      bridges.sort((a, b) => b.relationships.length - a.relationships.length);
-      return bridges;
-    }
-
-    function buildMatrixStructure(tokens, matrices, level = 0) {
-      const uniqueTokens = [...new Set(tokens.map((t, index) => ({ token: t, index })))];
-      const nodeCount = uniqueTokens.length;
-      return {
-        level,
-        n: nodeCount,
-        nodes: uniqueTokens.map((item, idx) => {
-          const angle = (2 * Math.PI * idx) / Math.max(nodeCount, 1);
-          return {
-            index: idx,
-            token: item.token,
-            adjacencyMatrix: matrices.get(item.token.toLowerCase()) ?? null,
-            position: { angle, radius: 1 },
-          };
-        }),
-      };
-    }
-
     function summarizeAttention(matrices) {
       const summary = [];
       for (const [token, data] of matrices.entries()) {
-        summary.push({ token, attention: data.attention_score ?? 0, total: data.total_relationships ?? 0 });
+        summary.push({ 
+          token, 
+          attention: data.attention_score || 0, 
+          total: data.total_relationships || 0 
+        });
       }
-      summary.sort((a, b) => b.attention - a.attention);
-      return summary.slice(0, 20);
+      return summary.sort((a, b) => b.attention - a.attention).slice(0, 10);
     }
 
-    function computeAdjacencyDensity(matrix) {
-      let edges = 0;
-      for (const data of matrix.values()) {
-        const relationships = data?.relationships ?? {};
-        for (const edgesList of Object.values(relationships)) {
-          if (Array.isArray(edgesList)) {
-            edges += edgesList.length;
-          }
+    function formatTopTokens(topTokens) {
+      const { ledger } = generateGlyphLedger();
+      return topTokens.map(t => {
+        const glyphEntry = ledger.get(t.token);
+        const glyph = glyphEntry ? glyphEntry.glyph : '◌';
+        return `<span class="token-highlight">${glyph} ${t.token}</span> (${t.attention.toFixed(2)})`;
+      }).join(', ');
+    }
+
+    function extractKeyRelationships(matrices) {
+      const relationships = [];
+      let count = 0;
+      for (const [token, data] of matrices.entries()) {
+        if (count >= 5) break;
+        const rels = data?.relationships || {};
+        for (const [rel, edges] of Object.entries(rels)) {
+          if (!Array.isArray(edges) || edges.length === 0) continue;
+          const topEdge = edges.sort((a, b) => b.weight - a.weight)[0];
+          relationships.push(`${token} ${rel} ${topEdge.token} (${topEdge.weight.toFixed(2)})`);
+          count++;
+          if (count >= 5) break;
         }
       }
-      const nodes = matrix.size;
-      const possibleEdges = nodes > 1 ? nodes * (nodes - 1) : 1;
-      const density = edges / possibleEdges;
-      return { edges, possibleEdges, density: Number(density.toFixed(3)) };
+      return relationships;
     }
 
-    function renderTokenEntries(container, matrices, hubs = [], bridges = []) {
-      container.innerHTML = '';
-      const template = document.getElementById('token-entry-template');
-      const hubSet = new Set(hubs.map((hub) => hub.token.toLowerCase()));
-      const bridgeSet = new Set(bridges.map((bridge) => bridge.token.toLowerCase()));
-      for (const [token, data] of matrices.entries()) {
-        const clone = template.content.firstElementChild.cloneNode(true);
-        const summary = clone.querySelector('summary');
-        const pre = clone.querySelector('pre');
-        const attention = data.attention_score ?? 0;
-        let badgeClass = 'attention-low';
-        if (attention >= 0.8) badgeClass = 'attention-high';
-        else if (attention >= 0.5) badgeClass = 'attention-medium';
-        if (hubSet.has(token)) badgeClass = 'attention-hub';
-        if (bridgeSet.has(token)) badgeClass = 'attention-bridge';
+    // ============================================
+    // HLSF VISUALIZATION
+    // ============================================
 
-        const relationshipsCount = data.total_relationships ?? 0;
-        summary.innerHTML = `<span class="attention-badge ${badgeClass}">${attention.toFixed(3)}</span> <strong>${token}</strong> <span class="status-badge">${relationshipsCount} edges</span>`;
-        pre.innerHTML = highlightJSON({ ...data, recursion_level: data.recursion_level ?? 0 });
-        clone.addEventListener('toggle', () => {
-          if (clone.open) {
-            clone.classList.add('expanded');
-          } else {
-            clone.classList.remove('expanded');
-          }
-        });
-        container.appendChild(clone);
-      }
-    }
-
-    function exportMatrices(sessionBundle) {
-      try {
-        const now = new Date();
-        const timestamp = now.toISOString().replace(/[:.]/g, '-');
-        const blob = new Blob([JSON.stringify(sessionBundle ?? buildCurrentExportBundle(), null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `HLSF_Session_${timestamp}.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        logSuccess('Adjacency matrices exported.');
-      } catch (err) {
-        logError(`Failed to export adjacency matrices: ${err.message}`);
-      }
-    }
-
-    function buildCurrentExportBundle(context = {}) {
-      const { inputPrompt = '', originalResponse = '', revisedResponse = '', emergentThoughts = '', matrices = {}, metadata = {} } = context;
-      const storedKeys = Object.keys(localStorage).filter((key) => key.startsWith('hlsf_token_'));
-      const storedMatrices = storedKeys.map((key) => {
+    function buildHLSFNodes() {
+      const keys = Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_'));
+      const nodes = [];
+      
+      console.log(`Building HLSF nodes from ${keys.length} cached tokens`);
+      
+      for (const key of keys) {
         try {
-          return JSON.parse(localStorage.getItem(key));
+          const tokenData = JSON.parse(localStorage.getItem(key));
+          const token = tokenData.token;
+          
+          if (!token) {
+            console.warn('Token missing from data:', key);
+            continue;
+          }
+          
+          const rels = tokenData.relationships || {};
+          
+          // Count adjacencies
+          let adjacencyCount = 0;
+          for (const edges of Object.values(rels)) {
+            if (Array.isArray(edges)) adjacencyCount += edges.length;
+          }
+          
+          // Map token properties to polygon properties
+          const attention = tokenData.attention_score || 0.5;
+          const complex = tokenToComplexNumber(token, tokenData);
+          const glyph = complexToGlyph(complex);
+          
+          // Determine polygon sides based on adjacency count (4-12 sides)
+          const sides = Math.min(12, Math.max(4, Math.floor(adjacencyCount / 3) + 4));
+          
+          // Position based on complex number
+          const x = complex.real * 2;
+          const y = complex.imaginary * 2;
+          
+          // Radius based on attention
+          const radius = 0.3 + attention * 0.4;
+          
+          // Color based on attention
+          let color;
+          if (attention >= 0.8) color = [0, 255, 136];
+          else if (attention >= 0.5) color = [255, 213, 79];
+          else color = [255, 119, 119];
+          
+          nodes.push({
+            token,
+            glyph,
+            center: [x, y],
+            radius,
+            sides,
+            attention,
+            adjacencyCount,
+            color,
+            vertices: polygonVertices([x, y], radius, sides),
+            triangles: null, // Will be computed
+            localRotation: 0,
+            rotationSpeed: attention * 0.02
+          });
         } catch (err) {
-          return { key, error: 'Failed to parse stored matrix' };
+          console.error('Failed to process token:', key, err);
+        }
+      }
+      
+      console.log(`Built ${nodes.length} HLSF nodes`);
+      
+      // Generate triangles for each node
+      for (const node of nodes) {
+        try {
+          node.triangles = buildBaseTriangles(node.vertices, node.sides);
+        } catch (err) {
+          console.error(`Failed to build triangles for ${node.token}:`, err);
+          node.triangles = [];
+        }
+      }
+      
+      return nodes;
+    }
+
+    function initHLSFCanvas() {
+      console.log('Initializing HLSF Canvas...');
+      
+      try {
+        // Build nodes first to check if we have data
+        hlsfNodes = buildHLSFNodes();
+        
+        if (hlsfNodes.length === 0) {
+          logWarning('No cached tokens found for HLSF. Process some queries first to populate the database.');
+          return;
+        }
+        
+        console.log(`Creating canvas UI for ${hlsfNodes.length} nodes`);
+        
+        const container = document.createElement('div');
+        container.className = 'hlsf-canvas-container';
+      container.innerHTML = `
+        <div style="margin-bottom: 1rem;">
+          <div class="section-title">🌌 HLSF: Hierarchical-Level Semantic Framework</div>
+          <div style="font-size: 0.9rem; opacity: 0.8; margin-top: 0.5rem;">
+            Geometric token visualization. Each polygon represents a token matrix with sides proportional 
+            to adjacency count. Triangular subdivisions show hierarchical structure.
+          </div>
+        </div>
+        <canvas id="hlsf-canvas" width="1200" height="600"></canvas>
+        <div class="hlsf-controls">
+          <div class="hlsf-control-group">
+            <label>Rotation Speed</label>
+            <input type="range" id="hlsf-rotation-speed" min="0" max="5" step="0.1" value="0.5">
+            <span id="hlsf-speed-val">0.5</span>
+          </div>
+          
+          <div class="hlsf-control-group">
+            <label>Alpha Transparency</label>
+            <input type="range" id="hlsf-alpha" min="0.1" max="1" step="0.05" value="0.3">
+            <span id="hlsf-alpha-val">0.3</span>
+          </div>
+          
+          <div class="hlsf-control-group">
+            <label>View Controls</label>
+            <div class="hlsf-button-row">
+              <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
+              <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
+              <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
+            </div>
+          </div>
+          
+          <div class="hlsf-control-group">
+            <label>Rotation Modes</label>
+            <div class="hlsf-button-row">
+              <button id="hlsf-toggle-rotation" class="btn btn-primary">Start Global</button>
+              <button id="hlsf-toggle-emergent" class="btn btn-success">Start Emergent</button>
+            </div>
+          </div>
+          
+          <div class="hlsf-control-group">
+            <label>Display Options</label>
+            <div class="hlsf-button-row">
+              <button id="hlsf-toggle-edges" class="btn btn-neutral">Edges: On</button>
+              <button id="hlsf-toggle-labels" class="btn btn-neutral">Labels: On</button>
+              <button id="hlsf-toggle-bg" class="btn btn-neutral">BG: Dark</button>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,255,136,0.05); border-radius: 8px; font-size: 0.85rem;">
+          <strong>Controls:</strong> Drag to pan • Scroll to zoom • Each polygon = token matrix • 
+          Sides = adjacency count • Color = attention score<br>
+          <strong>Modes:</strong> Global rotation = all polygons rotate around center • 
+          Emergent rotation = each polygon rotates around its own center
+        </div>
+      `;
+      
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
+      entry.appendChild(container);
+      elements.log.appendChild(entry);
+      elements.log.scrollTop = elements.log.scrollHeight;
+      
+      // Initialize canvas
+      window.HLSF.canvas = document.getElementById('hlsf-canvas');
+      window.HLSF.ctx = window.HLSF.canvas.getContext('2d');
+      
+      console.log('Canvas initialized:', window.HLSF.canvas ? 'success' : 'failed');
+      
+      // Setup controls
+      const speedSlider = document.getElementById('hlsf-rotation-speed');
+      const speedVal = document.getElementById('hlsf-speed-val');
+      speedSlider.addEventListener('input', (e) => {
+        window.HLSF.config.rotationSpeed = parseFloat(e.target.value);
+        speedVal.textContent = window.HLSF.config.rotationSpeed.toFixed(1);
+      });
+      
+      const alphaSlider = document.getElementById('hlsf-alpha');
+      const alphaVal = document.getElementById('hlsf-alpha-val');
+      alphaSlider.addEventListener('input', (e) => {
+        window.HLSF.config.alpha = parseFloat(e.target.value);
+        alphaVal.textContent = window.HLSF.config.alpha.toFixed(2);
+      });
+      
+      document.getElementById('hlsf-zoom-in').addEventListener('click', () => {
+        window.HLSF.config.scale *= 1.2;
+        renderHLSF();
+      });
+      
+      document.getElementById('hlsf-zoom-out').addEventListener('click', () => {
+        window.HLSF.config.scale *= 0.8;
+        renderHLSF();
+      });
+      
+      document.getElementById('hlsf-reset-view').addEventListener('click', () => {
+        window.HLSF.config.scale = 1;
+        window.HLSF.config.tx = window.HLSF.canvas.width / 2;
+        window.HLSF.config.ty = window.HLSF.canvas.height / 2;
+        renderHLSF();
+      });
+      
+      const rotationBtn = document.getElementById('hlsf-toggle-rotation');
+      rotationBtn.addEventListener('click', () => {
+        window.HLSF.config.rotationActive = !window.HLSF.config.rotationActive;
+        window.HLSF.config.emergentActive = false;
+        rotationBtn.textContent = window.HLSF.config.rotationActive ? 'Stop Global' : 'Start Global';
+        document.getElementById('hlsf-toggle-emergent').textContent = 'Start Emergent';
+      });
+      
+      const emergentBtn = document.getElementById('hlsf-toggle-emergent');
+      emergentBtn.addEventListener('click', () => {
+        window.HLSF.config.emergentActive = !window.HLSF.config.emergentActive;
+        window.HLSF.config.rotationActive = false;
+        emergentBtn.textContent = window.HLSF.config.emergentActive ? 'Stop Emergent' : 'Start Emergent';
+        document.getElementById('hlsf-toggle-rotation').textContent = 'Start Global';
+      });
+      
+      const edgesBtn = document.getElementById('hlsf-toggle-edges');
+      edgesBtn.addEventListener('click', () => {
+        window.HLSF.config.showEdges = !window.HLSF.config.showEdges;
+        edgesBtn.textContent = window.HLSF.config.showEdges ? 'Edges: On' : 'Edges: Off';
+        renderHLSF();
+      });
+      
+      const labelsBtn = document.getElementById('hlsf-toggle-labels');
+      labelsBtn.addEventListener('click', () => {
+        window.HLSF.config.showLabels = !window.HLSF.config.showLabels;
+        labelsBtn.textContent = window.HLSF.config.showLabels ? 'Labels: On' : 'Labels: Off';
+        renderHLSF();
+      });
+      
+      const bgBtn = document.getElementById('hlsf-toggle-bg');
+      bgBtn.addEventListener('click', () => {
+        window.HLSF.config.whiteBg = !window.HLSF.config.whiteBg;
+        bgBtn.textContent = window.HLSF.config.whiteBg ? 'BG: Light' : 'BG: Dark';
+        renderHLSF();
+      });
+      
+      // Mouse interaction
+      let isDragging = false;
+      let lastX = 0;
+      let lastY = 0;
+      
+      window.HLSF.canvas.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
+      
+      window.HLSF.canvas.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          window.HLSF.config.tx += dx;
+          window.HLSF.config.ty += dy;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          renderHLSF();
         }
       });
+      
+      window.HLSF.canvas.addEventListener('mouseup', () => {
+        isDragging = false;
+      });
+      
+      window.HLSF.canvas.addEventListener('mouseleave', () => {
+        isDragging = false;
+      });
+      
+      window.HLSF.canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.1 : 0.9;
+        window.HLSF.config.scale *= factor;
+        renderHLSF();
+      }, { passive: false });
+      
+      // Center view
+      window.HLSF.config.tx = window.HLSF.canvas.width / 2;
+      window.HLSF.config.ty = window.HLSF.canvas.height / 2;
+      
+      // Build nodes
+      window.HLSF.nodes = hlsfNodes;
+      
+      // Initial render
+      renderHLSF();
+      
+      // Start animation
+      animateHLSF();
+      
+      logSuccess(`HLSF visualization initialized with ${hlsfNodes.length} token matrices`);
+      
+      } catch (err) {
+        logError(`Failed to initialize HLSF canvas: ${err.message}`);
+        console.error('HLSF canvas error:', err);
+        throw err;
+      }
+    }
+
+    function worldToScreen(x, y) {
+      const sx = x * (200 * window.HLSF.config.scale) + window.HLSF.config.tx;
+      const sy = -y * (200 * window.HLSF.config.scale) + window.HLSF.config.ty;
+      return [sx, sy];
+    }
+
+    function drawTriangle(tri, fillColor, strokeColor) {
+      const ctx = window.HLSF.ctx;
+      const p0 = worldToScreen(tri[0][0], tri[0][1]);
+      const p1 = worldToScreen(tri[1][0], tri[1][1]);
+      const p2 = worldToScreen(tri[2][0], tri[2][1]);
+      
+      ctx.beginPath();
+      ctx.moveTo(p0[0], p0[1]);
+      ctx.lineTo(p1[0], p1[1]);
+      ctx.lineTo(p2[0], p2[1]);
+      ctx.closePath();
+      
+      if (fillColor) {
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+      }
+      
+      if (strokeColor && window.HLSF.config.showEdges) {
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+
+    function renderHLSF() {
+      if (!window.HLSF.canvas || !window.HLSF.ctx) {
+        console.warn('Canvas not initialized for renderHLSF');
+        return;
+      }
+      
+      try {
+        const ctx = window.HLSF.ctx;
+        const width = window.HLSF.canvas.width;
+        const height = window.HLSF.canvas.height;
+      
+      // Clear canvas
+      ctx.fillStyle = window.HLSF.config.whiteBg ? '#ffffff' : '#0a0a0a';
+      ctx.fillRect(0, 0, width, height);
+      
+      // Draw grid
+      ctx.strokeStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.05)' : 'rgba(0, 255, 136, 0.05)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < width; x += 50) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < height; y += 50) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+      
+      // Draw each node's triangles
+      for (const node of window.HLSF.nodes) {
+        const [r, g, b] = node.color;
+        const fillColor = `rgba(${r}, ${g}, ${b}, ${window.HLSF.config.alpha})`;
+        const strokeColor = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.3)';
+        
+        let triangles = node.triangles;
+        
+        // Apply rotation if active
+        if (window.HLSF.config.emergentActive) {
+          triangles = rotateTrianglesAround(node.triangles, node.center, node.localRotation);
+        } else if (window.HLSF.config.rotationActive) {
+          triangles = rotateTrianglesAround(node.triangles, [0, 0], window.HLSF.config.globalRotation);
+        }
+        
+        for (const tri of triangles) {
+          drawTriangle(tri, fillColor, strokeColor);
+        }
+        
+        // Draw glyph and label
+        if (window.HLSF.config.showLabels) {
+          const [sx, sy] = worldToScreen(node.center[0], node.center[1]);
+          
+          // Draw glyph
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+          ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(node.glyph, sx, sy);
+          
+          // Draw token name
+          ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
+          ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
+          ctx.fillText(node.token, sx, sy + 25 * window.HLSF.config.scale);
+        }
+      }
+      
+      // Draw stats
+      ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 255, 136, 0.8)';
+      ctx.font = '12px Fira Code, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Nodes: ${window.HLSF.nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`, 10, 20);
+      
+      } catch (err) {
+        console.error('Error rendering HLSF:', err);
+      }
+    }
+
+    function animateHLSF() {
+      if (!window.HLSF.canvas || !window.HLSF.ctx) {
+        console.warn('Canvas not ready for animation');
+        return;
+      }
+      
+      try {
+        if (window.HLSF.config.rotationActive) {
+          window.HLSF.config.globalRotation += window.HLSF.config.rotationSpeed * 0.01;
+        } else if (window.HLSF.config.emergentActive) {
+          for (const node of window.HLSF.nodes) {
+            node.localRotation += node.rotationSpeed;
+          }
+        }
+        
+        if (window.HLSF.config.rotationActive || window.HLSF.config.emergentActive) {
+          renderHLSF();
+        }
+      } catch (err) {
+        console.error('Error in HLSF animation:', err);
+      }
+      
+      window.HLSF.animationFrame = requestAnimationFrame(animateHLSF);
+    }
+
+    function stopHLSFAnimation() {
+      try {
+        if (window.HLSF && window.HLSF.animationFrame) {
+          cancelAnimationFrame(window.HLSF.animationFrame);
+          window.HLSF.animationFrame = null;
+        }
+        if (window.HLSF && window.HLSF.config) {
+          window.HLSF.config.rotationActive = false;
+          window.HLSF.config.emergentActive = false;
+        }
+      } catch (err) {
+        console.warn('Error stopping HLSF animation:', err);
+      }
+    }
+    function analyzeDatabaseMetadata() {
+      const keys = Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_'));
+      const tokens = [];
+      const relationshipCounts = new Map();
+      const tokenFrequency = new Map();
+      let totalRelationships = 0;
+      let totalAttentionScore = 0;
+      let oldestToken = null;
+      let newestToken = null;
+
+      for (const key of keys) {
+        try {
+          const data = JSON.parse(localStorage.getItem(key));
+          tokens.push(data);
+
+          // Track oldest and newest
+          if (data.cached_at) {
+            const timestamp = new Date(data.cached_at);
+            if (!oldestToken || timestamp < new Date(oldestToken.cached_at)) {
+              oldestToken = data;
+            }
+            if (!newestToken || timestamp > new Date(newestToken.cached_at)) {
+              newestToken = data;
+            }
+          }
+
+          // Count relationships
+          const rels = data.relationships || {};
+          for (const [relType, edges] of Object.entries(rels)) {
+            if (!Array.isArray(edges)) continue;
+            
+            relationshipCounts.set(relType, (relationshipCounts.get(relType) || 0) + edges.length);
+            totalRelationships += edges.length;
+
+            // Track token frequency across relationships
+            for (const edge of edges) {
+              const token = edge.token?.toLowerCase();
+              if (token) {
+                tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
+              }
+            }
+          }
+
+          if (data.attention_score) {
+            totalAttentionScore += data.attention_score;
+          }
+        } catch (err) {
+          console.error('Failed to parse token:', key, err);
+        }
+      }
+
+      // Sort by frequency
+      const topRelationships = Array.from(relationshipCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+
+      const topTokens = Array.from(tokenFrequency.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20);
+
+      const highAttentionTokens = tokens
+        .filter(t => t.attention_score)
+        .sort((a, b) => b.attention_score - a.attention_score)
+        .slice(0, 10);
+
       return {
-        session: {
-          timestamp: new Date().toISOString(),
-          input_prompt: inputPrompt,
-          original_response: originalResponse,
-          revised_response: revisedResponse,
-          emergent_thoughts: emergentThoughts,
-        },
-        matrices,
-        metadata: {
-          ...metadata,
-          stored_matrix_count: storedMatrices.length,
-        },
-        cached_matrices: storedMatrices,
+        totalTokens: tokens.length,
+        totalRelationships,
+        avgAttentionScore: tokens.length > 0 ? (totalAttentionScore / tokens.length).toFixed(3) : 0,
+        topRelationships,
+        topTokens,
+        highAttentionTokens,
+        oldestToken,
+        newestToken,
+        estimatedValue: tokens.length * CONFIG.ESTIMATED_COST_PER_API_CALL,
+        rawData: tokens
       };
     }
 
-    function persistSessionHistory(entry) {
+    function showDatabaseMetadata() {
+      const metadata = analyzeDatabaseMetadata();
+      
+      const maturityLevel = metadata.totalTokens > 100 ? 'Mature' : metadata.totalTokens > 20 ? 'Growing' : 'Early';
+      const maturityColor = metadata.totalTokens > 100 ? 'var(--success)' : metadata.totalTokens > 20 ? 'var(--warning)' : 'var(--accent)';
+      
+      addLog(`
+        <div class="section-divider"></div>
+        <div class="section-title">📊 Collective Database Metadata</div>
+        
+        <div class="adjacency-insight">
+          <strong>🌐 Knowledge Base Status:</strong> <span style="color: ${maturityColor}; font-weight: bold;">${maturityLevel}</span><br>
+          <small style="opacity: 0.8;">
+            ${metadata.totalTokens < 20 ? 
+              'Building foundational knowledge. Each query adds to the collective intelligence.' :
+              metadata.totalTokens < 100 ?
+              'Database is maturing. Cache hit rate improving with each session.' :
+              'Mature knowledge base. Most queries benefit from cached insights.'}
+          </small>
+        </div>
+
+        <div class="adjacency-insight">
+          <strong>💾 Database Size:</strong><br>
+          • Total cached tokens: <strong>${metadata.totalTokens}</strong><br>
+          • Total relationships: <strong>${metadata.totalRelationships}</strong><br>
+          • Average attention score: <strong>${metadata.avgAttentionScore}</strong><br>
+          • Network density: <strong>${(metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)}</strong> edges/token<br>
+          • Estimated saved cost: <strong>${formatCurrency(Math.ceil(metadata.estimatedValue * 100))}</strong>
+        </div>
+
+        <div class="adjacency-insight">
+          <strong>📈 Most Common Relationship Types:</strong><br>
+          ${metadata.topRelationships.map(([rel, count]) => 
+            `• <span class="token-highlight">${rel}</span>: ${count} instances`
+          ).join('<br>')}
+          ${metadata.topRelationships.length === 0 ? '<em>No relationships cached yet</em>' : ''}
+        </div>
+
+        <div class="adjacency-insight">
+          <strong>🔥 Most Referenced Tokens (Hub Concepts):</strong><br>
+          <small style="opacity: 0.8;">These tokens appear most frequently across relationships - they represent core concepts in the knowledge graph.</small><br><br>
+          ${metadata.topTokens.slice(0, 10).map(([token, count]) => 
+            `• <span class="token-highlight">${token}</span>: ${count} references`
+          ).join('<br>')}
+          ${metadata.topTokens.length === 0 ? '<em>No hub concepts identified yet</em>' : ''}
+        </div>
+
+        <div class="adjacency-insight">
+          <strong>⭐ Highest Attention Tokens:</strong><br>
+          <small style="opacity: 0.8;">Tokens with the strongest weighted relationships - highly salient concepts.</small><br><br>
+          ${metadata.highAttentionTokens.map(t => 
+            `• <span class="token-highlight">${t.token}</span>: ${t.attention_score} (${t.total_relationships || 0} edges)`
+          ).join('<br>')}
+          ${metadata.highAttentionTokens.length === 0 ? '<em>No high-attention tokens yet</em>' : ''}
+        </div>
+
+        ${metadata.oldestToken ? `
+        <div class="adjacency-insight">
+          <strong>📅 Database Timeline:</strong><br>
+          • Oldest entry: <strong>${metadata.oldestToken.token}</strong> (${new Date(metadata.oldestToken.cached_at).toLocaleString()})<br>
+          • Newest entry: <strong>${metadata.newestToken.token}</strong> (${new Date(metadata.newestToken.cached_at).toLocaleString()})
+        </div>
+        ` : ''}
+
+        <details>
+          <summary>📊 View knowledge graph analytics</summary>
+          <pre>${JSON.stringify({
+            database_maturity: maturityLevel,
+            network_density: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2),
+            top_5_relationship_types: metadata.topRelationships.slice(0, 5).map(([rel]) => rel),
+            top_5_hub_concepts: metadata.topTokens.slice(0, 5).map(([token]) => token),
+            growth_metrics: {
+              tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
+              avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)
+            }
+          }, null, 2)}</pre>
+        </details>
+
+        <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,255,136,0.05); border-radius: 8px; font-size: 0.9rem;">
+          💡 <strong>Insight:</strong> This metadata represents the collective intelligence being built. 
+          In a server deployment, this would be shared across all users, with each query contributing 
+          to a growing knowledge base that makes future queries faster and cheaper. The database also 
+          powers the symbolic glyph encryption system for secure inter-system communication.
+        </div>
+      `);
+    }
+
+    function exportDatabaseMetadata() {
+      const metadata = analyzeDatabaseMetadata();
+      
+      const exportData = {
+        export_timestamp: new Date().toISOString(),
+        readme: {
+          description: "HLSF Cognition Engine - Collective Database Metadata Export",
+          purpose: "This export contains the complete adjacency token database and analytics. It represents the collective intelligence built through token relationship analysis.",
+          usage: "This data can be imported into a server-side database to bootstrap a new deployment or shared for analysis.",
+          version: "2.0"
+        },
+        database_stats: {
+          total_tokens: metadata.totalTokens,
+          total_relationships: metadata.totalRelationships,
+          avg_attention_score: metadata.avgAttentionScore,
+          estimated_value_usd: metadata.estimatedValue.toFixed(2),
+          maturity_level: metadata.totalTokens > 100 ? 'mature' : metadata.totalTokens > 20 ? 'growing' : 'early'
+        },
+        relationship_distribution: Object.fromEntries(metadata.topRelationships),
+        hub_concepts: Object.fromEntries(metadata.topTokens),
+        high_attention_tokens: metadata.highAttentionTokens.map(t => ({
+          token: t.token,
+          attention_score: t.attention_score,
+          total_relationships: t.total_relationships
+        })),
+        knowledge_graph_metrics: {
+          network_density: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(3),
+          avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2),
+          tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
+          oldest_entry: metadata.oldestToken?.cached_at,
+          newest_entry: metadata.newestToken?.cached_at,
+          date_range_days: metadata.oldestToken && metadata.newestToken ? 
+            Math.ceil((new Date(metadata.newestToken.cached_at) - new Date(metadata.oldestToken.cached_at)) / (1000 * 60 * 60 * 24)) : 0
+        },
+        full_token_data: metadata.rawData
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `HLSF_Database_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      logSuccess(`Database metadata exported: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships, ${(new Blob([JSON.stringify(exportData)]).size / 1024).toFixed(1)}KB`);
+    }
+
+    function importDatabaseFromFile(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          importDatabaseData(data);
+        } catch (err) {
+          logError(`Failed to parse import file: ${err.message}`);
+        }
+      };
+      reader.onerror = () => {
+        logError('Failed to read file');
+      };
+      reader.readAsText(file);
+    }
+
+    function importDatabaseData(data, source = 'file') {
       try {
-        const raw = localStorage.getItem('hlsf_sessions');
-        const sessions = raw ? JSON.parse(raw) : [];
-        sessions.push(entry);
-        while (sessions.length > 50) sessions.shift();
-        localStorage.setItem('hlsf_sessions', JSON.stringify(sessions));
+        // Validate the data structure
+        if (!data.full_token_data || !Array.isArray(data.full_token_data)) {
+          logError('Invalid database format. Expected full_token_data array.');
+          return;
+        }
+
+        const tokenData = data.full_token_data;
+        let imported = 0;
+        let skipped = 0;
+        let updated = 0;
+
+        for (const token of tokenData) {
+          if (!token.token) continue;
+
+          const key = getCacheKey(token.token);
+          const existing = localStorage.getItem(key);
+
+          if (existing) {
+            // Check if imported data is newer
+            const existingData = JSON.parse(existing);
+            const importedDate = new Date(token.cached_at || 0);
+            const existingDate = new Date(existingData.cached_at || 0);
+
+            if (importedDate > existingDate) {
+              localStorage.setItem(key, JSON.stringify(token));
+              updated++;
+            } else {
+              skipped++;
+            }
+          } else {
+            localStorage.setItem(key, JSON.stringify(token));
+            imported++;
+          }
+        }
+
+        updateStats();
+
+        const summary = [];
+        if (imported > 0) summary.push(`${imported} new tokens imported`);
+        if (updated > 0) summary.push(`${updated} tokens updated`);
+        if (skipped > 0) summary.push(`${skipped} existing tokens kept`);
+
+        logSuccess(`Database imported from ${source}: ${summary.join(', ')}`);
+
+        if (data.database_stats) {
+          addLog(`<div class="adjacency-insight">
+            📊 <strong>Import Summary:</strong><br>
+            • Source maturity: ${data.database_stats.maturity_level}<br>
+            • Total tokens in source: ${data.database_stats.total_tokens}<br>
+            • Total relationships: ${data.database_stats.total_relationships}<br>
+            • Estimated value: ${data.database_stats.estimated_value_usd}
+          </div>`);
+        }
       } catch (err) {
-        logError(`Failed to persist session history: ${err.message}`);
+        logError(`Import failed: ${err.message}`);
       }
     }
 
+    async function autoLoadDatabase() {
+      // Try to load from database.json in the same directory
+      try {
+        const response = await fetch('database.json');
+        if (response.ok) {
+          const data = await response.json();
+          importDatabaseData(data, 'database.json');
+        }
+      } catch (err) {
+        // Silently fail - file might not exist, which is fine
+        console.log('No database.json found for auto-load');
+      }
+    }
+
+    // ============================================
+    // COMMANDS
+    // ============================================
+    function isCommand(input) { return input.startsWith('/'); }
+
+    async function handleCommand(cmd) {
+      const [command] = cmd.slice(1).split(/\s+/);
+      
+      switch (command.toLowerCase()) {
+        case 'clear':
+          elements.log.innerHTML = '';
+          logSuccess('Log cleared');
+          break;
+        case 'reset':
+          if (confirm('Clear all cached data?')) {
+            const keys = Object.keys(localStorage).filter(k => k.startsWith('hlsf_token_'));
+            keys.forEach(k => localStorage.removeItem(k));
+            updateStats();
+            logSuccess(`Cleared ${keys.length} tokens`);
+          }
+          break;
+        case 'stats':
+          const { totalApiCalls, totalCacheHits, totalCostCents } = state.sessionStats;
+          const total = totalApiCalls + totalCacheHits;
+          const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) : 0;
+          addLog(`<strong>Session Stats:</strong><br>
+            • Requests: ${total}<br>
+            • Cache hits: ${totalCacheHits} (${hitRate}%)<br>
+            • API calls: ${totalApiCalls}<br>
+            • Cost: ${formatCurrency(totalCostCents)}<br>
+            • Cached tokens: ${getCachedTokenCount()}`);
+          break;
+        case 'database':
+        case 'db':
+          showDatabaseMetadata();
+          break;
+        case 'export':
+          exportDatabaseMetadata();
+          break;
+        case 'import':
+          elements.fileInput.click();
+          break;
+        case 'glyph':
+        case 'ledger':
+          showGlyphLedger();
+          break;
+        case 'encrypt':
+          const encryptMsg = args.join(' ');
+          if (!encryptMsg) {
+            logError('Usage: /encrypt <message>');
+            break;
+          }
+          const { ledger: encLedger } = generateGlyphLedger();
+          const encResult = encodeMessage(encryptMsg, encLedger);
+          addLog(`<div class="adjacency-insight">
+            <strong>🔐 Encrypted:</strong><br>
+            <div style="font-size: 1.5em; letter-spacing: 0.15em; color: var(--accent); margin: 0.5rem 0;">${encResult.encoded}</div>
+            Coverage: ${encResult.coverage}%
+            ${encResult.unknown.length > 0 ? `<br>Unknown tokens: ${encResult.unknown.join(', ')}` : ''}
+          </div>`);
+          break;
+        case 'decrypt':
+          const decryptMsg = args.join(' ');
+          if (!decryptMsg) {
+            logError('Usage: /decrypt <encrypted glyphs>');
+            break;
+          }
+          const { reverseMap: decReverse } = generateGlyphLedger();
+          const decoded = decodeMessage(decryptMsg, decReverse);
+          addLog(`<div class="adjacency-insight">
+            <strong>🔓 Decrypted:</strong><br>
+            ${decoded}
+          </div>`);
+          break;
+        case 'exportledger':
+          const ledgerData = exportGlyphLedger();
+          logSuccess(`Glyph ledger exported: ${ledgerData.statistics.total_tokens} tokens, ${ledgerData.statistics.unique_glyphs} glyphs`);
+          break;
+        case 'hlsf':
+        case 'visualize':
+          try {
+            stopHLSFAnimation();
+            initHLSFCanvas();
+          } catch (err) {
+            logError(`HLSF initialization failed: ${err.message}`);
+            console.error('HLSF error:', err);
+          }
+          break;
+        case 'help':
+          addLog(`<strong>Commands:</strong><br>
+            /clear - Clear log<br>
+            /reset - Clear cache<br>
+            /stats - Session statistics<br>
+            /database or /db - View database metadata<br>
+            /export - Export database metadata as JSON<br>
+            /import - Import database from JSON file<br>
+            /glyph or /ledger - View symbolic glyph encryption ledger<br>
+            /encrypt &lt;message&gt; - Encrypt message using glyph system<br>
+            /decrypt &lt;glyphs&gt; - Decrypt glyph-encoded message<br>
+            /exportledger - Export glyph ledger for inter-system transmission<br>
+            /hlsf or /visualize - Visualize database as Hierarchical-Level Semantic Framework<br>
+            /help - Show commands`);
+          break;
+        default:
+          logError(`Unknown: ${command}`);
+      }
+    }
+
+    // ============================================
+    // MAIN PROCESSING
+    // ============================================
     async function processPrompt(prompt) {
-      if (isProcessing) return;
-      isProcessing = true;
-      sendBtn.disabled = true;
-      commandInput.disabled = true;
+      if (state.isProcessing) return;
+      
+      state.isProcessing = true;
+      currentAbortController = new AbortController();
+      elements.sendBtn.disabled = true;
+      elements.cancelBtn.style.display = 'inline-block';
+      elements.input.disabled = true;
 
       const startTime = performance.now();
-      let abortController = new AbortController();
 
       try {
-        const inputTokens = tokenize(prompt);
-        if (inputTokens.length === 0) {
-          logError('Prompt cannot be empty.');
+        const tokens = tokenize(prompt);
+        if (tokens.length === 0) {
+          logError('Prompt cannot be empty');
           return;
         }
-        if (inputTokens.length > 100) {
-          logError(`Input exceeds 100-token limit (${inputTokens.length}). Please shorten your prompt.`);
+        if (tokens.length > CONFIG.MAX_TOKENS_PER_PROMPT) {
+          logError(`Exceeds ${CONFIG.MAX_TOKENS_PER_PROMPT} token limit (${tokens.length})`);
           return;
         }
-        addLogEntry(`🧮 Input tokens detected: <strong>${inputTokens.length}</strong>`, 'info');
 
-        const llmStatus = logStatus('⏳ Sending prompt to LLM...');
+        const estimatedCalls = tokens.length * 2 + 3;
+        const estimatedCost = estimatedCalls * CONFIG.ESTIMATED_COST_PER_API_CALL;
+        addLog(`<div class="cost-estimate">
+          📊 <strong>Estimate:</strong> ${tokens.length} tokens, ~${estimatedCalls} API calls, ~${formatCurrency(Math.ceil(estimatedCost * 100))}
+        </div>`);
+
+        // Step 1: Initial response
         let initialResponse = '';
-        if (apiKey) {
-          initialResponse = await fetchOpenAI([
-            { role: 'system', content: 'You are an expert assistant that provides clear, concise responses.' },
+        if (state.apiKey) {
+          const s1 = logStatus('⏳ Generating initial response...');
+          initialResponse = await callOpenAI([
+            { role: 'system', content: 'You are an expert assistant.' },
             { role: 'user', content: prompt },
           ]);
-          llmStatus.innerHTML = formatStatusLine('✅ Received response from LLM.', `${countTokens(initialResponse)} tokens.`);
+          s1.innerHTML = `✅ Initial response generated`;
         } else {
-          initialResponse = '⚠️ Offline mode: Provide an API key to enable live responses.';
-          llmStatus.innerHTML = formatStatusLine('⚠️ Offline mode. Skipped LLM call.', '0 tokens.');
+          initialResponse = '⚠️ Offline mode';
+          logWarning('Skipped (offline)');
         }
 
+        // Step 2: Adjacency analysis
         const responseTokens = tokenize(initialResponse);
-        addLogEntry(`🧮 Output tokens detected: <strong>${responseTokens.length}</strong>`, 'info');
-
-        abortController = new AbortController();
         const [inputMatrices, outputMatrices] = await Promise.all([
-          getAdjacencyForTokens(inputTokens, prompt, 'input', abortController.signal),
-          getAdjacencyForTokens(responseTokens, initialResponse, 'output', abortController.signal),
+          batchFetchAdjacencies(tokens, prompt, 'input'),
+          batchFetchAdjacencies(responseTokens, initialResponse, 'output'),
         ]);
 
-        calculateAttentionScores(inputMatrices);
-        calculateAttentionScores(outputMatrices);
-
-        const inputMatrixStructure = buildMatrixStructure(inputTokens, inputMatrices, 0);
-        const outputMatrixStructure = buildMatrixStructure(responseTokens, outputMatrices, 0);
+        calculateAttention(inputMatrices);
+        calculateAttention(outputMatrices);
 
         const allMatrices = new Map([...inputMatrices, ...outputMatrices]);
-        const hubs = identifyHighFrequencyHubs(allMatrices);
-        const bridges = identifyCrossRelationshipBridges(allMatrices);
+        const topTokens = summarizeAttention(allMatrices);
+        const keyRels = extractKeyRelationships(allMatrices);
 
-        const inputDensity = computeAdjacencyDensity(inputMatrices);
-        const outputDensity = computeAdjacencyDensity(outputMatrices);
-        addLogEntry(`🔗 Input adjacency density: ${inputDensity.density} (${inputDensity.edges}/${inputDensity.possibleEdges})`);
-        addLogEntry(`🔗 Output adjacency density: ${outputDensity.density} (${outputDensity.edges}/${outputDensity.possibleEdges})`);
+        addLog(`<div class="adjacency-insight">
+          <strong>🎯 High Attention:</strong> ${formatTopTokens(topTokens)}
+        </div>
+        <div class="adjacency-insight">
+          <strong>🔗 Key Relationships:</strong><br>
+          ${keyRels.map(r => `• ${r}`).join('<br>')}
+        </div>`);
 
-        const highAttentionTokens = summarizeAttention(allMatrices);
-        const topAttentionSummary = highAttentionTokens
-          .map((item) => `${item.token} (${item.attention.toFixed(2)} · ${item.total})`)
-          .join(', ');
-        addLogEntry(`🎯 Top attention tokens: ${topAttentionSummary || 'None'}`);
-
-        let synthesis = '';
-        if (apiKey) {
-          const summaryPayload = `Token relationship analysis:
-${JSON.stringify(highAttentionTokens, null, 2)}
-
-High-frequency hubs: ${JSON.stringify(hubs, null, 2)}
-
-Cross-level connections: ${JSON.stringify(bridges, null, 2)}`;
-          const synthesisPrompt = `Original prompt: "${prompt}"
-Original response: "${initialResponse}"
-
-${summaryPayload}
-
-Synthesize the key conceptual insights revealed by this adjacency analysis. What latent patterns, contradictions, or emergent themes are revealed by the token relationships?`;
-          const synthesisStatus = logStatus('⏳ Facilitating hierarchical knowledge synthesis...');
-          synthesis = await fetchOpenAI([
-            { role: 'system', content: 'You analyze token relationship matrices to extract conceptual insights.' },
-            { role: 'user', content: synthesisPrompt },
-          ]);
-          synthesisStatus.innerHTML = formatStatusLine('✅ Hierarchical knowledge synthesis complete.');
-        } else {
-          synthesis = 'Offline mode: synthesis unavailable without API access.';
-        }
-
+        // Step 3: Thought stream
         let thoughtStream = '';
-        if (apiKey) {
-          const thoughtPrompt = `Based on the following adjacency insights, generate a stream-of-consciousness internal monologue representing the emergent cognitive process:
-
-Key insights: ${synthesis}
-Non-local connections: ${JSON.stringify(bridges, null, 2)}
-Recursive hubs: ${JSON.stringify(hubs, null, 2)}
-
-Write as a flowing, natural thought process that connects these elements.`;
-          const thoughtStatus = logStatus('⏳ Logging emergent thought stream...');
-          thoughtStream = await fetchOpenAI([
-            { role: 'system', content: 'You create reflective, stream-of-consciousness narratives grounded in provided analytical insights.' },
-            { role: 'user', content: thoughtPrompt },
+        if (state.apiKey) {
+          const s2 = logStatus('⏳ Synthesizing thought stream...');
+          thoughtStream = await callOpenAI([
+            { role: 'system', content: 'You create reflective thought streams from analytical insights.' },
+            { role: 'user', content: `Based on these adjacency insights, generate a stream-of-consciousness internal monologue:\n\nTop tokens: ${JSON.stringify(topTokens)}\nRelationships: ${keyRels.join('; ')}\n\nWrite as flowing natural thought connecting these elements.` },
           ]);
-          thoughtStatus.innerHTML = formatStatusLine('✅ Emergent thought stream captured.');
-        } else {
-          thoughtStream = 'Offline mode: thought stream unavailable without API access.';
+          s2.innerHTML = '✅ Thought stream captured';
+          
+          addLog(`<div class="section-divider"></div>
+            <div class="section-title">💭 Emergent Thought Stream</div>
+            <div class="thought-stream">${sanitize(thoughtStream)}</div>`);
         }
 
-        let revisedResponse = '';
-        if (apiKey) {
-          const revisionPrompt = `Original response: "${initialResponse}"
-
-Emergent insights: ${thoughtStream}
-
-Revise the original response by:
-1. Removing concepts that were pruned during adjacency analysis (low-weight, disconnected tokens)
-2. Incorporating emergent insights more clearly
-3. Restructuring for clarity based on hierarchical token relationships
-4. Maintaining the original intent but with enhanced coherence
-
-Provide the revised response only, without meta-commentary.`;
-          const revisionStatus = logStatus('⏳ Developing revised response output...');
-          revisedResponse = await fetchOpenAI([
-            { role: 'system', content: 'You refine responses based on adjacency-driven insights.' },
-            { role: 'user', content: revisionPrompt },
+        // Step 4: Refined response
+        let refinedResponse = initialResponse;
+        if (state.apiKey) {
+          const s3 = logStatus('⏳ Refining response...');
+          refinedResponse = await callOpenAI([
+            { role: 'system', content: 'You refine responses based on adjacency insights.' },
+            { role: 'user', content: `Original: "${initialResponse}"\n\nInsights: ${thoughtStream}\n\nRevise by: 1) Incorporating emergent insights 2) Restructuring based on token relationships 3) Enhancing coherence. Provide revised response only.` },
           ]);
-          revisionStatus.innerHTML = formatStatusLine('✅ Revised response generated.');
-        } else {
-          revisedResponse = initialResponse;
+          s3.innerHTML = '✅ Response refined';
         }
 
-        const processingTime = performance.now() - startTime;
-        const finalEntry = document.createElement('div');
-        finalEntry.className = 'log-entry final-output';
-        finalEntry.innerHTML = `
-          <div class="timestamp">${new Date().toLocaleTimeString()}</div>
-          <div class="output-divider"></div>
-          <div>✓ Processing complete (${(processingTime / 1000).toFixed(1)}s)</div>
-          <h3>REVISED RESPONSE:</h3>
-          <pre>${revisedResponse}</pre>
-          <details>
-            <summary>Show original LLM response</summary>
-            <pre>${initialResponse}</pre>
-          </details>
-          <details>
-            <summary>Show emergent thought stream</summary>
-            <pre>${thoughtStream}</pre>
-          </details>
-          <details>
-            <summary>Explore token adjacency matrices</summary>
-            <div class="token-section" id="token-section-input"></div>
-            <div class="token-section" id="token-section-output"></div>
-            <div class="token-section" id="token-section-hubs"></div>
-          </details>
-        `;
-        logContainer.appendChild(finalEntry);
-        logContainer.scrollTo({ top: logContainer.scrollHeight, behavior: 'smooth' });
+        // Display final output
+        const time = ((performance.now() - startTime) / 1000).toFixed(1);
+        addLog(`<div class="section-divider"></div>
+          <div class="final-output">
+            <h3>✨ REFINED RESPONSE</h3>
+            <pre>${sanitize(refinedResponse)}</pre>
+            
+            <details>
+              <summary>Compare with original response</summary>
+              <pre>${sanitize(initialResponse)}</pre>
+            </details>
+            
+            <details>
+              <summary>View adjacency data (${allMatrices.size} tokens)</summary>
+              <pre>${JSON.stringify(Array.from(allMatrices.entries()).slice(0, 5), null, 2)}</pre>
+            </details>
+          </div>
+        `);
+        
+        logSuccess(`Processing complete (${time}s)`);
 
-        const inputSection = finalEntry.querySelector('#token-section-input');
-        const outputSection = finalEntry.querySelector('#token-section-output');
-        const hubSection = finalEntry.querySelector('#token-section-hubs');
-
-        inputSection.innerHTML = `<h4>📁 Input Tokens (n=${inputMatrixStructure.n})</h4>`;
-        outputSection.innerHTML = `<h4>📁 Output Tokens (n=${outputMatrixStructure.n})</h4>`;
-        hubSection.innerHTML = `<h4>📁 Recursive Hubs (depth=${recursionDepth})</h4>`;
-
-        const inputWrapper = document.createElement('div');
-        const outputWrapper = document.createElement('div');
-        const hubWrapper = document.createElement('div');
-
-        renderTokenEntries(inputWrapper, inputMatrices, hubs, bridges);
-        renderTokenEntries(outputWrapper, outputMatrices, hubs, bridges);
-
-        for (const hub of hubs) {
-          const template = document.getElementById('token-entry-template');
-          const clone = template.content.firstElementChild.cloneNode(true);
-          const summary = clone.querySelector('summary');
-          const pre = clone.querySelector('pre');
-          summary.innerHTML = `<span class="attention-badge attention-hub">HUB</span> <strong>${hub.token}</strong> <span class="status-badge">${hub.count} cross-references</span>`;
-          pre.innerHTML = highlightJSON(hub);
-          hubWrapper.appendChild(clone);
-        }
-
-        inputSection.appendChild(inputWrapper);
-        outputSection.appendChild(outputWrapper);
-        hubSection.appendChild(hubWrapper);
-
-        const sessionEntry = {
-          timestamp: new Date().toISOString(),
-          input: prompt,
-          output: revisedResponse,
-          original: initialResponse,
-          tokens_processed: inputTokens.length + responseTokens.length,
-          recursion_depth: recursionDepth,
-        };
-        persistSessionHistory(sessionEntry);
-
-        const bundle = buildCurrentExportBundle({
-          inputPrompt: prompt,
-          originalResponse: initialResponse,
-          revisedResponse,
-          emergentThoughts: thoughtStream,
-          matrices: {
-            input_tokens: Array.from(inputMatrices.values()),
-            output_tokens: Array.from(outputMatrices.values()),
-            recursive_hubs: hubs,
-          },
-          metadata: {
-            total_tokens: sessionEntry.tokens_processed,
-            recursion_depth: recursionDepth,
-            processing_time_ms: Math.round(processingTime),
-          },
-        });
-        exportMatrices(bundle);
       } catch (err) {
-        if (err.name === 'AbortError') {
-          logError('Processing aborted.');
+        if (err.name === 'AbortError' || err.message === 'AbortError') {
+          logWarning('Processing cancelled');
         } else {
-          logError(err.message || 'An unexpected error occurred.');
+          logError(err.message || 'Processing failed');
+          console.error(err);
         }
       } finally {
-        isProcessing = false;
-        sendBtn.disabled = false;
-        commandInput.disabled = false;
-        commandInput.value = '';
-        commandInput.focus();
+        state.isProcessing = false;
+        currentAbortController = null;
+        elements.sendBtn.disabled = false;
+        elements.cancelBtn.style.display = 'none';
+        elements.input.disabled = false;
+        elements.input.value = '';
+        elements.input.focus();
       }
     }
 
-    sendBtn.addEventListener('click', () => {
-      const value = commandInput.value.trim();
-      if (!value) return;
-      addLogEntry(`> ${value}`);
-      if (isCommand(value)) {
-        handleCommand(value);
+    // ============================================
+    // EVENTS
+    // ============================================
+    elements.apiConfirmBtn.addEventListener('click', () => {
+      const key = elements.apiKeyInput.value.trim();
+      if (!key.startsWith('sk-')) {
+        logError('Invalid API key format');
+        return;
+      }
+      state.apiKey = key;
+      elements.apiModal.classList.add('hidden');
+      logSuccess('API key configured');
+    });
+
+    elements.apiCancelBtn.addEventListener('click', () => {
+      elements.apiModal.classList.add('hidden');
+      logWarning('Offline mode - limited functionality');
+    });
+
+    elements.sendBtn.addEventListener('click', () => {
+      const input = elements.input.value.trim();
+      if (!input) return;
+      
+      addLog(`> ${sanitize(input)}`);
+      
+      if (isCommand(input)) {
+        handleCommand(input);
+        elements.input.value = '';
       } else {
-        processPrompt(value);
+        processPrompt(input);
       }
     });
 
-    commandInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        sendBtn.click();
+    elements.cancelBtn.addEventListener('click', () => {
+      if (currentAbortController) {
+        currentAbortController.abort();
+        logWarning('Cancelling...');
       }
     });
 
+    elements.input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        elements.sendBtn.click();
+      }
+    });
+
+    elements.fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        importDatabaseFromFile(file);
+        e.target.value = ''; // Reset file input
+      }
+    });
+
+    // ============================================
+    // INIT
+    // ============================================
     window.addEventListener('beforeunload', () => {
-      apiKey = '';
+      state.apiKey = '';
+      stopHLSFAnimation();
     });
 
-    commandHelp();
+    async function initialize() {
+      updateStats();
+      
+      // Try to auto-load database.json
+      await autoLoadDatabase();
+      
+      const cachedCount = getCachedTokenCount();
+      
+      addLog(`<strong>🧠 HLSF Cognition Engine v2.0</strong><br><br>
+        This engine performs:<br>
+        1. Token adjacency mapping (50 relationship types)<br>
+        2. Attention score calculation<br>
+        3. Emergent thought stream synthesis<br>
+        4. Response refinement based on insights<br>
+        5. <strong>Symbolic glyph encryption</strong> (complex number encoding)<br>
+        6. <strong>HLSF visualization</strong> (hierarchical semantic framework)<br><br>
+        <strong>Commands:</strong> /help, /hlsf, /glyph, /encrypt, /decrypt<br>
+        ${cachedCount > 0 ? `<br>✅ Loaded with ${cachedCount} cached tokens` : ''}
+        <br><small>⚠️ Note: Download HTML and run locally for API calls to work.</small>
+      `);
+      
+      elements.input.focus();
+    }
+
+    initialize();
   </script>
 </body>
 </html>
