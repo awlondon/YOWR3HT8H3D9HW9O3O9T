@@ -857,7 +857,10 @@
         return { seeds, idx, glyphOnly: true };
       }
 
-      const cap = window.HLSF.config.fullSeedCap || 64;
+      const configuredCap = Number(window.HLSF.config.fullSeedCap);
+      const cap = Number.isFinite(configuredCap) && configuredCap > 0
+        ? Math.min(configuredCap, idx.size)
+        : idx.size;
       return { seeds: defaultSeeds(idx, cap), idx };
     }
 
@@ -1552,7 +1555,7 @@
       fillFaces: false,
       whiteBg: false,
       showEnglish: true,
-      fullSeedCap: 64,
+      fullSeedCap: 0,
       relationTypeCap: MAX_REL_TYPES,
       edgesPerType: 3,
       edgeWidth: 1.2,
