@@ -1090,9 +1090,6 @@
     const GLYPH_SEP = " "; // delimiter between glyph-weight pairs
     const NUM_FMT = n => Number(n).toString(); // unlimited precision as given
 
-    const TokenToGlyph = new Map();
-    const GlyphToToken = new Map();
-
     function hydrateLedgerMaps(ledger) {
       TokenToGlyph.clear();
       GlyphToToken.clear();
