@@ -1038,7 +1038,6 @@
       const legacySeeds = Array.isArray(options?.seeds) ? options.seeds : undefined;
       const anchors = anchorsInput ?? fallbackAnchors ?? legacySeeds ?? [];
       const graph = { nodes: new Map(), edges: [], anchors: [...anchors] };
-      graph.seeds = graph.anchors;
       const outSet = new Set();
       const inSet = new Set();
       const metricsState = { edgeTypeEnums: 0 };
@@ -1107,7 +1106,7 @@
           }
         }
         if (!opts.silent && expanded % 1000 === 0) {
-          logPhase('tick', { expanded, queued: Math.max(0, queue.length - head), nodes: graph.nodes.size, edges: graph.edges.length });
+          logPhase('tick', { expanded, queued: Math.max(0, queue.length - head), nodes: graph.nodes.size, link_instances: graph.edges.length });
           await microtask();
         }
       }
@@ -1230,9 +1229,9 @@
     }
 
     function legacyPositions(graph, width, height, scale, centerX, centerY) {
-      const anchors = graph.anchors && graph.anchors.length
+      const anchorList = Array.isArray(graph?.anchors) && graph.anchors.length
         ? graph.anchors
-        : graph.seeds && graph.seeds.length
+        : Array.isArray(graph?.seeds) && graph.seeds.length
           ? graph.seeds
           : [...graph.nodes.keys()].slice(0, 1);
       const pos = new Map();
@@ -1243,8 +1242,8 @@
       const cx = Number.isFinite(centerX) ? centerX : width / 2;
       const cy = Number.isFinite(centerY) ? centerY : height / 2;
 
-      anchors.forEach((token, idx) => {
-        const angle = (idx / Math.max(1, anchors.length)) * Math.PI * 2 + rotation;
+      anchorList.forEach((token, idx) => {
+        const angle = (idx / Math.max(1, anchorList.length)) * Math.PI * 2 + rotation;
         const x = cx + Rc * Math.cos(angle);
         const y = cy + Rc * Math.sin(angle);
         pos.set(token, { x, y });
@@ -1426,6 +1425,7 @@
         ? { bg: '#fff', fg: '#000', hint: '#444' }
         : { bg: '#000', fg: '#fff', hint: '#bbb' };
       const edgeColorMode = normalizeEdgeColorMode(cfg.edgeColorMode);
+      const edgeWidthControl = document.getElementById('edgew');
       const edgeWidth = clampEdgeWidth(cfg.edgeWidth);
       const nodeScale = clampNodeSize(cfg.nodeSize);
       const showGlow = cfg.showNodeGlow === true;
@@ -1456,7 +1456,9 @@
       ctx.strokeStyle = theme.fg;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.lineWidth = Math.max(0.005, edgeWidth) * dpr;
+      const controlValue = edgeWidthControl ? parseFloat(edgeWidthControl.value) : NaN;
+      const edgeWidthValue = Number.isFinite(controlValue) ? controlValue : edgeWidth;
+      ctx.lineWidth = Math.max(0.005, edgeWidthValue) * dpr;
       const fontScale = Math.max(0.6, Math.min(2.5, Math.sqrt(zoom)));
       ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
 
@@ -1490,8 +1492,9 @@
           const fromPos = rotatedPositions.get(edge.from) || rotatedPositions.get(edge.to);
           const toPos = rotatedPositions.get(edge.to);
           if (!fromPos || !toPos) continue;
-          const dx = (toPos.x - fromPos.x) * zoom;
-          const dy = (toPos.y - fromPos.y) * zoom;
+          const viewScale = window.HLSF?.view?.scale ?? zoom;
+          const dx = (toPos.x - fromPos.x) * viewScale;
+          const dy = (toPos.y - fromPos.y) * viewScale;
           if ((dx * dx + dy * dy) < 0.25) continue;
           const strokeColor = compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
           if (!batches.has(strokeColor)) batches.set(strokeColor, []);
@@ -1721,7 +1724,7 @@
     function clampEdgeWidth(value) {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return 0.02;
-      return Math.min(0.1, Math.max(0.005, numeric));
+      return Math.min(0.1, Math.max(0.01, numeric));
     }
 
     function clampNodeSize(value) {
@@ -3122,7 +3125,7 @@
       return appendLog(`<div class="processing-indicator"><span class="spinner"></span>${sanitize(msg)}</div>`, 'status');
     }
     function logError(msg) { return appendLog(`🔴 ${sanitize(msg)}`, 'error'); }
-    function logSuccess(msg) { return appendLog(`✅ ${sanitize(msg)}`, 'success'); }
+    window.logOK = (msg) => addLog(`✅ ${sanitize(String(msg))}`, 'success');
     function logWarning(msg) { return appendLog(`⚠️ ${sanitize(msg)}`, 'warning'); }
     function logFinal(msg) { return appendLog(`✅ ${sanitize(msg)}`, 'success'); }
 
@@ -4029,7 +4032,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       // Start animation
       animateLegacyHLSF();
       
-      logSuccess(`HLSF visualization initialized with ${hlsfNodes.length} token matrices`);
+      logOK(`HLSF visualization initialized with ${hlsfNodes.length} token matrices`);
       
       } catch (err) {
         logError(`Failed to initialize HLSF canvas: ${err.message}`);
@@ -4518,7 +4521,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      logSuccess(`Database metadata exported: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships, ${(new Blob([JSON.stringify(exportData)]).size / 1024).toFixed(1)}KB`);
+      logOK(`Database metadata exported: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships, ${(new Blob([JSON.stringify(exportData)]).size / 1024).toFixed(1)}KB`);
     }
 
     async function importHLSFDBFromFile(file) {
@@ -4594,7 +4597,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (skipped > 0) summary.push(`${skipped} existing tokens kept`);
         if (!summary.length) summary.push('no cache changes');
 
-        logSuccess(`Database imported from ${source}: ${summary.join(', ')}, normalized ${normalizedCount} tokens`);
+        logOK(`Database imported from ${source}: ${summary.join(', ')}, normalized ${normalizedCount} tokens`);
 
         if (data?.database_stats) {
           addLog(`<div class="adjacency-insight">
@@ -5025,16 +5028,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         };
         syncHlsfControls(document.getElementById('hlsf-canvas-container'));
         const suffix = originalArgs ? ` ${originalArgs}` : '';
-        const metrics = ensureGraphMetrics(graph);
-        logOK(`/hlsf${suffix} → nodes ${metrics.nodes}, edges ${metrics.edges}, relationships ${metrics.relationships}, anchors ${metrics.anchors}`);
+        const m = graph?._metrics || ensureGraphMetrics(graph);
+        logOK(`/hlsf${suffix} → nodes ${m.nodes}, edges ${m.edges}, relationships ${m.relationships}, anchors ${m.anchors}`);
 
         if (loggingActive) {
           BatchLog.phase('hlsf', 'end', {
             total_ms: (performance.now() - start) | 0,
-            nodes: metrics.nodes,
-            edges: metrics.edges,
-            relationships: metrics.relationships,
-            anchors: metrics.anchors,
+            nodes: m.nodes,
+            edges: m.edges,
+            relationships: m.relationships,
+            anchors: m.anchors,
           });
         }
       } finally {
@@ -5070,8 +5073,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         syncHlsfControls(document.getElementById('hlsf-canvas-container'));
         if (logUpdate) {
           const suffix = last.rawArgs ? ` ${last.rawArgs}` : '';
-          const metrics = ensureGraphMetrics(graph);
-          logStatus(`↻ /hlsf${suffix} → nodes ${metrics.nodes}, edges ${metrics.edges}, relationships ${metrics.relationships}, anchors ${metrics.anchors}`);
+          const m = graph?._metrics || ensureGraphMetrics(graph);
+          logStatus(`↻ /hlsf${suffix} → nodes ${m.nodes}, edges ${m.edges}, relationships ${m.relationships}, anchors ${m.anchors}`);
         }
         return graph;
       } catch (err) {
@@ -5256,7 +5259,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       switch (command.toLowerCase()) {
         case 'clear':
           elements.log.innerHTML = '';
-          logSuccess('Log cleared');
+          logOK('Log cleared');
           break;
         case 'reset':
           if (confirm('Clear all cached data?')) {
@@ -5275,7 +5278,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             }
             Session.tokens.clear();
             updateStats();
-            logSuccess(`Cleared ${keys.length} tokens`);
+            logOK(`Cleared ${keys.length} tokens`);
           }
           break;
         case 'stats':
@@ -5448,7 +5451,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           </div>
         `);
         
-        logSuccess(`Processing complete (${time}s)`);
+        logOK(`Processing complete (${time}s)`);
 
       } catch (err) {
         if (err.name === 'AbortError' || err.message === 'AbortError') {
@@ -5483,7 +5486,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (!persisted) {
         logWarning('API key configured but not saved to storage');
       }
-      logSuccess('API key configured');
+      logOK('API key configured');
     }
 
     elements.apiConfirmBtn.addEventListener('click', applyApiKeyFromModal);
@@ -5545,7 +5548,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         state.apiKey = storedKey.trim();
         elements.apiKeyInput.value = state.apiKey;
         elements.apiModal.classList.add('hidden');
-        logSuccess('Loaded stored API key');
+        logOK('Loaded stored API key');
       } else if (storedKey) {
         safeStorageRemove(API_KEY_STORAGE_KEY);
       }
