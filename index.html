@@ -1826,10 +1826,11 @@
 
     function saveToCache(token, data) {
       try {
-        const payload = JSON.stringify({
+        const payloadData = {
           ...data,
-          cached_at: new Date().toISOString()
-        });
+          cached_at: new Date().toISOString(),
+        };
+        const payload = JSON.stringify(payloadData);
         const ok = safeStorageSet(getCacheKey(token), payload);
         if (!ok) return;
         updateTokenIndex(token);
@@ -1953,7 +1954,9 @@
       }
 
       const cached = getFromCache(token);
-      if (cached) return { ...cached, cache_hit: true };
+      if (cached) {
+        return { ...cached, cache_hit: true };
+      }
 
       if (!state.apiKey) return { token, relationships: {}, offline: true };
 
@@ -3573,7 +3576,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const trimmed = (input || '').trim();
       if (!trimmed) return false;
 
-      const [raw, ...rest] = trimmed.split(/\s+/);
+      const parts = trimmed.split(/\s+/);
+      const [raw, ...rest] = parts;
       const command = raw.startsWith('/') ? raw.toLowerCase() : `/${raw.toLowerCase()}`;
       const arg = rest.join(' ').trim();
 
@@ -3595,7 +3599,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const handled = await safeAsync(() => dispatchCommand(trimmed), `Command dispatch failed for ${trimmed}`);
       if (handled) return;
 
-      const [command, ...args] = trimmed.slice(1).split(/\s+/);
+      const segments = trimmed.slice(1).split(/\s+/);
+      const [command, ...args] = segments;
 
       if (!command) {
         logError('Unknown command');
