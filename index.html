@@ -294,7 +294,7 @@
     #hlsf-canvas {
       width: 100%;
       height: 600px;
-      background: radial-gradient(circle at center, #0a0a0a 0%, #000 100%);
+      background: transparent;
       border-radius: 8px;
       cursor: grab;
     }
@@ -629,7 +629,10 @@
         : { bg: '#000', fg: '#fff', hint: '#bbb' };
 
       ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
       ctx.fillStyle = theme.bg;
+      ctx.strokeStyle = theme.fg;
       ctx.fillRect(0, 0, w, h);
 
       const geo = getCachedO20Layout(w, h);
@@ -637,7 +640,6 @@
       const cosR = Math.cos(rotation);
       const sinR = Math.sin(rotation);
 
-      ctx.strokeStyle = theme.fg;
       ctx.fillStyle = theme.fg;
       ctx.lineWidth = 1.2;
       ctx.font = "12px 'Fira Code', monospace";
@@ -792,6 +794,7 @@
         globalRotation: 0,
         showEdges: true,
         showLabels: true,
+        fillFaces: false,
         whiteBg: false,
       },
       canvas: null,
@@ -2092,34 +2095,24 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
 
+    function strokePolygon(ctx, verts) {
+      if (!verts || verts.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(verts[0][0], verts[0][1]);
+      for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i][0], verts[i][1]);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    function strokeTriangles(ctx, tris) {
+      if (!tris) return;
+      for (const t of tris) strokePolygon(ctx, t);
+    }
+
     function worldToScreen(x, y) {
       const sx = x * (200 * window.HLSF.config.scale) + window.HLSF.config.tx;
       const sy = -y * (200 * window.HLSF.config.scale) + window.HLSF.config.ty;
       return [sx, sy];
-    }
-
-    function drawTriangle(tri, fillColor, strokeColor) {
-      const ctx = window.HLSF.ctx;
-      const p0 = worldToScreen(tri[0][0], tri[0][1]);
-      const p1 = worldToScreen(tri[1][0], tri[1][1]);
-      const p2 = worldToScreen(tri[2][0], tri[2][1]);
-      
-      ctx.beginPath();
-      ctx.moveTo(p0[0], p0[1]);
-      ctx.lineTo(p1[0], p1[1]);
-      ctx.lineTo(p2[0], p2[1]);
-      ctx.closePath();
-      
-      if (fillColor) {
-        ctx.fillStyle = fillColor;
-        ctx.fill();
-      }
-      
-      if (strokeColor && window.HLSF.config.showEdges) {
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
     }
 
     function renderLegacyHLSF() {
@@ -2127,94 +2120,105 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         console.warn('Canvas not initialized for renderHLSF');
         return;
       }
-      
+
       try {
         const ctx = window.HLSF.ctx;
         const width = window.HLSF.canvas.width;
         const height = window.HLSF.canvas.height;
-      
-      // Clear canvas
-      ctx.fillStyle = window.HLSF.config.whiteBg ? '#ffffff' : '#0a0a0a';
-      ctx.fillRect(0, 0, width, height);
-      
-      // Draw grid
-      ctx.strokeStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.05)' : 'rgba(0, 255, 136, 0.05)';
-      ctx.lineWidth = 1;
-      for (let x = 0; x < width; x += 50) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-        ctx.stroke();
-      }
-      for (let y = 0; y < height; y += 50) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
-      }
-      
-      // Draw each node's triangles
-      for (const node of window.HLSF.nodes) {
-        const [r, g, b] = node.color;
-        const fillColor = `rgba(${r}, ${g}, ${b}, ${window.HLSF.config.alpha})`;
-        const strokeColor = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.3)';
+        const theme = window.HLSF.config.whiteBg
+          ? { bg: '#ffffff', fg: '#000000', grid: 'rgba(0, 0, 0, 0.05)' }
+          : { bg: '#0a0a0a', fg: '#ffffff', grid: 'rgba(0, 255, 136, 0.05)' };
 
-        let triangles = node.triangles;
-        let vertices = node.vertices;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = theme.bg;
+        ctx.strokeStyle = theme.fg;
+        ctx.lineWidth = 1;
 
-        // Apply rotation if active
-        if (window.HLSF.config.emergentActive) {
-          triangles = rotateTrianglesAround(node.triangles, node.center, node.localRotation);
-          vertices = rotatePointsAround(node.vertices, node.center, node.localRotation);
-        } else if (window.HLSF.config.rotationActive) {
-          triangles = rotateTrianglesAround(node.triangles, [0, 0], window.HLSF.config.globalRotation);
-          vertices = rotatePointsAround(node.vertices, [0, 0], window.HLSF.config.globalRotation);
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.strokeStyle = theme.grid;
+        for (let x = 0; x < width; x += 50) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+        }
+        for (let y = 0; y < height; y += 50) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
         }
 
-        for (const tri of triangles) {
-          drawTriangle(tri, fillColor, strokeColor);
+        ctx.strokeStyle = theme.fg;
+        const edgeWidth = 1.2;
+        if (window.HLSF.config.fillFaces === true) {
+          /* intentionally unused now */
         }
 
-        if (window.HLSF.config.showEdges && vertices.length > 1) {
-          const anchorIndex = typeof node.anchorIndex === 'number' ? node.anchorIndex : 0;
-          const anchor = vertices[anchorIndex];
-          const [ax, ay] = worldToScreen(anchor[0], anchor[1]);
-          ctx.strokeStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.4)' : 'rgba(255, 255, 255, 0.35)';
-          ctx.lineWidth = 1.2;
-          for (let i = 0; i < vertices.length; i++) {
-            if (i === anchorIndex) continue;
-            const [vx, vy] = worldToScreen(vertices[i][0], vertices[i][1]);
-            ctx.beginPath();
-            ctx.moveTo(ax, ay);
-            ctx.lineTo(vx, vy);
-            ctx.stroke();
+        for (const node of window.HLSF.nodes) {
+          let triangles = node.triangles;
+          let vertices = node.vertices;
+
+          if (window.HLSF.config.emergentActive) {
+            triangles = rotateTrianglesAround(node.triangles, node.center, node.localRotation);
+            vertices = rotatePointsAround(node.vertices, node.center, node.localRotation);
+          } else if (window.HLSF.config.rotationActive) {
+            triangles = rotateTrianglesAround(node.triangles, [0, 0], window.HLSF.config.globalRotation);
+            vertices = rotatePointsAround(node.vertices, [0, 0], window.HLSF.config.globalRotation);
+          }
+
+          triangles = Array.isArray(triangles) ? triangles : [];
+          vertices = Array.isArray(vertices) ? vertices : [];
+
+          const screenTriangles = triangles.map(tri => tri.map(([x, y]) => worldToScreen(x, y)));
+          const screenVertices = vertices.map(([x, y]) => worldToScreen(x, y));
+
+          ctx.globalAlpha = window.HLSF.config.alpha;
+          ctx.strokeStyle = theme.fg;
+          ctx.lineWidth = edgeWidth;
+
+          strokePolygon(ctx, screenVertices);
+          strokeTriangles(ctx, screenTriangles);
+
+          if (window.HLSF.config.showEdges && screenVertices.length > 1) {
+            const anchorIndex = typeof node.anchorIndex === 'number' ? node.anchorIndex : 0;
+            const anchor = screenVertices[anchorIndex];
+            for (let i = 0; i < screenVertices.length; i++) {
+              if (i === anchorIndex) continue;
+              const [vx, vy] = screenVertices[i];
+              ctx.beginPath();
+              ctx.moveTo(anchor[0], anchor[1]);
+              ctx.lineTo(vx, vy);
+              ctx.stroke();
+            }
+          }
+
+          ctx.globalAlpha = 1;
+
+          if (window.HLSF.config.showLabels) {
+            const [sx, sy] = worldToScreen(node.center[0], node.center[1]);
+            const [r, g, b] = node.color;
+
+            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+            ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.glyph, sx, sy);
+
+            ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
+            ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
+            ctx.fillText(node.token, sx, sy + 25 * window.HLSF.config.scale);
           }
         }
 
-        // Draw glyph and label
-        if (window.HLSF.config.showLabels) {
-          const [sx, sy] = worldToScreen(node.center[0], node.center[1]);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 255, 136, 0.8)';
+        ctx.font = '12px Fira Code, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Nodes: ${window.HLSF.nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`, 10, 20);
 
-          // Draw glyph
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
-          ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(node.glyph, sx, sy);
-
-          // Draw token name
-          ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
-          ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
-          ctx.fillText(node.token, sx, sy + 25 * window.HLSF.config.scale);
-        }
-      }
-      
-      // Draw stats
-      ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 255, 136, 0.8)';
-      ctx.font = '12px Fira Code, monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText(`Nodes: ${window.HLSF.nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`, 10, 20);
-      
       } catch (err) {
         console.error('Error rendering HLSF:', err);
       }
