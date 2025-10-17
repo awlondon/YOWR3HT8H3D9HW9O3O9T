@@ -653,14 +653,27 @@
     function edgesFrom(rec) {
       if (!rec) return [];
       const matrix = buildMatrixForRecord(rec);
-      return matrix.edges
-        .slice(0, 10)
-        .map(e => ({ rtype: e.rtype, to: e.items[0]?.token, w: e.aggWeight }))
-        .filter(edge => edge.to);
+      const relationCap = clampRelationTypeCap(window.HLSF.config?.relationTypeCap);
+      const perType = clampEdgesPerType(window.HLSF.config?.edgesPerType);
+      const relations = (matrix?.edges || []).slice(0, relationCap);
+      const out = [];
+      for (const relation of relations) {
+        const items = Array.isArray(relation?.items) ? relation.items.slice(0, perType) : [];
+        for (const item of items) {
+          const target = item?.token;
+          if (!target) continue;
+          const weight = Number.isFinite(item?.weight)
+            ? item.weight
+            : Number.isFinite(item?.w)
+              ? item.w
+              : relation?.aggWeight;
+          out.push({ rtype: relation?.rtype, to: target, w: Number(weight) || 0 });
+        }
+      }
+      return out;
     }
 
     function assembleGraphFromSeeds(seeds, depthFloat, idx) {
-      const MAX_REL = 10;
       const graph = { nodes: new Map(), edges: [], seeds: [...seeds] };
       const seen = new Set();
       const q = [];
@@ -669,7 +682,7 @@
         const rec = idx.get(seed);
         if (!rec) continue;
         graph.nodes.set(seed, { token: seed, f: rec.f || rec.frequency || 1 });
-        edgesFrom(rec).slice(0, MAX_REL).forEach(e => {
+        edgesFrom(rec).forEach(e => {
           q.push({ from: seed, to: e.to, w: e.w, rtype: e.rtype, depth: 1 });
         });
       }
@@ -689,7 +702,7 @@
           if (d < full) {
             const rec = idx.get(edge.to);
             if (!rec) continue;
-            edgesFrom(rec).slice(0, MAX_REL).forEach(ne => {
+            edgesFrom(rec).forEach(ne => {
               const key = `${edge.to}→${ne.to}·${ne.rtype}`;
               if (seen.has(key)) return;
               seen.add(key);
@@ -998,42 +1011,327 @@
       }
     }
 
+    const MAX_REL_TYPES = 50;
+    const MAX_EDGES_PER_TYPE = 10;
+
+    function clampRelationTypeCap(value) {
+      const numeric = Math.floor(Number(value));
+      if (!Number.isFinite(numeric)) return MAX_REL_TYPES;
+      return Math.min(MAX_REL_TYPES, Math.max(1, numeric));
+    }
+
+    function clampEdgesPerType(value) {
+      const numeric = Math.floor(Number(value));
+      if (!Number.isFinite(numeric)) return 3;
+      return Math.min(MAX_EDGES_PER_TYPE, Math.max(1, numeric));
+    }
+
     function ensureHLSFCanvas() {
-      let canvas = document.getElementById('hlsf-canvas');
+      let wrapper = document.getElementById('hlsf-canvas-container');
+      if (wrapper) {
+        wrapper.style.display = '';
+      } else {
+        if (!elements?.log) {
+          console.warn('Log element not ready for HLSF canvas');
+          return null;
+        }
+
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
+
+        wrapper = document.createElement('div');
+        wrapper.id = 'hlsf-canvas-container';
+        wrapper.className = 'hlsf-canvas-container';
+        wrapper.innerHTML = `
+          <div class="section-title">🔭 HLSF Matrix Visualizer</div>
+          <canvas id="hlsf-canvas"></canvas>
+          <div class="hlsf-controls">
+            <div class="hlsf-control-group">
+              <label for="hlsf-rotation-speed">Rotation speed <span id="hlsf-speed-val">0.00</span></label>
+              <input id="hlsf-rotation-speed" type="range" min="-2" max="2" step="0.01" value="0.30">
+            </div>
+            <div class="hlsf-control-group">
+              <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.70</span></label>
+              <input id="hlsf-alpha" type="range" min="0.01" max="0.99" step="0.01" value="0.70">
+            </div>
+            <div class="hlsf-control-group">
+              <label for="hlsf-relation-cap">Relation types <span id="hlsf-relation-cap-val">${MAX_REL_TYPES}</span></label>
+              <input id="hlsf-relation-cap" type="number" min="1" max="${MAX_REL_TYPES}" step="1" value="${MAX_REL_TYPES}">
+            </div>
+            <div class="hlsf-control-group">
+              <label for="hlsf-edges-per-type">Edges per type <span id="hlsf-edges-per-type-val">3</span></label>
+              <input id="hlsf-edges-per-type" type="number" min="1" max="${MAX_EDGES_PER_TYPE}" step="1" value="3">
+            </div>
+            <div class="hlsf-control-group">
+              <label>Display options</label>
+              <div class="hlsf-button-row">
+                <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
+                <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
+                <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
+              </div>
+            </div>
+            <div class="hlsf-control-group">
+              <label>Rotation modes</label>
+              <div class="hlsf-button-row">
+                <button id="hlsf-toggle-rotation" class="btn btn-secondary">Start Global</button>
+                <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergent</button>
+              </div>
+            </div>
+            <div class="hlsf-control-group">
+              <label>View</label>
+              <div class="hlsf-button-row">
+                <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
+                <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
+                <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
+              </div>
+            </div>
+          </div>
+        `;
+
+        entry.appendChild(wrapper);
+        elements.log.appendChild(entry);
+        elements.log.scrollTop = elements.log.scrollHeight;
+      }
+
+      const canvas = /** @type {HTMLCanvasElement|null} */ (wrapper.querySelector('#hlsf-canvas'));
       if (canvas) {
         window.HLSF.canvas = canvas;
         window.HLSF.ctx = canvas.getContext('2d');
-        const wrapper = canvas.closest('.hlsf-canvas-container');
-        if (wrapper) wrapper.style.display = 'block';
-        return canvas;
       }
 
-      if (!elements?.log) {
-        console.warn('Log element not ready for HLSF canvas');
-        return null;
-      }
+      bindHlsfControls(wrapper);
+      syncHlsfControls(wrapper);
 
-      const entry = document.createElement('div');
-      entry.className = 'log-entry';
-      entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
-
-      const container = document.createElement('div');
-      container.className = 'hlsf-canvas-container';
-      container.innerHTML = `
-        <div class="section-title">🔭 HLSF Matrix Visualizer</div>
-        <canvas id="hlsf-canvas"></canvas>
-      `;
-
-      entry.appendChild(container);
-      elements.log.appendChild(entry);
-      elements.log.scrollTop = elements.log.scrollHeight;
-
-      canvas = container.querySelector('#hlsf-canvas');
-      if (canvas) {
-        window.HLSF.canvas = canvas;
-        window.HLSF.ctx = canvas.getContext('2d');
-      }
       return canvas;
+    }
+
+    function bindHlsfControls(wrapper) {
+      if (!wrapper || wrapper.dataset.controlsBound === 'true') return;
+
+      const canvas = wrapper.querySelector('#hlsf-canvas');
+      if (canvas) {
+        window.HLSF.canvas = canvas;
+        window.HLSF.ctx = canvas.getContext('2d');
+      }
+
+      const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
+      const speedVal = wrapper.querySelector('#hlsf-speed-val');
+      if (speedSlider && speedVal) {
+        speedSlider.addEventListener('input', (e) => {
+          const next = parseFloat(e.target.value);
+          if (!Number.isFinite(next)) return;
+          window.HLSF.config.rotationOmega = next;
+          speedVal.textContent = next.toFixed(2);
+          debouncedLegacyRender();
+        });
+      }
+
+      const alphaSlider = wrapper.querySelector('#hlsf-alpha');
+      const alphaVal = wrapper.querySelector('#hlsf-alpha-val');
+      if (alphaSlider && alphaVal) {
+        alphaSlider.addEventListener('input', (e) => {
+          const raw = parseFloat(e.target.value);
+          const next = clampAlpha(raw);
+          if (!Number.isFinite(next)) {
+            logError('Alpha value must be numeric.');
+            return;
+          }
+          window.HLSF.config.alpha = next;
+          alphaVal.textContent = next.toFixed(2);
+          if (Math.abs(next - parseFloat(alphaSlider.value)) > 1e-6) {
+            alphaSlider.value = next.toFixed(2);
+          }
+          debouncedLegacyRender();
+        });
+      }
+
+      const relationInput = wrapper.querySelector('#hlsf-relation-cap');
+      const relationVal = wrapper.querySelector('#hlsf-relation-cap-val');
+      if (relationInput) {
+        relationInput.addEventListener('input', () => {
+          const next = clampRelationTypeCap(relationInput.value);
+          window.HLSF.config.relationTypeCap = next;
+          relationInput.value = String(next);
+          if (relationVal) relationVal.textContent = String(next);
+          rebuildHlsfFromLastCommand(true);
+        });
+      }
+
+      const edgesInput = wrapper.querySelector('#hlsf-edges-per-type');
+      const edgesVal = wrapper.querySelector('#hlsf-edges-per-type-val');
+      if (edgesInput) {
+        edgesInput.addEventListener('input', () => {
+          const next = clampEdgesPerType(edgesInput.value);
+          window.HLSF.config.edgesPerType = next;
+          edgesInput.value = String(next);
+          if (edgesVal) edgesVal.textContent = String(next);
+          rebuildHlsfFromLastCommand(true);
+        });
+      }
+
+      const zoomIn = wrapper.querySelector('#hlsf-zoom-in');
+      if (zoomIn) {
+        zoomIn.addEventListener('click', () => {
+          window.HLSF.config.scale *= 1.2;
+          debouncedLegacyRender();
+        });
+      }
+
+      const zoomOut = wrapper.querySelector('#hlsf-zoom-out');
+      if (zoomOut) {
+        zoomOut.addEventListener('click', () => {
+          window.HLSF.config.scale *= 0.8;
+          debouncedLegacyRender();
+        });
+      }
+
+      const reset = wrapper.querySelector('#hlsf-reset-view');
+      if (reset) {
+        reset.addEventListener('click', () => {
+          const canvasEl = window.HLSF.canvas;
+          window.HLSF.config.scale = 1;
+          if (canvasEl) {
+            window.HLSF.config.tx = canvasEl.width / 2;
+            window.HLSF.config.ty = canvasEl.height / 2;
+          } else {
+            window.HLSF.config.tx = 0;
+            window.HLSF.config.ty = 0;
+          }
+          debouncedLegacyRender();
+        });
+      }
+
+      const rotationBtn = wrapper.querySelector('#hlsf-toggle-rotation');
+      if (rotationBtn) {
+        rotationBtn.addEventListener('click', () => {
+          window.HLSF.config.rotationActive = !window.HLSF.config.rotationActive;
+          if (window.HLSF.config.rotationActive) {
+            window.HLSF.config.emergentActive = false;
+          }
+          syncHlsfControls(wrapper);
+        });
+      }
+
+      const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
+      if (emergentBtn) {
+        emergentBtn.addEventListener('click', () => {
+          window.HLSF.config.emergentActive = !window.HLSF.config.emergentActive;
+          if (window.HLSF.config.emergentActive) {
+            window.HLSF.config.rotationActive = false;
+          }
+          syncHlsfControls(wrapper);
+        });
+      }
+
+      const edgesBtn = wrapper.querySelector('#hlsf-toggle-edges');
+      if (edgesBtn) {
+        edgesBtn.addEventListener('click', () => {
+          window.HLSF.config.showEdges = !window.HLSF.config.showEdges;
+          edgesBtn.textContent = window.HLSF.config.showEdges ? 'Edges: On' : 'Edges: Off';
+          debouncedLegacyRender();
+        });
+      }
+
+      const labelsBtn = wrapper.querySelector('#hlsf-toggle-labels');
+      if (labelsBtn) {
+        labelsBtn.addEventListener('click', () => {
+          window.HLSF.config.showLabels = !window.HLSF.config.showLabels;
+          labelsBtn.textContent = window.HLSF.config.showLabels ? 'Labels: On' : 'Labels: Off';
+          debouncedLegacyRender();
+        });
+      }
+
+      const bgBtn = wrapper.querySelector('#hlsf-toggle-bg');
+      if (bgBtn) {
+        bgBtn.addEventListener('click', () => {
+          window.HLSF.config.whiteBg = !window.HLSF.config.whiteBg;
+          bgBtn.textContent = window.HLSF.config.whiteBg ? 'BG: Light' : 'BG: Dark';
+          debouncedLegacyRender();
+        });
+      }
+
+      const canvasEl = wrapper.querySelector('#hlsf-canvas');
+      if (canvasEl) {
+        let isDragging = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        canvasEl.addEventListener('mousedown', (e) => {
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        window.addEventListener('mouseup', () => {
+          isDragging = false;
+        });
+
+        canvasEl.addEventListener('mousemove', (e) => {
+          if (!isDragging) return;
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          window.HLSF.config.tx += dx;
+          window.HLSF.config.ty += dy;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          debouncedLegacyRender();
+        });
+
+        canvasEl.addEventListener('mouseleave', () => {
+          isDragging = false;
+        });
+      }
+
+      wrapper.dataset.controlsBound = 'true';
+    }
+
+    function syncHlsfControls(wrapper) {
+      if (!wrapper) return;
+
+      const config = window.HLSF.config || {};
+      const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
+      const speedVal = wrapper.querySelector('#hlsf-speed-val');
+      const omega = Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0;
+      window.HLSF.config.rotationOmega = omega;
+      if (speedSlider) speedSlider.value = omega.toFixed(2);
+      if (speedVal) speedVal.textContent = omega.toFixed(2);
+
+      const alphaSlider = wrapper.querySelector('#hlsf-alpha');
+      const alphaVal = wrapper.querySelector('#hlsf-alpha-val');
+      const alpha = clampAlpha(config.alpha);
+      window.HLSF.config.alpha = alpha;
+      if (alphaSlider) alphaSlider.value = alpha.toFixed(2);
+      if (alphaVal) alphaVal.textContent = alpha.toFixed(2);
+
+      const relationInput = wrapper.querySelector('#hlsf-relation-cap');
+      const relationVal = wrapper.querySelector('#hlsf-relation-cap-val');
+      const relationCap = clampRelationTypeCap(config.relationTypeCap);
+      window.HLSF.config.relationTypeCap = relationCap;
+      if (relationInput) relationInput.value = String(relationCap);
+      if (relationVal) relationVal.textContent = String(relationCap);
+
+      const edgesInput = wrapper.querySelector('#hlsf-edges-per-type');
+      const edgesVal = wrapper.querySelector('#hlsf-edges-per-type-val');
+      const edgesPerType = clampEdgesPerType(config.edgesPerType);
+      window.HLSF.config.edgesPerType = edgesPerType;
+      if (edgesInput) edgesInput.value = String(edgesPerType);
+      if (edgesVal) edgesVal.textContent = String(edgesPerType);
+
+      const rotationBtn = wrapper.querySelector('#hlsf-toggle-rotation');
+      if (rotationBtn) rotationBtn.textContent = config.rotationActive ? 'Stop Global' : 'Start Global';
+
+      const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
+      if (emergentBtn) emergentBtn.textContent = config.emergentActive ? 'Stop Emergent' : 'Start Emergent';
+
+      const edgesBtn = wrapper.querySelector('#hlsf-toggle-edges');
+      if (edgesBtn) edgesBtn.textContent = config.showEdges ? 'Edges: On' : 'Edges: Off';
+
+      const labelsBtn = wrapper.querySelector('#hlsf-toggle-labels');
+      if (labelsBtn) labelsBtn.textContent = config.showLabels ? 'Labels: On' : 'Labels: Off';
+
+      const bgBtn = wrapper.querySelector('#hlsf-toggle-bg');
+      if (bgBtn) bgBtn.textContent = config.whiteBg ? 'BG: Light' : 'BG: Dark';
     }
 
     window.HLSF = window.HLSF || {};
@@ -1054,7 +1352,11 @@
       whiteBg: false,
       showEnglish: true,
       fullSeedCap: 64,
+      relationTypeCap: MAX_REL_TYPES,
+      edgesPerType: 3,
     }, existingConfig);
+    window.HLSF.config.relationTypeCap = clampRelationTypeCap(window.HLSF.config.relationTypeCap);
+    window.HLSF.config.edgesPerType = clampEdgesPerType(window.HLSF.config.edgesPerType);
     window.HLSF.state = Object.assign({
       globalRot: 0,
       emergentRot: 0,
@@ -3257,24 +3559,29 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return tokens;
     }
 
-    function encryptTextToGlyphs(plain) {
+    function encryptTextToGlyphs(plain, options = {}) {
+      const { persistUnknown = true } = options || {};
       const idx = dbIndex();
       const ledger = loadLedger();
       const words = (plain || '').trim().split(/\s+/).filter(Boolean);
       const out = [];
       const unknown = [];
       let covered = 0;
+      let mutated = false;
 
       for (const word of words) {
         const glyph = glyphForToken(word);
         const weight = tokenWeight(word, idx);
-        ledgerAdd(ledger, glyph, word, weight);
+        if (persistUnknown || idx.has(word)) {
+          ledgerAdd(ledger, glyph, word, weight);
+          mutated = true;
+        }
         out.push(glyph + NUM_FMT(weight));
         if (idx.has(word)) covered++;
         else unknown.push(word);
       }
 
-      saveLedger(ledger);
+      if (mutated) saveLedger(ledger);
       const encrypted = out.join(GLYPH_SEP);
       const coverage = words.length ? (100 * covered / words.length).toFixed(1) : '0.0';
       return { encrypted, coverage, unknown };
@@ -3374,7 +3681,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         logError('Usage: /encrypt <text>');
         return;
       }
-      const { encrypted, coverage } = encryptTextToGlyphs(text);
+      const { encrypted, coverage } = encryptTextToGlyphs(text, { persistUnknown: true });
       logFinal(`🔐 ${encrypted}\nCoverage: ${coverage}%`);
     }
 
@@ -3448,9 +3755,32 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
       const depth = Number.isFinite(args.depth) ? args.depth : 3;
       const graph = assembleGraphFromSeeds(seeds, depth, idx);
+      window.HLSF.lastCommand = {
+        rawArgs,
+        args,
+        seeds: [...seeds],
+        idx,
+        glyphOnly: glyphOnly === true,
+        depth,
+      };
       animateComposite(graph, glyphOnly === true);
+      syncHlsfControls(document.getElementById('hlsf-canvas-container'));
       const suffix = rawArgs ? ` ${rawArgs}` : '';
       logFinal(`/hlsf${suffix} → nodes ${graph.nodes.size}, edges ${graph.edges.length}, seeds ${seeds.length}`);
+    }
+
+    function rebuildHlsfFromLastCommand(logUpdate = false) {
+      const last = window.HLSF?.lastCommand;
+      if (!last || !last.idx || !Array.isArray(last.seeds) || !last.seeds.length) return null;
+      const depth = Number.isFinite(last.depth) ? last.depth : 3;
+      const graph = assembleGraphFromSeeds(last.seeds, depth, last.idx);
+      animateComposite(graph, last.glyphOnly === true);
+      syncHlsfControls(document.getElementById('hlsf-canvas-container'));
+      if (logUpdate) {
+        const suffix = last.rawArgs ? ` ${last.rawArgs}` : '';
+        logStatus(`↻ /hlsf${suffix} → nodes ${graph.nodes.size}, edges ${graph.edges.length}, seeds ${last.seeds.length}`);
+      }
+      return graph;
     }
 
     function cmdScheme(arg) {
