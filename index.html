@@ -598,6 +598,255 @@
       return matrices;
     }
 
+    function parseHlsfArgs(str) {
+      const out = { mode: 'full', tokens: [], glyphs: [], depth: 3.0 };
+      const s = (str || '').trim();
+      if (!s) return out;
+      if (/^--conversation$/i.test(s)) { out.mode = 'conversation'; return out; }
+      const m = s.match(/^--\[(.*)\]$/s);
+      if (!m) return out;
+      const parts = m[1].split(/\s*,\s*/).filter(Boolean);
+      for (const p of parts) {
+        const kv = p.split(/\s*=\s*/);
+        if (kv.length === 2 && /^recursionDepth$/i.test(kv[0])) {
+          out.depth = Math.max(0, parseFloat(kv[1]) || 0);
+          continue;
+        }
+        if (/^[\u2200-\u2BFF\u{1F300}-\u{1FAFF}]+$/u.test(p)) out.glyphs.push(p);
+        else out.tokens.push(p);
+      }
+      out.mode = out.glyphs.length ? 'glyphs' : 'tokens';
+      return out;
+    }
+
+    function buildIndex(db) {
+      const idx = new Map();
+      (db?.full_token_data || []).forEach(rec => {
+        if (rec?.token) idx.set(rec.token, rec);
+      });
+      return idx;
+    }
+
+    function edgesFrom(rec) {
+      if (!rec) return [];
+      const matrix = buildMatrixForRecord(rec);
+      return matrix.edges
+        .slice(0, 10)
+        .map(e => ({ rtype: e.rtype, to: e.items[0]?.token, w: e.aggWeight }))
+        .filter(edge => edge.to);
+    }
+
+    function assembleGraphFromSeeds(seeds, depthFloat, idx) {
+      const MAX_REL = 10;
+      const graph = { nodes: new Map(), edges: [], seeds: [...seeds] };
+      const seen = new Set();
+      const q = [];
+
+      for (const seed of seeds) {
+        const rec = idx.get(seed);
+        if (!rec) continue;
+        graph.nodes.set(seed, { token: seed, f: rec.f || rec.frequency || 1 });
+        edgesFrom(rec).slice(0, MAX_REL).forEach(e => {
+          q.push({ from: seed, to: e.to, w: e.w, rtype: e.rtype, depth: 1 });
+        });
+      }
+
+      const full = Math.floor(depthFloat);
+      for (let d = 1; d <= full; d++) {
+        const layer = q
+          .filter(e => e.depth === d)
+          .sort((a, b) => b.w - a.w);
+        const next = [];
+        for (const edge of layer) {
+          if (!graph.nodes.has(edge.to)) {
+            const rec = idx.get(edge.to);
+            graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1 });
+          }
+          graph.edges.push(edge);
+          if (d < full) {
+            const rec = idx.get(edge.to);
+            if (!rec) continue;
+            edgesFrom(rec).slice(0, MAX_REL).forEach(ne => {
+              const key = `${edge.to}→${ne.to}·${ne.rtype}`;
+              if (seen.has(key)) return;
+              seen.add(key);
+              next.push({ from: edge.to, to: ne.to, w: ne.w, rtype: ne.rtype, depth: d + 1 });
+            });
+          }
+        }
+        q.push(...next);
+      }
+
+      const frac = depthFloat - full;
+      if (frac > 0) {
+        const tail = q
+          .filter(e => e.depth === full + 1)
+          .sort((a, b) => b.w - a.w);
+        const k = Math.max(0, Math.floor(frac * tail.length));
+        for (let i = 0; i < k; i++) {
+          const edge = tail[i];
+          if (!graph.nodes.has(edge.to)) {
+            const rec = idx.get(edge.to);
+            graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1 });
+          }
+          graph.edges.push(edge);
+        }
+      }
+
+      return graph;
+    }
+
+    function seedsForMode(args) {
+      const db = getDb();
+      if (!db) throw new Error('No DB loaded');
+      loadGlyphMaps(db);
+      const idx = buildIndex(db);
+
+      if (args.mode === 'full') {
+        const all = [...idx.keys()];
+        const cap = window.HLSF.config.fullSeedCap || 64;
+        return { seeds: all.slice(0, cap), idx };
+      }
+
+      if (args.mode === 'conversation') {
+        const conv = [...Session.tokens];
+        if (!conv.length) throw new Error('No conversation tokens collected');
+        return { seeds: conv, idx };
+      }
+
+      if (args.mode === 'tokens') {
+        const valid = args.tokens.filter(t => idx.has(t));
+        if (!valid.length) throw new Error('No valid tokens');
+        return { seeds: valid, idx };
+      }
+
+      if (args.mode === 'glyphs') {
+        const tokens = args.glyphs.map(g => GlyphToToken.get(g)).filter(Boolean);
+        const valid = tokens.filter(t => idx.has(t));
+        if (!valid.length) throw new Error('No valid glyph-mapped tokens');
+        return { seeds: valid, idx, glyphOnly: true };
+      }
+
+      throw new Error('Unsupported mode');
+    }
+
+    function nodeLabel(token, glyphOnly = false) {
+      const glyph = TokenToGlyph.get(token);
+      if (glyphOnly && glyph) return glyph;
+      return glyph || token;
+    }
+
+    function edgeLabel(rtype) {
+      return window.HLSF.config.showEnglish
+        ? `${rtype} ${REL_EN[rtype] || ''}`.trim()
+        : rtype;
+    }
+
+    function drawComposite(graph, opts = {}) {
+      const cfg = window.HLSF.config;
+      const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
+      if (!canvas) {
+        console.warn('HLSF canvas element not found');
+        return;
+      }
+      const ctx = window.HLSF.ctx || (window.HLSF.ctx = canvas.getContext('2d'));
+      const width = canvas.width = canvas.clientWidth;
+      const height = canvas.height = canvas.clientHeight;
+      const theme = cfg.whiteBg
+        ? { bg: '#fff', fg: '#000', hint: '#444' }
+        : { bg: '#000', fg: '#fff', hint: '#bbb' };
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = theme.bg;
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = theme.fg;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      const seeds = graph.seeds && graph.seeds.length ? graph.seeds : [...graph.nodes.keys()].slice(0, 1);
+      const pos = new Map();
+      const cx = width / 2;
+      const cy = height / 2;
+      if (!window.HLSF.__centerInit) {
+        window.HLSF.config.tx = cx;
+        window.HLSF.config.ty = cy;
+        window.HLSF.__centerInit = true;
+      }
+      const centerX = Number.isFinite(window.HLSF.config.tx) ? window.HLSF.config.tx : cx;
+      const centerY = Number.isFinite(window.HLSF.config.ty) ? window.HLSF.config.ty : cy;
+      const scale = typeof cfg.scale === 'number' && cfg.scale > 0 ? cfg.scale : 1;
+      const fontScale = Math.max(0.6, Math.min(2.5, Math.sqrt(scale)));
+      ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
+      ctx.lineWidth = 1.1 * Math.max(0.6, Math.min(2.5, scale));
+      const Rc = Math.min(width, height) * 0.35 * scale;
+      const rotation = cfg.globalRotation || 0;
+
+      seeds.forEach((token, idx) => {
+        const angle = (idx / Math.max(1, seeds.length)) * Math.PI * 2 + rotation;
+        const x = centerX + Rc * Math.cos(angle);
+        const y = centerY + Rc * Math.sin(angle);
+        pos.set(token, { x, y });
+      });
+
+      const groupByRoot = new Map();
+      graph.edges.forEach(edge => {
+        if (!groupByRoot.has(edge.from)) groupByRoot.set(edge.from, []);
+        groupByRoot.get(edge.from).push(edge);
+      });
+
+      for (const [root, edges] of groupByRoot.entries()) {
+        const base = pos.get(root) || { x: centerX, y: centerY };
+        const R = Math.min(width, height) * 0.18 * scale;
+        edges
+          .slice(0, 10)
+          .sort((a, b) => b.w - a.w)
+          .forEach((edge, i) => {
+            const theta = Math.PI * (i / Math.max(1, edges.length - 1));
+            const x = base.x + R * Math.cos(theta);
+            const y = base.y - R * Math.sin(theta);
+            if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
+          });
+      }
+
+      const glyphOnly = opts.glyphOnly === true;
+      if (cfg.showEdges !== false) {
+        graph.edges.forEach(edge => {
+          const from = pos.get(edge.from) || pos.get(edge.to);
+          const to = pos.get(edge.to);
+          if (!from || !to) return;
+          const weight = Math.max(0.15, Math.min(1, edge.w || 0));
+          ctx.globalAlpha = weight * (cfg.alpha ?? 1);
+          ctx.beginPath();
+          ctx.moveTo(from.x, from.y);
+          ctx.lineTo(to.x, to.y);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          if (cfg.showLabels !== false) {
+            const mx = (from.x + to.x) / 2;
+            const my = (from.y + to.y) / 2;
+            ctx.fillStyle = theme.hint;
+            ctx.fillText(edgeLabel(edge.rtype), mx, my - 10 * scale);
+            ctx.fillStyle = theme.fg;
+          }
+        });
+      }
+
+      for (const [token, data] of graph.nodes.entries()) {
+        const position = pos.get(token) || { x: centerX, y: centerY };
+        const freq = typeof data.f === 'number' ? data.f : 1;
+        const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * scale);
+        ctx.beginPath();
+        ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        if (cfg.showLabels !== false) {
+          ctx.fillStyle = theme.fg;
+          ctx.fillText(nodeLabel(token, glyphOnly), position.x, position.y - (radius + 12 * scale));
+        }
+      }
+
+      ctx.restore();
+    }
+
     // ---------------- O20 layout ----------------
     function buildO20Layout(width, height, margin = 32) {
       const cx = width / 2;
@@ -641,124 +890,31 @@
     }
 
     // ---------------- Canvas renderer ----------------
-    function drawHLSFMatrix(matrix, opts = {}) {
-      if (!matrix) return;
-      const cfg = window.HLSF.config;
-      const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
-      if (!canvas) {
-        console.warn('HLSF canvas element not found');
-        return;
-      }
-      const ctx = window.HLSF.ctx || (window.HLSF.ctx = canvas.getContext('2d'));
-      if (!ctx) return;
-
-      const w = canvas.width = canvas.clientWidth || canvas.width;
-      const h = canvas.height = canvas.clientHeight || canvas.height;
-
-      const theme = cfg.whiteBg
-        ? { bg: '#fff', fg: '#000', hint: '#444' }
-        : { bg: '#000', fg: '#fff', hint: '#bbb' };
-
-      ctx.save();
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = theme.bg;
-      ctx.strokeStyle = theme.fg;
-      ctx.fillRect(0, 0, w, h);
-
-      const geo = getCachedO20Layout(w, h);
-      const rotation = cfg.globalRotation || 0;
-      const cosR = Math.cos(rotation);
-      const sinR = Math.sin(rotation);
-
-      ctx.fillStyle = theme.fg;
-      ctx.lineWidth = 1.2;
-      ctx.font = "12px 'Fira Code', monospace";
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
-      ctx.beginPath();
-      ctx.arc(geo.cx, geo.cy, 10, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillText(matrix.token, geo.cx, geo.cy - 20);
-
-      const edges = [...matrix.edges]
-        .sort((a, b) => (b.aggWeight ?? 0) - (a.aggWeight ?? 0))
-        .slice(0, 10);
-
-      const r0 = 6;
-      const k = 12;
-      const scale = cfg.scale || 1;
-      const freqInfo = applyFrequencyVisuals(matrix.f);
-      const edgeWidth = 0.6 + 2.4 * freqInfo.norm;
-
-      edges.forEach((edge, i) => {
-        const slot = geo.slots[i];
-        if (!slot) return;
-
-        const dx = slot.x - geo.cx;
-        const dy = slot.y - geo.cy;
-        const rx = geo.cx + dx * cosR - dy * sinR;
-        const ry = geo.cy + dx * sinR + dy * cosR;
-
-        const normalizedWeight = Math.sqrt(Math.max(0, edge.sizeWeight));
-        const radius = (r0 + k * (normalizedWeight + 0.75 * edge.count) / (Math.sqrt(10) + 7.5)) * scale;
-
-        ctx.globalAlpha = Math.min(1, Math.max(0.15, edge.aggWeight ?? 0));
-        ctx.lineWidth = edgeWidth;
-        ctx.beginPath();
-        ctx.moveTo(geo.cx, geo.cy);
-        ctx.lineTo(rx, ry);
-        ctx.stroke();
-
-        ctx.globalAlpha = 1;
-        ctx.lineWidth = edgeWidth;
-
-        if (freqInfo.isHigh) {
-          ctx.beginPath();
-          ctx.arc(rx, ry, radius + 2, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-
-        ctx.beginPath();
-        ctx.arc(rx, ry, radius, 0, Math.PI * 2);
-        ctx.stroke();
-
-        const top = edge.items?.[0]?.token || '';
-        const relName = cfg.showEnglish ? relDisplay(edge.rtype) : edge.rtype;
-        const label = `${relName} · ${top}${edge.count > 1 ? ` (+${edge.count - 1})` : ''}`;
-        ctx.fillStyle = theme.hint;
-        ctx.fillText(label, rx, ry - (radius + 12));
-        ctx.fillStyle = theme.fg;
-      });
-
-      ctx.restore();
+    function drawHLSFMatrix(graph, opts = {}) {
+      drawComposite(graph, opts);
     }
 
     let _anim = null;
-    function animateHLSF(matrix) {
-      if (!matrix) return;
+    function animateHLSF(graph, glyphOnly = false) {
+      if (!graph) return;
       const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
       if (!canvas) {
         console.warn('HLSF canvas element not found for animation');
         return;
       }
 
-      window.HLSF.currentMatrix = matrix;
+      window.HLSF.currentGraph = graph;
+      window.HLSF.currentGlyphOnly = glyphOnly;
       cancelAnimationFrame(_anim);
 
       const start = performance.now();
       (function loop(time) {
         const dt = (time - start) / 1000;
         if (window.HLSF.config.rotationActive) {
-          window.HLSF.config.globalRotation = (dt * (window.HLSF.config.rotationSpeed || 0.5)) % (2 * Math.PI);
+          window.HLSF.config.globalRotation = (dt * (window.HLSF.config.rotationSpeed || 0.3)) % (2 * Math.PI);
         }
 
-        const breathe = 1 + 0.05 * Math.sin(dt * 2);
-        const originalScale = window.HLSF.config.scale;
-        window.HLSF.config.scale = breathe;
-        drawHLSFMatrix(matrix);
-        window.HLSF.config.scale = originalScale;
+        drawComposite(graph, { glyphOnly });
 
         _anim = requestAnimationFrame(loop);
       })(performance.now());
@@ -768,6 +924,11 @@
       if (_anim) {
         cancelAnimationFrame(_anim);
         _anim = null;
+      }
+      if (window.HLSF) {
+        window.HLSF.currentGraph = null;
+        window.HLSF.currentGlyphOnly = false;
+        window.HLSF.__centerInit = false;
       }
       if (typeof stopLegacyHLSFAnimation === 'function') {
         try {
@@ -814,29 +975,53 @@
       return canvas;
     }
 
-    window.HLSF = window.HLSF || {
-      config: {
-        rotationSpeed: 0.5,
-        alpha: 0.3,
-        scale: 1,
-        tx: 0,
-        ty: 0,
-        rotationActive: false,
-        emergentActive: false,
-        globalRotation: 0,
-        showEdges: true,
-        showLabels: true,
-        fillFaces: false,
-        whiteBg: false,
-        showEnglish: true,
-      },
-      canvas: null,
-      ctx: null,
-      nodes: [],
-      animationFrame: null,
-      geometry: {},
-      rendering: {},
-    };
+    window.HLSF = window.HLSF || {};
+    window.HLSF.config = Object.assign({
+      rotationSpeed: 0.3,
+      alpha: 0.3,
+      scale: 1,
+      tx: 0,
+      ty: 0,
+      rotationActive: true,
+      emergentActive: false,
+      globalRotation: 0,
+      showEdges: true,
+      showLabels: true,
+      fillFaces: false,
+      whiteBg: false,
+      showEnglish: true,
+      fullSeedCap: 64,
+    }, window.HLSF.config || {});
+    window.HLSF.canvas = window.HLSF.canvas || null;
+    window.HLSF.ctx = window.HLSF.ctx || null;
+    window.HLSF.nodes = window.HLSF.nodes || [];
+    window.HLSF.animationFrame = window.HLSF.animationFrame || null;
+    window.HLSF.geometry = window.HLSF.geometry || {};
+    window.HLSF.rendering = window.HLSF.rendering || {};
+    window.HLSF.__centerInit = window.HLSF.__centerInit || false;
+
+    let TokenToGlyph = new Map();
+    let GlyphToToken = new Map();
+
+    function loadGlyphMaps(db) {
+      if (!db) return;
+      if (!(TokenToGlyph instanceof Map)) TokenToGlyph = new Map();
+      if (!(GlyphToToken instanceof Map)) GlyphToToken = new Map();
+      TokenToGlyph.clear();
+      GlyphToToken.clear();
+      (db.token_glyph_map || []).forEach(({ token, glyph }) => {
+        if (token && glyph) {
+          TokenToGlyph.set(token, glyph);
+          GlyphToToken.set(glyph, token);
+        }
+      });
+      (db.glyph_token_map || []).forEach(({ glyph, token }) => {
+        if (glyph && token) {
+          TokenToGlyph.set(token, glyph);
+          GlyphToToken.set(glyph, token);
+        }
+      });
+    }
 
     window.CognitionEngine = window.CognitionEngine || {
       state: {},
@@ -1040,6 +1225,17 @@
         .split(/[^\p{L}\p{N}\-']+/u)
         .filter(Boolean)
         .map(t => t.toLowerCase());
+    }
+
+    const Session = {
+      tokens: new Set(),
+    };
+
+    function addConversationTokens(arr) {
+      if (!Array.isArray(arr)) return;
+      for (const token of arr) {
+        if (token) Session.tokens.add(token);
+      }
     }
 
     function formatCurrency(cents) {
@@ -2309,7 +2505,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
 
-    const debouncedLegacyRender = debounce(() => renderLegacyHLSF(), 16);
+    const debouncedLegacyRender = debounce(() => {
+      if (window.HLSF?.currentGraph) {
+        drawComposite(window.HLSF.currentGraph, { glyphOnly: window.HLSF.currentGlyphOnly === true });
+      } else {
+        renderLegacyHLSF();
+      }
+    }, 16);
 
     function animateLegacyHLSF() {
       if (!window.HLSF.canvas || !window.HLSF.ctx) {
@@ -2992,48 +3194,30 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       elements.dbFileInput.click();
     }
 
-    function cmdHlsf(token) {
-      const target = (token || '').trim();
-      if (!target) {
-        logError('Usage: /hlsf <token>');
-        return;
+    function cmdHlsf(rawArgs) {
+      try {
+        const args = parseHlsfArgs(rawArgs);
+        const { seeds, idx, glyphOnly } = seedsForMode(args);
+        const uniqueSeeds = [...new Set(seeds)];
+        if (!uniqueSeeds.length) throw new Error('No seeds to visualize');
+        if (!ensureHLSFCanvas()) {
+          throw new Error('Unable to initialize canvas for HLSF rendering.');
+        }
+        const depth = typeof args.depth === 'number' ? args.depth : 3;
+        const graph = assembleGraphFromSeeds(uniqueSeeds, depth, idx);
+        animateHLSF(graph, glyphOnly === true);
+        const argLabel = rawArgs ? ` ${rawArgs}` : '';
+        logFinal(`/hlsf${argLabel} → nodes ${graph.nodes.size}, edges ${graph.edges.length}, mode ${args.mode}, depth ${depth}`);
+      } catch (err) {
+        logError(`/hlsf failed: ${err.message}`);
       }
-
-      const db = getDb();
-      if (!db) {
-        logError('No DB loaded. Use /import.');
-        return;
-      }
-
-      let matrices = window.HLSF.matrices;
-      if (!matrices || !matrices.size) {
-        matrices = buildHLSFMatrices(db);
-      }
-
-      let matrix = matrices.get(target);
-      if (!matrix) {
-        const altKey = [...matrices.keys()].find(k => k.toLowerCase() === target.toLowerCase());
-        if (altKey) matrix = matrices.get(altKey);
-      }
-      if (!matrix) {
-        logError(`Token not found: ${target}`);
-        return;
-      }
-
-      if (!ensureHLSFCanvas()) {
-        logError('Unable to initialize canvas for HLSF rendering.');
-        return;
-      }
-
-      animateHLSF(matrix);
-      logFinal(`HLSF matrix for "${target}" ready. Edges: ${matrix.edges.length}`);
     }
 
     function cmdScheme(arg) {
       const mode = (arg || '').toLowerCase();
       window.HLSF.config.whiteBg = mode === 'white';
-      if (window.HLSF.currentMatrix) {
-        animateHLSF(window.HLSF.currentMatrix);
+      if (window.HLSF.currentGraph) {
+        animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
       }
       logStatus(`Scheme: ${window.HLSF.config.whiteBg ? 'Black lines on white' : 'White lines on black'}`);
     }
@@ -3041,8 +3225,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     function cmdSpin(arg) {
       const value = (arg || '').toLowerCase();
       window.HLSF.config.rotationActive = /^(on|true|1)$/i.test(value) || (!value && true);
-      if (window.HLSF.currentMatrix && !_anim) {
-        animateHLSF(window.HLSF.currentMatrix);
+      if (window.HLSF.currentGraph && !_anim) {
+        animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
       }
       logStatus(`Rotation: ${window.HLSF.config.rotationActive ? 'on' : 'off'}`);
     }
@@ -3110,42 +3294,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     async function cmd_hlsf() {
-      const it = iterTokenRecords();
-      const first = it.next();
-      if (first.done) { logWarning('No cached tokens found for HLSF. Use /import.'); return; }
-
-      // Re-run with full iterator including the first element
-      function* replay() { yield first.value; for (const r of iterTokenRecords()) yield r; }
-      const HLSF = (() => {
-        const pri = RELATIONSHIP_PRIORITIES || {};
-        const nodes = []; const edges = []; let maxA = 0;
-        for (const rec of replay()) {
-          if (!rec || !rec.token || !rec.relationships) continue;
-          let a = 0;
-          for (const rk of Object.keys(rec.relationships)) {
-            const t = normRelKey(rk);
-            const p = (pri[t] ?? pri.get?.(t)) ?? 1;
-            for (const rel of rec.relationships[rk]) { const w = rel.weight ?? 0; a += w * p; edges.push({ source: rec.token, target: rel.token, type: t, w }); }
-          }
-          maxA = Math.max(maxA, a);
-          nodes.push({ id: rec.token, attention: a });
-        }
-        const m = maxA || 1;
-        for (const n of nodes) n.attention = +(n.attention / m).toFixed(3);
-        return { nodes, edges, meta: { nodeCount: nodes.length, edgeCount: edges.length } };
-      })();
-
-      window.HLSF_GRAPH = HLSF;
-      state.hlsfReady = true;
-      logSuccess(`HLSF ready: ${HLSF.meta.nodeCount} nodes, ${HLSF.meta.edgeCount} edges.`);
-      try {
-        stopHLSFAnimation();
-        initHLSFCanvas();
-      } catch (err) {
-        logError(`HLSF initialization failed: ${err.message}`);
-        console.error('HLSF visualization error:', err);
-      }
-      return; // ← stop any fallthrough probes
+      cmdHlsf('');
     }
 
     registerCommand('/import', cmd_import);
@@ -3166,14 +3315,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const arg = rest.join(' ').trim();
 
       if (command === '/import') { cmdImport(); return true; }
-      if (command === '/hlsf' && arg) { cmdHlsf(arg); return true; }
+      if (command === '/hlsf') { cmdHlsf(arg); return true; }
       if (command === '/scheme') { cmdScheme(arg || 'black'); return true; }
       if (command === '/spin') { cmdSpin(arg || 'on'); return true; }
-      if (command === '/glyph') { cmdGlyph(arg); return true; }
-      if (command === '/ledger') { cmdLedger(arg); return true; }
-      if (command === '/encrypt') { cmdEncrypt(arg); return true; }
-      if (command === '/decrypt') { cmdDecrypt(arg); return true; }
-      if (command === '/hlsf') { await cmd_hlsf(); return true; }
 
       return false;
     }
@@ -3215,8 +3359,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               window.HLSF.matrices = null;
               window.HLSF.layoutCache = null;
               window.HLSF.dbCache = null;
-              window.HLSF.currentMatrix = null;
+              window.HLSF.currentGraph = null;
+              window.HLSF.currentGlyphOnly = false;
+              window.HLSF.__centerInit = false;
             }
+            Session.tokens.clear();
             updateStats();
             logSuccess(`Cleared ${keys.length} tokens`);
           }
@@ -3295,6 +3442,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           logError('Prompt cannot be empty');
           return;
         }
+        addConversationTokens(tokens);
         if (tokens.length > CONFIG.MAX_TOKENS_PER_PROMPT) {
           logError(`Exceeds ${CONFIG.MAX_TOKENS_PER_PROMPT} token limit (${tokens.length})`);
           return;
@@ -3322,6 +3470,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         // Step 2: Adjacency analysis
         const responseTokens = tokenize(initialResponse);
+        addConversationTokens(responseTokens);
         const [inputMatrices, outputMatrices] = await Promise.all([
           batchFetchAdjacencies(tokens, prompt, 'input'),
           batchFetchAdjacencies(responseTokens, initialResponse, 'output'),
@@ -3367,6 +3516,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           ]);
           s3.innerHTML = '✅ Response refined';
         }
+        addConversationTokens(tokenize(refinedResponse));
 
         // Display final output
         const time = ((performance.now() - startTime) / 1000).toFixed(1);
