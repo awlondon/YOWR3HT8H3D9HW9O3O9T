@@ -321,12 +321,13 @@
       opacity: 0.7;
     }
 
-    .hlsf-control-group input[type="range"] {
+    .hlsf-control-group input[type="range"],
+    .hlsf-control-group select {
       width: 100%;
     }
 
-    .hlsf-control-group input[type="number"] {
-      width: 80px;
+    .hlsf-control-group input[type="number"],
+    .hlsf-control-group select {
       padding: 0.5rem;
       background: var(--panel);
       border: 1px solid #222;
@@ -366,6 +367,23 @@
       width: 20px;
       height: 20px;
       border-radius: 4px;
+    }
+
+    .hlsf-node-info {
+      position: absolute;
+      background: rgba(0, 0, 0, 0.9);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 0.75rem;
+      pointer-events: none;
+      z-index: 1000;
+      max-width: 300px;
+      font-size: 0.85rem;
+      display: none;
+    }
+
+    .hlsf-node-info.visible {
+      display: block;
     }
 
     .modal-content input {
@@ -479,6 +497,64 @@
     <div class="hlsf-canvas-container" id="hlsf-canvas-container" style="display:none">
       <div class="section-title">🔭 HLSF Matrix Visualizer</div>
       <canvas id="hlsf-canvas"></canvas>
+      <div class="hlsf-controls">
+        <div class="hlsf-control-group">
+          <label for="hlsf-rotation-speed">Rotation speed <span id="hlsf-speed-val">0.00</span></label>
+          <input id="hlsf-rotation-speed" type="range" min="-2" max="2" step="0.01" value="0.30">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.70</span></label>
+          <input id="hlsf-alpha" type="range" min="0.01" max="0.99" step="0.01" value="0.70">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-edge-width">Edge width <span id="hlsf-edge-width-val">1.2</span></label>
+          <input id="hlsf-edge-width" type="range" min="0.2" max="5" step="0.1" value="1.2">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
+          <input id="hlsf-node-size" type="range" min="0.5" max="2.5" step="0.1" value="1.0">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-edge-color-mode">Edge coloring</label>
+          <select id="hlsf-edge-color-mode">
+            <option value="theme">Theme</option>
+            <option value="weight">Weight</option>
+            <option value="relation">Relation</option>
+          </select>
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-relation-cap">Relation types <span id="hlsf-relation-cap-val">50</span></label>
+          <input id="hlsf-relation-cap" type="number" min="1" max="50" step="1" value="50">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-edges-per-type">Edges per type <span id="hlsf-edges-per-type-val">3</span></label>
+          <input id="hlsf-edges-per-type" type="number" min="1" max="10" step="1" value="3">
+        </div>
+        <div class="hlsf-control-group">
+          <label>Display options</label>
+          <div class="hlsf-button-row">
+            <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
+            <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
+            <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
+            <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
+          </div>
+        </div>
+        <div class="hlsf-control-group">
+          <label>Rotation modes</label>
+          <div class="hlsf-button-row">
+            <button id="hlsf-toggle-rotation" class="btn btn-secondary">Start Global</button>
+            <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergent</button>
+          </div>
+        </div>
+        <div class="hlsf-control-group">
+          <label>View</label>
+          <div class="hlsf-button-row">
+            <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
+            <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
+            <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -810,6 +886,10 @@
       const theme = cfg.whiteBg
         ? { bg: '#fff', fg: '#000', hint: '#444' }
         : { bg: '#000', fg: '#fff', hint: '#bbb' };
+      const edgeColorMode = normalizeEdgeColorMode(cfg.edgeColorMode);
+      const edgeWidth = clampEdgeWidth(cfg.edgeWidth);
+      const nodeScale = clampNodeSize(cfg.nodeSize);
+      const showGlow = cfg.showNodeGlow === true;
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1.0;
@@ -833,7 +913,8 @@
       const scale = typeof cfg.scale === 'number' && cfg.scale > 0 ? cfg.scale : 1;
       const fontScale = Math.max(0.6, Math.min(2.5, Math.sqrt(scale)));
       ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
-      ctx.lineWidth = 1.1 * Math.max(0.6, Math.min(2.5, scale));
+      const effectiveEdgeWidth = edgeWidth * Math.max(0.6, Math.min(2.5, scale));
+      ctx.lineWidth = effectiveEdgeWidth;
       const Rc = Math.min(width, height) * 0.35 * scale;
       const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
         ? window.HLSF.state.globalRot
@@ -873,11 +954,15 @@
           const to = pos.get(edge.to);
           if (!from || !to) return;
           ctx.globalAlpha = edgeAlphaFromWeight(edge.w);
+          const strokeColor = compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = effectiveEdgeWidth;
           ctx.beginPath();
           ctx.moveTo(from.x, from.y);
           ctx.lineTo(to.x, to.y);
           ctx.stroke();
           ctx.globalAlpha = 1.0;
+          ctx.strokeStyle = theme.fg;
           if (cfg.showLabels !== false) {
             const mx = (from.x + to.x) / 2;
             const my = (from.y + to.y) / 2;
@@ -891,11 +976,17 @@
       for (const [token, data] of graph.nodes.entries()) {
         const position = pos.get(token) || { x: centerX, y: centerY };
         const freq = typeof data.f === 'number' ? data.f : 1;
-        const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * scale);
+        const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * scale * nodeScale);
         ctx.globalAlpha = baseAlpha();
+        ctx.save();
+        if (showGlow) {
+          ctx.shadowColor = 'rgba(0, 255, 136, 0.35)';
+          ctx.shadowBlur = 14 * Math.max(1, scale);
+        }
         ctx.beginPath();
         ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.restore();
         ctx.globalAlpha = 1.0;
         if (cfg.showLabels !== false) {
           ctx.globalAlpha = baseAlpha();
@@ -1026,6 +1117,28 @@
       return Math.min(MAX_EDGES_PER_TYPE, Math.max(1, numeric));
     }
 
+    function clampEdgeWidth(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return 1.2;
+      return Math.min(5, Math.max(0.2, numeric));
+    }
+
+    function clampNodeSize(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return 1;
+      return Math.min(2.5, Math.max(0.5, numeric));
+    }
+
+    function normalizeEdgeColorMode(value) {
+      switch (value) {
+        case 'weight':
+        case 'relation':
+          return value;
+        default:
+          return 'theme';
+      }
+    }
+
     function ensureHLSFCanvas() {
       let wrapper = document.getElementById('hlsf-canvas-container');
       if (wrapper) {
@@ -1056,6 +1169,22 @@
               <input id="hlsf-alpha" type="range" min="0.01" max="0.99" step="0.01" value="0.70">
             </div>
             <div class="hlsf-control-group">
+              <label for="hlsf-edge-width">Edge width <span id="hlsf-edge-width-val">1.2</span></label>
+              <input id="hlsf-edge-width" type="range" min="0.2" max="5" step="0.1" value="1.2">
+            </div>
+            <div class="hlsf-control-group">
+              <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
+              <input id="hlsf-node-size" type="range" min="0.5" max="2.5" step="0.1" value="1.0">
+            </div>
+            <div class="hlsf-control-group">
+              <label for="hlsf-edge-color-mode">Edge coloring</label>
+              <select id="hlsf-edge-color-mode">
+                <option value="theme">Theme</option>
+                <option value="weight">Weight</option>
+                <option value="relation">Relation</option>
+              </select>
+            </div>
+            <div class="hlsf-control-group">
               <label for="hlsf-relation-cap">Relation types <span id="hlsf-relation-cap-val">${MAX_REL_TYPES}</span></label>
               <input id="hlsf-relation-cap" type="number" min="1" max="${MAX_REL_TYPES}" step="1" value="${MAX_REL_TYPES}">
             </div>
@@ -1068,6 +1197,7 @@
               <div class="hlsf-button-row">
                 <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
                 <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
+                <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
                 <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
               </div>
             </div>
@@ -1146,6 +1276,36 @@
         });
       }
 
+      const edgeWidthSlider = wrapper.querySelector('#hlsf-edge-width');
+      const edgeWidthVal = wrapper.querySelector('#hlsf-edge-width-val');
+      if (edgeWidthSlider && edgeWidthVal) {
+        edgeWidthSlider.addEventListener('input', (e) => {
+          const next = clampEdgeWidth(e.target.value);
+          if (!Number.isFinite(next)) return;
+          window.HLSF.config.edgeWidth = next;
+          edgeWidthVal.textContent = next.toFixed(1);
+          if (Math.abs(next - parseFloat(edgeWidthSlider.value)) > 1e-6) {
+            edgeWidthSlider.value = next.toFixed(1);
+          }
+          debouncedLegacyRender();
+        });
+      }
+
+      const nodeSizeSlider = wrapper.querySelector('#hlsf-node-size');
+      const nodeSizeVal = wrapper.querySelector('#hlsf-node-size-val');
+      if (nodeSizeSlider && nodeSizeVal) {
+        nodeSizeSlider.addEventListener('input', (e) => {
+          const next = clampNodeSize(e.target.value);
+          if (!Number.isFinite(next)) return;
+          window.HLSF.config.nodeSize = next;
+          nodeSizeVal.textContent = next.toFixed(1);
+          if (Math.abs(next - parseFloat(nodeSizeSlider.value)) > 1e-6) {
+            nodeSizeSlider.value = next.toFixed(1);
+          }
+          debouncedLegacyRender();
+        });
+      }
+
       const relationInput = wrapper.querySelector('#hlsf-relation-cap');
       const relationVal = wrapper.querySelector('#hlsf-relation-cap-val');
       if (relationInput) {
@@ -1167,6 +1327,16 @@
           edgesInput.value = String(next);
           if (edgesVal) edgesVal.textContent = String(next);
           rebuildHlsfFromLastCommand(true);
+        });
+      }
+
+      const edgeColorSelect = wrapper.querySelector('#hlsf-edge-color-mode');
+      if (edgeColorSelect) {
+        edgeColorSelect.addEventListener('change', (e) => {
+          const value = normalizeEdgeColorMode(e.target.value);
+          window.HLSF.config.edgeColorMode = value;
+          edgeColorSelect.value = value;
+          debouncedLegacyRender();
         });
       }
 
@@ -1242,6 +1412,15 @@
         });
       }
 
+      const glowBtn = wrapper.querySelector('#hlsf-toggle-glow');
+      if (glowBtn) {
+        glowBtn.addEventListener('click', () => {
+          window.HLSF.config.showNodeGlow = !window.HLSF.config.showNodeGlow;
+          glowBtn.textContent = window.HLSF.config.showNodeGlow ? 'Glow: On' : 'Glow: Off';
+          debouncedLegacyRender();
+        });
+      }
+
       const bgBtn = wrapper.querySelector('#hlsf-toggle-bg');
       if (bgBtn) {
         bgBtn.addEventListener('click', () => {
@@ -1304,6 +1483,20 @@
       if (alphaSlider) alphaSlider.value = alpha.toFixed(2);
       if (alphaVal) alphaVal.textContent = alpha.toFixed(2);
 
+      const edgeWidthSlider = wrapper.querySelector('#hlsf-edge-width');
+      const edgeWidthVal = wrapper.querySelector('#hlsf-edge-width-val');
+      const edgeWidth = clampEdgeWidth(config.edgeWidth);
+      window.HLSF.config.edgeWidth = edgeWidth;
+      if (edgeWidthSlider) edgeWidthSlider.value = edgeWidth.toFixed(1);
+      if (edgeWidthVal) edgeWidthVal.textContent = edgeWidth.toFixed(1);
+
+      const nodeSizeSlider = wrapper.querySelector('#hlsf-node-size');
+      const nodeSizeVal = wrapper.querySelector('#hlsf-node-size-val');
+      const nodeSize = clampNodeSize(config.nodeSize);
+      window.HLSF.config.nodeSize = nodeSize;
+      if (nodeSizeSlider) nodeSizeSlider.value = nodeSize.toFixed(1);
+      if (nodeSizeVal) nodeSizeVal.textContent = nodeSize.toFixed(1);
+
       const relationInput = wrapper.querySelector('#hlsf-relation-cap');
       const relationVal = wrapper.querySelector('#hlsf-relation-cap-val');
       const relationCap = clampRelationTypeCap(config.relationTypeCap);
@@ -1318,6 +1511,11 @@
       if (edgesInput) edgesInput.value = String(edgesPerType);
       if (edgesVal) edgesVal.textContent = String(edgesPerType);
 
+      const edgeColorSelect = wrapper.querySelector('#hlsf-edge-color-mode');
+      const colorMode = normalizeEdgeColorMode(config.edgeColorMode);
+      window.HLSF.config.edgeColorMode = colorMode;
+      if (edgeColorSelect) edgeColorSelect.value = colorMode;
+
       const rotationBtn = wrapper.querySelector('#hlsf-toggle-rotation');
       if (rotationBtn) rotationBtn.textContent = config.rotationActive ? 'Stop Global' : 'Start Global';
 
@@ -1329,6 +1527,9 @@
 
       const labelsBtn = wrapper.querySelector('#hlsf-toggle-labels');
       if (labelsBtn) labelsBtn.textContent = config.showLabels ? 'Labels: On' : 'Labels: Off';
+
+      const glowBtn = wrapper.querySelector('#hlsf-toggle-glow');
+      if (glowBtn) glowBtn.textContent = config.showNodeGlow ? 'Glow: On' : 'Glow: Off';
 
       const bgBtn = wrapper.querySelector('#hlsf-toggle-bg');
       if (bgBtn) bgBtn.textContent = config.whiteBg ? 'BG: Light' : 'BG: Dark';
@@ -1354,9 +1555,17 @@
       fullSeedCap: 64,
       relationTypeCap: MAX_REL_TYPES,
       edgesPerType: 3,
+      edgeWidth: 1.2,
+      nodeSize: 1,
+      edgeColorMode: 'theme',
+      showNodeGlow: false,
     }, existingConfig);
     window.HLSF.config.relationTypeCap = clampRelationTypeCap(window.HLSF.config.relationTypeCap);
     window.HLSF.config.edgesPerType = clampEdgesPerType(window.HLSF.config.edgesPerType);
+    window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
+    window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
+    window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
+    window.HLSF.config.showNodeGlow = window.HLSF.config.showNodeGlow === true;
     window.HLSF.state = Object.assign({
       globalRot: 0,
       emergentRot: 0,
@@ -1387,6 +1596,56 @@
       if (Number.isFinite(preferred)) return preferred;
       return baseAlpha();
     };
+
+    const EDGE_COLOR_PALETTE = [
+      '#00ff88', '#ffd54f', '#ff6f91', '#64b5f6', '#ce93d8',
+      '#ff8a65', '#4dd0e1', '#9ccc65', '#f06292', '#ba68c8'
+    ];
+
+    function paletteColor(key) {
+      if (!key) return EDGE_COLOR_PALETTE[0];
+      let hash = 0;
+      for (let i = 0; i < key.length; i++) {
+        hash = (hash * 33 + key.charCodeAt(i)) | 0;
+      }
+      const index = Math.abs(hash) % EDGE_COLOR_PALETTE.length;
+      return EDGE_COLOR_PALETTE[index];
+    }
+
+    function normalizedIntensity(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return 0;
+      return Math.max(0, Math.min(1, numeric));
+    }
+
+    function weightToColor(value) {
+      const t = normalizedIntensity(value);
+      const r = Math.round(255 - 90 * t);
+      const g = Math.round(160 + 80 * t);
+      const b = Math.round(120 + 16 * (1 - t));
+      const alpha = 0.45 + 0.45 * t;
+      return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+    }
+
+    function nodeEdgeStrokeColor(node, index, mode) {
+      if (mode === 'relation') {
+        return paletteColor(`${node.token}-${index}`);
+      }
+      if (mode === 'weight') {
+        return weightToColor(node.attention ?? 0);
+      }
+      return null;
+    }
+
+    function compositeEdgeStrokeColor(edge, mode) {
+      if (mode === 'relation') {
+        return paletteColor(edge.rtype || `${edge.from}->${edge.to}`);
+      }
+      if (mode === 'weight') {
+        return weightToColor(edge.w ?? 0);
+      }
+      return null;
+    }
 
     function stepRotation(dt) {
       const w = window.HLSF.config.rotationOmega || 0;
@@ -2527,11 +2786,30 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       });
     }
 
+    function scalePointsAround(points, center, scale) {
+      if (!Array.isArray(points)) return [];
+      return points.map(vertex => {
+        const dx = vertex[0] - center[0];
+        const dy = vertex[1] - center[1];
+        return [
+          center[0] + dx * scale,
+          center[1] + dy * scale
+        ];
+      });
+    }
+
+    function scaleTrianglesAround(triangles, center, scale) {
+      if (!Array.isArray(triangles)) return [];
+      return triangles.map(tri => scalePointsAround(tri, center, scale));
+    }
+
     window.HLSF.geometry = {
       polygonVertices,
       buildBaseTriangles,
       rotateTrianglesAround,
       rotatePointsAround,
+      scalePointsAround,
+      scaleTrianglesAround,
       deriveAdjacencyPolygon,
     };
 
@@ -2930,6 +3208,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const theme = window.HLSF.config.whiteBg
           ? { bg: '#ffffff', fg: '#000000', grid: 'rgba(0, 0, 0, 0.05)' }
           : { bg: '#0a0a0a', fg: '#ffffff', grid: 'rgba(0, 255, 136, 0.05)' };
+        const nodeScale = clampNodeSize(window.HLSF.config.nodeSize);
+        const edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
+        const edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
+        const effectiveEdgeWidth = edgeWidth * Math.max(0.6, window.HLSF.config.scale || 1);
 
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
@@ -2954,23 +3236,34 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
 
         ctx.strokeStyle = theme.fg;
-        const edgeWidth = 1.2;
         if (window.HLSF.config.fillFaces === true) {
           /* intentionally unused now */
         }
 
         for (const node of window.HLSF.nodes) {
-          let triangles = node.triangles;
-          let vertices = node.vertices;
+          let triangles = Array.isArray(node.triangles) ? node.triangles : [];
+          let vertices = Array.isArray(node.vertices) ? node.vertices : [];
+          let centerPoint = Array.isArray(node.center) ? node.center : [0, 0];
+          const nodeColor = Array.isArray(node.color) ? node.color : [0, 255, 136];
+          const [r, g, b] = nodeColor;
 
           if (window.HLSF.config.emergentActive) {
             const angle = window.HLSF.state?.emergentRot ?? 0;
-            triangles = rotateTrianglesAround(node.triangles, node.center, angle);
-            vertices = rotatePointsAround(node.vertices, node.center, angle);
+            triangles = rotateTrianglesAround(triangles, node.center, angle);
+            vertices = rotatePointsAround(vertices, node.center, angle);
           } else if (window.HLSF.config.rotationActive) {
             const angle = window.HLSF.state?.globalRot ?? 0;
-            triangles = rotateTrianglesAround(node.triangles, [0, 0], angle);
-            vertices = rotatePointsAround(node.vertices, [0, 0], angle);
+            triangles = rotateTrianglesAround(triangles, [0, 0], angle);
+            vertices = rotatePointsAround(vertices, [0, 0], angle);
+            centerPoint = rotatePointsAround([node.center], [0, 0], angle)[0];
+          }
+
+          const scalePivot = (window.HLSF.config.rotationActive && !window.HLSF.config.emergentActive)
+            ? centerPoint
+            : node.center;
+          if (Math.abs(nodeScale - 1) > 1e-3) {
+            triangles = scaleTrianglesAround(triangles, scalePivot, nodeScale);
+            vertices = scalePointsAround(vertices, scalePivot, nodeScale);
           }
 
           triangles = Array.isArray(triangles) ? triangles : [];
@@ -2981,10 +3274,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
           ctx.globalAlpha = baseAlpha();
           ctx.strokeStyle = theme.fg;
-          ctx.lineWidth = edgeWidth;
+          ctx.lineWidth = effectiveEdgeWidth;
+          ctx.save();
+          if (window.HLSF.config.showNodeGlow) {
+            ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.35)`;
+            ctx.shadowBlur = 16 * Math.max(1, window.HLSF.config.scale || 1);
+          }
 
           strokePolygon(ctx, screenVertices);
           strokeTriangles(ctx, screenTriangles);
+          ctx.restore();
 
           if (window.HLSF.config.showEdges && screenVertices.length > 1) {
             const anchorIndex = typeof node.anchorIndex === 'number' ? node.anchorIndex : 0;
@@ -2992,25 +3291,36 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             for (let i = 0; i < screenVertices.length; i++) {
               if (i === anchorIndex) continue;
               const [vx, vy] = screenVertices[i];
+              const strokeColor = nodeEdgeStrokeColor(node, i, edgeColorMode) || theme.fg;
+              ctx.strokeStyle = strokeColor;
+              ctx.lineWidth = effectiveEdgeWidth;
               ctx.beginPath();
               ctx.moveTo(anchor[0], anchor[1]);
               ctx.lineTo(vx, vy);
               ctx.stroke();
             }
+            ctx.strokeStyle = theme.fg;
           }
 
           ctx.globalAlpha = 1.0;
 
           if (window.HLSF.config.showLabels) {
-            const [sx, sy] = worldToScreen(node.center[0], node.center[1]);
-            const [r, g, b] = node.color;
-
+            const centerForLabel = (window.HLSF.config.rotationActive && !window.HLSF.config.emergentActive)
+              ? centerPoint
+              : node.center;
+            const [sx, sy] = worldToScreen(centerForLabel[0], centerForLabel[1]);
+            ctx.save();
+            if (window.HLSF.config.showNodeGlow) {
+              ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.45)`;
+              ctx.shadowBlur = 18 * Math.max(1, window.HLSF.config.scale || 1);
+            }
             ctx.globalAlpha = baseAlpha();
             ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
             ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(node.glyph, sx, sy);
+            ctx.restore();
 
             ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
             ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
