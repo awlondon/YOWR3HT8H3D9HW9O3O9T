@@ -757,6 +757,7 @@
         : { bg: '#000', fg: '#fff', hint: '#bbb' };
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1.0;
       ctx.fillStyle = theme.bg;
       ctx.fillRect(0, 0, width, height);
       ctx.strokeStyle = theme.fg;
@@ -779,7 +780,9 @@
       ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
       ctx.lineWidth = 1.1 * Math.max(0.6, Math.min(2.5, scale));
       const Rc = Math.min(width, height) * 0.35 * scale;
-      const rotation = cfg.globalRotation || 0;
+      const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
+        ? window.HLSF.state.globalRot
+        : 0;
 
       seeds.forEach((token, idx) => {
         const angle = (idx / Math.max(1, seeds.length)) * Math.PI * 2 + rotation;
@@ -814,13 +817,12 @@
           const from = pos.get(edge.from) || pos.get(edge.to);
           const to = pos.get(edge.to);
           if (!from || !to) return;
-          const weight = Math.max(0.15, Math.min(1, edge.w || 0));
-          ctx.globalAlpha = weight * (cfg.alpha ?? 1);
+          ctx.globalAlpha = edgeAlphaFromWeight(edge.w);
           ctx.beginPath();
           ctx.moveTo(from.x, from.y);
           ctx.lineTo(to.x, to.y);
           ctx.stroke();
-          ctx.globalAlpha = 1;
+          ctx.globalAlpha = 1.0;
           if (cfg.showLabels !== false) {
             const mx = (from.x + to.x) / 2;
             const my = (from.y + to.y) / 2;
@@ -835,12 +837,16 @@
         const position = pos.get(token) || { x: centerX, y: centerY };
         const freq = typeof data.f === 'number' ? data.f : 1;
         const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * scale);
+        ctx.globalAlpha = baseAlpha();
         ctx.beginPath();
         ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.globalAlpha = 1.0;
         if (cfg.showLabels !== false) {
+          ctx.globalAlpha = baseAlpha();
           ctx.fillStyle = theme.fg;
           ctx.fillText(nodeLabel(token, glyphOnly), position.x, position.y - (radius + 12 * scale));
+          ctx.globalAlpha = 1.0;
         }
       }
 
@@ -895,6 +901,21 @@
     }
 
     let _anim = null;
+    function animateComposite(graph, glyphOnly = false) {
+      if (!graph) return;
+      cancelAnimationFrame(_anim);
+      window.HLSF.currentGraph = graph;
+      window.HLSF.currentGlyphOnly = glyphOnly === true;
+      let last = performance.now();
+      (function loop(now) {
+        const dt = (now - last) / 1000;
+        last = now;
+        stepRotation(dt);
+        drawComposite(graph, { glyphOnly });
+        _anim = requestAnimationFrame(loop);
+      })(last);
+    }
+
     function animateHLSF(graph, glyphOnly = false) {
       if (!graph) return;
       const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
@@ -903,21 +924,17 @@
         return;
       }
 
-      window.HLSF.currentGraph = graph;
-      window.HLSF.currentGlyphOnly = glyphOnly;
       cancelAnimationFrame(_anim);
-
-      const start = performance.now();
-      (function loop(time) {
-        const dt = (time - start) / 1000;
-        if (window.HLSF.config.rotationActive) {
-          window.HLSF.config.globalRotation = (dt * (window.HLSF.config.rotationSpeed || 0.3)) % (2 * Math.PI);
-        }
-
-        drawComposite(graph, { glyphOnly });
-
+      window.HLSF.currentGraph = graph;
+      window.HLSF.currentGlyphOnly = glyphOnly === true;
+      let last = performance.now();
+      (function loop(now) {
+        const dt = (now - last) / 1000;
+        last = now;
+        stepRotation(dt);
+        drawHLSFMatrix(graph, { glyphOnly });
         _anim = requestAnimationFrame(loop);
-      })(performance.now());
+      })(last);
     }
 
     function stopHLSFAnimation() {
@@ -977,14 +994,13 @@
 
     window.HLSF = window.HLSF || {};
     window.HLSF.config = Object.assign({
-      rotationSpeed: 0.3,
-      alpha: 0.3,
+      rotationActive: true,
+      rotationOmega: 0.30,
+      alpha: 0.10,
       scale: 1,
       tx: 0,
       ty: 0,
-      rotationActive: true,
       emergentActive: false,
-      globalRotation: 0,
       showEdges: true,
       showLabels: true,
       fillFaces: false,
@@ -992,6 +1008,10 @@
       showEnglish: true,
       fullSeedCap: 64,
     }, window.HLSF.config || {});
+    window.HLSF.state = Object.assign({
+      globalRot: 0,
+      emergentRot: 0,
+    }, window.HLSF.state || {});
     window.HLSF.canvas = window.HLSF.canvas || null;
     window.HLSF.ctx = window.HLSF.ctx || null;
     window.HLSF.nodes = window.HLSF.nodes || [];
@@ -999,6 +1019,33 @@
     window.HLSF.geometry = window.HLSF.geometry || {};
     window.HLSF.rendering = window.HLSF.rendering || {};
     window.HLSF.__centerInit = window.HLSF.__centerInit || false;
+
+    const clampAlpha = (value) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return NaN;
+      return Math.min(0.99, Math.max(0.01, numeric));
+    };
+    window.HLSF.config.alpha = (() => {
+      const initial = clampAlpha(window.HLSF.config.alpha);
+      return Number.isFinite(initial) ? initial : 0.1;
+    })();
+    const baseAlpha = () => {
+      const resolved = clampAlpha(window.HLSF.config.alpha);
+      return Number.isFinite(resolved) ? resolved : 0.1;
+    };
+    const edgeAlphaFromWeight = (w) => {
+      const preferred = Number.isFinite(w) ? clampAlpha(w) : NaN;
+      if (Number.isFinite(preferred)) return preferred;
+      return baseAlpha();
+    };
+
+    function stepRotation(dt) {
+      const w = window.HLSF.config.rotationOmega || 0;
+      if ((!window.HLSF.config.rotationActive && !window.HLSF.config.emergentActive) || !w) return;
+      const tau = 2 * Math.PI;
+      window.HLSF.state.globalRot = (window.HLSF.state.globalRot + dt * w) % tau;
+      window.HLSF.state.emergentRot = (window.HLSF.state.emergentRot + dt * w) % tau;
+    }
 
     let TokenToGlyph = new Map();
     let GlyphToToken = new Map();
@@ -2083,9 +2130,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             anchorIndex: shape.anchorIndex,
             color,
             vertices: shape.vertices,
-            triangles: null, // Will be computed
-            localRotation: 0,
-            rotationSpeed: attention * 0.02
+            triangles: null // Will be computed
           });
         } catch (err) {
           console.error('Failed to process token for HLSF:', tokenData, err);
@@ -2136,14 +2181,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         <div class="hlsf-controls">
           <div class="hlsf-control-group">
             <label>Rotation Speed</label>
-            <input type="range" id="hlsf-rotation-speed" min="0" max="5" step="0.1" value="0.5">
-            <span id="hlsf-speed-val">0.5</span>
+            <input type="range" id="hlsf-rotation-speed" min="0" max="5" step="0.01" value="0.30">
+            <span id="hlsf-speed-val">0.30</span>
           </div>
-          
+
           <div class="hlsf-control-group">
             <label>Alpha Transparency</label>
-            <input type="range" id="hlsf-alpha" min="0.1" max="1" step="0.05" value="0.3">
-            <span id="hlsf-alpha-val">0.3</span>
+            <input type="range" id="hlsf-alpha" min="0.01" max="0.99" step="0.01" value="0.10">
+            <span id="hlsf-alpha-val">0.10</span>
           </div>
           
           <div class="hlsf-control-group">
@@ -2196,19 +2241,43 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       // Setup controls
       const speedSlider = document.getElementById('hlsf-rotation-speed');
       const speedVal = document.getElementById('hlsf-speed-val');
-      speedSlider.addEventListener('input', (e) => {
-        window.HLSF.config.rotationSpeed = parseFloat(e.target.value);
-        speedVal.textContent = window.HLSF.config.rotationSpeed.toFixed(1);
-        debouncedLegacyRender();
-      });
+      if (speedSlider && speedVal) {
+        const omega = Number.isFinite(window.HLSF.config.rotationOmega)
+          ? window.HLSF.config.rotationOmega
+          : 0;
+        speedSlider.value = omega.toFixed(2);
+        speedVal.textContent = omega.toFixed(2);
+        speedSlider.addEventListener('input', (e) => {
+          const next = parseFloat(e.target.value);
+          if (!Number.isFinite(next)) return;
+          window.HLSF.config.rotationOmega = next;
+          speedVal.textContent = next.toFixed(2);
+          debouncedLegacyRender();
+        });
+      }
 
       const alphaSlider = document.getElementById('hlsf-alpha');
       const alphaVal = document.getElementById('hlsf-alpha-val');
-      alphaSlider.addEventListener('input', (e) => {
-        window.HLSF.config.alpha = parseFloat(e.target.value);
-        alphaVal.textContent = window.HLSF.config.alpha.toFixed(2);
-        debouncedLegacyRender();
-      });
+      if (alphaSlider && alphaVal) {
+        const alpha = baseAlpha();
+        alphaSlider.value = alpha.toFixed(2);
+        alphaVal.textContent = alpha.toFixed(2);
+        window.HLSF.config.alpha = alpha;
+        alphaSlider.addEventListener('input', (e) => {
+          const raw = parseFloat(e.target.value);
+          const next = clampAlpha(raw);
+          if (!Number.isFinite(next)) {
+            logError('Alpha value must be numeric.');
+            return;
+          }
+          window.HLSF.config.alpha = next;
+          alphaVal.textContent = next.toFixed(2);
+          if (Math.abs(next - parseFloat(alphaSlider.value)) > 1e-6) {
+            alphaSlider.value = next.toFixed(2);
+          }
+          debouncedLegacyRender();
+        });
+      }
       
       document.getElementById('hlsf-zoom-in').addEventListener('click', () => {
         window.HLSF.config.scale *= 1.2;
@@ -2359,7 +2428,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           : { bg: '#0a0a0a', fg: '#ffffff', grid: 'rgba(0, 255, 136, 0.05)' };
 
         ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = 1.0;
         ctx.fillStyle = theme.bg;
         ctx.strokeStyle = theme.fg;
         ctx.lineWidth = 1;
@@ -2391,11 +2460,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           let vertices = node.vertices;
 
           if (window.HLSF.config.emergentActive) {
-            triangles = rotateTrianglesAround(node.triangles, node.center, node.localRotation);
-            vertices = rotatePointsAround(node.vertices, node.center, node.localRotation);
+            const angle = window.HLSF.state?.emergentRot ?? 0;
+            triangles = rotateTrianglesAround(node.triangles, node.center, angle);
+            vertices = rotatePointsAround(node.vertices, node.center, angle);
           } else if (window.HLSF.config.rotationActive) {
-            triangles = rotateTrianglesAround(node.triangles, [0, 0], window.HLSF.config.globalRotation);
-            vertices = rotatePointsAround(node.vertices, [0, 0], window.HLSF.config.globalRotation);
+            const angle = window.HLSF.state?.globalRot ?? 0;
+            triangles = rotateTrianglesAround(node.triangles, [0, 0], angle);
+            vertices = rotatePointsAround(node.vertices, [0, 0], angle);
           }
 
           triangles = Array.isArray(triangles) ? triangles : [];
@@ -2404,7 +2475,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           const screenTriangles = triangles.map(tri => tri.map(([x, y]) => worldToScreen(x, y)));
           const screenVertices = vertices.map(([x, y]) => worldToScreen(x, y));
 
-          ctx.globalAlpha = window.HLSF.config.alpha;
+          ctx.globalAlpha = baseAlpha();
           ctx.strokeStyle = theme.fg;
           ctx.lineWidth = edgeWidth;
 
@@ -2424,12 +2495,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             }
           }
 
-          ctx.globalAlpha = 1;
+          ctx.globalAlpha = 1.0;
 
           if (window.HLSF.config.showLabels) {
             const [sx, sy] = worldToScreen(node.center[0], node.center[1]);
             const [r, g, b] = node.color;
 
+            ctx.globalAlpha = baseAlpha();
             ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
             ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
             ctx.textAlign = 'center';
@@ -2439,10 +2511,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
             ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
             ctx.fillText(node.token, sx, sy + 25 * window.HLSF.config.scale);
+            ctx.globalAlpha = 1.0;
           }
         }
 
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = 1.0;
         ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 255, 136, 0.8)';
         ctx.font = '12px Fira Code, monospace';
         ctx.textAlign = 'left';
@@ -2461,28 +2534,27 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }, 16);
 
-    function animateLegacyHLSF() {
+    let _legacyLast = null;
+    function animateLegacyHLSF(now) {
       if (!window.HLSF.canvas || !window.HLSF.ctx) {
         console.warn('Canvas not ready for animation');
         return;
       }
-      
+
       try {
-        if (window.HLSF.config.rotationActive) {
-          window.HLSF.config.globalRotation += window.HLSF.config.rotationSpeed * 0.01;
-        } else if (window.HLSF.config.emergentActive) {
-          for (const node of window.HLSF.nodes) {
-            node.localRotation += node.rotationSpeed;
-          }
-        }
-        
+        const timestamp = typeof now === 'number' ? now : performance.now();
+        const last = _legacyLast ?? timestamp;
+        const dt = (timestamp - last) / 1000;
+        _legacyLast = timestamp;
+        stepRotation(dt);
+
         if (window.HLSF.config.rotationActive || window.HLSF.config.emergentActive) {
           renderLegacyHLSF();
         }
       } catch (err) {
         console.error('Error in HLSF animation:', err);
       }
-      
+
       window.HLSF.animationFrame = requestAnimationFrame(animateLegacyHLSF);
     }
 
@@ -2496,6 +2568,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           window.HLSF.config.rotationActive = false;
           window.HLSF.config.emergentActive = false;
         }
+        _legacyLast = null;
       } catch (err) {
         console.warn('Error stopping HLSF animation:', err);
       }
@@ -2938,6 +3011,41 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       logStatus(`Rotation: ${window.HLSF.config.rotationActive ? 'on' : 'off'}`);
     }
 
+    function cmdOmega(arg) {
+      const w = parseFloat(arg);
+      if (!Number.isFinite(w)) {
+        logError('Usage: /omega <rad/s>');
+        return;
+      }
+      window.HLSF.config.rotationOmega = w;
+      const slider = document.getElementById('hlsf-rotation-speed');
+      const speedVal = document.getElementById('hlsf-speed-val');
+      if (slider) slider.value = w.toFixed(2);
+      if (speedVal) speedVal.textContent = w.toFixed(2);
+      debouncedLegacyRender();
+      logFinal(`Rotation omega = ${w.toFixed(2)} rad/s`);
+    }
+
+    function cmdAlpha(arg) {
+      const parsed = parseFloat(arg);
+      if (!Number.isFinite(parsed)) {
+        logError('Usage: /alpha <0.01..0.99>');
+        return;
+      }
+      const a = clampAlpha(parsed);
+      if (!Number.isFinite(a)) {
+        logError('Usage: /alpha <0.01..0.99>');
+        return;
+      }
+      window.HLSF.config.alpha = a;
+      const slider = document.getElementById('hlsf-alpha');
+      const alphaVal = document.getElementById('hlsf-alpha-val');
+      if (slider) slider.value = a.toFixed(2);
+      if (alphaVal) alphaVal.textContent = a.toFixed(2);
+      debouncedLegacyRender();
+      logFinal(`Alpha = ${a.toFixed(2)}`);
+    }
+
     function cmd_import() {
       cmdImport();
     }
@@ -3025,6 +3133,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (command === '/hlsf') { cmdHlsf(arg); return true; }
       if (command === '/scheme') { cmdScheme(arg || 'black'); return true; }
       if (command === '/spin') { cmdSpin(arg || 'on'); return true; }
+      if (command === '/omega') { cmdOmega(arg); return true; }
+      if (command === '/alpha') { cmdAlpha(arg); return true; }
 
       return false;
     }
