@@ -1163,6 +1163,7 @@
     // ---- HLSF constants
     const TOKEN_CACHE_PREFIX = 'hlsf_token_';
     const DB_RAW_KEY = 'HLSF_DB_RAW';        // stores JSON export text
+    const API_KEY_STORAGE_KEY = 'HLSF_API_KEY';
     const DB_INDEX_KEY = 'HLSF_DB_INDEX';    // array of token strings
 
     function parseMaybeNdjson(text) {
@@ -1372,6 +1373,14 @@
         console.warn('Storage keys enumeration failed:', err);
         return [];
       }
+    }
+
+    function isValidApiKey(key) {
+      if (typeof key !== 'string') return false;
+      const trimmed = key.trim();
+      if (!trimmed) return false;
+      if (!trimmed.startsWith('sk-')) return false;
+      return trimmed.length >= 20;
     }
 
     function tokenize(text) {
@@ -3805,12 +3814,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     // ============================================
     elements.apiConfirmBtn.addEventListener('click', () => {
       const key = elements.apiKeyInput.value.trim();
-      if (!key.startsWith('sk-')) {
+      if (!isValidApiKey(key)) {
         logError('Invalid API key format');
         return;
       }
-      state.apiKey = key;
+      state.apiKey = key.trim();
+      const persisted = safeStorageSet(API_KEY_STORAGE_KEY, state.apiKey);
       elements.apiModal.classList.add('hidden');
+      if (!persisted) {
+        logWarning('API key configured but not saved to storage');
+      }
       logSuccess('API key configured');
     });
 
@@ -3858,9 +3871,19 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     async function initialize() {
       updateStats();
-      
+
+      const storedKey = safeStorageGet(API_KEY_STORAGE_KEY, '');
+      if (isValidApiKey(storedKey)) {
+        state.apiKey = storedKey.trim();
+        elements.apiKeyInput.value = state.apiKey;
+        elements.apiModal.classList.add('hidden');
+        logSuccess('Loaded stored API key');
+      } else if (storedKey) {
+        safeStorageRemove(API_KEY_STORAGE_KEY);
+      }
+
       await tryBootstrapDb();
-      
+
       const cachedCount = getCachedTokenCount();
       
       addLog(`<strong>🧠 HLSF Cognition Engine v2.0</strong><br><br>
