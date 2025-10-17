@@ -852,6 +852,57 @@
       export: () => ({}),
     };
 
+    // ---- Glyph crypto core ----
+    const LEDGER_KEY = "HLSF_GLYPH_LEDGER_V1";
+    const GLYPH_SET = Array.from("⬣⬧⬩⬡⬪⬨⬤⬟⬢⬥⬠⬙⬘⬗⬖⬕⬔⬓⬒⬑"); // limited symbols
+    const GLYPH_SEP = " "; // delimiter between glyph-weight pairs
+    const NUM_FMT = n => Number(n).toString(); // unlimited precision as given
+
+    const TokenToGlyph = new Map();
+    const GlyphToToken = new Map();
+
+    function hydrateLedgerMaps(ledger) {
+      TokenToGlyph.clear();
+      GlyphToToken.clear();
+      const map = ledger?.glyph_map || {};
+      for (const glyph of Object.keys(map)) {
+        const entries = Array.isArray(map[glyph]) ? map[glyph] : [];
+        for (const entry of entries) {
+          if (!entry || !entry.token) continue;
+          TokenToGlyph.set(entry.token, glyph);
+          if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+          GlyphToToken.get(glyph).add(entry.token);
+        }
+      }
+    }
+
+    // Load/save ledger
+    function loadLedger() {
+      let ledger;
+      try {
+        const raw = localStorage.getItem(LEDGER_KEY);
+        ledger = raw ? JSON.parse(raw) : null;
+      } catch {
+        ledger = null;
+      }
+      if (!ledger || typeof ledger !== 'object') {
+        ledger = { version: "1.0", created_at: new Date().toISOString(), glyph_map: {} };
+      } else {
+        ledger.version = ledger.version || "1.0";
+        ledger.created_at = ledger.created_at || new Date().toISOString();
+        ledger.glyph_map = ledger.glyph_map || {};
+      }
+      hydrateLedgerMaps(ledger);
+      return ledger;
+    }
+    function saveLedger(ledger) {
+      try {
+        localStorage.setItem(LEDGER_KEY, JSON.stringify(ledger));
+      } catch (err) {
+        console.warn('Failed to persist glyph ledger:', err);
+      }
+    }
+
     // ---- HLSF constants
     const TOKEN_CACHE_PREFIX = 'hlsf_token_';
     const DB_RAW_KEY = 'hlsf_db_raw';        // stores JSON export text
@@ -1181,15 +1232,16 @@
 
     window.GlyphSystem.ledger = null;
     window.GlyphSystem.encode = function encode(message) {
-      const { ledger } = generateGlyphLedger();
-      window.GlyphSystem.ledger = ledger;
-      return encodeMessage(message, ledger);
+      const result = encryptTextToGlyphs(message || '');
+      window.GlyphSystem.ledger = loadLedger();
+      return { encoded: result.encrypted, coverage: result.coverage, unknown: result.unknown };
     };
     window.GlyphSystem.decode = function decode(encoded) {
-      const { reverseMap } = generateGlyphLedger();
-      return decodeMessage(encoded, reverseMap);
+      return decryptGlyphsToText(encoded || '');
     };
-    window.GlyphSystem.export = exportGlyphLedger;
+    window.GlyphSystem.export = function exportLedgerSnapshot() {
+      return loadLedger();
+    };
 
     function generateEncryptionExamples(ledger, reverseMap) {
       const examples = [
@@ -2690,6 +2742,247 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return raw;
     }
 
+    function dbIndex() {
+      const db = getDb();
+      const idx = new Map();
+      (db?.full_token_data || []).forEach(record => {
+        if (record?.token) idx.set(record.token, record);
+      });
+      return idx;
+    }
+
+    function tokenWeight(token, idx) {
+      const rec = idx.get(token);
+      if (!rec) return 0.5;
+      const relationships = Object.values(rec.relationships || {});
+      const weights = [];
+      for (const arr of relationships) {
+        if (!Array.isArray(arr)) continue;
+        for (const rel of arr) {
+          const w = rel?.weight;
+          if (typeof w === 'number' && Number.isFinite(w)) weights.push(w);
+        }
+      }
+      if (!weights.length) return 0.5;
+      const maxW = Math.max(...weights);
+      const meanW = weights.reduce((sum, value) => sum + value, 0) / weights.length;
+      return Math.max(0.01, Math.min(1.0, 0.6 * maxW + 0.4 * meanW));
+    }
+
+    function hashGlyphForToken(token) {
+      let h = 2166136261 >>> 0; // FNV-1a
+      for (let i = 0; i < token.length; i++) {
+        h ^= token.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return GLYPH_SET[h % GLYPH_SET.length];
+    }
+
+    function glyphForToken(token) {
+      if (!TokenToGlyph.has(token)) {
+        // Ensure existing ledger mappings are available before hashing
+        if (!TokenToGlyph.size) loadLedger();
+      }
+      return TokenToGlyph.get(token) || hashGlyphForToken(token);
+    }
+
+    function ledgerAdd(ledger, glyph, token, weight) {
+      if (!ledger.glyph_map[glyph]) ledger.glyph_map[glyph] = [];
+      const arr = ledger.glyph_map[glyph];
+      const numericWeight = Number(weight);
+      const now = Date.now();
+      const found = arr.find(entry => entry.token === token);
+      if (found) {
+        found.w = numericWeight;
+        found.t = now;
+      } else {
+        arr.push({ token, w: numericWeight, t: now });
+      }
+      TokenToGlyph.set(token, glyph);
+      if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+      GlyphToToken.get(glyph).add(token);
+      return ledger;
+    }
+
+    function ledgerBestToken(ledger, glyph, weight) {
+      const arr = Array.isArray(ledger.glyph_map[glyph]) ? ledger.glyph_map[glyph] : [];
+      if (!arr.length) return null;
+      let best = arr[0];
+      let bestDistance = Math.abs((best?.w ?? 0) - weight);
+      for (let i = 1; i < arr.length; i++) {
+        const candidate = arr[i];
+        const distance = Math.abs((candidate?.w ?? 0) - weight);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = candidate;
+        }
+      }
+      return best?.token || null;
+    }
+
+    function parseGlyphFloatSequence(input) {
+      const tokens = [];
+      if (!input) return tokens;
+      const segments = input.trim().split(/\s+/);
+      for (const segment of segments) {
+        if (!segment) continue;
+        let cursor = 0;
+        while (cursor < segment.length) {
+          let glyph = null;
+          for (const candidate of GLYPH_SET) {
+            if (segment.startsWith(candidate, cursor)) {
+              if (!glyph || candidate.length > glyph.length) glyph = candidate;
+            }
+          }
+          if (!glyph) break;
+          cursor += glyph.length;
+          let nextGlyphIndex = segment.length;
+          for (const candidate of GLYPH_SET) {
+            const idx = segment.indexOf(candidate, cursor);
+            if (idx !== -1 && idx < nextGlyphIndex) nextGlyphIndex = idx;
+          }
+          const numberPortion = segment.slice(cursor, nextGlyphIndex);
+          cursor = nextGlyphIndex;
+          let weight = parseFloat(numberPortion);
+          if (!Number.isFinite(weight)) weight = 0.5;
+          tokens.push({ glyph, weightStr: numberPortion, weight });
+        }
+      }
+      return tokens;
+    }
+
+    function encryptTextToGlyphs(plain) {
+      const idx = dbIndex();
+      const ledger = loadLedger();
+      const words = (plain || '').trim().split(/\s+/).filter(Boolean);
+      const out = [];
+      const unknown = [];
+      let covered = 0;
+
+      for (const word of words) {
+        const glyph = glyphForToken(word);
+        const weight = tokenWeight(word, idx);
+        ledgerAdd(ledger, glyph, word, weight);
+        out.push(glyph + NUM_FMT(weight));
+        if (idx.has(word)) covered++;
+        else unknown.push(word);
+      }
+
+      saveLedger(ledger);
+      const encrypted = out.join(GLYPH_SEP);
+      const coverage = words.length ? (100 * covered / words.length).toFixed(1) : '0.0';
+      return { encrypted, coverage, unknown };
+    }
+
+    function decryptGlyphsToText(cipher) {
+      const ledger = loadLedger();
+      const pairs = parseGlyphFloatSequence(cipher || '');
+      const out = [];
+      const unresolved = [];
+      let resolved = 0;
+
+      for (const pair of pairs) {
+        const token = ledgerBestToken(ledger, pair.glyph, pair.weight);
+        if (token) {
+          out.push(token);
+          resolved++;
+        } else {
+          out.push('<?>');
+          unresolved.push({ glyph: pair.glyph, weight: pair.weight });
+        }
+      }
+
+      const coverage = pairs.length ? (100 * resolved / pairs.length).toFixed(1) : '0.0';
+      return { decrypted: out.join(' '), coverage, unresolved };
+    }
+
+    function cmdLedger(arg) {
+      const ledger = loadLedger();
+      const [sub] = (arg || '').trim().split(/\s+/);
+      if (sub === 'export') {
+        const blob = new Blob([JSON.stringify(ledger, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `glyph_ledger_${Date.now()}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        return logFinal('Ledger exported.');
+      }
+      if (sub === 'import') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.onchange = async e => {
+          try {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const text = await file.text();
+            const imported = JSON.parse(text);
+            hydrateLedgerMaps(imported);
+            saveLedger(imported);
+            logFinal('Ledger imported.');
+          } catch (err) {
+            logError(`Ledger import failed: ${err.message}`);
+          }
+        };
+        input.click();
+        return;
+      }
+
+      const lines = [];
+      const map = ledger.glyph_map || {};
+      const glyphs = Object.keys(map).sort();
+      for (const glyph of glyphs) {
+        const arr = Array.isArray(map[glyph]) ? map[glyph] : [];
+        if (!arr.length) continue;
+        const latest = [...arr].sort((a, b) => (b?.t ?? 0) - (a?.t ?? 0))[0];
+        const weightStr = NUM_FMT(latest?.w ?? 0);
+        lines.push(`${glyph} ${weightStr} → ${latest?.token || ''}`.trim());
+      }
+      return logFinal(lines.length ? lines.join('\n') : 'Ledger empty.');
+    }
+
+    function cmdGlyph(argsStr) {
+      const idx = dbIndex();
+      const tokens = (argsStr || '').trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) {
+        logError('Usage: /glyph <token1 token2 ...>');
+        return;
+      }
+      const ledger = loadLedger();
+      const outputs = [];
+      for (const token of tokens) {
+        const glyph = glyphForToken(token);
+        const weight = tokenWeight(token, idx);
+        ledgerAdd(ledger, glyph, token, weight);
+        outputs.push(glyph + NUM_FMT(weight));
+      }
+      saveLedger(ledger);
+      logFinal(outputs.join(GLYPH_SEP));
+    }
+
+    function cmdEncrypt(rest) {
+      const text = (rest || '').trim();
+      if (!text) {
+        logError('Usage: /encrypt <text>');
+        return;
+      }
+      const { encrypted, coverage } = encryptTextToGlyphs(text);
+      logFinal(`🔐 ${encrypted}\nCoverage: ${coverage}%`);
+    }
+
+    function cmdDecrypt(rest) {
+      const text = (rest || '').trim();
+      if (!text) {
+        logError('Usage: /decrypt <glyph+float sequence>');
+        return;
+      }
+      const { decrypted, coverage } = decryptGlyphsToText(text);
+      logFinal(`🔓 ${decrypted}\nCoverage: ${coverage}%`);
+    }
+
+
     function cmdImport() {
       if (!elements?.dbFileInput) {
         logError('File input unavailable');
@@ -2876,6 +3169,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (command === '/hlsf' && arg) { cmdHlsf(arg); return true; }
       if (command === '/scheme') { cmdScheme(arg || 'black'); return true; }
       if (command === '/spin') { cmdSpin(arg || 'on'); return true; }
+      if (command === '/glyph') { cmdGlyph(arg); return true; }
+      if (command === '/ledger') { cmdLedger(arg); return true; }
+      if (command === '/encrypt') { cmdEncrypt(arg); return true; }
+      if (command === '/decrypt') { cmdDecrypt(arg); return true; }
       if (command === '/hlsf') { await cmd_hlsf(); return true; }
 
       return false;
@@ -2943,38 +3240,19 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           exportDatabaseMetadata();
           break;
         case 'glyph':
+          cmdGlyph(args.join(' '));
+          break;
         case 'ledger':
-          showGlyphLedger();
+          cmdLedger(args.join(' '));
           break;
         case 'encrypt':
-          const encryptMsg = args.join(' ');
-          if (!encryptMsg) {
-            logError('Usage: /encrypt <message>');
-            break;
-          }
-          const encResult = window.GlyphSystem.encode(encryptMsg);
-          addLog(`<div class="adjacency-insight">
-            <strong>🔐 Encrypted:</strong><br>
-            <div style="font-size: 1.5em; letter-spacing: 0.15em; color: var(--accent); margin: 0.5rem 0;">${encResult.encoded}</div>
-            Coverage: ${encResult.coverage}%
-            ${encResult.unknown.length > 0 ? `<br>Unknown tokens: ${encResult.unknown.join(', ')}` : ''}
-          </div>`);
+          cmdEncrypt(args.join(' '));
           break;
         case 'decrypt':
-          const decryptMsg = args.join(' ');
-          if (!decryptMsg) {
-            logError('Usage: /decrypt <encrypted glyphs>');
-            break;
-          }
-          const decoded = window.GlyphSystem.decode(decryptMsg);
-          addLog(`<div class="adjacency-insight">
-            <strong>🔓 Decrypted:</strong><br>
-            ${decoded}
-          </div>`);
+          cmdDecrypt(args.join(' '));
           break;
         case 'exportledger':
-          const ledgerData = window.GlyphSystem.export();
-          logSuccess(`Glyph ledger exported: ${ledgerData.statistics.total_tokens} tokens, ${ledgerData.statistics.unique_glyphs} glyphs`);
+          cmdLedger('export');
           break;
         case 'help':
           addLog(`<strong>Commands:</strong><br>
@@ -2984,10 +3262,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             /database or /db - View database metadata<br>
             /export - Export database metadata as JSON<br>
             /import - Import database from JSON file<br>
-            /glyph or /ledger - View symbolic glyph encryption ledger<br>
-            /encrypt &lt;message&gt; - Encrypt message using glyph system<br>
-            /decrypt &lt;glyphs&gt; - Decrypt glyph-encoded message<br>
-            /exportledger - Export glyph ledger for inter-system transmission<br>
+            /glyph &lt;token1 token2 ...&gt; - Show weighted glyph assignments<br>
+            /ledger [show|export|import] - Manage private glyph ledger<br>
+            /encrypt &lt;text&gt; - Encrypt text into weighted glyphs<br>
+            /decrypt &lt;glyph+float&gt; - Decrypt using private ledger<br>
+            /exportledger - Shortcut for /ledger export<br>
             /hlsf or /visualize - Visualize database as Hierarchical-Level Semantic Framework<br>
             /help - Show commands`);
           break;
