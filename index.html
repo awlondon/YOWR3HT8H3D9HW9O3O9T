@@ -518,11 +518,11 @@
         </div>
         <div class="hlsf-control-group">
           <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.70</span></label>
-          <input id="hlsf-alpha" type="range" min="0.01" max="0.99" step="0.01" value="0.70">
+          <input id="hlsf-alpha" type="range" min="0.005" max="0.99" step="0.01" value="0.70">
         </div>
         <div class="hlsf-control-group">
-          <label for="hlsf-edge-width">Edge width <span id="hlsf-edge-width-val">1.2</span></label>
-          <input id="hlsf-edge-width" type="range" min="0.2" max="5" step="0.1" value="1.2">
+          <label>Edge width <span id="edgew-val">0.02</span></label>
+          <input id="edgew" type="range" min="0.01" max="0.10" step="0.005" value="0.02">
         </div>
         <div class="hlsf-control-group">
           <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
@@ -566,7 +566,7 @@
           <label>Rotation modes</label>
           <div class="hlsf-button-row">
             <button id="hlsf-toggle-rotation" class="btn btn-secondary">Start Global</button>
-            <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergent</button>
+            <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergence</button>
           </div>
         </div>
         <div class="hlsf-control-group">
@@ -574,6 +574,7 @@
           <div class="hlsf-button-row">
             <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
             <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
+            <button id="hlsf-zoom-portal" class="btn btn-secondary">Portal</button>
             <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
           </div>
         </div>
@@ -833,8 +834,8 @@
       return idx;
     }
 
-    function getSeedCap(idx) {
-      const configuredCap = Number(window.HLSF?.config?.fullSeedCap);
+    function getAnchorCap(idx) {
+      const configuredCap = Number(window.HLSF?.config?.fullAnchorCap);
       if (Number.isFinite(configuredCap) && configuredCap > 0) {
         const size = idx instanceof Map ? idx.size : configuredCap;
         return Math.min(configuredCap, size);
@@ -854,7 +855,7 @@
       return { relTypes, edges };
     }
 
-    function defaultSeeds(idx, k = 64) {
+    function defaultAnchors(idx, k = 64) {
       const recs = Array.from(idx.values());
       recs.sort((a, b) => {
         const A = adjacencyStats(a);
@@ -1007,12 +1008,13 @@
       debouncedLegacyRender();
     }
 
-    function edgesFrom(rec) {
+    function edgesFrom(rec, metrics) {
       if (!rec) return [];
       const matrix = buildMatrixForRecord(rec);
       const relationCap = clampRelationTypeCap(window.HLSF.config?.relationTypeCap);
       const perType = clampEdgesPerType(window.HLSF.config?.edgesPerType);
       const relations = (matrix?.edges || []).slice(0, relationCap);
+      if (metrics) metrics.edgeTypeEnums += relations.length;
       const out = [];
       for (const relation of relations) {
         const items = Array.isArray(relation?.items) ? relation.items.slice(0, perType) : [];
@@ -1030,9 +1032,16 @@
       return out;
     }
 
-    async function assembleGraphFromSeedsLogged(seeds, depthFloat, index, options = {}) {
+    async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, options = {}) {
       const opts = options || {};
-      const graph = { nodes: new Map(), edges: [], seeds: [...seeds] };
+      const fallbackAnchors = Array.isArray(options?.anchors) ? options.anchors : undefined;
+      const legacySeeds = Array.isArray(options?.seeds) ? options.seeds : undefined;
+      const anchors = anchorsInput ?? fallbackAnchors ?? legacySeeds ?? [];
+      const graph = { nodes: new Map(), edges: [], anchors: [...anchors] };
+      graph.seeds = graph.anchors;
+      const outSet = new Set();
+      const inSet = new Set();
+      const metricsState = { edgeTypeEnums: 0 };
       const queue = [];
       let head = 0;
       let expanded = 0;
@@ -1053,23 +1062,25 @@
 
       const pushEdge = (edge) => {
         graph.edges.push(edge);
+        if (edge?.from) outSet.add(edge.from);
+        if (edge?.to) inSet.add(edge.to);
         expanded += 1;
         if (loggingActive && expanded % tick === 0) {
           logProgress(expanded, expanded + Math.max(0, queue.length - head));
         }
       };
 
-      for (const seed of seeds) {
-        const rec = index.get(seed);
+      for (const anchor of anchors) {
+        const rec = index.get(anchor);
         if (!rec) continue;
-        graph.nodes.set(seed, { token: seed, f: freqFor(rec), layer: 0, degree: 0 });
-        for (const edge of edgesFrom(rec)) {
-          queue.push({ from: seed, to: edge.to, w: edge.w, rtype: edge.rtype, depth: 1 });
+        graph.nodes.set(anchor, { token: anchor, f: freqFor(rec), layer: 0, degree: 0 });
+        for (const edge of edgesFrom(rec, metricsState)) {
+          queue.push({ from: anchor, to: edge.to, w: edge.w, rtype: edge.rtype, depth: 1 });
           enqueued += 1;
         }
       }
 
-      logPhase('seeded', { seeds: seeds.length, queued: enqueued });
+      logPhase('anchored', { anchors: anchors.length, queued: enqueued });
 
       let remainderIndex = queue.length;
       while (head < queue.length) {
@@ -1090,7 +1101,7 @@
         if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
         if (toNode) toNode.degree = (toNode.degree || 0) + 1;
         if (edge.depth < maxDepth) {
-          for (const next of edgesFrom(rec)) {
+          for (const next of edgesFrom(rec, metricsState)) {
             queue.push({ from: edge.to, to: next.to, w: next.w, rtype: next.rtype, depth: edge.depth + 1 });
             enqueued += 1;
           }
@@ -1114,8 +1125,36 @@
       }
 
       logProgress(1, 1);
-      logPhase('summary', { nodes: graph.nodes.size, edges: graph.edges.length });
+      const metrics = {
+        nodes: outSet.size,
+        relationships: inSet.size,
+        anchors: [...outSet].filter((t) => inSet.has(t)).length,
+        edges: metricsState.edgeTypeEnums,
+      };
+      graph._metrics = metrics;
+      logPhase('summary', metrics);
       return graph;
+    }
+
+    function ensureGraphMetrics(graph) {
+      if (!graph) {
+        return { nodes: 0, relationships: 0, anchors: 0, edges: 0 };
+      }
+      if (graph._metrics && typeof graph._metrics === 'object') return graph._metrics;
+      const out = new Set();
+      const inn = new Set();
+      const edges = Array.isArray(graph.edges) ? graph.edges : [];
+      for (const edge of edges) {
+        if (edge?.from) out.add(edge.from);
+        if (edge?.to) inn.add(edge.to);
+      }
+      const anchors = [...out].filter((t) => inn.has(t)).length;
+      return {
+        nodes: out.size,
+        relationships: inn.size,
+        anchors,
+        edges: edges.length,
+      };
     }
 
     function microtask() {
@@ -1132,9 +1171,13 @@
       window.HLSF.currentGraph = graph;
       window.HLSF.currentGlyphOnly = glyphOnly;
       window.HLSF.currentLayoutSnapshot = layout;
+      if (window.HLSF?.state) {
+        window.HLSF.state.patches = new Map();
+        window.HLSF.state.emergentRot = 0;
+      }
     }
 
-    function seedsForMode(args, idx){
+    function anchorsForMode(args, idx){
       let index = idx;
       if (!(index instanceof Map)) {
         const db = getDb();
@@ -1145,14 +1188,14 @@
 
       if (args.mode === 'conversation') {
         const conv = [...(Session?.tokens || [])].filter(t => index.has(t));
-        const seeds = conv.length ? conv : defaultSeeds(index, 32);
-        return { seeds, idx: index };
+        const anchors = conv.length ? conv : defaultAnchors(index, 32);
+        return { anchors, idx: index };
       }
 
       if (args.mode === 'tokens') {
-        let seeds = args.tokens.filter(t => index.has(t));
-        if (!seeds.length) seeds = defaultSeeds(index, 32);
-        return { seeds, idx: index };
+        let anchors = args.tokens.filter(t => index.has(t));
+        if (!anchors.length) anchors = defaultAnchors(index, 32);
+        return { anchors, idx: index };
       }
 
       if (args.mode === 'glyphs') {
@@ -1165,13 +1208,13 @@
           else glyphTokens.push(val);
         }
         const toks = glyphTokens.filter(t => index.has(t));
-        const seeds = toks.length ? toks : defaultSeeds(index, 32);
-        return { seeds, idx: index, glyphOnly: true };
+        const anchors = toks.length ? toks : defaultAnchors(index, 32);
+        return { anchors, idx: index, glyphOnly: true };
       }
 
-      const cap = getSeedCap(index);
+      const cap = getAnchorCap(index);
       const limit = cap > 0 ? cap : index.size;
-      return { seeds: defaultSeeds(index, limit), idx: index };
+      return { anchors: defaultAnchors(index, limit), idx: index };
     }
 
     function nodeLabel(token, glyphOnly = false) {
@@ -1187,7 +1230,11 @@
     }
 
     function legacyPositions(graph, width, height, scale, centerX, centerY) {
-      const seeds = graph.seeds && graph.seeds.length ? graph.seeds : [...graph.nodes.keys()].slice(0, 1);
+      const anchors = graph.anchors && graph.anchors.length
+        ? graph.anchors
+        : graph.seeds && graph.seeds.length
+          ? graph.seeds
+          : [...graph.nodes.keys()].slice(0, 1);
       const pos = new Map();
       const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
         ? window.HLSF.state.globalRot
@@ -1196,8 +1243,8 @@
       const cx = Number.isFinite(centerX) ? centerX : width / 2;
       const cy = Number.isFinite(centerY) ? centerY : height / 2;
 
-      seeds.forEach((token, idx) => {
-        const angle = (idx / Math.max(1, seeds.length)) * Math.PI * 2 + rotation;
+      anchors.forEach((token, idx) => {
+        const angle = (idx / Math.max(1, anchors.length)) * Math.PI * 2 + rotation;
         const x = cx + Rc * Math.cos(angle);
         const y = cy + Rc * Math.sin(angle);
         pos.set(token, { x, y });
@@ -1364,8 +1411,17 @@
         return;
       }
       const ctx = window.HLSF.ctx || (window.HLSF.ctx = canvas.getContext('2d'));
-      const width = canvas.width = canvas.clientWidth;
-      const height = canvas.height = canvas.clientHeight;
+      const dpr = window.devicePixelRatio || 1;
+      const displayWidth = canvas.clientWidth || canvas.width || 0;
+      const displayHeight = canvas.clientHeight || canvas.height || 0;
+      const bufferWidth = Math.max(1, Math.round(displayWidth * dpr));
+      const bufferHeight = Math.max(1, Math.round(displayHeight * dpr));
+      if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
+        canvas.width = bufferWidth;
+        canvas.height = bufferHeight;
+      }
+      const width = displayWidth || canvas.width / dpr;
+      const height = displayHeight || canvas.height / dpr;
       const theme = cfg.whiteBg
         ? { bg: '#fff', fg: '#000', hint: '#444' }
         : { bg: '#000', fg: '#fff', hint: '#bbb' };
@@ -1373,76 +1429,106 @@
       const edgeWidth = clampEdgeWidth(cfg.edgeWidth);
       const nodeScale = clampNodeSize(cfg.nodeSize);
       const showGlow = cfg.showNodeGlow === true;
+
+      if (!window.HLSF.__centerInit) {
+        window.HLSF.view.x = width / 2;
+        window.HLSF.view.y = height / 2;
+        syncViewToConfig();
+        window.HLSF.__centerInit = true;
+      }
+
+      syncViewToConfig();
+      const view = window.HLSF.view;
+      const zoom = Number.isFinite(view.scale) ? view.scale : 1;
+
       ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1.0;
       ctx.fillStyle = theme.bg;
-      ctx.fillRect(0, 0, width, height);
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.translate(view.x, view.y);
+      ctx.scale(zoom, zoom);
       ctx.strokeStyle = theme.fg;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const cx = width / 2;
-      const cy = height / 2;
-      if (!window.HLSF.__centerInit) {
-        window.HLSF.config.tx = cx;
-        window.HLSF.config.ty = cy;
-        window.HLSF.__centerInit = true;
-      }
-      const centerX = Number.isFinite(window.HLSF.config.tx) ? window.HLSF.config.tx : cx;
-      const centerY = Number.isFinite(window.HLSF.config.ty) ? window.HLSF.config.ty : cy;
-      const scale = typeof cfg.scale === 'number' && cfg.scale > 0 ? cfg.scale : 1;
-      const fontScale = Math.max(0.6, Math.min(2.5, Math.sqrt(scale)));
+      ctx.lineWidth = Math.max(0.005, edgeWidth) * dpr;
+      const fontScale = Math.max(0.6, Math.min(2.5, Math.sqrt(zoom)));
       ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
-      const effectiveEdgeWidth = edgeWidth * Math.max(0.6, Math.min(2.5, scale));
-      ctx.lineWidth = effectiveEdgeWidth;
+
+      const layoutScale = 1;
       let pos;
       if (window.HLSF.config.layout === 'affinity') {
-        pos = clusterLevelLayout(graph, width, height, scale, centerX, centerY);
+        pos = clusterLevelLayout(graph, width, height, layoutScale, 0, 0);
       } else if (window.HLSF.config.layout === 'layered') {
-        pos = ringPositions(graph, width, height, scale, centerX, centerY);
+        pos = ringPositions(graph, width, height, layoutScale, 0, 0);
       } else {
-        pos = legacyPositions(graph, width, height, scale, centerX, centerY);
+        pos = legacyPositions(graph, width, height, layoutScale, 0, 0);
+      }
+
+      const patches = computePatches(graph, pos);
+      window.HLSF.state.patches = patches;
+      const rotatedPositions = new Map();
+      for (const [token, base] of pos.entries()) {
+        const node = graph.nodes.get(token);
+        rotatedPositions.set(token, rotatedPos(token, base, node));
       }
 
       if (cfg.layout === 'affinity') {
-        drawClusterOverlays(ctx, graph, pos);
+        drawClusterOverlays(ctx, graph, rotatedPositions);
       }
 
       const glyphOnly = opts.glyphOnly === true;
+
       if (cfg.showEdges !== false) {
-        graph.edges.forEach(edge => {
-          const from = pos.get(edge.from) || pos.get(edge.to);
-          const to = pos.get(edge.to);
-          if (!from || !to) return;
-          ctx.globalAlpha = edgeAlphaFromWeight(edge.w);
+        const batches = new Map();
+        for (const edge of graph.edges) {
+          const fromPos = rotatedPositions.get(edge.from) || rotatedPositions.get(edge.to);
+          const toPos = rotatedPositions.get(edge.to);
+          if (!fromPos || !toPos) continue;
+          const dx = (toPos.x - fromPos.x) * zoom;
+          const dy = (toPos.y - fromPos.y) * zoom;
+          if ((dx * dx + dy * dy) < 0.25) continue;
           const strokeColor = compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
-          ctx.strokeStyle = strokeColor;
-          ctx.lineWidth = effectiveEdgeWidth;
-          ctx.beginPath();
-          ctx.moveTo(from.x, from.y);
-          ctx.lineTo(to.x, to.y);
-          ctx.stroke();
-          ctx.globalAlpha = 1.0;
-          ctx.strokeStyle = theme.fg;
-          if (cfg.showLabels !== false) {
-            const mx = (from.x + to.x) / 2;
-            const my = (from.y + to.y) / 2;
-            ctx.fillStyle = theme.hint;
-            ctx.fillText(edgeLabel(edge.rtype), mx, my - 10 * scale);
-            ctx.fillStyle = theme.fg;
+          if (!batches.has(strokeColor)) batches.set(strokeColor, []);
+          batches.get(strokeColor).push({ from: fromPos, to: toPos, edge });
+        }
+        for (const [color, edges] of batches.entries()) {
+          ctx.strokeStyle = color;
+          for (const { from, to, edge } of edges) {
+            ctx.globalAlpha = edgeAlphaFromWeight(edge.w);
+            ctx.beginPath();
+            ctx.moveTo(from.x, from.y);
+            ctx.lineTo(to.x, to.y);
+            ctx.stroke();
+            if (cfg.showLabels !== false) {
+              const mx = (from.x + to.x) / 2;
+              const my = (from.y + to.y) / 2;
+              ctx.globalAlpha = baseAlpha();
+              ctx.fillStyle = theme.hint;
+              ctx.fillText(edgeLabel(edge.rtype), mx, my - 10);
+              ctx.fillStyle = theme.fg;
+            }
           }
-        });
+        }
+        ctx.globalAlpha = 1.0;
+        ctx.strokeStyle = theme.fg;
       }
 
       for (const [token, data] of graph.nodes.entries()) {
-        const position = pos.get(token) || { x: centerX, y: centerY };
+        const position = rotatedPositions.get(token);
+        if (!position) continue;
         const freq = typeof data.f === 'number' ? data.f : 1;
-        const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * scale * nodeScale);
+        const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * nodeScale);
         ctx.globalAlpha = baseAlpha();
         ctx.save();
         if (showGlow) {
           ctx.shadowColor = 'rgba(0, 255, 136, 0.35)';
-          ctx.shadowBlur = 14 * Math.max(1, scale);
+          ctx.shadowBlur = 14 * Math.max(1, zoom);
         }
         ctx.beginPath();
         ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
@@ -1452,12 +1538,66 @@
         if (cfg.showLabels !== false) {
           ctx.globalAlpha = baseAlpha();
           ctx.fillStyle = theme.fg;
-          ctx.fillText(nodeLabel(token, glyphOnly), position.x, position.y - (radius + 12 * scale));
+          ctx.fillText(nodeLabel(token, glyphOnly), position.x, position.y - (radius + 12));
           ctx.globalAlpha = 1.0;
         }
       }
 
       ctx.restore();
+    }
+
+    function computePatches(graph, pos) {
+      const groups = new Map();
+      for (const [token, node] of graph.nodes) {
+        const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
+        const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+        const key = `${layer}:${cluster}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(token);
+      }
+      const patches = new Map();
+      const prev = window.HLSF?.state?.patches;
+      for (const [key, toks] of groups) {
+        const pts = toks.map(t => pos.get(t)).filter(Boolean);
+        if (!pts.length) continue;
+        const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
+        const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
+        const prevPatch = prev instanceof Map ? prev.get(key) : null;
+        const angle = prevPatch && Number.isFinite(prevPatch.angle) ? prevPatch.angle : 0;
+        patches.set(key, { cx, cy, angle });
+      }
+      return patches;
+    }
+
+    function rotate_patches(dt) {
+      const state = window.HLSF?.state;
+      if (!state?.emergent?.on) return;
+      const speed = Number.isFinite(state.emergent.speed) ? state.emergent.speed : 0;
+      if (!speed) return;
+      const patches = state.patches instanceof Map ? state.patches : null;
+      if (!patches) return;
+      const tau = Math.PI * 2;
+      for (const patch of patches.values()) {
+        const current = Number.isFinite(patch?.angle) ? patch.angle : 0;
+        patch.angle = (current + speed * dt) % tau;
+      }
+    }
+
+    function rotatedPos(token, basePos, node) {
+      if (!basePos) return basePos;
+      const state = window.HLSF?.state;
+      if (!state?.emergent?.on) return basePos;
+      const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
+      const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+      const patchKey = `${layer}:${cluster}`;
+      const patch = state.patches instanceof Map ? state.patches.get(patchKey) : null;
+      if (!patch) return basePos;
+      const angle = Number.isFinite(patch.angle) ? patch.angle : 0;
+      const s = Math.sin(angle);
+      const c = Math.cos(angle);
+      const x = basePos.x - patch.cx;
+      const y = basePos.y - patch.cy;
+      return { x: patch.cx + c * x - s * y, y: patch.cy + s * x + c * y };
     }
 
     // ---------------- O20 layout ----------------
@@ -1580,8 +1720,8 @@
 
     function clampEdgeWidth(value) {
       const numeric = Number(value);
-      if (!Number.isFinite(numeric)) return 1.2;
-      return Math.min(5, Math.max(0.2, numeric));
+      if (!Number.isFinite(numeric)) return 0.02;
+      return Math.min(0.1, Math.max(0.005, numeric));
     }
 
     function clampNodeSize(value) {
@@ -1657,11 +1797,11 @@
             </div>
             <div class="hlsf-control-group">
               <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.70</span></label>
-              <input id="hlsf-alpha" type="range" min="0.01" max="0.99" step="0.01" value="0.70">
+              <input id="hlsf-alpha" type="range" min="0.005" max="0.99" step="0.01" value="0.70">
             </div>
             <div class="hlsf-control-group">
-              <label for="hlsf-edge-width">Edge width <span id="hlsf-edge-width-val">1.2</span></label>
-              <input id="hlsf-edge-width" type="range" min="0.2" max="5" step="0.1" value="1.2">
+              <label>Edge width <span id="edgew-val">0.02</span></label>
+              <input id="edgew" type="range" min="0.01" max="0.10" step="0.005" value="0.02">
             </div>
             <div class="hlsf-control-group">
               <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
@@ -1705,7 +1845,7 @@
               <label>Rotation modes</label>
               <div class="hlsf-button-row">
                 <button id="hlsf-toggle-rotation" class="btn btn-secondary">Start Global</button>
-                <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergent</button>
+                <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergence</button>
               </div>
             </div>
             <div class="hlsf-control-group">
@@ -1713,6 +1853,7 @@
               <div class="hlsf-button-row">
                 <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
                 <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
+                <button id="hlsf-zoom-portal" class="btn btn-secondary">Portal</button>
                 <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
               </div>
             </div>
@@ -1777,18 +1918,18 @@
         });
       }
 
-      const edgeWidthSlider = wrapper.querySelector('#hlsf-edge-width');
-      const edgeWidthVal = wrapper.querySelector('#hlsf-edge-width-val');
+      const edgeWidthSlider = wrapper.querySelector('#edgew');
+      const edgeWidthVal = wrapper.querySelector('#edgew-val');
       if (edgeWidthSlider && edgeWidthVal) {
         edgeWidthSlider.addEventListener('input', (e) => {
-          const next = clampEdgeWidth(e.target.value);
+          const next = clampEdgeWidth(parseFloat(e.target.value));
           if (!Number.isFinite(next)) return;
           window.HLSF.config.edgeWidth = next;
-          edgeWidthVal.textContent = next.toFixed(1);
+          edgeWidthVal.textContent = next.toFixed(3);
           if (Math.abs(next - parseFloat(edgeWidthSlider.value)) > 1e-6) {
-            edgeWidthSlider.value = next.toFixed(1);
+            edgeWidthSlider.value = next.toFixed(3);
           }
-          debouncedLegacyRender();
+          requestRender();
         });
       }
 
@@ -1871,16 +2012,22 @@
       const zoomIn = wrapper.querySelector('#hlsf-zoom-in');
       if (zoomIn) {
         zoomIn.addEventListener('click', () => {
-          window.HLSF.config.scale *= 1.2;
-          debouncedLegacyRender();
+          const view = window.HLSF.view;
+          const next = Math.min(12, Math.max(0.25, view.scale * 1.2));
+          window.HLSF.view.scale = next;
+          syncViewToConfig();
+          requestRender();
         });
       }
 
       const zoomOut = wrapper.querySelector('#hlsf-zoom-out');
       if (zoomOut) {
         zoomOut.addEventListener('click', () => {
-          window.HLSF.config.scale *= 0.8;
-          debouncedLegacyRender();
+          const view = window.HLSF.view;
+          const next = Math.min(12, Math.max(0.25, view.scale * 0.8));
+          window.HLSF.view.scale = next;
+          syncViewToConfig();
+          requestRender();
         });
       }
 
@@ -1888,15 +2035,36 @@
       if (reset) {
         reset.addEventListener('click', () => {
           const canvasEl = window.HLSF.canvas;
-          window.HLSF.config.scale = 1;
+          window.HLSF.view.scale = 1;
           if (canvasEl) {
-            window.HLSF.config.tx = canvasEl.width / 2;
-            window.HLSF.config.ty = canvasEl.height / 2;
+            const width = canvasEl.clientWidth || canvasEl.width;
+            const height = canvasEl.clientHeight || canvasEl.height;
+            window.HLSF.view.x = width / 2;
+            window.HLSF.view.y = height / 2;
           } else {
-            window.HLSF.config.tx = 0;
-            window.HLSF.config.ty = 0;
+            window.HLSF.view.x = 0;
+            window.HLSF.view.y = 0;
           }
-          debouncedLegacyRender();
+          syncViewToConfig();
+          requestRender();
+        });
+      }
+
+      const portal = wrapper.querySelector('#hlsf-zoom-portal');
+      if (portal) {
+        portal.addEventListener('click', () => {
+          const canvasEl = window.HLSF.canvas;
+          if (!canvasEl) return;
+          const width = canvasEl.clientWidth || canvasEl.width;
+          const height = canvasEl.clientHeight || canvasEl.height;
+          const cx = width / 2;
+          const cy = height / 2;
+          const target = {
+            x: cx,
+            y: cy,
+            scale: Math.max(1.5, window.HLSF.view.scale * 2),
+          };
+          animateViewport(target, 350);
         });
       }
 
@@ -1906,19 +2074,22 @@
           window.HLSF.config.rotationActive = !window.HLSF.config.rotationActive;
           if (window.HLSF.config.rotationActive) {
             window.HLSF.config.emergentActive = false;
+            window.HLSF.state.emergent.on = false;
           }
           syncHlsfControls(wrapper);
+          requestRender();
         });
       }
 
       const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
       if (emergentBtn) {
         emergentBtn.addEventListener('click', () => {
-          window.HLSF.config.emergentActive = !window.HLSF.config.emergentActive;
-          if (window.HLSF.config.emergentActive) {
-            window.HLSF.config.rotationActive = false;
-          }
+          const state = window.HLSF.state.emergent;
+          state.on = !state.on;
+          window.HLSF.config.emergentActive = state.on;
+          if (state.on) window.HLSF.config.rotationActive = false;
           syncHlsfControls(wrapper);
+          requestRender();
         });
       }
 
@@ -1991,11 +2162,12 @@
           if (!isDragging) return;
           const dx = e.clientX - lastX;
           const dy = e.clientY - lastY;
-          window.HLSF.config.tx += dx;
-          window.HLSF.config.ty += dy;
+          window.HLSF.view.x += dx;
+          window.HLSF.view.y += dy;
+          syncViewToConfig();
           lastX = e.clientX;
           lastY = e.clientY;
-          debouncedLegacyRender();
+          requestRender();
         });
 
         canvasEl.addEventListener('mouseleave', () => {
@@ -2009,6 +2181,7 @@
     function syncHlsfControls(wrapper) {
       if (!wrapper) return;
 
+      syncViewToConfig();
       const config = window.HLSF.config || {};
       const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
       const speedVal = wrapper.querySelector('#hlsf-speed-val');
@@ -2024,12 +2197,12 @@
       if (alphaSlider) alphaSlider.value = alpha.toFixed(2);
       if (alphaVal) alphaVal.textContent = alpha.toFixed(2);
 
-      const edgeWidthSlider = wrapper.querySelector('#hlsf-edge-width');
-      const edgeWidthVal = wrapper.querySelector('#hlsf-edge-width-val');
+      const edgeWidthSlider = wrapper.querySelector('#edgew');
+      const edgeWidthVal = wrapper.querySelector('#edgew-val');
       const edgeWidth = clampEdgeWidth(config.edgeWidth);
       window.HLSF.config.edgeWidth = edgeWidth;
-      if (edgeWidthSlider) edgeWidthSlider.value = edgeWidth.toFixed(1);
-      if (edgeWidthVal) edgeWidthVal.textContent = edgeWidth.toFixed(1);
+      if (edgeWidthSlider) edgeWidthSlider.value = edgeWidth.toFixed(3);
+      if (edgeWidthVal) edgeWidthVal.textContent = edgeWidth.toFixed(3);
 
       const nodeSizeSlider = wrapper.querySelector('#hlsf-node-size');
       const nodeSizeVal = wrapper.querySelector('#hlsf-node-size-val');
@@ -2083,7 +2256,9 @@
       if (rotationBtn) rotationBtn.textContent = config.rotationActive ? 'Stop Global' : 'Start Global';
 
       const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
-      if (emergentBtn) emergentBtn.textContent = config.emergentActive ? 'Stop Emergent' : 'Start Emergent';
+      const emergentActive = window.HLSF.state?.emergent?.on === true;
+      window.HLSF.config.emergentActive = emergentActive;
+      if (emergentBtn) emergentBtn.textContent = emergentActive ? 'Stop Emergence' : 'Start Emergence';
 
       const edgesBtn = wrapper.querySelector('#hlsf-toggle-edges');
       if (edgesBtn) edgesBtn.textContent = config.showEdges ? 'Edges: On' : 'Edges: Off';
@@ -2122,14 +2297,14 @@
       fillFaces: false,
       whiteBg: false,
       showEnglish: true,
-      fullSeedCap: 0,
+      fullAnchorCap: 0,
       batchLogging: true,
       deferredRender: true,
       progressTick: 250,
       layout: 'affinity',
       relationTypeCap: MAX_REL_TYPES,
       edgesPerType: 3,
-      edgeWidth: 1.2,
+      edgeWidth: 0.02,
       nodeSize: 1,
       edgeColorMode: 'theme',
       showNodeGlow: false,
@@ -2158,10 +2333,26 @@
         ? Math.min(20, Math.max(1, Math.round(rawIters)))
         : 8;
     }
-    window.HLSF.state = Object.assign({
-      globalRot: 0,
-      emergentRot: 0,
-    }, window.HLSF.state || {});
+    const prevState = window.HLSF.state || {};
+    window.HLSF.state = Object.assign({}, prevState);
+    window.HLSF.state.globalRot = Number.isFinite(prevState.globalRot) ? prevState.globalRot : 0;
+    const emergentState = prevState.emergent && typeof prevState.emergent === 'object'
+      ? prevState.emergent
+      : {};
+    window.HLSF.state.emergent = Object.assign({ on: false, speed: 0.25 }, emergentState);
+    window.HLSF.state.emergentRot = Number.isFinite(prevState.emergentRot) ? prevState.emergentRot : 0;
+    if (!(window.HLSF.state.patches instanceof Map)) window.HLSF.state.patches = new Map();
+    window.HLSF.view = Object.assign({ x: 0, y: 0, scale: 1 }, window.HLSF.view || {});
+    if (!Number.isFinite(window.HLSF.view.x)) window.HLSF.view.x = 0;
+    if (!Number.isFinite(window.HLSF.view.y)) window.HLSF.view.y = 0;
+    if (!Number.isFinite(window.HLSF.view.scale) || window.HLSF.view.scale <= 0) window.HLSF.view.scale = 1;
+
+    function syncViewToConfig() {
+      if (!window.HLSF?.config || !window.HLSF?.view) return;
+      window.HLSF.config.scale = window.HLSF.view.scale;
+      window.HLSF.config.tx = window.HLSF.view.x;
+      window.HLSF.config.ty = window.HLSF.view.y;
+    }
     window.HLSF.canvas = window.HLSF.canvas || null;
     window.HLSF.ctx = window.HLSF.ctx || null;
     window.HLSF.nodes = window.HLSF.nodes || [];
@@ -2175,7 +2366,7 @@
     const clampAlpha = (value) => {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return NaN;
-      return Math.min(0.99, Math.max(0.01, numeric));
+      return Math.min(0.99, Math.max(0.005, numeric));
     };
     window.HLSF.config.alpha = (() => {
       const initial = clampAlpha(window.HLSF.config.alpha);
@@ -2253,10 +2444,17 @@
 
     function stepRotation(dt) {
       const w = window.HLSF.config.rotationOmega || 0;
-      if ((!window.HLSF.config.rotationActive && !window.HLSF.config.emergentActive) || !w) return;
       const tau = 2 * Math.PI;
-      window.HLSF.state.globalRot = (window.HLSF.state.globalRot + dt * w) % tau;
-      window.HLSF.state.emergentRot = (window.HLSF.state.emergentRot + dt * w) % tau;
+      if (window.HLSF.config.rotationActive && w) {
+        window.HLSF.state.globalRot = (window.HLSF.state.globalRot + dt * w) % tau;
+      }
+      rotate_patches(dt);
+      if (window.HLSF.state?.emergent?.on) {
+        const speed = Number.isFinite(window.HLSF.state.emergent.speed) ? window.HLSF.state.emergent.speed : 0;
+        if (speed) {
+          window.HLSF.state.emergentRot = (window.HLSF.state.emergentRot + dt * speed) % tau;
+        }
+      }
     }
 
     let TokenToGlyph = new Map();
@@ -3575,7 +3773,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
           <div class="hlsf-control-group">
             <label>Alpha Transparency</label>
-            <input type="range" id="hlsf-alpha" min="0.01" max="0.99" step="0.01" value="0.10">
+            <input type="range" id="hlsf-alpha" min="0.005" max="0.99" step="0.01" value="0.10">
             <span id="hlsf-alpha-val">0.10</span>
           </div>
           
@@ -3584,6 +3782,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             <div class="hlsf-button-row">
               <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
               <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
+              <button id="hlsf-zoom-portal" class="btn btn-secondary">Portal</button>
               <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
             </div>
           </div>
@@ -3592,7 +3791,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             <label>Rotation Modes</label>
             <div class="hlsf-button-row">
               <button id="hlsf-toggle-rotation" class="btn btn-primary">Start Global</button>
-              <button id="hlsf-toggle-emergent" class="btn btn-success">Start Emergent</button>
+              <button id="hlsf-toggle-emergent" class="btn btn-success">Start Emergence</button>
             </div>
           </div>
           
@@ -3667,37 +3866,85 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         });
       }
       
-      document.getElementById('hlsf-zoom-in').addEventListener('click', () => {
-        window.HLSF.config.scale *= 1.2;
-        debouncedLegacyRender();
-      });
+      const globalZoomIn = document.getElementById('hlsf-zoom-in');
+      if (globalZoomIn) {
+        globalZoomIn.addEventListener('click', () => {
+          const view = window.HLSF.view;
+          const next = Math.min(12, Math.max(0.25, view.scale * 1.2));
+          window.HLSF.view.scale = next;
+          syncViewToConfig();
+          requestRender();
+        });
+      }
 
-      document.getElementById('hlsf-zoom-out').addEventListener('click', () => {
-        window.HLSF.config.scale *= 0.8;
-        debouncedLegacyRender();
-      });
+      const globalZoomOut = document.getElementById('hlsf-zoom-out');
+      if (globalZoomOut) {
+        globalZoomOut.addEventListener('click', () => {
+          const view = window.HLSF.view;
+          const next = Math.min(12, Math.max(0.25, view.scale * 0.8));
+          window.HLSF.view.scale = next;
+          syncViewToConfig();
+          requestRender();
+        });
+      }
 
-      document.getElementById('hlsf-reset-view').addEventListener('click', () => {
-        window.HLSF.config.scale = 1;
-        window.HLSF.config.tx = window.HLSF.canvas.width / 2;
-        window.HLSF.config.ty = window.HLSF.canvas.height / 2;
-        debouncedLegacyRender();
-      });
-      
+      const globalReset = document.getElementById('hlsf-reset-view');
+      if (globalReset) {
+        globalReset.addEventListener('click', () => {
+          window.HLSF.view.scale = 1;
+          const canvasEl = window.HLSF.canvas;
+          if (canvasEl) {
+            const width = canvasEl.clientWidth || canvasEl.width;
+            const height = canvasEl.clientHeight || canvasEl.height;
+            window.HLSF.view.x = width / 2;
+            window.HLSF.view.y = height / 2;
+          } else {
+            window.HLSF.view.x = 0;
+            window.HLSF.view.y = 0;
+          }
+          syncViewToConfig();
+          requestRender();
+        });
+      }
+
+      const globalPortal = document.getElementById('hlsf-zoom-portal');
+      if (globalPortal) {
+        globalPortal.addEventListener('click', () => {
+          const canvasEl = window.HLSF.canvas;
+          if (!canvasEl) return;
+          const width = canvasEl.clientWidth || canvasEl.width;
+          const height = canvasEl.clientHeight || canvasEl.height;
+          animateViewport({
+            x: width / 2,
+            y: height / 2,
+            scale: Math.max(1.5, window.HLSF.view.scale * 2),
+          }, 350);
+        });
+      }
+
       const rotationBtn = document.getElementById('hlsf-toggle-rotation');
       rotationBtn.addEventListener('click', () => {
         window.HLSF.config.rotationActive = !window.HLSF.config.rotationActive;
-        window.HLSF.config.emergentActive = false;
+        if (window.HLSF.config.rotationActive) {
+          window.HLSF.state.emergent.on = false;
+          window.HLSF.config.emergentActive = false;
+          document.getElementById('hlsf-toggle-emergent').textContent = 'Start Emergence';
+        }
         rotationBtn.textContent = window.HLSF.config.rotationActive ? 'Stop Global' : 'Start Global';
-        document.getElementById('hlsf-toggle-emergent').textContent = 'Start Emergent';
+        requestRender();
       });
-      
+
       const emergentBtn = document.getElementById('hlsf-toggle-emergent');
       emergentBtn.addEventListener('click', () => {
-        window.HLSF.config.emergentActive = !window.HLSF.config.emergentActive;
-        window.HLSF.config.rotationActive = false;
-        emergentBtn.textContent = window.HLSF.config.emergentActive ? 'Stop Emergent' : 'Start Emergent';
-        document.getElementById('hlsf-toggle-rotation').textContent = 'Start Global';
+        const state = window.HLSF.state.emergent;
+        state.on = !state.on;
+        window.HLSF.config.emergentActive = state.on;
+        if (state.on) {
+          window.HLSF.config.rotationActive = false;
+          document.getElementById('hlsf-toggle-rotation').textContent = 'Start Global';
+        }
+        emergentBtn.textContent = state.on ? 'Stop Emergence' : 'Start Emergence';
+        requestRender();
       });
       
       const edgesBtn = document.getElementById('hlsf-toggle-edges');
@@ -3736,11 +3983,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (isDragging) {
           const dx = e.clientX - lastX;
           const dy = e.clientY - lastY;
-          window.HLSF.config.tx += dx;
-          window.HLSF.config.ty += dy;
+          window.HLSF.view.x += dx;
+          window.HLSF.view.y += dy;
+          syncViewToConfig();
           lastX = e.clientX;
           lastY = e.clientY;
-          debouncedLegacyRender();
+          requestRender();
         }
       });
       
@@ -3755,13 +4003,22 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       window.HLSF.canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
         const factor = e.deltaY < 0 ? 1.1 : 0.9;
-        window.HLSF.config.scale *= factor;
-        debouncedLegacyRender();
+        window.HLSF.view.scale = Math.min(12, Math.max(0.25, window.HLSF.view.scale * factor));
+        syncViewToConfig();
+        requestRender();
       }, { passive: false });
       
       // Center view
-      window.HLSF.config.tx = window.HLSF.canvas.width / 2;
-      window.HLSF.config.ty = window.HLSF.canvas.height / 2;
+      if (window.HLSF.canvas) {
+        const width = window.HLSF.canvas.clientWidth || window.HLSF.canvas.width;
+        const height = window.HLSF.canvas.clientHeight || window.HLSF.canvas.height;
+        window.HLSF.view.x = width / 2;
+        window.HLSF.view.y = height / 2;
+      } else {
+        window.HLSF.view.x = 0;
+        window.HLSF.view.y = 0;
+      }
+      syncViewToConfig();
       
       // Build nodes
       window.HLSF.nodes = hlsfNodes;
@@ -3954,6 +4211,29 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }, 16);
 
+    function requestRender() {
+      debouncedLegacyRender();
+    }
+
+    function animateViewport(target, ms = 300) {
+      const view = window.HLSF.view;
+      const start = performance.now();
+      const s0 = { x: view.x, y: view.y, scale: view.scale };
+      const duration = Number.isFinite(ms) ? Math.max(16, ms) : 300;
+      function step(t) {
+        const k = Math.min(1, (t - start) / duration);
+        const eased = k * (2 - k);
+        view.x = s0.x + eased * ((target?.x ?? s0.x) - s0.x);
+        view.y = s0.y + eased * ((target?.y ?? s0.y) - s0.y);
+        const targetScale = Number.isFinite(target?.scale) ? Math.max(0.1, target.scale) : s0.scale;
+        view.scale = s0.scale + eased * (targetScale - s0.scale);
+        syncViewToConfig();
+        requestRender();
+        if (k < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
     let _legacyLast = null;
     function animateLegacyHLSF(now) {
       if (!window.HLSF.canvas || !window.HLSF.ctx) {
@@ -3987,6 +4267,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (window.HLSF && window.HLSF.config) {
           window.HLSF.config.rotationActive = false;
           window.HLSF.config.emergentActive = false;
+        }
+        if (window.HLSF?.state?.emergent) {
+          window.HLSF.state.emergent.on = false;
+          window.HLSF.state.emergentRot = 0;
         }
         _legacyLast = null;
       } catch (err) {
@@ -4712,14 +4996,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
 
         const index = await time('index', async () => loadOrGetIndex());
-        const { seeds, idx, glyphOnly } = await time('seeds', async () => seedsForMode(args, index));
-        if (!Array.isArray(seeds) || !seeds.length) {
+        const { anchors, idx, glyphOnly } = await time('anchors', async () => anchorsForMode(args, index));
+        if (!Array.isArray(anchors) || !anchors.length) {
           logError('DB is empty. Use /loaddb or /import.');
           return;
         }
 
         const depth = Number.isFinite(args.depth) ? args.depth : 3;
-        const graph = await time('graph', async () => assembleGraphFromSeedsLogged(seeds, depth, idx || index));
+        const graph = await time('graph', async () => assembleGraphFromAnchorsLogged(anchors, depth, idx || index));
         await time('cluster', async () => { applyAffinityClusters(graph, idx || index); });
         const layout = await time('layout', async () => computeLayout(graph));
         await time('stage', async () => prepareBuffers(graph, layout, { glyphOnly: glyphOnly === true }));
@@ -4733,7 +5017,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           rawArgs: originalArgs,
           resolvedArgs: sanitizedArgs,
           args,
-          seeds: [...seeds],
+          anchors: [...anchors],
           idx: idx || index,
           glyphOnly: glyphOnly === true,
           depth,
@@ -4741,14 +5025,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         };
         syncHlsfControls(document.getElementById('hlsf-canvas-container'));
         const suffix = originalArgs ? ` ${originalArgs}` : '';
-        logFinal(`/hlsf${suffix} → nodes ${graph.nodes.size}, edges ${graph.edges.length}, seeds ${seeds.length}`);
+        const metrics = ensureGraphMetrics(graph);
+        logOK(`/hlsf${suffix} → nodes ${metrics.nodes}, edges ${metrics.edges}, relationships ${metrics.relationships}, anchors ${metrics.anchors}`);
 
         if (loggingActive) {
           BatchLog.phase('hlsf', 'end', {
             total_ms: (performance.now() - start) | 0,
-            nodes: graph.nodes.size,
-            edges: graph.edges.length,
-            seeds: seeds.length,
+            nodes: metrics.nodes,
+            edges: metrics.edges,
+            relationships: metrics.relationships,
+            anchors: metrics.anchors,
           });
         }
       } finally {
@@ -4771,10 +5057,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     async function rebuildHlsfFromLastCommand(logUpdate = false) {
       const last = window.HLSF?.lastCommand;
-      if (!last || !last.idx || !Array.isArray(last.seeds) || !last.seeds.length) return null;
+      if (!last || !last.idx || !Array.isArray(last.anchors) || !last.anchors.length) return null;
       try {
         const depth = Number.isFinite(last.depth) ? last.depth : 3;
-        const graph = await assembleGraphFromSeedsLogged(last.seeds, depth, last.idx, { silent: true });
+        const graph = await assembleGraphFromAnchorsLogged(last.anchors, depth, last.idx, { silent: true });
         applyAffinityClusters(graph, last.idx);
         const layout = computeLayout(graph);
         prepareBuffers(graph, layout, { glyphOnly: last.glyphOnly === true });
@@ -4784,7 +5070,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         syncHlsfControls(document.getElementById('hlsf-canvas-container'));
         if (logUpdate) {
           const suffix = last.rawArgs ? ` ${last.rawArgs}` : '';
-          logStatus(`↻ /hlsf${suffix} → nodes ${graph.nodes.size}, edges ${graph.edges.length}, seeds ${last.seeds.length}`);
+          const metrics = ensureGraphMetrics(graph);
+          logStatus(`↻ /hlsf${suffix} → nodes ${metrics.nodes}, edges ${metrics.edges}, relationships ${metrics.relationships}, anchors ${metrics.anchors}`);
         }
         return graph;
       } catch (err) {
@@ -5038,7 +5325,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             /encrypt &lt;text&gt; - Encrypt text into weighted glyphs<br>
             /decrypt &lt;glyph+float&gt; - Decrypt using private ledger<br>
             /exportledger - Shortcut for /ledger export<br>
-            /hlsf or /visualize - Visualize database as Hierarchical-Level Semantic Framework<br>
+            /hlsf or /visualize - Visualize database as Hierarchical-Level Semantic Framework — builds from anchors<br>
             /help - Show commands`);
           break;
         default:
