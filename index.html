@@ -1038,7 +1038,7 @@
 
     window.HLSF = window.HLSF || {};
     const existingConfig = window.HLSF.config || {};
-    const DEFAULT_BOOTSTRAP_DB = "HLSF_Database_2025-10-17.json";
+    const DEFAULT_BOOTSTRAP_DB = "HLSF_Database_2025-10-15.json";
     window.HLSF.config = Object.assign({
       bootstrapDbUrl: existingConfig.bootstrapDbUrl || DEFAULT_BOOTSTRAP_DB,
       rotationActive: true,
@@ -3438,6 +3438,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       const args = parseHlsfArgs(rawArgs);
       const { seeds, idx, glyphOnly } = seedsForMode(args);
+      if (!seeds?.length) {
+        logError('DB is empty. Use /loaddb or /import.');
+        return;
+      }
       if (!ensureHLSFCanvas()) {
         logError('Unable to initialize canvas for HLSF rendering.');
         return;
