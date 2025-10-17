@@ -1037,8 +1037,10 @@
     }
 
     window.HLSF = window.HLSF || {};
+    const existingConfig = window.HLSF.config || {};
+    const DEFAULT_BOOTSTRAP_DB = "HLSF_Database_2025-10-17.json";
     window.HLSF.config = Object.assign({
-      bootstrapDbUrl: "HLSF_Database_2025-10-15.json",
+      bootstrapDbUrl: existingConfig.bootstrapDbUrl || DEFAULT_BOOTSTRAP_DB,
       rotationActive: true,
       rotationOmega: 0.30,
       alpha: 0.10,
@@ -1052,8 +1054,7 @@
       whiteBg: false,
       showEnglish: true,
       fullSeedCap: 64,
-      bootstrapDbUrl: '',
-    }, window.HLSF.config || {});
+    }, existingConfig);
     window.HLSF.state = Object.assign({
       globalRot: 0,
       emergentRot: 0,
