@@ -1411,7 +1411,14 @@
         .map(t => t.toLowerCase());
     }
 
-    const Session = Object.assign({ tokens: new Set() }, Session || {});
+    const Session = (() => {
+      const existing = window.Session && typeof window.Session === 'object'
+        ? window.Session
+        : {};
+      const session = Object.assign({ tokens: new Set() }, existing);
+      window.Session = session;
+      return session;
+    })();
 
     function addConversationTokens(arr) {
       for (const token of arr || []) {
