@@ -719,7 +719,24 @@
       return graph;
     }
 
-    function seedsForMode(args) {
+    function recordScore(rec){
+      let s = 0, any = false;
+      for (const arr of Object.values(rec.relationships || {})){
+        if (Array.isArray(arr) && arr.length){
+          const m = Math.max(...arr.map(x => +x.weight || 0));
+          s += m; any = true;
+        }
+      }
+      return any ? s : Object.keys(rec.relationships || {}).length;
+    }
+
+    function defaultSeeds(idx, k = 64){
+      const recs = Array.from(idx.values());
+      recs.sort((a,b) => recordScore(b) - recordScore(a));
+      return recs.slice(0, k).map(r => r.token);
+    }
+
+    function seedsForMode(args){
       const db = getDb();
       if (!db) throw new Error('No DB loaded');
       loadGlyphMaps(db);
@@ -1035,6 +1052,7 @@
       whiteBg: false,
       showEnglish: true,
       fullSeedCap: 64,
+      bootstrapDbUrl: '',
     }, window.HLSF.config || {});
     window.HLSF.state = Object.assign({
       globalRot: 0,
@@ -1087,13 +1105,15 @@
       (db.token_glyph_map || []).forEach(({ token, glyph }) => {
         if (token && glyph) {
           TokenToGlyph.set(token, glyph);
-          GlyphToToken.set(glyph, token);
+          if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+          GlyphToToken.get(glyph).add(token);
         }
       });
       (db.glyph_token_map || []).forEach(({ glyph, token }) => {
         if (glyph && token) {
           TokenToGlyph.set(token, glyph);
-          GlyphToToken.set(glyph, token);
+          if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+          GlyphToToken.get(glyph).add(token);
         }
       });
     }
@@ -2990,9 +3010,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     async function importHLSFDBFromFile(file) {
       const txt = await file.text();
-      const db = JSON.parse(txt);
-      safeStorageSet(DB_RAW_KEY, txt);
-
+      const count = loadDbObject(txt);
+      const db = getDb();
+      if (!db) return;
       const seen = [];
       for (const rec of db.full_token_data || []) {
         safeStorageSet(TOKEN_CACHE_PREFIX + rec.token, JSON.stringify(rec));
@@ -3002,17 +3022,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       state.hlsfReady = false;
       window.HLSF_GRAPH = null;
       updateStats();
-      addLog(`📊 Import: ${seen.length} tokens, ${db.database_stats?.total_relationships ?? '?'} relationships.`);
+      addLog(`📊 Import: ${seen.length} tokens (${count} normalized).`);
       updateHeaderCounts();
     }
 
     function importDatabaseData(data, source = 'file') {
       try {
-        // Validate the data structure
-        if (!data.full_token_data || !Array.isArray(data.full_token_data)) {
-          logError('Invalid database format. Expected full_token_data array.');
-          return null;
-        }
+        const normalizedCount = loadDbObject(data);
+        const db = getDb();
+        if (!db) throw new Error('Failed to hydrate database');
 
         state.hlsfReady = false;
         let totalTokens = 0;
@@ -3029,17 +3047,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const seen = new Set();
 
         for (const token of tokenData) {
-          if (!token.token) continue;
+          if (!token?.token) continue;
 
           const key = getCacheKey(token.token);
           const existing = safeStorageGet(key);
           seen.add(token.token);
 
           if (existing) {
-            // Check if imported data is newer
             const existingData = typeof existing === 'string' ? JSON.parse(existing) : existing;
             const importedDate = new Date(token.cached_at || 0);
-            const existingDate = new Date(existingData.cached_at || 0);
+            const existingDate = new Date(existingData?.cached_at || 0);
 
             if (importedDate > existingDate) {
               safeStorageSet(key, JSON.stringify(token));
@@ -3062,10 +3079,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (imported > 0) summary.push(`${imported} new tokens imported`);
         if (updated > 0) summary.push(`${updated} tokens updated`);
         if (skipped > 0) summary.push(`${skipped} existing tokens kept`);
+        if (!summary.length) summary.push('no cache changes');
 
-        logSuccess(`Database imported from ${source}: ${summary.join(', ')}`);
+        logSuccess(`Database imported from ${source}: ${summary.join(', ')}, normalized ${normalizedCount} tokens`);
 
-        if (data.database_stats) {
+        if (data?.database_stats) {
           addLog(`<div class="adjacency-insight">
             📊 <strong>Import Summary:</strong><br>
             • Source maturity: ${data.database_stats.maturity_level}<br>
@@ -3075,9 +3093,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           </div>`);
         }
 
-        return { imported, skipped, updated, seen: Array.from(seen) };
+        return { imported, skipped, updated, seen: Array.from(seen), normalizedCount };
       } catch (err) {
-        logError(`Import failed: ${err.message}`);
+        logError(`Import failed: ${err.message || err}`);
         return null;
       }
     }
@@ -3493,13 +3511,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     function* iterTokenRecords() {
-      const raw = safeStorageGet(DB_RAW_KEY);
-      if (raw) {
-        const db = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (db.full_token_data && db.full_token_data.length) {
-          for (const rec of db.full_token_data) yield rec;
-          return;
-        }
+      const db = getDb();
+      if (db?.full_token_data?.length) {
+        for (const rec of db.full_token_data) yield rec;
+        return;
       }
       const idxRaw = safeStorageGet(DB_INDEX_KEY, []);
       const idx = Array.isArray(idxRaw) ? idxRaw : [];
