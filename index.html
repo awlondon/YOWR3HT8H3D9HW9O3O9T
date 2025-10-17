@@ -696,38 +696,51 @@
       return graph;
     }
 
-    function seedsForMode(args) {
+    function recordScore(rec){
+      let s = 0, any = false;
+      for (const arr of Object.values(rec.relationships || {})){
+        if (Array.isArray(arr) && arr.length){
+          const m = Math.max(...arr.map(x => +x.weight || 0));
+          s += m; any = true;
+        }
+      }
+      return any ? s : Object.keys(rec.relationships || {}).length;
+    }
+
+    function defaultSeeds(idx, k = 64){
+      const recs = Array.from(idx.values());
+      recs.sort((a,b) => recordScore(b) - recordScore(a));
+      return recs.slice(0, k).map(r => r.token);
+    }
+
+    function seedsForMode(args){
       const db = getDb();
       if (!db) throw new Error('No DB loaded');
       loadGlyphMaps(db);
       const idx = buildIndex(db);
 
-      if (args.mode === 'full') {
-        const all = [...idx.keys()];
-        const cap = window.HLSF.config.fullSeedCap || 64;
-        return { seeds: all.slice(0, cap), idx };
+      if (args.mode === 'conversation'){
+        const conv = [...(Session?.tokens || [])].filter(t => idx.has(t));
+        const seeds = conv.length ? conv : defaultSeeds(idx, 32);
+        return { seeds, idx };
       }
-
-      if (args.mode === 'conversation') {
-        const conv = [...Session.tokens];
-        if (!conv.length) throw new Error('No conversation tokens collected');
-        return { seeds: conv, idx };
+      if (args.mode === 'tokens'){
+        let seeds = args.tokens.filter(t => idx.has(t));
+        if (!seeds.length) seeds = defaultSeeds(idx, 32);
+        return { seeds, idx };
       }
-
-      if (args.mode === 'tokens') {
-        const valid = args.tokens.filter(t => idx.has(t));
-        if (!valid.length) throw new Error('No valid tokens');
-        return { seeds: valid, idx };
+      if (args.mode === 'glyphs'){
+        const toks = args.glyphs.flatMap(g => {
+          const mapped = GlyphToToken.get(g);
+          if (!mapped) return [];
+          if (mapped instanceof Set) return [...mapped];
+          if (Array.isArray(mapped)) return mapped;
+          return [mapped];
+        }).filter(t => idx.has(t));
+        const seeds = toks.length ? toks : defaultSeeds(idx, 32);
+        return { seeds, idx, glyphOnly: true };
       }
-
-      if (args.mode === 'glyphs') {
-        const tokens = args.glyphs.map(g => GlyphToToken.get(g)).filter(Boolean);
-        const valid = tokens.filter(t => idx.has(t));
-        if (!valid.length) throw new Error('No valid glyph-mapped tokens');
-        return { seeds: valid, idx, glyphOnly: true };
-      }
-
-      throw new Error('Unsupported mode');
+      return { seeds: defaultSeeds(idx, window.HLSF.config.fullSeedCap || 64), idx };
     }
 
     function nodeLabel(token, glyphOnly = false) {
@@ -1007,6 +1020,7 @@
       whiteBg: false,
       showEnglish: true,
       fullSeedCap: 64,
+      bootstrapDbUrl: '',
     }, window.HLSF.config || {});
     window.HLSF.state = Object.assign({
       globalRot: 0,
@@ -1059,13 +1073,15 @@
       (db.token_glyph_map || []).forEach(({ token, glyph }) => {
         if (token && glyph) {
           TokenToGlyph.set(token, glyph);
-          GlyphToToken.set(glyph, token);
+          if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+          GlyphToToken.get(glyph).add(token);
         }
       });
       (db.glyph_token_map || []).forEach(({ glyph, token }) => {
         if (glyph && token) {
           TokenToGlyph.set(token, glyph);
-          GlyphToToken.set(glyph, token);
+          if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+          GlyphToToken.get(glyph).add(token);
         }
       });
     }
@@ -1134,8 +1150,65 @@
 
     // ---- HLSF constants
     const TOKEN_CACHE_PREFIX = 'hlsf_token_';
-    const DB_RAW_KEY = 'hlsf_db_raw';        // stores JSON export text
-    const DB_INDEX_KEY = 'hlsf_db_index';    // array of token strings
+    const DB_RAW_KEY = 'HLSF_DB_RAW';
+    const DB_INDEX_KEY = 'HLSF_DB_INDEX';
+
+    function parseMaybeNdjson(text){
+      try { return JSON.parse(text); } catch {}
+      const lines = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+      const rows = [];
+      for (const ln of lines){
+        try { rows.push(JSON.parse(ln)); } catch {}
+      }
+      return rows.length ? rows : null;
+    }
+
+    function coerceDb(input){
+      const data = (typeof input === 'string') ? parseMaybeNdjson(input.replace(/^\uFEFF/, '')) : input;
+      if (!data) throw new Error('Unparseable JSON/NDJSON');
+      if (data && !Array.isArray(data) && Array.isArray(data.full_token_data)) {
+        return { full_token_data: data.full_token_data };
+      }
+      if (Array.isArray(data)) return { full_token_data: data };
+      throw new Error('Invalid database format. Expected full_token_data array.');
+    }
+
+    function normalizeRecord(rec){
+      if (!rec || typeof rec.token !== 'string') return null;
+      const rels = rec.relationships && typeof rec.relationships === 'object' ? rec.relationships : {};
+      return { token: rec.token, relationships: rels, cached_at: rec.cached_at || null };
+    }
+
+    function loadDbObject(dbLike){
+      const db = coerceDb(dbLike);
+      const raw = Array.from(db.full_token_data || []);
+      const clean = raw.map(normalizeRecord).filter(Boolean);
+      if (!clean.length) throw new Error('No valid token records');
+      const out = { full_token_data: clean };
+      localStorage.setItem(DB_RAW_KEY, JSON.stringify(out));
+      const index = clean.map(r=>r.token);
+      localStorage.setItem(DB_INDEX_KEY, JSON.stringify(index));
+      window.HLSF = window.HLSF || {};
+      window.HLSF.dbCache = out;
+      window.HLSF.matrices = null;
+      window.HLSF.layoutCache = null;
+      loadGlyphMaps(out);
+      return clean.length;
+    }
+
+    function getDb(){
+      if (window.HLSF?.dbCache) return window.HLSF.dbCache;
+      const raw = localStorage.getItem(DB_RAW_KEY);
+      if (!raw) return null;
+      try {
+        const parsed = JSON.parse(raw);
+        window.HLSF = window.HLSF || {};
+        window.HLSF.dbCache = parsed;
+        return parsed;
+      } catch {
+        return null;
+      }
+    }
 
     // Symbolic glyphs for complex number representation
     const GLYPH_LIBRARY = [
@@ -1271,16 +1344,20 @@
         .map(t => t.toLowerCase());
     }
 
-    const Session = {
-      tokens: new Set(),
-    };
+    const Session = Object.assign({ tokens: new Set() }, window.Session || {});
 
-    function addConversationTokens(arr) {
-      if (!Array.isArray(arr)) return;
-      for (const token of arr) {
-        if (token) Session.tokens.add(token);
+    function addConversationTokens(arr){
+      for (const t of arr || []) {
+        if (t) Session.tokens.add(t);
       }
     }
+
+    function onUserPromptSubmitted(text){
+      const toks = (text || '').trim().split(/\s+/).filter(Boolean);
+      addConversationTokens(toks);
+    }
+
+    window.Session = Session;
 
     function formatCurrency(cents) {
       return `$${(cents / 100).toFixed(2)}`;
@@ -2868,9 +2945,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     async function importHLSFDBFromFile(file) {
       const txt = await file.text();
-      const db = JSON.parse(txt);
-      safeStorageSet(DB_RAW_KEY, txt);
-
+      const count = loadDbObject(txt);
+      const db = getDb();
+      if (!db) return;
       const seen = [];
       for (const rec of db.full_token_data || []) {
         safeStorageSet(TOKEN_CACHE_PREFIX + rec.token, JSON.stringify(rec));
@@ -2880,44 +2957,35 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       state.hlsfReady = false;
       window.HLSF_GRAPH = null;
       updateStats();
-      addLog(`📊 Import: ${seen.length} tokens, ${db.database_stats?.total_relationships ?? '?'} relationships.`);
+      addLog(`📊 Import: ${seen.length} tokens (${count} normalized).`);
       updateHeaderCounts();
     }
 
     function importDatabaseData(data, source = 'file') {
       try {
-        // Validate the data structure
-        if (!data.full_token_data || !Array.isArray(data.full_token_data)) {
-          logError('Invalid database format. Expected full_token_data array.');
-          return null;
-        }
+        const normalizedCount = loadDbObject(data);
+        const db = getDb();
+        if (!db) throw new Error('Failed to hydrate database');
 
         state.hlsfReady = false;
-        const persisted = safeStorageSet(DB_RAW_KEY, JSON.stringify(data));
-        if (!persisted) {
-          console.warn('Failed to persist raw DB snapshot');
-        }
 
-        window.HLSF.dbCache = data;
-
-        const tokenData = data.full_token_data;
+        const tokenData = db.full_token_data || [];
         let imported = 0;
         let skipped = 0;
         let updated = 0;
         const seen = new Set();
 
         for (const token of tokenData) {
-          if (!token.token) continue;
+          if (!token?.token) continue;
 
           const key = getCacheKey(token.token);
           const existing = safeStorageGet(key);
           seen.add(token.token);
 
           if (existing) {
-            // Check if imported data is newer
             const existingData = typeof existing === 'string' ? JSON.parse(existing) : existing;
             const importedDate = new Date(token.cached_at || 0);
-            const existingDate = new Date(existingData.cached_at || 0);
+            const existingDate = new Date(existingData?.cached_at || 0);
 
             if (importedDate > existingDate) {
               safeStorageSet(key, JSON.stringify(token));
@@ -2938,10 +3006,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (imported > 0) summary.push(`${imported} new tokens imported`);
         if (updated > 0) summary.push(`${updated} tokens updated`);
         if (skipped > 0) summary.push(`${skipped} existing tokens kept`);
+        if (!summary.length) summary.push('no cache changes');
 
-        logSuccess(`Database imported from ${source}: ${summary.join(', ')}`);
+        logSuccess(`Database imported from ${source}: ${summary.join(', ')}, normalized ${normalizedCount} tokens`);
 
-        if (data.database_stats) {
+        if (data?.database_stats) {
           addLog(`<div class="adjacency-insight">
             📊 <strong>Import Summary:</strong><br>
             • Source maturity: ${data.database_stats.maturity_level}<br>
@@ -2951,24 +3020,39 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           </div>`);
         }
 
-        return { imported, skipped, updated, seen: Array.from(seen) };
+        return { imported, skipped, updated, seen: Array.from(seen), normalizedCount };
       } catch (err) {
-        logError(`Import failed: ${err.message}`);
+        logError(`Import failed: ${err.message || err}`);
         return null;
       }
     }
 
-    async function autoLoadDatabase() {
-      // Try to load from database.json in the same directory
-      try {
-        const response = await fetch('database.json');
-        if (response.ok) {
-          const data = await response.json();
-          importDatabaseData(data, 'database.json');
-          buildHLSFMatrices(data);
+    async function tryBootstrapDb(){
+      if (getDb()) return true;
+      const candidates = [];
+      const cfgUrl = window.HLSF?.config?.bootstrapDbUrl;
+      if (cfgUrl) candidates.push(cfgUrl);
+      candidates.push('database.json');
+      for (const href of candidates){
+        if (!href) continue;
+        try{
+          const res = await fetch(href, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const text = await res.text();
+          const n = loadDbObject(text);
+          buildHLSFMatrices(getDb());
+          logSuccess(`Bootstrapped DB from ${href}. Tokens: ${n}`);
+          return true;
+        }catch(err){
+          console.warn('Bootstrap failed for', href, err);
         }
-      } catch (err) {
-        // Silently fail - file might not exist, which is fine
+      }
+      return false;
+    }
+
+    async function autoLoadDatabase() {
+      const ok = await tryBootstrapDb();
+      if (!ok) {
         console.log('No database.json found for auto-load');
       }
     }
@@ -2982,36 +3066,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (!name || typeof handler !== 'function') return;
       const key = name.startsWith('/') ? name.toLowerCase() : `/${name.toLowerCase()}`;
       COMMANDS[key] = handler;
-    }
-
-    async function loadDbFromFile(file) {
-      const text = await file.text();
-      safeStorageSet(DB_RAW_KEY, text);
-      const db = JSON.parse(text);
-      const index = (db.full_token_data || []).map(r => r.token).filter(Boolean);
-      safeStorageSet(DB_INDEX_KEY, JSON.stringify(index));
-      window.HLSF.matrices = null;
-      window.HLSF.layoutCache = null;
-      window.HLSF.dbCache = db;
-      logStatus(`DB loaded. Tokens: ${index.length}`);
-      return db;
-    }
-
-    function getDb() {
-      if (window.HLSF.dbCache) return window.HLSF.dbCache;
-      const raw = safeStorageGet(DB_RAW_KEY);
-      if (!raw) return null;
-      if (typeof raw === 'string') {
-        try {
-          const parsed = JSON.parse(raw);
-          window.HLSF.dbCache = parsed;
-          return parsed;
-        } catch {
-          return null;
-        }
-      }
-      window.HLSF.dbCache = raw;
-      return raw;
     }
 
     function dbIndex() {
@@ -3255,16 +3309,52 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
 
-    function cmdImport() {
-      if (!elements?.dbFileInput) {
+    function cmdImport(){
+      const input = elements?.dbFileInput || document.getElementById('db-file');
+      if (!input) {
         logError('File input unavailable');
         return;
       }
-      elements.dbFileInput.value = '';
-      elements.dbFileInput.click();
+      input.value = '';
+      input.onchange = async e => {
+        try{
+          const f = e.target.files?.[0]; if (!f) return;
+          const text = await f.text();
+          const n = loadDbObject(text);
+          buildHLSFMatrices(getDb());
+          logFinal(`DB loaded. Tokens: ${n}`);
+        }catch(err){
+          logError(String(err.message||err));
+        }finally{
+          e.target.value = '';
+        }
+      };
+      input.click();
     }
 
-    function cmdHlsf(rawArgs) {
+    async function cmdLoadDb(arg){
+      try{
+        const href = (arg || '').trim() || window.HLSF?.config?.bootstrapDbUrl;
+        if (!href) throw new Error('Usage: /loaddb <url-or-path>');
+        const res = await fetch(href, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        const n = loadDbObject(text);
+        buildHLSFMatrices(getDb());
+        logFinal(`DB loaded. Tokens: ${n}`);
+      }catch(e){
+        logError(`load failed: ${String(e.message || e)}`);
+      }
+    }
+
+    async function cmdHlsf(rawArgs) {
+      if (!getDb()) {
+        const ok = await tryBootstrapDb();
+        if (!ok) {
+          logError('No DB loaded. Use /loaddb or /import.');
+          return;
+        }
+      }
       try {
         const args = parseHlsfArgs(rawArgs);
         const { seeds, idx, glyphOnly } = seedsForMode(args);
@@ -3277,7 +3367,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const graph = assembleGraphFromSeeds(uniqueSeeds, depth, idx);
         animateHLSF(graph, glyphOnly === true);
         const argLabel = rawArgs ? ` ${rawArgs}` : '';
-        logFinal(`/hlsf${argLabel} → nodes ${graph.nodes.size}, edges ${graph.edges.length}, mode ${args.mode}, depth ${depth}`);
+        logFinal(`/hlsf${argLabel} → nodes ${graph.nodes.size}, edges ${graph.edges.length}, seeds ${uniqueSeeds.length}, mode ${args.mode}`);
       } catch (err) {
         logError(`/hlsf failed: ${err.message}`);
       }
@@ -3351,13 +3441,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     function* iterTokenRecords() {
-      const raw = safeStorageGet(DB_RAW_KEY);
-      if (raw) {
-        const db = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (db.full_token_data && db.full_token_data.length) {
-          for (const rec of db.full_token_data) yield rec;
-          return;
-        }
+      const db = getDb();
+      if (db?.full_token_data?.length) {
+        for (const rec of db.full_token_data) yield rec;
+        return;
       }
       const idxRaw = safeStorageGet(DB_INDEX_KEY, []);
       const idx = Array.isArray(idxRaw) ? idxRaw : [];
@@ -3399,10 +3486,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     async function cmd_hlsf() {
-      cmdHlsf('');
+      await cmdHlsf('');
     }
 
     registerCommand('/import', cmd_import);
+    registerCommand('/loaddb', cmdLoadDb);
     window.COMMANDS = COMMANDS;
     // Router guard (prevents duplicate logs)
     if (!COMMANDS.__hlsf_bound) {
@@ -3420,7 +3508,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const arg = rest.join(' ').trim();
 
       if (command === '/import') { cmdImport(); return true; }
-      if (command === '/hlsf') { cmdHlsf(arg); return true; }
+      if (command === '/loaddb') { await cmdLoadDb(arg); return true; }
+      if (command === '/hlsf') { await cmdHlsf(arg); return true; }
       if (command === '/scheme') { cmdScheme(arg || 'black'); return true; }
       if (command === '/spin') { cmdSpin(arg || 'on'); return true; }
       if (command === '/omega') { cmdOmega(arg); return true; }
@@ -3693,6 +3782,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         handleCommand(input);
         elements.input.value = '';
       } else {
+        onUserPromptSubmitted(input);
         processPrompt(input);
       }
     });
@@ -3708,23 +3798,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (e.key === 'Enter') {
         e.preventDefault();
         elements.sendBtn.click();
-      }
-    });
-
-    elements.dbFileInput.addEventListener('change', async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      try {
-        const db = await loadDbFromFile(file);
-        if (db) {
-          importDatabaseData(db, file.name || 'file');
-          buildHLSFMatrices(db);
-        }
-      } catch (err) {
-        logError(`Import failed: ${err.message}`);
-      } finally {
-        e.target.value = '';
       }
     });
 
