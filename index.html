@@ -3832,7 +3832,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     // ============================================
     // EVENTS
     // ============================================
-    elements.apiConfirmBtn.addEventListener('click', () => {
+    function applyApiKeyFromModal() {
       const key = elements.apiKeyInput.value.trim();
       if (!isValidApiKey(key)) {
         logError('Invalid API key format');
@@ -3845,6 +3845,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         logWarning('API key configured but not saved to storage');
       }
       logSuccess('API key configured');
+    }
+
+    elements.apiConfirmBtn.addEventListener('click', applyApiKeyFromModal);
+
+    elements.apiKeyInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        applyApiKeyFromModal();
+      }
     });
 
     elements.apiCancelBtn.addEventListener('click', () => {
