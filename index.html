@@ -917,7 +917,8 @@
 
     function candidateMap(graph) {
       const nbr = new Map();
-      for (const edge of graph.edges) {
+      const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
+      for (const edge of edges) {
         const fromSet = nbr.get(edge.from) || (() => {
           const set = new Set();
           nbr.set(edge.from, set);
@@ -1008,28 +1009,16 @@
       debouncedLegacyRender();
     }
 
-    function edgesFrom(rec, metrics) {
+    function edgesFrom(rec) {
       if (!rec) return [];
       const matrix = buildMatrixForRecord(rec);
       const relationCap = clampRelationTypeCap(window.HLSF.config?.relationTypeCap);
       const perType = clampEdgesPerType(window.HLSF.config?.edgesPerType);
-      const relations = (matrix?.edges || []).slice(0, relationCap);
-      if (metrics) metrics.edgeTypeEnums += relations.length;
-      const out = [];
-      for (const relation of relations) {
-        const items = Array.isArray(relation?.items) ? relation.items.slice(0, perType) : [];
-        for (const item of items) {
-          const target = item?.token;
-          if (!target) continue;
-          const weight = Number.isFinite(item?.weight)
-            ? item.weight
-            : Number.isFinite(item?.w)
-              ? item.w
-              : relation?.aggWeight;
-          out.push({ rtype: relation?.rtype, to: target, w: Number(weight) || 0 });
-        }
-      }
-      return out;
+      return (matrix?.edges || []).slice(0, relationCap).map((relation) => ({
+        rtype: relation?.rtype,
+        aggWeight: relation?.aggWeight,
+        items: Array.isArray(relation?.items) ? relation.items.slice(0, perType) : []
+      }));
     }
 
     async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, options = {}) {
@@ -1037,10 +1026,10 @@
       const fallbackAnchors = Array.isArray(options?.anchors) ? options.anchors : undefined;
       const legacySeeds = Array.isArray(options?.seeds) ? options.seeds : undefined;
       const anchors = anchorsInput ?? fallbackAnchors ?? legacySeeds ?? [];
-      const graph = { nodes: new Map(), edges: [], anchors: [...anchors] };
+      const graph = { nodes: new Map(), links: [], anchors: [...anchors] };
       const outSet = new Set();
       const inSet = new Set();
-      const metricsState = { edgeTypeEnums: 0 };
+      let edgeTypeEnums = 0;
       const queue = [];
       let head = 0;
       let expanded = 0;
@@ -1051,6 +1040,10 @@
       const loggingActive = !opts.silent && window.HLSF?.config?.batchLogging !== false;
       const logPhase = (evt, meta) => { if (loggingActive) BatchLog.phase('graph', evt, meta); };
       const logProgress = (done, total) => { if (loggingActive) BatchLog.progress(done, total); };
+      const expandedSrc = new Set();
+      const seenTriple = new Set();
+      const visitedSrc = new Set();
+      const fractionalNodes = new Set();
       const freqFor = (rec) => {
         if (!rec) return 1;
         if (Number.isFinite(rec.f)) return rec.f;
@@ -1058,77 +1051,108 @@
         if (Number.isFinite(rec.freq)) return rec.freq;
         return 1;
       };
-
-      const pushEdge = (edge) => {
-        graph.edges.push(edge);
-        if (edge?.from) outSet.add(edge.from);
-        if (edge?.to) inSet.add(edge.to);
+      const ensureNode = (token, layer) => {
+        if (!token) return null;
+        const existing = graph.nodes.get(token);
+        if (existing) {
+          if (Number.isFinite(layer)) {
+            const currentLayer = Number(existing.layer);
+            if (!Number.isFinite(currentLayer) || layer < currentLayer) existing.layer = layer;
+          }
+          return existing;
+        }
+        const rec = index.get(token);
+        if (!rec) return null;
+        const node = { token, f: freqFor(rec), layer: Number.isFinite(layer) ? layer : 0, degree: 0 };
+        graph.nodes.set(token, node);
+        return node;
+      };
+      const pushLink = (from, to, rtype, weight) => {
+        const key = `${from}|${rtype}|${to}`;
+        if (seenTriple.has(key)) return false;
+        seenTriple.add(key);
+        graph.links.push({ from, to, rtype, w: weight });
+        outSet.add(from);
+        inSet.add(to);
+        const fromNode = graph.nodes.get(from);
+        const toNode = graph.nodes.get(to);
+        if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
+        if (toNode) toNode.degree = (toNode.degree || 0) + 1;
         expanded += 1;
         if (loggingActive && expanded % tick === 0) {
           logProgress(expanded, expanded + Math.max(0, queue.length - head));
         }
+        return true;
+      };
+      const queueNext = (from, to, rtype, weight, depth) => {
+        queue.push({ from, to, rtype, w: weight, depth });
+        enqueued += 1;
+      };
+      const expandSource = (token, depth) => {
+        const rec = index.get(token);
+        if (!rec) return;
+        ensureNode(token, depth);
+        const relations = edgesFrom(rec);
+        if (!expandedSrc.has(token)) {
+          edgeTypeEnums += relations.length;
+          expandedSrc.add(token);
+        }
+        for (const relation of relations) {
+          const nextDepth = depth + 1;
+          for (const item of relation.items) {
+            const target = item?.token;
+            if (!target) continue;
+            const targetRec = index.get(target);
+            if (!targetRec) continue;
+            ensureNode(target, nextDepth);
+            const weight = Number.isFinite(item?.weight)
+              ? item.weight
+              : Number.isFinite(item?.w)
+                ? item.w
+                : relation?.aggWeight;
+            const normalizedWeight = Number(weight) || 0;
+            const added = pushLink(token, target, relation?.rtype, normalizedWeight);
+            if (depth < maxDepth) {
+              if (added) queueNext(token, target, relation?.rtype, normalizedWeight, nextDepth);
+            } else if (frac > 0) {
+              fractionalNodes.add(target);
+            }
+          }
+        }
       };
 
       for (const anchor of anchors) {
-        const rec = index.get(anchor);
-        if (!rec) continue;
-        graph.nodes.set(anchor, { token: anchor, f: freqFor(rec), layer: 0, degree: 0 });
-        for (const edge of edgesFrom(rec, metricsState)) {
-          queue.push({ from: anchor, to: edge.to, w: edge.w, rtype: edge.rtype, depth: 1 });
-          enqueued += 1;
-        }
+        if (!index.get(anchor)) continue;
+        ensureNode(anchor, 0);
+        expandSource(anchor, 0);
+        visitedSrc.add(anchor);
       }
 
       logPhase('anchored', { anchors: anchors.length, queued: enqueued });
 
-      let remainderIndex = queue.length;
       while (head < queue.length) {
         const edge = queue[head++];
         if (!edge) break;
-        if (edge.depth > maxDepth) {
-          remainderIndex = head - 1;
-          break;
-        }
-        const rec = index.get(edge.to);
-        if (!rec) continue;
-        if (!graph.nodes.has(edge.to)) {
-          graph.nodes.set(edge.to, { token: edge.to, f: freqFor(rec), layer: edge.depth, degree: 0 });
-        }
-        pushEdge(edge);
-        const fromNode = graph.nodes.get(edge.from);
-        const toNode = graph.nodes.get(edge.to);
-        if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
-        if (toNode) toNode.degree = (toNode.degree || 0) + 1;
-        if (edge.depth < maxDepth) {
-          for (const next of edgesFrom(rec, metricsState)) {
-            queue.push({ from: edge.to, to: next.to, w: next.w, rtype: next.rtype, depth: edge.depth + 1 });
-            enqueued += 1;
-          }
-        }
+        if (edge.depth > maxDepth) continue;
+        if (visitedSrc.has(edge.to)) continue;
+        expandSource(edge.to, edge.depth);
+        visitedSrc.add(edge.to);
         if (!opts.silent && expanded % 1000 === 0) {
-          logPhase('tick', { expanded, queued: Math.max(0, queue.length - head), nodes: graph.nodes.size, link_instances: graph.edges.length });
+          logPhase('tick', { expanded, queued: Math.max(0, queue.length - head), nodes: graph.nodes.size, link_instances: graph.links.length });
           await microtask();
         }
       }
 
-      const remainder = queue.slice(Math.max(remainderIndex, head));
-      if (frac > 0 && remainder.length) {
-        const layer = maxDepth + 1;
-        for (const edge of remainder) {
-          if (graph.nodes.has(edge.to)) continue;
-          const rec = index.get(edge.to);
-          if (!rec) continue;
-          graph.nodes.set(edge.to, { token: edge.to, f: freqFor(rec), layer, degree: 0 });
-        }
-        logPhase('fractional', { added: remainder.length });
+      if (frac > 0 && fractionalNodes.size) {
+        logPhase('fractional', { added: fractionalNodes.size });
       }
 
       logProgress(1, 1);
       const metrics = {
         nodes: outSet.size,
-        relationships: inSet.size,
+        edges: edgeTypeEnums,
+        relationships: graph.links.length,
         anchors: [...outSet].filter((t) => inSet.has(t)).length,
-        edges: metricsState.edgeTypeEnums,
       };
       graph._metrics = metrics;
       logPhase('summary', metrics);
@@ -1142,17 +1166,23 @@
       if (graph._metrics && typeof graph._metrics === 'object') return graph._metrics;
       const out = new Set();
       const inn = new Set();
-      const edges = Array.isArray(graph.edges) ? graph.edges : [];
-      for (const edge of edges) {
+      const links = Array.isArray(graph.links)
+        ? graph.links
+        : (Array.isArray(graph.edges) ? graph.edges : []);
+      const edgeTypes = new Set();
+      const triples = new Set();
+      for (const edge of links) {
         if (edge?.from) out.add(edge.from);
         if (edge?.to) inn.add(edge.to);
+        if (edge?.from && edge?.rtype) edgeTypes.add(`${edge.from}|${edge.rtype}`);
+        if (edge?.from && edge?.to && edge?.rtype) triples.add(`${edge.from}|${edge.rtype}|${edge.to}`);
       }
       const anchors = [...out].filter((t) => inn.has(t)).length;
       return {
         nodes: out.size,
-        relationships: inn.size,
+        relationships: triples.size || links.length,
         anchors,
-        edges: edges.length,
+        edges: edgeTypes.size || links.length,
       };
     }
 
@@ -1162,7 +1192,10 @@
 
     function computeLayout(graph) {
       if (!graph) return { nodes: 0, edges: 0 };
-      return { nodes: graph.nodes.size, edges: graph.edges.length };
+      const linkCount = Array.isArray(graph.links)
+        ? graph.links.length
+        : (Array.isArray(graph.edges) ? graph.edges.length : 0);
+      return { nodes: graph.nodes.size, edges: linkCount };
     }
 
     function prepareBuffers(graph, layout, options = {}) {
@@ -1250,7 +1283,8 @@
       });
 
       const groupByRoot = new Map();
-      graph.edges.forEach(edge => {
+      const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
+      edges.forEach(edge => {
         if (!groupByRoot.has(edge.from)) groupByRoot.set(edge.from, []);
         groupByRoot.get(edge.from).push(edge);
       });
@@ -1488,7 +1522,8 @@
 
       if (cfg.showEdges !== false) {
         const batches = new Map();
-        for (const edge of graph.edges) {
+        const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
+        for (const edge of edges) {
           const fromPos = rotatedPositions.get(edge.from) || rotatedPositions.get(edge.to);
           const toPos = rotatedPositions.get(edge.to);
           if (!fromPos || !toPos) continue;
