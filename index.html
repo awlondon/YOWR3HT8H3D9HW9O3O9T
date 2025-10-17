@@ -738,205 +738,127 @@
     }
 
     function signatureFor(rec) {
-      const relationships = rec?.relationships || {};
-      const weights = new Map();
-      const neighbors = new Set();
-      for (const arr of Object.values(relationships)) {
+      const S = { weights: new Map(), neigh: new Set() };
+      for (const arr of Object.values(rec?.relationships || {})) {
         if (!Array.isArray(arr)) continue;
         for (const rel of arr) {
           const token = rel?.token;
           if (!token) continue;
-          const weight = Number.isFinite(rel?.weight) ? rel.weight : 1;
-          weights.set(token, (weights.get(token) || 0) + weight);
-          neighbors.add(token);
+          const weight = Number.isFinite(rel?.weight)
+            ? rel.weight
+            : Number.isFinite(rel?.w)
+              ? rel.w
+              : 1;
+          S.weights.set(token, (S.weights.get(token) || 0) + weight);
+          S.neigh.add(token);
         }
       }
-      return { weights, neigh: neighbors };
+      return S;
     }
 
-    function cosine(sigA, sigB) {
-      if (!sigA || !sigB) return 0;
+    function cosine(a, b) {
+      if (!a || !b) return 0;
       let dot = 0;
-      let nu = 0;
-      let nv = 0;
-      for (const [token, wa] of sigA.weights) {
-        nu += wa * wa;
-        const wb = sigB.weights.get(token) || 0;
+      let na = 0;
+      let nb = 0;
+      for (const [token, wa] of a.weights) {
+        na += wa * wa;
+        const wb = b.weights.get(token) || 0;
         if (wb) dot += wa * wb;
       }
-      for (const wb of sigB.weights.values()) nv += wb * wb;
-      const denom = Math.sqrt(nu * nv);
+      for (const wb of b.weights.values()) nb += wb * wb;
+      const denom = Math.sqrt(na * nb);
       return denom ? dot / denom : 0;
     }
 
-    function jaccard(sigA, sigB) {
-      if (!sigA || !sigB) return 0;
-      let smaller = sigA;
-      let larger = sigB;
-      if (sigA.neigh.size > sigB.neigh.size) {
-        smaller = sigB;
-        larger = sigA;
-      }
-      let intersection = 0;
-      for (const token of smaller.neigh) {
-        if (larger.neigh.has(token)) intersection += 1;
-      }
-      const union = smaller.neigh.size + larger.neigh.size - intersection;
-      return union ? intersection / union : 0;
+    function jaccard(a, b) {
+      if (!a || !b) return 0;
+      const A = a.neigh;
+      const B = b.neigh;
+      let inter = 0;
+      const small = A.size <= B.size ? A : B;
+      const big = A.size <= B.size ? B : A;
+      for (const x of small) if (big.has(x)) inter += 1;
+      const uni = A.size + B.size - inter;
+      return uni ? inter / uni : 0;
     }
 
-    function affinity(sigA, sigB) {
-      return 0.6 * cosine(sigA, sigB) + 0.4 * jaccard(sigA, sigB);
+    function affinity(a, b) {
+      return 0.6 * cosine(a, b) + 0.4 * jaccard(a, b);
     }
 
     function candidateMap(graph) {
-      const neighbors = new Map();
-      for (const token of graph.nodes.keys()) {
-        neighbors.set(token, new Set());
-      }
+      const nbr = new Map();
       for (const edge of graph.edges) {
-        const fromSet = neighbors.get(edge.from) || (() => {
+        const fromSet = nbr.get(edge.from) || (() => {
           const set = new Set();
-          neighbors.set(edge.from, set);
+          nbr.set(edge.from, set);
           return set;
         })();
-        const toSet = neighbors.get(edge.to) || (() => {
+        const toSet = nbr.get(edge.to) || (() => {
           const set = new Set();
-          neighbors.set(edge.to, set);
+          nbr.set(edge.to, set);
           return set;
         })();
         fromSet.add(edge.to);
         toSet.add(edge.from);
       }
-      for (const [token, firstHop] of neighbors.entries()) {
-        const additions = new Set();
-        const sortedFirstHop = [...firstHop].sort((a, b) => a.localeCompare(b));
-        for (const neighbor of sortedFirstHop) {
-          const secondHop = neighbors.get(neighbor);
-          if (!secondHop) continue;
-          for (const candidate of secondHop) {
-            if (candidate === token || firstHop.has(candidate)) continue;
-            additions.add(candidate);
+      for (const [a, set] of nbr) {
+        for (const b of [...set]) {
+          const second = nbr.get(b) || new Set();
+          for (const c of second) {
+            if (c !== a) set.add(c);
           }
         }
-        const sortedAdditions = [...additions].sort((a, b) => a.localeCompare(b));
-        for (const candidate of sortedAdditions) firstHop.add(candidate);
       }
-      return neighbors;
+      return nbr;
     }
 
-    function ensureAffinityCache() {
-      window.HLSF = window.HLSF || {};
-      window.HLSF.state = window.HLSF.state || {};
-      let cache = window.HLSF.state.affinityClusters;
-      if (cache instanceof Map) return cache;
-      if (cache && typeof cache === 'object') {
-        const restored = new Map();
-        for (const [token, cluster] of Object.entries(cache)) {
-          if (Number.isFinite(cluster)) restored.set(token, cluster);
-        }
-        window.HLSF.state.affinityClusters = restored;
-        return restored;
-      }
-      cache = new Map();
-      window.HLSF.state.affinityClusters = cache;
-      return cache;
-    }
-
-    function clusterByAffinity(graph, index, threshold = 0.35, iterations = 8) {
+    function clusterByAffinity(graph, index, { thresh = 0.35, iters = 8 } = {}) {
       if (!graph || !index) return 0;
-      const tokens = [...graph.nodes.keys()].sort((a, b) => a.localeCompare(b));
-      if (!tokens.length) return 0;
-      const signatures = new Map();
-      for (const token of tokens) {
-        const rec = index.get(token);
-        signatures.set(token, signatureFor(rec));
+      const sig = new Map();
+      for (const [token] of graph.nodes) {
+        sig.set(token, signatureFor(index.get(token) || {}));
       }
-      const candidates = candidateMap(graph);
-      for (const token of tokens) {
-        if (!candidates.has(token)) candidates.set(token, new Set());
+      const cand = candidateMap(graph);
+      for (const token of graph.nodes.keys()) {
+        if (!cand.has(token)) cand.set(token, new Set());
       }
-      const cache = ensureAffinityCache();
-      const previous = new Map(cache);
-      const labels = new Map();
-      for (const token of tokens) {
-        const cached = previous.get(token);
-        labels.set(token, Number.isFinite(cached) ? `cluster:${cached}` : token);
-      }
-      const limit = Math.max(1, Math.floor(iterations));
-      const thresh = Math.max(0, Math.min(1, Number(threshold) || 0));
-      for (let iteration = 0; iteration < limit; iteration++) {
+      const label = new Map();
+      for (const token of graph.nodes.keys()) label.set(token, token);
+      const limit = Math.max(1, Math.floor(iters));
+      const threshold = Math.max(0, Math.min(1, Number(thresh) || 0));
+      for (let i = 0; i < limit; i++) {
         let moved = 0;
-        for (const token of tokens) {
-          const neighborhood = candidates.get(token);
-          if (!neighborhood || neighborhood.size === 0) continue;
-          let best = labels.get(token);
+        for (const [a, neighbors] of cand) {
+          let best = label.get(a);
           let bestScore = 0;
           const scores = new Map();
-          const sortedNeighbors = [...neighborhood].sort((a, b) => a.localeCompare(b));
-          for (const neighbor of sortedNeighbors) {
-            const score = affinity(signatures.get(token), signatures.get(neighbor));
-            if (score < thresh) continue;
-            const label = labels.get(neighbor);
-            if (!label) continue;
-            scores.set(label, (scores.get(label) || 0) + score);
+          for (const b of neighbors) {
+            const score = affinity(sig.get(a), sig.get(b));
+            if (score < threshold) continue;
+            const lbl = label.get(b);
+            scores.set(lbl, (scores.get(lbl) || 0) + score);
           }
-          for (const [label, score] of scores.entries()) {
-            if (score > bestScore) {
-              bestScore = score;
-              best = label;
+          for (const [lbl, total] of scores) {
+            if (total > bestScore) {
+              bestScore = total;
+              best = lbl;
             }
           }
-          if (best !== labels.get(token)) {
-            labels.set(token, best);
+          if (best !== label.get(a)) {
+            label.set(a, best);
             moved += 1;
           }
         }
-        if (moved === 0) break;
+        if (!moved) break;
       }
-
-      const clusters = new Map();
-      for (const token of tokens) {
-        const label = labels.get(token) || token;
-        if (!clusters.has(label)) clusters.set(label, []);
-        clusters.get(label).push(token);
+      const ids = [...new Set(label.values())].sort();
+      const idMap = new Map(ids.map((k, idx) => [k, idx]));
+      for (const [token, node] of graph.nodes) {
+        node.cluster = idMap.get(label.get(token));
       }
-
-      const clusterEntries = [];
-      for (const [label, members] of clusters.entries()) {
-        members.sort((a, b) => a.localeCompare(b));
-        let priorRank = Number.POSITIVE_INFINITY;
-        for (const token of members) {
-          const cached = previous.get(token);
-          if (Number.isFinite(cached)) priorRank = Math.min(priorRank, cached);
-        }
-        clusterEntries.push({ label, members, priorRank, size: members.length });
-      }
-
-      clusterEntries.sort((a, b) => {
-        const rankA = Number.isFinite(a.priorRank) ? a.priorRank : Number.POSITIVE_INFINITY;
-        const rankB = Number.isFinite(b.priorRank) ? b.priorRank : Number.POSITIVE_INFINITY;
-        if (rankA !== rankB) return rankA - rankB;
-        const sizeDiff = b.size - a.size;
-        if (sizeDiff) return sizeDiff;
-        const nameA = a.members[0] || '';
-        const nameB = b.members[0] || '';
-        return nameA.localeCompare(nameB);
-      });
-
-      cache.clear();
-      clusterEntries.forEach((entry, idx) => {
-        for (const token of entry.members) {
-          cache.set(token, idx);
-        }
-      });
-
-      for (const [token, node] of graph.nodes.entries()) {
-        const assigned = cache.get(token);
-        node.cluster = Number.isFinite(assigned) ? assigned : 0;
-      }
-
-      return clusterEntries.length;
+      return idMap.size;
     }
 
     function applyAffinityClusters(graph, index) {
@@ -944,7 +866,7 @@
       const config = window.HLSF?.config?.affinity || {};
       const threshold = Number.isFinite(config.threshold) ? config.threshold : 0.35;
       const iterations = Number.isFinite(config.iterations) ? config.iterations : 8;
-      const count = clusterByAffinity(graph, index, threshold, iterations);
+      const count = clusterByAffinity(graph, index, { thresh: threshold, iters: iterations });
       graph.clusterCount = count;
       return count;
     }
@@ -983,73 +905,54 @@
 
     function assembleGraphFromSeeds(seeds, depthFloat, idx) {
       const graph = { nodes: new Map(), edges: [], seeds: [...seeds] };
-      const seen = new Set();
-      const q = [];
+      const queue = [];
 
       for (const seed of seeds) {
         const rec = idx.get(seed);
         if (!rec) continue;
-        graph.nodes.set(seed, { token: seed, f: rec.f || rec.frequency || 1, layer: 0, degree: 0, cluster: 0 });
-        edgesFrom(rec).forEach(e => {
-          q.push({ from: seed, to: e.to, w: e.w, rtype: e.rtype, depth: 1 });
-        });
+        graph.nodes.set(seed, { token: seed, f: rec?.f || rec?.frequency || 1, layer: 0, degree: 0 });
+        for (const edge of edgesFrom(rec)) {
+          queue.push({ from: seed, to: edge.to, w: edge.w, rtype: edge.rtype, depth: 1 });
+        }
       }
 
-      const full = Math.floor(depthFloat);
-      for (let d = 1; d <= full; d++) {
-        const layer = q
-          .filter(e => e.depth === d)
-          .sort((a, b) => b.w - a.w);
-        const next = [];
-        for (const edge of layer) {
-          if (!graph.nodes.has(edge.to)) {
-            const rec = idx.get(edge.to);
-            graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1, layer: d, degree: 0, cluster: 0 });
-          }
-          const node = graph.nodes.get(edge.to);
-          if (!node) continue;
-          node.layer = Math.min(node.layer ?? d, d);
-          graph.edges.push(edge);
-          const fromNode = graph.nodes.get(edge.from);
-          if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
-          node.degree = (node.degree || 0) + 1;
-          if (d < full) {
-            const rec = idx.get(edge.to);
-            if (!rec) continue;
-            edgesFrom(rec).forEach(ne => {
-              const key = `${edge.to}→${ne.to}·${ne.rtype}`;
-              if (seen.has(key)) return;
-              seen.add(key);
-              next.push({ from: edge.to, to: ne.to, w: ne.w, rtype: ne.rtype, depth: d + 1 });
-            });
+      const maxDepth = Math.floor(depthFloat);
+      const frac = depthFloat - maxDepth;
+      while (queue.length) {
+        const edge = queue.shift();
+        if (!edge) break;
+        const depth = edge.depth;
+        if (depth > maxDepth) {
+          queue.unshift(edge);
+          break;
+        }
+        const rec = idx.get(edge.to);
+        if (!rec) continue;
+        if (!graph.nodes.has(edge.to)) {
+          graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1, layer: depth, degree: 0 });
+        }
+        graph.edges.push(edge);
+        const fromNode = graph.nodes.get(edge.from);
+        const toNode = graph.nodes.get(edge.to);
+        if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
+        if (toNode) toNode.degree = (toNode.degree || 0) + 1;
+        if (depth < maxDepth) {
+          for (const next of edgesFrom(rec)) {
+            queue.push({ from: edge.to, to: next.to, w: next.w, rtype: next.rtype, depth: depth + 1 });
           }
         }
-        q.push(...next);
       }
 
-      const frac = depthFloat - full;
       if (frac > 0) {
-        const tail = q
-          .filter(e => e.depth === full + 1)
-          .sort((a, b) => b.w - a.w);
-        const k = Math.max(0, Math.floor(frac * tail.length));
-        for (let i = 0; i < k; i++) {
-          const edge = tail[i];
-          if (!graph.nodes.has(edge.to)) {
-            const rec = idx.get(edge.to);
-            graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1, layer: full + 1, degree: 0, cluster: 0 });
-          }
-          const node = graph.nodes.get(edge.to);
-          if (!node) continue;
-          node.layer = Math.min(node.layer ?? (full + 1), full + 1);
-          graph.edges.push(edge);
-          const fromNode = graph.nodes.get(edge.from);
-          if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
-          node.degree = (node.degree || 0) + 1;
+        const tailLayer = maxDepth + 1;
+        for (const edge of queue) {
+          if (graph.nodes.has(edge.to)) continue;
+          const rec = idx.get(edge.to);
+          if (!rec) continue;
+          graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1, layer: tailLayer, degree: 0 });
         }
       }
 
-      applyAffinityClusters(graph, idx);
       return graph;
     }
 
@@ -1143,61 +1046,62 @@
       return pos;
     }
 
-    function affinityLayout(graph, width, height, scale, centerX, centerY) {
+    function clusterLevelLayout(graph, width, height, scale, centerX, centerY) {
+      const rot = window.HLSF.state?.globalRot || 0;
       const cx = Number.isFinite(centerX) ? centerX : width / 2;
       const cy = Number.isFinite(centerY) ? centerY : height / 2;
-      const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
-        ? window.HLSF.state.globalRot
-        : 0;
-      const ringMap = new Map();
-      let maxLayer = 0;
-      for (const [token, node] of graph.nodes.entries()) {
-        const layer = Number.isFinite(node?.layer) ? Math.max(0, Math.floor(node.layer)) : 0;
-        const cluster = Number.isFinite(node?.cluster) ? node.cluster : 0;
-        maxLayer = Math.max(maxLayer, layer);
-        const byCluster = ringMap.get(layer) || new Map();
-        if (!ringMap.has(layer)) ringMap.set(layer, byCluster);
-        const members = byCluster.get(cluster) || [];
-        if (!byCluster.has(cluster)) byCluster.set(cluster, members);
-        members.push(token);
+      let Lmax = 0;
+      for (const node of graph.nodes.values()) {
+        const layer = node?.layer;
+        if (Number.isFinite(layer)) Lmax = Math.max(Lmax, layer | 0);
       }
+
+      const layerCluster = new Map();
+      for (const [token, node] of graph.nodes) {
+        const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
+        const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+        const key = `${layer}:${cluster}`;
+        const arr = layerCluster.get(key) || [];
+        arr.push(token);
+        layerCluster.set(key, arr);
+      }
+
+      const layers = Array.from({ length: Lmax + 1 }, () => new Map());
+      for (const [key, toks] of layerCluster.entries()) {
+        const [layerStr, clusterStr] = key.split(':');
+        const layer = Number(layerStr) || 0;
+        const cluster = Number(clusterStr) || 0;
+        const bucket = layers[layer];
+        toks.sort();
+        bucket.set(cluster, toks);
+      }
+
       const Rmax = Math.min(width, height) * 0.45 * scale;
-      const dr = Rmax / Math.max(1, maxLayer + 1);
-      const positions = new Map();
-      const sortedLayers = [...ringMap.entries()].sort((a, b) => a[0] - b[0]);
-      for (const [layer, clusters] of sortedLayers) {
-        const entries = [...clusters.entries()].map(([clusterId, tokens]) => {
-          tokens.sort((a, b) => a.localeCompare(b));
-          return { clusterId, tokens };
-        });
-        entries.sort((a, b) => {
-          const idA = Number.isFinite(a.clusterId) ? a.clusterId : Number.POSITIVE_INFINITY;
-          const idB = Number.isFinite(b.clusterId) ? b.clusterId : Number.POSITIVE_INFINITY;
-          if (idA !== idB) return idA - idB;
-          const sizeDiff = b.tokens.length - a.tokens.length;
-          if (sizeDiff) return sizeDiff;
-          return (a.tokens[0] || '').localeCompare(b.tokens[0] || '');
-        });
-        const count = Math.max(1, entries.length);
-        const span = (Math.PI * 2) / count;
-        const baseR = Math.max(24, dr * (layer + 1));
-        for (let idx = 0; idx < entries.length; idx++) {
-          const entry = entries[idx];
-          const phi0 = rotation + idx * span;
-          const members = entry.tokens;
-          const polygon = Math.max(1, members.length);
-          for (let i = 0; i < members.length; i++) {
-            const theta = phi0 + (i / polygon) * span;
-            const wobble = 0.95 - 0.1 * (i % 2);
-            const radius = baseR * wobble;
-            positions.set(members[i], {
-              x: cx + radius * Math.cos(theta),
-              y: cy + radius * Math.sin(theta)
+      const dr = Rmax / Math.max(1, Lmax + 1);
+      const pos = new Map();
+
+      for (let layer = 0; layer < layers.length; layer++) {
+        const entries = [...layers[layer].entries()]
+          .sort((a, b) => b[1].length - a[1].length || a[0] - b[0]);
+        const R = Math.max(20, dr * (layer + 1));
+        const sectors = Math.max(1, entries.length);
+        for (let s = 0; s < entries.length; s++) {
+          const tokens = entries[s][1];
+          const phi0 = rot + (s / sectors) * Math.PI * 2;
+          const span = (Math.PI * 2) / sectors;
+          const N = tokens.length;
+          for (let i = 0; i < N; i++) {
+            const theta = phi0 + (i / Math.max(1, N)) * span;
+            const wobble = i % 2 ? 0.92 : 0.98;
+            const r = R * wobble;
+            pos.set(tokens[i], {
+              x: cx + r * Math.cos(theta),
+              y: cy + r * Math.sin(theta)
             });
           }
         }
       }
-      return positions;
+      return pos;
     }
 
     function ringPositions(graph, width, height, scale, centerX, centerY) {
@@ -1247,48 +1151,30 @@
     }
 
     function drawClusterOverlays(ctx, graph, positions) {
-      const groups = new Map();
-      for (const [token, node] of graph.nodes.entries()) {
-        const layer = Number.isFinite(node?.layer) ? Math.max(0, Math.floor(node.layer)) : 0;
-        const cluster = Number.isFinite(node?.cluster) ? node.cluster : 0;
+      const byLC = new Map();
+      for (const [token, node] of graph.nodes) {
+        const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
+        const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
         const key = `${layer}:${cluster}`;
-        const tokens = groups.get(key) || [];
-        if (!groups.has(key)) groups.set(key, tokens);
-        tokens.push(token);
+        const arr = byLC.get(key) || [];
+        arr.push(token);
+        byLC.set(key, arr);
       }
-      for (const [key, tokens] of groups.entries()) {
-        const pts = tokens
-          .map(token => positions.get(token))
-          .filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+      ctx.save();
+      for (const [key, tokens] of byLC) {
+        if (tokens.length < 3) continue;
+        const pts = tokens.map(t => positions.get(t)).filter(Boolean);
         if (pts.length < 3) continue;
-        const [, clusterStr] = key.split(':');
-        const clusterId = Number.parseInt(clusterStr, 10);
-        const centroid = pts.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
-        centroid.x /= pts.length;
-        centroid.y /= pts.length;
-        const ordered = [...pts].sort((a, b) => {
-          const angleA = Math.atan2(a.y - centroid.y, a.x - centroid.x);
-          const angleB = Math.atan2(b.y - centroid.y, b.x - centroid.x);
-          return angleA - angleB;
-        });
-        const color = paletteColor(`cluster-${clusterId}`);
-        ctx.save();
+        const color = paletteColor(`cluster-${key}`);
         ctx.globalAlpha = 0.12;
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.moveTo(ordered[0].x, ordered[0].y);
-        for (let i = 1; i < ordered.length; i++) ctx.lineTo(ordered[i].x, ordered[i].y);
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.closePath();
         ctx.fill();
-        ctx.restore();
-        ctx.save();
-        ctx.globalAlpha = 0.85;
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(centroid.x, centroid.y, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
       }
+      ctx.restore();
     }
 
     function drawComposite(graph, opts = {}) {
@@ -1332,7 +1218,7 @@
       ctx.lineWidth = effectiveEdgeWidth;
       let pos;
       if (window.HLSF.config.layout === 'affinity') {
-        pos = affinityLayout(graph, width, height, scale, centerX, centerY);
+        pos = clusterLevelLayout(graph, width, height, scale, centerX, centerY);
       } else if (window.HLSF.config.layout === 'layered') {
         pos = ringPositions(graph, width, height, scale, centerX, centerY);
       } else {
@@ -1545,6 +1431,17 @@
       }
     }
 
+    function layoutLabel(value) {
+      switch (normalizeLayout(value)) {
+        case 'layered':
+          return 'Layered';
+        case 'legacy':
+          return 'Legacy';
+        default:
+          return 'Clusters × Levels';
+      }
+    }
+
     function ensureHLSFCanvas() {
       let wrapper = document.getElementById('hlsf-canvas-container');
       if (wrapper) {
@@ -1605,7 +1502,7 @@
                 <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
                 <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
                 <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
-                <button id="hlsf-toggle-layout" class="btn btn-secondary">Layout: Affinity</button>
+                <button id="hlsf-toggle-layout" class="btn btn-secondary">Layout: Clusters × Levels</button>
               </div>
             </div>
             <div class="hlsf-control-group">
@@ -1880,7 +1777,7 @@
           const index = layouts.indexOf(current);
           const next = layouts[(index + 1) % layouts.length];
           window.HLSF.config.layout = next;
-          layoutBtn.textContent = `Layout: ${next.charAt(0).toUpperCase()}${next.slice(1)}`;
+          layoutBtn.textContent = `Layout: ${layoutLabel(next)}`;
           debouncedLegacyRender();
         });
       }
@@ -2015,7 +1912,7 @@
       if (layoutBtn) {
         const layout = normalizeLayout(config.layout);
         window.HLSF.config.layout = layout;
-        layoutBtn.textContent = `Layout: ${layout.charAt(0).toUpperCase()}${layout.slice(1)}`;
+        layoutBtn.textContent = `Layout: ${layoutLabel(layout)}`;
       }
     }
 
@@ -4565,6 +4462,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
       const depth = Number.isFinite(args.depth) ? args.depth : 3;
       const graph = assembleGraphFromSeeds(seeds, depth, idx);
+      applyAffinityClusters(graph, idx);
       window.HLSF.lastCommand = {
         rawArgs,
         args,
@@ -4584,6 +4482,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (!last || !last.idx || !Array.isArray(last.seeds) || !last.seeds.length) return null;
       const depth = Number.isFinite(last.depth) ? last.depth : 3;
       const graph = assembleGraphFromSeeds(last.seeds, depth, last.idx);
+      applyAffinityClusters(graph, last.idx);
       animateComposite(graph, last.glyphOnly === true);
       syncHlsfControls(document.getElementById('hlsf-canvas-container'));
       if (logUpdate) {
