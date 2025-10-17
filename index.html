@@ -491,24 +491,55 @@
       ESTIMATED_COST_PER_API_CALL: 0.02,
     };
 
-    // ---------------- HLSF matrix builder ----------------
-    const ADJ10 = ["≡","⊃","⊂","≈","∈","⊛","⇝","∝","⇌","↔"];
-    const RELKEY_ALIASES = new Map([
-      ["≡ Identity","≡"],["⊃ Contains","⊃"],["⊂ Is Contained By","⊂"],["≈ Variant","≈"],
-      ["∈ Is Instance Of","∈"],["⊛ Associated With","⊛"],["⇝ Causes","⇝"],["∝ Correlates With","∝"],
-      ["⇌ Inverts","⇌"],["↔ Mirrors","↔"],["∼ Adjacent To","∼"],["→ Next","→"],["⇄ Co-occurs With","⇄"],
-      ["⇐ Preceded By","⇐"],["↠ Follows","↠"],["⊕ Complements","⊕"],["⊏ Part Of","⊂"],["⊐ Composes","⊃"]
-    ]);
+    // Canonical 50-type display names
+    const REL_EN = {
+      "≡":"Identity","⊃":"Contains","⊂":"Is Contained By","≈":"Variant","∈":"Is Instance Of","∋":"Has Instance",
+      "⊤":"Is Type Of","⊥":"Has Type","⊏":"Part Of","⊐":"Composes","↔":"Mirrors","⇌":"Inverts","∥":"Parallel To",
+      "∼":"Adjacent To","→":"Next","⇒":"Sequence Of","⇐":"Preceded By","↠":"Follows","↗":"Spatially Above","↘":"Spatially Below",
+      "↝":"Symbolically Supports","↧":"Symbolically Depends","≠":"Contrasts","⊕":"Complements","⊛":"Associated With","∝":"Correlates With",
+      "⇝":"Causes","↼":"Caused By","*":"Evokes","≜":"Represents","★":"Symbolizes","↦":"Refers To","⊢":"Defines","⊣":"Is Defined By",
+      "↷":"Transforms To","↶":"Transformed From","∘":"Functions As","⊨":"Interpreted As","◁":"Used With","⇄":"Co-occurs With",
+      "⊗":"Synthesizes","÷":"Divides Into","⊘":"Opposes","↳":"Leads To","↲":"Results In","⟂":"Orthogonal To","≉":"Diverges From",
+      "≍":"Equivalent In Form","≓":"Approximately Equals","≔":"Defined As"
+    };
+
+    // Return "∼ Adjacent To"
+    const relDisplay = k => `${k} ${REL_EN[k] ?? ''}`.trim();
+
+    const RELKEY_ALIASES = (() => {
+      const map = new Map();
+      for (const [glyph, name] of Object.entries(REL_EN)) {
+        map.set(`${glyph} ${name}`, glyph);
+        map.set(name, glyph);
+        map.set(name.toLowerCase(), glyph);
+      }
+      map.set('∗', '*');
+      map.set('*', '*');
+      map.set('⋆', '*');
+      return map;
+    })();
 
     function normRelKey(k) {
-      if (ADJ10.includes(k)) return k;
       const cleaned = (k || '').trim();
-      const alias = RELKEY_ALIASES.get(cleaned)
-        || RELKEY_ALIASES.get(cleaned.replace(/\s+/g, ' '))
-        || cleaned.split(' ')[0];
-      return ADJ10.includes(alias) ? alias : null;
+      if (!cleaned) return null;
+      if (REL_EN[cleaned]) return cleaned;
+      const normalized = cleaned.replace(/\s+/g, ' ');
+      const alias = RELKEY_ALIASES.get(normalized)
+        || RELKEY_ALIASES.get(normalized.toLowerCase())
+        || RELKEY_ALIASES.get(normalized.split(' ')[0]);
+      return REL_EN[alias] ? alias : null;
     }
 
+    function normalizeRelKeyForStats(k){
+      const g = normRelKey(k);
+      return REL_EN[g] ? g : null;
+    }
+
+    function renderRelTypeRow(glyph, count){
+      return `${relDisplay(glyph)}: ${count} instances`;
+    }
+
+    // ---------------- HLSF matrix builder ----------------
     function buildMatrixForRecord(rec) {
       const edges = [];
       const rels = rec?.relationships || {};
@@ -694,7 +725,8 @@
         ctx.stroke();
 
         const top = edge.items?.[0]?.token || '';
-        const label = `${edge.rtype} · ${top}${edge.count > 1 ? ` (+${edge.count - 1})` : ''}`;
+        const relName = cfg.showEnglish ? relDisplay(edge.rtype) : edge.rtype;
+        const label = `${relName} · ${top}${edge.count > 1 ? ` (+${edge.count - 1})` : ''}`;
         ctx.fillStyle = theme.hint;
         ctx.fillText(label, rx, ry - (radius + 12));
         ctx.fillStyle = theme.fg;
@@ -796,6 +828,7 @@
         showLabels: true,
         fillFaces: false,
         whiteBg: false,
+        showEnglish: true,
       },
       canvas: null,
       ctx: null,
@@ -2271,12 +2304,30 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       animate: animateLegacyHLSF,
       stop: stopLegacyHLSFAnimation,
     };
+    function computeRelHistogramEntries(db) {
+      const hist = new Map();
+      for (const rec of db.full_token_data || []) {
+        const rels = rec?.relationships || {};
+        for (const key of Object.keys(rels)) {
+          const glyph = normalizeRelKeyForStats(key);
+          if (!glyph) continue;
+          const edges = Array.isArray(rels[key]) ? rels[key] : [];
+          if (!edges.length) continue;
+          hist.set(glyph, (hist.get(glyph) || 0) + edges.length);
+        }
+      }
+      return [...hist.entries()].sort((a, b) => b[1] - a[1]);
+    }
+
+    function computeRelHistogram(db, entries){
+      const base = Array.isArray(entries) ? entries : computeRelHistogramEntries(db);
+      return base.map(([glyph, count]) => renderRelTypeRow(glyph, count));
+    }
+
     function analyzeDatabaseMetadata() {
       const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
       const tokens = [];
-      const relationshipCounts = new Map();
       const tokenFrequency = new Map();
-      let totalRelationships = 0;
       let totalAttentionScore = 0;
       let oldestToken = null;
       let newestToken = null;
@@ -2301,9 +2352,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           const rels = data.relationships || {};
           for (const [relType, edges] of Object.entries(rels)) {
             if (!Array.isArray(edges)) continue;
-            
-            relationshipCounts.set(relType, (relationshipCounts.get(relType) || 0) + edges.length);
-            totalRelationships += edges.length;
+            const glyph = normalizeRelKeyForStats(relType);
+            if (!glyph) continue;
 
             // Track token frequency across relationships
             for (const edge of edges) {
@@ -2322,10 +2372,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
       }
 
-      // Sort by frequency
-      const topRelationships = Array.from(relationshipCounts.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
+      const relHistogramEntries = computeRelHistogramEntries({ full_token_data: tokens });
+      const relHistogramRows = computeRelHistogram(null, relHistogramEntries);
+      const totalRelationships = relHistogramEntries.reduce((sum, [, count]) => sum + count, 0);
+      const topRelationships = relHistogramEntries.slice(0, 10);
+      const topRelationshipRows = relHistogramRows.slice(0, 10);
 
       const topTokens = Array.from(tokenFrequency.entries())
         .sort((a, b) => b[1] - a[1])
@@ -2341,6 +2392,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         totalRelationships,
         avgAttentionScore: tokens.length > 0 ? (totalAttentionScore / tokens.length).toFixed(3) : 0,
         topRelationships,
+        topRelationshipRows,
+        relHistogramRows,
         topTokens,
         highAttentionTokens,
         oldestToken,
@@ -2382,10 +2435,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         <div class="adjacency-insight">
           <strong>📈 Most Common Relationship Types:</strong><br>
-          ${metadata.topRelationships.map(([rel, count]) => 
-            `• <span class="token-highlight">${rel}</span>: ${count} instances`
+          ${metadata.topRelationshipRows.map(row =>
+            `• <span class="token-highlight">${row}</span>`
           ).join('<br>')}
-          ${metadata.topRelationships.length === 0 ? '<em>No relationships cached yet</em>' : ''}
+          ${metadata.topRelationshipRows.length === 0 ? '<em>No relationships cached yet</em>' : ''}
         </div>
 
         <div class="adjacency-insight">
@@ -2419,7 +2472,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           <pre>${JSON.stringify({
             database_maturity: maturityLevel,
             network_density: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2),
-            top_5_relationship_types: metadata.topRelationships.slice(0, 5).map(([rel]) => rel),
+            top_5_relationship_types: metadata.topRelationships.slice(0, 5).map(([rel]) => relDisplay(rel)),
+            relationship_histogram_named: metadata.relHistogramRows,
             top_5_hub_concepts: metadata.topTokens.slice(0, 5).map(([token]) => token),
             growth_metrics: {
               tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
@@ -2456,6 +2510,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           maturity_level: metadata.totalTokens > 100 ? 'mature' : metadata.totalTokens > 20 ? 'growing' : 'early'
         },
         relationship_distribution: Object.fromEntries(metadata.topRelationships),
+        relationship_distribution_named: Object.fromEntries(metadata.topRelationships.map(([glyph, count]) => [relDisplay(glyph), count])),
         hub_concepts: Object.fromEntries(metadata.topTokens),
         high_attention_tokens: metadata.highAttentionTokens.map(t => ({
           token: t.token,
