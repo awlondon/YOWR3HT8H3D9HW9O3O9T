@@ -537,6 +537,7 @@
             <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
             <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
             <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
+            <button id="hlsf-toggle-layout" class="btn btn-secondary">Layout: Layered</button>
           </div>
         </div>
         <div class="hlsf-control-group">
@@ -640,7 +641,6 @@
           items
         };
         edges.push(agg);
-        if (edges.length === 10) break;
       }
       const freq = typeof rec?.f === 'number'
         ? rec.f
@@ -707,22 +707,25 @@
       return idx;
     }
 
-    function recordScore(rec) {
-      let s = 0;
-      let any = false;
+    function adjacencyStats(rec) {
+      let relTypes = 0;
+      let edges = 0;
       for (const arr of Object.values(rec?.relationships || {})) {
         if (Array.isArray(arr) && arr.length) {
-          const m = Math.max(...arr.map(x => +x.weight || 0));
-          s += m;
-          any = true;
+          relTypes += 1;
+          edges += arr.length;
         }
       }
-      return any ? s : Object.keys(rec?.relationships || {}).length;
+      return { relTypes, edges };
     }
 
     function defaultSeeds(idx, k = 64) {
       const recs = Array.from(idx.values());
-      recs.sort((a, b) => recordScore(b) - recordScore(a));
+      recs.sort((a, b) => {
+        const A = adjacencyStats(a);
+        const B = adjacencyStats(b);
+        return (B.edges - A.edges) || (B.relTypes - A.relTypes);
+      });
       return recs.slice(0, k).map(r => r.token);
     }
 
@@ -757,7 +760,7 @@
       for (const seed of seeds) {
         const rec = idx.get(seed);
         if (!rec) continue;
-        graph.nodes.set(seed, { token: seed, f: rec.f || rec.frequency || 1 });
+        graph.nodes.set(seed, { token: seed, f: rec.f || rec.frequency || 1, layer: 0, degree: 0 });
         edgesFrom(rec).forEach(e => {
           q.push({ from: seed, to: e.to, w: e.w, rtype: e.rtype, depth: 1 });
         });
@@ -772,9 +775,15 @@
         for (const edge of layer) {
           if (!graph.nodes.has(edge.to)) {
             const rec = idx.get(edge.to);
-            graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1 });
+            graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1, layer: d, degree: 0 });
           }
+          const node = graph.nodes.get(edge.to);
+          if (!node) continue;
+          node.layer = Math.min(node.layer ?? d, d);
           graph.edges.push(edge);
+          const fromNode = graph.nodes.get(edge.from);
+          if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
+          node.degree = (node.degree || 0) + 1;
           if (d < full) {
             const rec = idx.get(edge.to);
             if (!rec) continue;
@@ -799,30 +808,19 @@
           const edge = tail[i];
           if (!graph.nodes.has(edge.to)) {
             const rec = idx.get(edge.to);
-            graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1 });
+            graph.nodes.set(edge.to, { token: edge.to, f: rec?.f || rec?.frequency || 1, layer: full + 1, degree: 0 });
           }
+          const node = graph.nodes.get(edge.to);
+          if (!node) continue;
+          node.layer = Math.min(node.layer ?? (full + 1), full + 1);
           graph.edges.push(edge);
+          const fromNode = graph.nodes.get(edge.from);
+          if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
+          node.degree = (node.degree || 0) + 1;
         }
       }
 
       return graph;
-    }
-
-    function recordScore(rec){
-      let s = 0, any = false;
-      for (const arr of Object.values(rec.relationships || {})){
-        if (Array.isArray(arr) && arr.length){
-          const m = Math.max(...arr.map(x => +x.weight || 0));
-          s += m; any = true;
-        }
-      }
-      return any ? s : Object.keys(rec.relationships || {}).length;
-    }
-
-    function defaultSeeds(idx, k = 64){
-      const recs = Array.from(idx.values());
-      recs.sort((a,b) => recordScore(b) - recordScore(a));
-      return recs.slice(0, k).map(r => r.token);
     }
 
     function seedsForMode(args){
@@ -876,6 +874,91 @@
         : rtype;
     }
 
+    function legacyPositions(graph, width, height, scale, centerX, centerY) {
+      const seeds = graph.seeds && graph.seeds.length ? graph.seeds : [...graph.nodes.keys()].slice(0, 1);
+      const pos = new Map();
+      const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
+        ? window.HLSF.state.globalRot
+        : 0;
+      const Rc = Math.min(width, height) * 0.35 * scale;
+      const cx = Number.isFinite(centerX) ? centerX : width / 2;
+      const cy = Number.isFinite(centerY) ? centerY : height / 2;
+
+      seeds.forEach((token, idx) => {
+        const angle = (idx / Math.max(1, seeds.length)) * Math.PI * 2 + rotation;
+        const x = cx + Rc * Math.cos(angle);
+        const y = cy + Rc * Math.sin(angle);
+        pos.set(token, { x, y });
+      });
+
+      const groupByRoot = new Map();
+      graph.edges.forEach(edge => {
+        if (!groupByRoot.has(edge.from)) groupByRoot.set(edge.from, []);
+        groupByRoot.get(edge.from).push(edge);
+      });
+
+      for (const [root, edges] of groupByRoot.entries()) {
+        const base = pos.get(root) || { x: cx, y: cy };
+        const R = Math.min(width, height) * 0.18 * scale;
+        const sorted = [...edges].sort((a, b) => b.w - a.w);
+        const denom = Math.max(1, sorted.length - 1);
+        sorted.forEach((edge, i) => {
+          const theta = Math.PI * (i / denom);
+          const x = base.x + R * Math.cos(theta);
+          const y = base.y - R * Math.sin(theta);
+          if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
+        });
+      }
+
+      return pos;
+    }
+
+    function ringPositions(graph, width, height, scale, centerX, centerY) {
+      const cx = Number.isFinite(centerX) ? centerX : width / 2;
+      const cy = Number.isFinite(centerY) ? centerY : height / 2;
+      let L = 0;
+      for (const node of graph.nodes.values()) {
+        const rawLayer = node && Number.isFinite(node.layer) ? node.layer : 0;
+        const layer = Math.max(0, Math.floor(rawLayer));
+        if (layer > L) L = layer;
+      }
+
+      const rings = Array.from({ length: L + 1 }, () => []);
+      for (const [token, node] of graph.nodes.entries()) {
+        const layer = node && Number.isFinite(node.layer)
+          ? Math.max(0, Math.floor(node.layer))
+          : 0;
+        rings[layer].push({ token, node });
+      }
+
+      for (const ring of rings) {
+        ring.sort((a, b) => ((b.node?.degree || 0) - (a.node?.degree || 0)) || a.token.localeCompare(b.token));
+      }
+
+      const Rmax = Math.min(width, height) * 0.42 * scale;
+      const dr = Rmax / Math.max(1, L + 1);
+      const pos = new Map();
+      const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
+        ? window.HLSF.state.globalRot
+        : 0;
+
+      for (let layer = 0; layer < rings.length; layer++) {
+        const ring = rings[layer];
+        if (!ring.length) continue;
+        const R = Math.max(20, dr * (layer + 1));
+        const N = ring.length;
+        for (let i = 0; i < N; i++) {
+          const theta = (i / N) * 2 * Math.PI + rotation;
+          pos.set(ring[i].token, {
+            x: cx + R * Math.cos(theta),
+            y: cy + R * Math.sin(theta)
+          });
+        }
+      }
+
+      return pos;
+    }
+
     function drawComposite(graph, opts = {}) {
       const cfg = window.HLSF.config;
       const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
@@ -901,9 +984,6 @@
       ctx.strokeStyle = theme.fg;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-
-      const seeds = graph.seeds && graph.seeds.length ? graph.seeds : [...graph.nodes.keys()].slice(0, 1);
-      const pos = new Map();
       const cx = width / 2;
       const cy = height / 2;
       if (!window.HLSF.__centerInit) {
@@ -918,37 +998,9 @@
       ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
       const effectiveEdgeWidth = edgeWidth * Math.max(0.6, Math.min(2.5, scale));
       ctx.lineWidth = effectiveEdgeWidth;
-      const Rc = Math.min(width, height) * 0.35 * scale;
-      const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
-        ? window.HLSF.state.globalRot
-        : 0;
-
-      seeds.forEach((token, idx) => {
-        const angle = (idx / Math.max(1, seeds.length)) * Math.PI * 2 + rotation;
-        const x = centerX + Rc * Math.cos(angle);
-        const y = centerY + Rc * Math.sin(angle);
-        pos.set(token, { x, y });
-      });
-
-      const groupByRoot = new Map();
-      graph.edges.forEach(edge => {
-        if (!groupByRoot.has(edge.from)) groupByRoot.set(edge.from, []);
-        groupByRoot.get(edge.from).push(edge);
-      });
-
-      for (const [root, edges] of groupByRoot.entries()) {
-        const base = pos.get(root) || { x: centerX, y: centerY };
-        const R = Math.min(width, height) * 0.18 * scale;
-        edges
-          .slice(0, 10)
-          .sort((a, b) => b.w - a.w)
-          .forEach((edge, i) => {
-            const theta = Math.PI * (i / Math.max(1, edges.length - 1));
-            const x = base.x + R * Math.cos(theta);
-            const y = base.y - R * Math.sin(theta);
-            if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
-          });
-      }
+      const pos = (window.HLSF.config.layout === 'layered')
+        ? ringPositions(graph, width, height, scale, centerX, centerY)
+        : legacyPositions(graph, width, height, scale, centerX, centerY);
 
       const glyphOnly = opts.glyphOnly === true;
       if (cfg.showEdges !== false) {
@@ -1202,6 +1254,7 @@
                 <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
                 <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
                 <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
+                <button id="hlsf-toggle-layout" class="btn btn-secondary">Layout: Layered</button>
               </div>
             </div>
             <div class="hlsf-control-group">
@@ -1433,6 +1486,16 @@
         });
       }
 
+      const layoutBtn = wrapper.querySelector('#hlsf-toggle-layout');
+      if (layoutBtn) {
+        layoutBtn.addEventListener('click', () => {
+          window.HLSF.config.layout = window.HLSF.config.layout === 'layered' ? 'legacy' : 'layered';
+          const label = window.HLSF.config.layout;
+          layoutBtn.textContent = `Layout: ${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+          debouncedLegacyRender();
+        });
+      }
+
       const canvasEl = wrapper.querySelector('#hlsf-canvas');
       if (canvasEl) {
         let isDragging = false;
@@ -1536,6 +1599,12 @@
 
       const bgBtn = wrapper.querySelector('#hlsf-toggle-bg');
       if (bgBtn) bgBtn.textContent = config.whiteBg ? 'BG: Light' : 'BG: Dark';
+
+      const layoutBtn = wrapper.querySelector('#hlsf-toggle-layout');
+      if (layoutBtn) {
+        const label = config.layout === 'legacy' ? 'Legacy' : 'Layered';
+        layoutBtn.textContent = `Layout: ${label}`;
+      }
     }
 
     window.HLSF = window.HLSF || {};
@@ -1556,6 +1625,7 @@
       whiteBg: false,
       showEnglish: true,
       fullSeedCap: 0,
+      layout: 'layered',
       relationTypeCap: MAX_REL_TYPES,
       edgesPerType: 3,
       edgeWidth: 1.2,
@@ -1569,6 +1639,7 @@
     window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
     window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
     window.HLSF.config.showNodeGlow = window.HLSF.config.showNodeGlow === true;
+    window.HLSF.config.layout = window.HLSF.config.layout === 'legacy' ? 'legacy' : 'layered';
     window.HLSF.state = Object.assign({
       globalRot: 0,
       emergentRot: 0,
