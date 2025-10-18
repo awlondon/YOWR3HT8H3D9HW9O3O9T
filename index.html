@@ -2528,6 +2528,8 @@
         : iters <= 9 ? 'steady'
         : 'extended';
 
+      const mechanics = `Neighbors must score at least ${thr.toFixed(2)} on the 60/40 cosine–Jaccard affinity mix to influence clustering. The loop allows up to ${iters} iteration${iters === 1 ? '' : 's'} before settling.`;
+
       const STATES = {
         low: {
           brief: {
@@ -2590,16 +2592,17 @@
       const preset = STATES[thrBand] && STATES[thrBand][iterBand]
         ? STATES[thrBand][iterBand]
         : null;
-      if (preset) return preset;
+      if (preset) return Object.assign({ mechanics }, preset);
       return {
         name: 'Adaptive clustering',
-        desc: `Threshold ${thr.toFixed(2)} with ${iters} iteration${iters === 1 ? '' : 's'} blends evidence filtering with iterative refinement.`
+        desc: `Threshold ${thr.toFixed(2)} with ${iters} iteration${iters === 1 ? '' : 's'} blends evidence filtering with iterative refinement.`,
+        mechanics,
       };
     }
 
     function updateAffinityAnnotations(wrapper, threshold, iterations) {
       if (!wrapper) return;
-      const { name, desc } = describeAffinityMentalState(threshold, iterations);
+      const { name, desc, mechanics } = describeAffinityMentalState(threshold, iterations);
       const nameEl = wrapper.querySelector('#hlsf-mental-name');
       if (nameEl) nameEl.textContent = name;
       const summaryEl = wrapper.querySelector('#hlsf-affinity-summary');
@@ -2607,12 +2610,7 @@
       const descEl = wrapper.querySelector('#hlsf-mental-desc');
       if (descEl) descEl.textContent = desc;
       const mechanicsEl = wrapper.querySelector('#hlsf-affinity-mechanics');
-      if (mechanicsEl) {
-        const thr = Number.isFinite(threshold) ? threshold : 0.35;
-        const iters = Number.isFinite(iterations) ? iterations : 8;
-        const iterWord = iters === 1 ? 'iteration' : 'iterations';
-        mechanicsEl.textContent = `Neighbors must score at least ${thr.toFixed(2)} on the 60/40 cosine–Jaccard affinity mix to influence clustering. The loop will revisit labels for up to ${iters} ${iterWord} before settling.`;
-      }
+      if (mechanicsEl) mechanicsEl.textContent = mechanics;
     }
 
     function ensureHLSFCanvas() {
