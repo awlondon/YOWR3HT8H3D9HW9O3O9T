@@ -322,6 +322,10 @@
       gap: 0.5rem;
     }
 
+    .hlsf-control-group.full-span {
+      grid-column: 1 / -1;
+    }
+
     .hlsf-mental-state {
       background: rgba(0, 0, 0, 0.25);
       border: 1px solid #222;
@@ -610,7 +614,7 @@
           <label for="hlsf-aff-iters">Affinity iterations <span id="hlsf-aff-iters-val">8</span></label>
           <input id="hlsf-aff-iters" type="range" min="1" max="20" step="1" value="8">
         </div>
-        <div class="hlsf-control-group">
+        <div class="hlsf-control-group full-span">
           <em id="hlsf-affinity-summary" class="hlsf-mental-summary">Current mental state: Focused yet flexible attention.</em>
         </div>
         <div class="hlsf-control-group">
