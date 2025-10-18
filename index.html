@@ -295,6 +295,7 @@
       padding: 1rem;
       margin: 1rem 0;
       box-shadow: 0 0 30px rgba(0, 255, 136, 0.15);
+      position: relative;
     }
 
     #hlsf-canvas {
@@ -476,6 +477,48 @@
       box-shadow: 0 10px 25px rgba(0, 255, 136, 0.18);
     }
 
+    .hlsf-loading-panel {
+      position: absolute;
+      top: 120px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(420px, calc(100% - 3rem));
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: center;
+      padding: 1.25rem 1.5rem;
+      background: rgba(0, 0, 0, 0.85);
+      border: 1px solid rgba(0, 255, 136, 0.35);
+      border-radius: 12px;
+      box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(8px);
+      pointer-events: none;
+      text-align: center;
+      z-index: 5;
+    }
+
+    .hlsf-loading-bar {
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+
+    .hlsf-loading-progress {
+      width: 0%;
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.2s ease;
+    }
+
+    .hlsf-loading-detail {
+      font-size: 0.85rem;
+      opacity: 0.75;
+    }
+
     .spinner {
       width: 14px;
       height: 14px;
@@ -562,6 +605,16 @@
         <pre id="hlsf-log-stream"></pre>
         <button id="hlsf-log-download">Download log</button>
       </details>
+      <div id="hlsf-loading-panel" class="hlsf-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
+        <div class="processing-indicator">
+          <div class="spinner"></div>
+          <span id="hlsf-loading-label">Preparing HLSF visualization…</span>
+        </div>
+        <div class="hlsf-loading-bar">
+          <div id="hlsf-loading-progress" class="hlsf-loading-progress"></div>
+        </div>
+        <div id="hlsf-loading-detail" class="hlsf-loading-detail">This can take a few seconds for large datasets.</div>
+      </div>
       <canvas id="hlsf-canvas"></canvas>
       <div class="hlsf-controls">
         <div class="hlsf-control-group">
@@ -763,6 +816,68 @@
       });
 
       return { push, phase, progress, flush, clear, toJSON, mount };
+    })();
+
+    const HlsfLoading = (() => {
+      let panel = null;
+      let bar = null;
+      let label = null;
+      let detail = null;
+      let hideTimer = null;
+      const defaultDetail = 'This can take a few seconds for large datasets.';
+
+      function ensure() {
+        if (!panel) panel = document.getElementById('hlsf-loading-panel');
+        if (!bar) bar = document.getElementById('hlsf-loading-progress');
+        if (!label) label = document.getElementById('hlsf-loading-label');
+        if (!detail) detail = document.getElementById('hlsf-loading-detail');
+        return panel && bar;
+      }
+
+      function reveal() {
+        if (!ensure()) return false;
+        if (hideTimer) {
+          clearTimeout(hideTimer);
+          hideTimer = null;
+        }
+        panel.classList.remove('hidden');
+        panel.setAttribute('aria-hidden', 'false');
+        return true;
+      }
+
+      function show(message = 'Preparing HLSF visualization…', info = defaultDetail) {
+        if (!reveal()) return;
+        if (label) label.textContent = message;
+        if (detail) detail.textContent = info;
+        if (bar) bar.style.width = '0%';
+      }
+
+      function update(message, info) {
+        if (!reveal()) return;
+        if (message && label) label.textContent = message;
+        if (detail) detail.textContent = info || detail.textContent || defaultDetail;
+      }
+
+      function progress(done, total) {
+        if (!reveal()) return;
+        const pct = total > 0 ? Math.round(Math.max(0, Math.min(100, (done / total) * 100))) : 0;
+        if (bar) bar.style.width = `${pct}%`;
+        if (detail) detail.textContent = `Building semantic map… ${pct}%`;
+      }
+
+      function hide(delay = 200) {
+        if (!ensure()) return;
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          if (!ensure()) return;
+          panel.classList.add('hidden');
+          panel.setAttribute('aria-hidden', 'true');
+          if (bar) bar.style.width = '0%';
+          if (detail) detail.textContent = defaultDetail;
+        }, Math.max(0, delay));
+      }
+
+      return { show, update, progress, hide };
     })();
 
     function normRelKey(k) {
@@ -1161,7 +1276,10 @@
       const frac = depthFloat - maxDepth;
       const loggingActive = !opts.silent && window.HLSF?.config?.batchLogging !== false;
       const logPhase = (evt, meta) => { if (loggingActive) BatchLog.phase('graph', evt, meta); };
-      const logProgress = (done, total) => { if (loggingActive) BatchLog.progress(done, total); };
+      const logProgress = (done, total) => {
+        if (loggingActive) BatchLog.progress(done, total);
+        HlsfLoading.progress(done, total);
+      };
       const seenTriple = new Set();
       const visitedSrc = new Set();
       const fractionalNodes = new Set();
@@ -2641,6 +2759,16 @@
             <pre id="hlsf-log-stream"></pre>
             <button id="hlsf-log-download">Download log</button>
           </details>
+          <div id="hlsf-loading-panel" class="hlsf-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
+            <div class="processing-indicator">
+              <div class="spinner"></div>
+              <span id="hlsf-loading-label">Preparing HLSF visualization…</span>
+            </div>
+            <div class="hlsf-loading-bar">
+              <div id="hlsf-loading-progress" class="hlsf-loading-progress"></div>
+            </div>
+            <div id="hlsf-loading-detail" class="hlsf-loading-detail">This can take a few seconds for large datasets.</div>
+          </div>
           <canvas id="hlsf-canvas"></canvas>
           <div class="hlsf-controls">
             <div class="hlsf-control-group">
@@ -6397,6 +6525,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
       }
 
+      HlsfLoading.show('Preparing HLSF visualization…');
+
       const originalArgs = (rawArgs || '').trim();
       const { text: sanitizedArgs, flags } = extractHlsfFlags(originalArgs);
       const args = parseHlsfArgs(sanitizedArgs);
@@ -6430,6 +6560,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         window.HLSF.config.batchLogging = prevBatchLogging;
         window.HLSF.config.deferredRender = prevDeferred;
         logError('Unable to initialize canvas for HLSF rendering.');
+        HlsfLoading.hide(0);
         return;
       }
 
@@ -6439,8 +6570,22 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const loggingActive = window.HLSF.config.batchLogging !== false;
       const start = performance.now();
 
+      const stageMessages = {
+        index: { label: 'Indexing cached tokens…', detail: 'Hydrating adjacency index.' },
+        anchors: { label: 'Selecting anchor tokens…', detail: 'Evaluating entry points for the graph.' },
+        graph: { label: 'Assembling semantic graph…', detail: 'Expanding neighborhoods and edges.' },
+        cluster: { label: 'Clustering adjacency…', detail: 'Balancing affinity across layers.' },
+        layout: { label: 'Computing spatial layout…', detail: 'Solving multi-layer projection.' },
+        stage: { label: 'Preparing visualization buffers…', detail: 'Uploading geometry to renderer.' },
+        render: { label: 'Rendering HLSF visualization…', detail: 'Finalizing canvas output.' },
+      };
+
       const time = async (name, fn) => {
         const phaseStart = performance.now();
+        const phaseMeta = stageMessages[name];
+        if (phaseMeta) {
+          HlsfLoading.update(phaseMeta.label, phaseMeta.detail);
+        }
         if (loggingActive) BatchLog.phase(name, 'start');
         try {
           const result = await fn();
@@ -6498,6 +6643,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           });
           runMetrics = graph?._metrics || ensureGraphMetrics(graph);
         } else {
+          HlsfLoading.update('Computing database metrics…', 'Visualization skipped for DB scope.');
+          HlsfLoading.progress(1, 1);
           if (loggingActive) BatchLog.phase('graph', 'skip', { scope: METRIC_SCOPE.DB });
           stopHLSFAnimation();
           hideVisualizer();
@@ -6560,6 +6707,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           });
         }
       } finally {
+        HlsfLoading.hide(400);
         window.HLSF.config.batchLogging = prevBatchLogging;
         window.HLSF.config.deferredRender = prevDeferred;
       }
@@ -6572,6 +6720,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (window.HLSF?.config?.batchLogging !== false) {
           BatchLog.phase('hlsf', 'fatal', { err: String(err) });
         }
+        HlsfLoading.hide(0);
         showVisualizer();
         logError(String(err?.message || err));
       }
@@ -7268,9 +7417,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       `);
 
       if (dbAvailable) {
+        HlsfLoading.show('Preparing HLSF visualization…');
         queueMicrotask(() => { runHlsfSafely(''); });
       }
-      
+
       elements.input.focus();
     }
 
