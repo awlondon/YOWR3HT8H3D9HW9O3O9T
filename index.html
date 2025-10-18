@@ -5230,6 +5230,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       const tokens = Array.from(index.values());
 
+      const relTypeMaxCache = new Map();
+      let maxAdjacencyMatrixCount = 0;
+      const maxAdjacencyMatrixTokens = new Set();
+
       const cachedTokenSet = new Set();
       for (const key of index.keys()) {
         if (key == null) continue;
@@ -5263,16 +5267,48 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
 
         const rels = data.relationships || {};
+        const adjacencyNeighbors = new Set();
         for (const [relType, edges] of Object.entries(rels)) {
           if (!Array.isArray(edges)) continue;
           const glyph = normalizeRelKeyForStats(relType);
           if (!glyph) continue;
 
+          const uniqueTargets = new Set();
+
           for (const edge of edges) {
-            const token = edge?.token?.toLowerCase();
-            if (token) {
-              tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
+            const rawToken = edge?.token;
+            const normalizedToken = typeof rawToken === 'string' ? rawToken.trim() : '';
+            if (normalizedToken) {
+              const freqKey = normalizedToken.toLowerCase();
+              tokenFrequency.set(freqKey, (tokenFrequency.get(freqKey) || 0) + 1);
+              adjacencyNeighbors.add(normalizedToken);
+              uniqueTargets.add(normalizedToken);
             }
+          }
+
+          if (uniqueTargets.size > 0) {
+            const entry = relTypeMaxCache.get(glyph);
+            if (!entry || uniqueTargets.size > entry.count) {
+              const tokensWithPeak = new Set();
+              const sourceToken = typeof data.token === 'string' ? data.token.trim() : '';
+              if (sourceToken) tokensWithPeak.add(sourceToken);
+              relTypeMaxCache.set(glyph, { count: uniqueTargets.size, tokens: tokensWithPeak });
+            } else if (uniqueTargets.size === entry.count) {
+              const sourceToken = typeof data.token === 'string' ? data.token.trim() : '';
+              if (sourceToken) entry.tokens.add(sourceToken);
+            }
+          }
+        }
+
+        if (adjacencyNeighbors.size > 0) {
+          if (adjacencyNeighbors.size > maxAdjacencyMatrixCount) {
+            maxAdjacencyMatrixCount = adjacencyNeighbors.size;
+            maxAdjacencyMatrixTokens.clear();
+            const sourceToken = typeof data.token === 'string' ? data.token.trim() : '';
+            if (sourceToken) maxAdjacencyMatrixTokens.add(sourceToken);
+          } else if (adjacencyNeighbors.size === maxAdjacencyMatrixCount) {
+            const sourceToken = typeof data.token === 'string' ? data.token.trim() : '';
+            if (sourceToken) maxAdjacencyMatrixTokens.add(sourceToken);
           }
         }
 
@@ -5280,6 +5316,49 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           totalAttentionScore += data.attention_score;
         }
       }
+
+      const limitList = (collection, max = 10) => {
+        const out = [];
+        if (!collection) return out;
+        if (Array.isArray(collection)) {
+          for (const value of collection) {
+            if (value == null || value === '') continue;
+            out.push(value);
+            if (out.length >= max) break;
+          }
+          return out;
+        }
+        if (typeof collection[Symbol.iterator] === 'function') {
+          for (const value of collection) {
+            if (value == null || value === '') continue;
+            out.push(value);
+            if (out.length >= max) break;
+          }
+        }
+        return out;
+      };
+
+      let maxRelTypeCount = 0;
+      const maxRelTypeEntries = [];
+      for (const [glyph, info] of relTypeMaxCache.entries()) {
+        if (!info || !Number.isFinite(info.count)) continue;
+        if (info.count <= 0) continue;
+        if (info.count > maxRelTypeCount) {
+          maxRelTypeCount = info.count;
+          maxRelTypeEntries.length = 0;
+        }
+        if (info.count === maxRelTypeCount) {
+          maxRelTypeEntries.push({
+            type: glyph,
+            tokens: limitList(info.tokens, 10),
+          });
+        }
+      }
+
+      const maxAdjacencyMatrixSummary = {
+        count: maxAdjacencyMatrixCount,
+        tokens: limitList(maxAdjacencyMatrixTokens, 10),
+      };
 
       const relHistogramEntries = computeRelHistogramEntries({ full_token_data: tokens });
       const relHistogramRows = computeRelHistogram(null, relHistogramEntries);
@@ -5319,6 +5398,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         sessionTokenCount,
         cachedSessionTokens,
         sessionCoverage,
+        maxRelTypeTokens: {
+          count: maxRelTypeCount,
+          types: maxRelTypeEntries,
+        },
+        maxAdjacencyMatrixTokens: maxAdjacencyMatrixSummary,
       };
     }
 
@@ -5374,6 +5458,51 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         ? `Coverage: <strong>${metadata.cachedSessionTokens || 0}</strong> / <strong>${sessionTokenCount}</strong> (${coverageDisplay})`
         : 'Coverage: No session tokens observed yet';
 
+      const formatHighlightList = (tokens, maxDisplay = 5) => {
+        if (!Array.isArray(tokens) || tokens.length === 0) return '';
+        const rendered = tokens.slice(0, maxDisplay)
+          .map(token => `<span class="token-highlight">${token}</span>`)
+          .join(', ');
+        const extraCount = tokens.length - maxDisplay;
+        const extra = extraCount > 0
+          ? ` <small style="opacity: 0.65;">(+${extraCount} more)</small>`
+          : '';
+        return `${rendered}${extra}`;
+      };
+
+      const maxRelTypeTokens = metadata.maxRelTypeTokens || { count: 0, types: [] };
+      const maxRelTypeSummary = (() => {
+        const count = Number.isFinite(maxRelTypeTokens?.count) ? maxRelTypeTokens.count : 0;
+        if (count <= 0) {
+          return `<strong>0</strong> <small style="opacity: 0.65;">(n/a)</small>`;
+        }
+        const entries = Array.isArray(maxRelTypeTokens.types) ? maxRelTypeTokens.types : [];
+        if (entries.length === 0) {
+          return `<strong>${count}</strong>`;
+        }
+        const [primary, ...rest] = entries;
+        const typeLabel = primary?.type ? relDisplay(primary.type) : 'Unknown';
+        const tokenDisplay = formatHighlightList(primary?.tokens || []);
+        const extraTypes = rest.length;
+        const extraTypeNote = extraTypes > 0
+          ? ` <small style="opacity: 0.65;">(+${extraTypes} other type${extraTypes === 1 ? '' : 's'})</small>`
+          : '';
+        const tokenNote = tokenDisplay ? ` — ${tokenDisplay}` : '';
+        return `<strong>${count}</strong> via <span class="token-highlight">${typeLabel}</span>${tokenNote}${extraTypeNote}`;
+      })();
+
+      const maxAdjacencyMatrixTokens = metadata.maxAdjacencyMatrixTokens || { count: 0, tokens: [] };
+      const maxAdjacencySummary = (() => {
+        const count = Number.isFinite(maxAdjacencyMatrixTokens?.count) ? maxAdjacencyMatrixTokens.count : 0;
+        if (count <= 0) {
+          return `<strong>0</strong> <small style="opacity: 0.65;">(n/a)</small>`;
+        }
+        const tokenDisplay = formatHighlightList(maxAdjacencyMatrixTokens.tokens || []);
+        return tokenDisplay
+          ? `<strong>${count}</strong> — ${tokenDisplay}`
+          : `<strong>${count}</strong>`;
+      })();
+
       let maturityLevel;
       let maturityColor;
       let maturityMessage;
@@ -5414,6 +5543,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           • Anchors (in ∩ out): <strong>${dbStats.anchors}</strong><br>
           • Minimum edges per token: ${minEdgeSummary}<br>
           • Maximum edges per token: ${maxEdgeSummary}<br>
+          • Max tokens in a relationship type: ${maxRelTypeSummary}<br>
+          • Max tokens per adjacency matrix: ${maxAdjacencySummary}<br>
           • Average attention score: <strong>${metadata.avgAttentionScore}</strong><br>
           • Network density: <strong>${(metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)}</strong> edges/token<br>
           • Estimated saved cost: <strong>${formatCurrency(metadata.estimatedValue || 0)}</strong>
@@ -5462,6 +5593,18 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             relationship_histogram_named: metadata.relHistogramRows,
             top_5_hub_concepts: metadata.topTokens.slice(0, 5).map(([token]) => token),
             db_graph_metrics: dbStats,
+            relationship_type_peaks: {
+              max_tokens: metadata.maxRelTypeTokens?.count || 0,
+              types: (metadata.maxRelTypeTokens?.types || []).map(entry => ({
+                type: entry.type,
+                type_display: relDisplay(entry.type),
+                tokens: entry.tokens,
+              })),
+            },
+            adjacency_matrix_peaks: {
+              max_tokens: metadata.maxAdjacencyMatrixTokens?.count || 0,
+              tokens: metadata.maxAdjacencyMatrixTokens?.tokens || [],
+            },
             growth_metrics: {
               tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
               avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)
@@ -5527,6 +5670,18 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           max_edges_per_token: {
             count: Number.isFinite(dbStats.maxEdges?.count) ? dbStats.maxEdges.count : 0,
             tokens: Array.isArray(dbStats.maxEdges?.tokens) ? dbStats.maxEdges.tokens : [],
+          },
+          max_tokens_per_relationship_type: {
+            count: metadata.maxRelTypeTokens?.count || 0,
+            types: (metadata.maxRelTypeTokens?.types || []).map(entry => ({
+              type: entry.type,
+              type_display: relDisplay(entry.type),
+              tokens: entry.tokens,
+            })),
+          },
+          max_tokens_per_adjacency_matrix: {
+            count: metadata.maxAdjacencyMatrixTokens?.count || 0,
+            tokens: metadata.maxAdjacencyMatrixTokens?.tokens || [],
           },
           avg_attention_score: metadata.avgAttentionScore,
           estimated_value_usd: metadata.estimatedValue.toFixed(2),
