@@ -322,6 +322,22 @@
       gap: 0.5rem;
     }
 
+    .hlsf-dimension-stats {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.8rem;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid #222;
+      border-radius: 6px;
+      padding: 0.5rem 0.6rem;
+    }
+
+    .hlsf-dimension-stats span {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
     .hlsf-control-group label {
       font-size: 0.85rem;
       opacity: 0.7;
@@ -1293,12 +1309,413 @@
       return new Promise(resolve => queueMicrotask(resolve));
     }
 
-    function computeLayout(graph) {
+    function activeRelationTypes(index, scope, stateRelTypes) {
+      const cap = clampRelationTypeCap(window.HLSF?.config?.relationTypeCap);
+      if (scope === 'state' && stateRelTypes && Number.isFinite(stateRelTypes.maxPresent)) {
+        return Math.min(cap, Math.max(0, stateRelTypes.maxPresent | 0));
+      }
+      return cap;
+    }
+
+    function nonEmptyTypes(index) {
+      const has = new Set();
+      if (index instanceof Map) {
+        for (const [, rec] of index) {
+          const rels = rec?.relationships;
+          if (!rels || typeof rels !== 'object') continue;
+          for (const [rtype, arr] of Object.entries(rels)) {
+            if (Array.isArray(arr) && arr.length) has.add(rtype);
+          }
+        }
+      }
+      return [...has].sort((a, b) => a.localeCompare(b));
+    }
+
+    function computeDimension(index, scope, stateRelTypes) {
+      const types = nonEmptyTypes(index);
+      const Treq = activeRelationTypes(index, scope, stateRelTypes);
+      const limited = types.slice(0, Math.max(0, Treq));
+      return { D: 2 * limited.length, types: limited };
+    }
+
+    function degrees(rec) {
+      let out = 0;
+      let in_ = 0;
+      for (const arr of Object.values(rec?.relationships || {})) {
+        if (Array.isArray(arr) && arr.length) {
+          out += 1;
+          for (const rel of arr) {
+            in_ += rel?.incoming ? 1 : 0;
+          }
+        }
+      }
+      return { out, in_ };
+    }
+
+    function signature(rec) {
+      const weights = new Map();
+      for (const arr of Object.values(rec?.relationships || {})) {
+        if (!Array.isArray(arr)) continue;
+        for (const rel of arr) {
+          const token = rel?.token;
+          if (!token) continue;
+          const weight = Number.isFinite(rel?.weight)
+            ? rel.weight
+            : Number.isFinite(rel?.w)
+              ? rel.w
+              : 1;
+          weights.set(token, (weights.get(token) || 0) + weight);
+        }
+      }
+      return weights;
+    }
+
+    function cosineSignature(a, b) {
+      let dot = 0;
+      let na = 0;
+      let nb = 0;
+      for (const [k, va] of a.entries()) {
+        na += va * va;
+        const vb = b.get(k) || 0;
+        if (vb) dot += va * vb;
+      }
+      for (const vb of b.values()) nb += vb * vb;
+      const denom = Math.sqrt(Math.max(na, 0) * Math.max(nb, 0));
+      return denom ? dot / denom : 0;
+    }
+
+    function selectAnchors(index, D) {
+      if (!(index instanceof Map) || D <= 0) return [];
+      const sigs = new Map();
+      const tokens = [...index.keys()].sort((a, b) => a.localeCompare(b));
+      const allSigs = tokens.map(token => {
+        const rec = index.get(token) || {};
+        const sig = signature(rec);
+        sigs.set(token, sig);
+        return [token, sig];
+      });
+      const sample = allSigs.slice(0, Math.min(512, allSigs.length));
+      const scored = tokens.map(token => {
+        const rec = index.get(token) || {};
+        const { out, in_ } = degrees(rec);
+        const freq = Number.isFinite(rec?.frequency)
+          ? rec.frequency
+          : Number.isFinite(rec?.f)
+            ? rec.f
+            : Number.isFinite(rec?.freq)
+              ? rec.freq
+              : 0;
+        let ac = 0;
+        const sig = sigs.get(token) || new Map();
+        for (const [, otherSig] of sample) {
+          ac += cosineSignature(sig, otherSig);
+        }
+        ac /= Math.max(1, sample.length);
+        const score = 0.4 * freq + 0.3 * out + 0.2 * in_ + 0.1 * ac;
+        return { token, score, out, in_ };
+      });
+      scored.sort((a, b) => (b.score - a.score) || a.token.localeCompare(b.token));
+      return scored.slice(0, D).map(entry => entry.token);
+    }
+
+    function clusterToAnchors(index, anchors) {
+      const groups = new Map();
+      if (!(index instanceof Map) || !Array.isArray(anchors)) return groups;
+      const orderedAnchors = [...anchors];
+      for (const anchor of orderedAnchors) {
+        groups.set(anchor, []);
+      }
+      if (!orderedAnchors.length) return groups;
+      const anchorSigs = new Map(orderedAnchors.map(a => [a, signature(index.get(a) || {})]));
+      for (const [token, rec] of index.entries()) {
+        if (anchorSigs.has(token)) continue;
+        const sig = signature(rec || {});
+        let best = orderedAnchors[0];
+        let bestScore = -Infinity;
+        for (const anchor of orderedAnchors) {
+          const c = cosineSignature(sig, anchorSigs.get(anchor) || new Map());
+          if (c > bestScore) {
+            bestScore = c;
+            best = anchor;
+          }
+        }
+        groups.get(best).push(token);
+      }
+      for (const [anchor, list] of groups) {
+        list.sort((a, b) => a.localeCompare(b));
+      }
+      return groups;
+    }
+
+    function packLevels(index, scope, state) {
+      const stateRelTypes = state?.relationTypes || {};
+      const { D, types } = computeDimension(index, scope, stateRelTypes);
+      const tokensCount = scope === 'state'
+        ? (state?.tokens instanceof Set ? state.tokens.size : index.size)
+        : index.size;
+      const anchors = selectAnchors(index, Math.min(D || tokensCount, tokensCount));
+      const effectiveD = Math.min(D, Math.max(anchors.length, 0));
+      const levels = [];
+      levels.push({ cells: [{ anchor: null, tokens: anchors.slice(0, Math.min(effectiveD || anchors.length, anchors.length)) }] });
+
+      if (!effectiveD || tokensCount <= effectiveD) {
+        return { D, effectiveD: Math.min(tokensCount, effectiveD), levels, anchors, types };
+      }
+
+      const clusters = clusterToAnchors(index, anchors);
+      const cells = [];
+      for (const anchor of anchors) {
+        const list = clusters.get(anchor) || [];
+        const combined = [anchor, ...list];
+        const cellTokens = combined.slice(0, effectiveD || combined.length);
+        cells.push({ anchor, tokens: cellTokens });
+      }
+      levels.push({ cells });
+
+      const pool = [];
+      for (const anchor of anchors) {
+        const list = clusters.get(anchor) || [];
+        const combined = [anchor, ...list];
+        if (combined.length > (effectiveD || combined.length)) {
+          pool.push(...combined.slice(effectiveD));
+        }
+      }
+
+      if (pool.length) {
+        const L2cells = [];
+        const span = Math.max(1, effectiveD || 1);
+        const blocks = Math.ceil(pool.length / span);
+        for (let i = 0; i < blocks; i++) {
+          const anchor = cells[i % cells.length]?.anchor ?? null;
+          const start = i * span;
+          const slice = pool.slice(start, start + span);
+          if (!slice.length) continue;
+          L2cells.push({ anchor, tokens: slice });
+        }
+        if (L2cells.length) levels.push({ cells: L2cells });
+      }
+
+      return { D, effectiveD, levels, anchors, types };
+    }
+
+    function layoutPolygon(tokens, angles, radius, levelIndex) {
+      const tau = Math.PI * 2;
+      const out = [];
+      if (!Array.isArray(tokens) || !tokens.length) return out;
+      const useAngles = Array.isArray(angles) && angles.length ? angles : tokens.map((_, i) => (tau * i) / Math.max(1, tokens.length));
+      for (let i = 0; i < tokens.length; i++) {
+        const angle = useAngles[i % useAngles.length];
+        const normAngle = normalizeAngle(angle);
+        out.push({ token: tokens[i], angle: normAngle, radius, level: levelIndex, cellIndex: 0 });
+      }
+      return out;
+    }
+
+    function layoutSectorPolygon(tokens, baseAngle, sectorSpan, radius, levelIndex, cellIndex) {
+      const tau = Math.PI * 2;
+      const out = [];
+      if (!Array.isArray(tokens) || !tokens.length) return out;
+      if (tokens.length === 1) {
+        out.push({ token: tokens[0], angle: normalizeAngle(baseAngle), radius, level: levelIndex, cellIndex });
+        return out;
+      }
+      const step = sectorSpan / Math.max(tokens.length, 1);
+      const start = baseAngle - (sectorSpan / 2) + step / 2;
+      for (let i = 0; i < tokens.length; i++) {
+        const angle = normalizeAngle(start + i * step);
+        out.push({ token: tokens[i], angle, radius, level: levelIndex, cellIndex });
+      }
+      return out;
+    }
+
+    function normalizeAngle(angle) {
+      const tau = Math.PI * 2;
+      let a = angle % tau;
+      if (a < 0) a += tau;
+      return a;
+    }
+
+    function computeActiveAngles(types) {
+      const count = Math.max(0, types.length * 2);
+      if (!count) return [];
+      const tau = Math.PI * 2;
+      const step = tau / count;
+      return Array.from({ length: count }, (_, i) => normalizeAngle(i * step));
+    }
+
+    function placeLevels(levels, effectiveD, activeAngles) {
+      const positions = new Map();
+      const cellsGeom = [];
+      const placed = new Set();
+      const anchorAngles = new Map();
+      const levelCount = Array.isArray(levels) ? levels.length : 0;
+      const tau = Math.PI * 2;
+      let maxRadius = 0;
+
+      if (!levelCount) {
+        return { positions, cells: cellsGeom, maxRadius: 0, anchorAngles };
+      }
+
+      const first = levels[0]?.cells?.[0]?.tokens || [];
+      const radius0 = 1;
+      const l0 = layoutPolygon(first, activeAngles.slice(0, first.length), radius0, 0);
+      maxRadius = Math.max(maxRadius, radius0);
+      const cell0 = [];
+      for (let i = 0; i < l0.length; i++) {
+        const entry = l0[i];
+        if (!positions.has(entry.token)) {
+          positions.set(entry.token, entry);
+          placed.add(entry.token);
+          anchorAngles.set(entry.token, entry.angle);
+        }
+        cell0.push(entry);
+      }
+      cellsGeom.push({ level: 0, index: 0, anchor: null, tokens: cell0 });
+
+      for (let levelIndex = 1; levelIndex < levelCount; levelIndex++) {
+        const level = levels[levelIndex];
+        const cells = Array.isArray(level?.cells) ? level.cells : [];
+        const isLast = levelIndex === levelCount - 1;
+        const radius = levelIndex + 1;
+        maxRadius = Math.max(maxRadius, radius);
+        const components = isLast ? cells.length : Math.max(activeAngles.length, cells.length, 1);
+        const step = components ? tau / components : tau;
+        for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+          const cell = cells[cellIndex];
+          const anchor = cell?.anchor ?? null;
+          let baseAngle;
+          if (isLast) {
+            baseAngle = cellIndex * step;
+          } else if (levelIndex === 1 && anchor != null && anchorAngles.has(anchor)) {
+            baseAngle = anchorAngles.get(anchor);
+          } else if (activeAngles.length) {
+            baseAngle = activeAngles[cellIndex % activeAngles.length];
+          } else {
+            baseAngle = cellIndex * step;
+          }
+          const tokens = Array.isArray(cell?.tokens) ? cell.tokens : [];
+          const fresh = tokens.filter(token => !placed.has(token));
+          const sectorSpan = step;
+          const placedEntries = layoutSectorPolygon(fresh, baseAngle, sectorSpan, radius, levelIndex, cellIndex);
+          for (const entry of placedEntries) {
+            positions.set(entry.token, entry);
+            placed.add(entry.token);
+          }
+          const geomTokens = tokens.map(token => {
+            const existing = positions.get(token);
+            if (existing) {
+              return Object.assign({}, existing, { cellIndex });
+            }
+            const angle = normalizeAngle(baseAngle);
+            return { token, angle, radius, level: levelIndex, cellIndex };
+          });
+          cellsGeom.push({ level: levelIndex, index: cellIndex, anchor, tokens: geomTokens });
+        }
+      }
+
+      return { positions, cells: cellsGeom, maxRadius, anchorAngles };
+    }
+
+    function computeLayout(graph, index, options = {}) {
       if (!graph) return { nodes: 0, edges: 0 };
+      const idx = index instanceof Map ? index : window.HLSF?.lastCommand?.idx;
+      const baseIndex = idx instanceof Map ? idx : new Map();
+      const config = window.HLSF?.config || {};
+      const desiredScope = (options?.scope || config.hlsfScope || 'db').toLowerCase();
+      let scope = desiredScope === 'state' ? 'state' : 'db';
+
+      const sessionTokens = window.Session?.tokens instanceof Set ? window.Session.tokens : new Set();
+      const scopedTokens = new Set();
+      if (scope === 'state') {
+        for (const token of sessionTokens) {
+          if (baseIndex.has(token)) scopedTokens.add(token);
+        }
+        if (!scopedTokens.size) scope = 'db';
+      }
+
+      let scopedIndex;
+      if (scope === 'state') {
+        scopedIndex = new Map();
+        for (const token of scopedTokens) {
+          scopedIndex.set(token, baseIndex.get(token));
+        }
+      } else {
+        scopedIndex = baseIndex;
+        for (const token of baseIndex.keys()) scopedTokens.add(token);
+      }
+
+      if (!(scopedIndex instanceof Map) || scopedIndex.size === 0) {
+        scopedIndex = baseIndex;
+        for (const token of baseIndex.keys()) scopedTokens.add(token);
+      }
+
+      const typeList = nonEmptyTypes(scopedIndex);
+      const packed = packLevels(scopedIndex, scope, { relationTypes: { maxPresent: typeList.length }, tokens: scopedTokens });
+      const activeAngles = computeActiveAngles(packed.types || []);
+      const placed = placeLevels(packed.levels, packed.effectiveD, activeAngles);
+      const metrics = computeDbStats(scopedIndex);
+
+      const positions = placed.positions;
+      const ensurePosition = (token) => {
+        if (positions.has(token)) return;
+        const radius = (placed.maxRadius || 1) + 1;
+        positions.set(token, { token, angle: 0, radius, level: packed.levels.length, cellIndex: 0 });
+      };
+      for (const token of scopedIndex.keys()) ensurePosition(token);
+
+      const newNodes = new Map();
+      for (const [token, rec] of scopedIndex.entries()) {
+        const node = graph.nodes.get(token) || {};
+        const freq = Number.isFinite(rec?.frequency)
+          ? rec.frequency
+          : Number.isFinite(rec?.f)
+            ? rec.f
+            : Number.isFinite(rec?.freq)
+              ? rec.freq
+              : node.f;
+        node.token = token;
+        if (Number.isFinite(freq)) node.f = freq;
+        const pos = positions.get(token);
+        if (pos) {
+          node.layer = pos.level;
+          node.cluster = pos.cellIndex;
+        }
+        newNodes.set(token, node);
+      }
+      graph.nodes = newNodes;
+
+      const levelCount = Array.isArray(packed.levels) ? packed.levels.length : 0;
+      const lastLevelComponents = levelCount ? (packed.levels[levelCount - 1]?.cells?.length || 0) : 0;
+      const layout = {
+        scope,
+        dimension: packed.D,
+        effectiveDimension: packed.effectiveD,
+        anchors: packed.anchors,
+        levels: packed.levels,
+        cells: placed.cells,
+        activeAngles,
+        positions,
+        maxRadius: placed.maxRadius || levelCount || 1,
+        anchorAngles: placed.anchorAngles,
+        metrics,
+        levelCount,
+        lastLevelComponents,
+        types: packed.types,
+      };
+
+      graph.dimensionLayout = layout;
+      graph.anchors = Array.isArray(packed.anchors) ? packed.anchors : graph.anchors;
+      graph._metrics = metrics;
+
       const linkCount = Array.isArray(graph.links)
         ? graph.links.length
         : (Array.isArray(graph.edges) ? graph.edges.length : 0);
-      return { nodes: graph.nodes.size, edges: linkCount };
+      return {
+        nodes: newNodes.size,
+        edges: linkCount,
+        layout,
+        metrics,
+      };
     }
 
     function prepareBuffers(graph, layout, options = {}) {
@@ -1600,10 +2017,23 @@
       ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
 
       const layoutScale = 1;
+      const layoutMode = normalizeLayout(window.HLSF.config.layout);
       let pos;
-      if (window.HLSF.config.layout === 'affinity') {
+      if (layoutMode === 'dimension' && graph.dimensionLayout) {
+        const dim = graph.dimensionLayout;
+        const radialMax = Math.max(1, dim.maxRadius || 1);
+        const radiusScale = Math.min(width, height) * 0.42 * layoutScale;
+        pos = new Map();
+        for (const [token, entry] of dim.positions.entries()) {
+          const radius = (entry?.radius || 1) / radialMax * radiusScale;
+          const angle = entry?.angle || 0;
+          const x = Math.cos(angle) * radius;
+          const y = Math.sin(angle) * radius;
+          pos.set(token, { x, y });
+        }
+      } else if (layoutMode === 'affinity') {
         pos = clusterLevelLayout(graph, width, height, layoutScale, 0, 0);
-      } else if (window.HLSF.config.layout === 'layered') {
+      } else if (layoutMode === 'layered') {
         pos = ringPositions(graph, width, height, layoutScale, 0, 0);
       } else {
         pos = legacyPositions(graph, width, height, layoutScale, 0, 0);
@@ -1617,11 +2047,35 @@
         rotatedPositions.set(token, rotatedPos(token, base, node));
       }
 
-      if (cfg.layout === 'affinity') {
+      if (layoutMode === 'affinity') {
         drawClusterOverlays(ctx, graph, rotatedPositions);
       }
 
+      if (layoutMode === 'dimension' && graph.dimensionLayout) {
+        ctx.save();
+        ctx.globalAlpha = 0.35;
+        const polyWidth = Math.max(0.01, Math.min(0.1, edgeWidthValue)) * dpr;
+        ctx.lineWidth = polyWidth;
+        ctx.strokeStyle = theme.hint;
+        const cells = Array.isArray(graph.dimensionLayout.cells) ? graph.dimensionLayout.cells : [];
+        for (const cell of cells) {
+          const tokens = Array.isArray(cell?.tokens) ? cell.tokens : [];
+          const pts = tokens
+            .map(t => rotatedPositions.get(t.token))
+            .filter(Boolean);
+          if (pts.length < 3) continue;
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+          ctx.closePath();
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
       const glyphOnly = opts.glyphOnly === true;
+
+      ctx.lineWidth = Math.max(0.005, edgeWidthValue) * dpr;
 
       if (cfg.showEdges !== false) {
         const batches = new Map();
@@ -1900,23 +2354,30 @@
     }
 
     function normalizeLayout(value) {
-      switch (value) {
-        case 'legacy':
+      const v = typeof value === 'string' ? value.toLowerCase() : value;
+      switch (v) {
+        case 'dimension':
+        case 'affinity':
         case 'layered':
-          return value;
+        case 'legacy':
+          return v;
         default:
-          return 'affinity';
+          return 'dimension';
       }
     }
 
     function layoutLabel(value) {
       switch (normalizeLayout(value)) {
+        case 'dimension':
+          return 'Dimension NAM';
+        case 'affinity':
+          return 'Clusters × Levels';
         case 'layered':
           return 'Layered';
         case 'legacy':
           return 'Legacy';
         default:
-          return 'Clusters × Levels';
+          return 'Dimension NAM';
       }
     }
 
@@ -1977,6 +2438,21 @@
             <div class="hlsf-control-group">
               <label for="hlsf-relation-cap">Relation types <span id="hlsf-relation-cap-val">${MAX_REL_TYPES}</span></label>
               <input id="hlsf-relation-cap" type="number" min="1" max="${MAX_REL_TYPES}" step="1" value="${MAX_REL_TYPES}">
+            </div>
+            <div class="hlsf-control-group">
+              <label for="hlsf-scope">Scope</label>
+              <select id="hlsf-scope">
+                <option value="db">DB</option>
+                <option value="state">State</option>
+              </select>
+            </div>
+            <div class="hlsf-control-group">
+              <label>Dimension metrics</label>
+              <div class="hlsf-dimension-stats">
+                <div>Anchors D: <span id="hlsf-dimension-d">—</span></div>
+                <div>Level count L: <span id="hlsf-dimension-levels">—</span></div>
+                <div>Last level components C: <span id="hlsf-dimension-last">—</span></div>
+              </div>
             </div>
             <div class="hlsf-control-group">
               <label for="hlsf-edges-per-type">Edges per type <span id="hlsf-edges-per-type-val">3</span></label>
@@ -2044,6 +2520,19 @@
       if (canvas) {
         window.HLSF.canvas = canvas;
         window.HLSF.ctx = canvas.getContext('2d');
+      }
+
+      const scopeSelect = wrapper.querySelector('#hlsf-scope');
+      if (scopeSelect) {
+        scopeSelect.addEventListener('change', () => {
+          const value = scopeSelect.value === 'state' ? 'state' : 'db';
+          window.HLSF.config.hlsfScope = value;
+          if (window.HLSF?.currentGraph && window.HLSF?.lastCommand?.idx) {
+            rebuildHlsfFromLastCommand(true);
+          } else {
+            debouncedLegacyRender();
+          }
+        });
       }
 
       const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
@@ -2291,7 +2780,7 @@
       const layoutBtn = wrapper.querySelector('#hlsf-toggle-layout');
       if (layoutBtn) {
         layoutBtn.addEventListener('click', () => {
-          const layouts = ['affinity', 'layered', 'legacy'];
+          const layouts = ['dimension', 'affinity', 'layered', 'legacy'];
           const current = normalizeLayout(window.HLSF.config.layout);
           const index = layouts.indexOf(current);
           const next = layouts[(index + 1) % layouts.length];
@@ -2382,6 +2871,19 @@
       }
       if (relationVal) relationVal.textContent = relationCap === Infinity ? '∞' : String(relationCap);
 
+      const scopeSelect = wrapper.querySelector('#hlsf-scope');
+      const normalizedScope = config.hlsfScope === 'state' ? 'state' : 'db';
+      window.HLSF.config.hlsfScope = normalizedScope;
+      if (scopeSelect) scopeSelect.value = normalizedScope;
+
+      const dimLayout = window.HLSF?.currentGraph?.dimensionLayout || window.HLSF?.currentLayoutSnapshot?.layout || null;
+      const dimDSpan = wrapper.querySelector('#hlsf-dimension-d');
+      const dimLevelSpan = wrapper.querySelector('#hlsf-dimension-levels');
+      const dimLastSpan = wrapper.querySelector('#hlsf-dimension-last');
+      if (dimDSpan) dimDSpan.textContent = dimLayout ? String(dimLayout.dimension || 0) : '—';
+      if (dimLevelSpan) dimLevelSpan.textContent = dimLayout ? String(dimLayout.levelCount || 0) : '—';
+      if (dimLastSpan) dimLastSpan.textContent = dimLayout ? String(dimLayout.lastLevelComponents || 0) : '—';
+
       const edgesInput = wrapper.querySelector('#hlsf-edges-per-type');
       const edgesVal = wrapper.querySelector('#hlsf-edges-per-type-val');
       const edgesRaw = config.edgesPerType;
@@ -2470,7 +2972,8 @@
       batchLogging: true,
       deferredRender: true,
       progressTick: 250,
-      layout: 'affinity',
+      layout: 'dimension',
+      hlsfScope: existingConfig.hlsfScope || 'db',
       metricScope: METRIC_SCOPE.RUN,
       relationTypeCap: MAX_REL_TYPES,
       edgesPerType: 3,
@@ -5218,12 +5721,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         let graph = null;
         let runMetrics = { nodes: 0, edges: 0, relationships: 0, anchors: 0 };
+        let layoutResult = null;
 
         if (metricScope === METRIC_SCOPE.RUN) {
           graph = await time('graph', async () => assembleGraphFromAnchorsLogged(anchorsToUse, depth, effectiveIndex));
           await time('cluster', async () => { applyAffinityClusters(graph, effectiveIndex); });
-          const layout = await time('layout', async () => computeLayout(graph));
-          await time('stage', async () => prepareBuffers(graph, layout, { glyphOnly: glyphOnly === true }));
+          layoutResult = await time('layout', async () => computeLayout(graph, effectiveIndex, { scope: window.HLSF?.config?.hlsfScope }));
+          await time('stage', async () => prepareBuffers(graph, layoutResult, { glyphOnly: glyphOnly === true }));
           await time('render', async () => {
             showVisualizer();
             drawComposite(graph, { glyphOnly: glyphOnly === true });
@@ -5246,7 +5750,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         window.HLSF.metrics = Object.assign({}, window.HLSF.metrics || {}, { db: dbStats });
 
         const suffix = originalArgs ? ` ${originalArgs}` : '';
-        logOK(`/hlsf${suffix} → nodes ${runMetrics.nodes} / ${dbStats.nodes}, edges ${runMetrics.edges} / ${dbStats.edges}, relationships ${runMetrics.relationships} / ${dbStats.relationships}, anchors ${runMetrics.anchors} / ${dbStats.anchors}`);
+        const layoutInfo = layoutResult?.layout || graph?.dimensionLayout || null;
+        const dimVal = layoutInfo ? layoutInfo.dimension || 0 : 0;
+        const levelCount = layoutInfo ? layoutInfo.levelCount || 0 : 0;
+        const lastComponents = layoutInfo ? layoutInfo.lastLevelComponents || 0 : 0;
+        const scopeUsed = (layoutInfo?.scope || window.HLSF?.config?.hlsfScope || 'db').toString().toLowerCase();
+        logOK(`/hlsf${suffix} → nodes ${runMetrics.nodes} / ${dbStats.nodes}, edges ${runMetrics.edges} / ${dbStats.edges}, relationships ${runMetrics.relationships} / ${dbStats.relationships}, anchors ${runMetrics.anchors} / ${dbStats.anchors} D=${dimVal}, levels=${levelCount}, last_level_components=${lastComponents}, scope=${scopeUsed}`);
         addLog(`ⓘ run / db • tokens(db) ${dbStats.tokens}`);
 
         if (runMetrics.relationships < runMetrics.edges) {
@@ -5281,6 +5790,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             db_edges: dbStats.edges,
             db_relationships: dbStats.relationships,
             db_tokens: dbStats.tokens,
+            dimension: dimVal,
+            levels: levelCount,
+            last_level_components: lastComponents,
+            scope: scopeUsed,
           });
         }
       } finally {
@@ -5315,7 +5828,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const depth = Number.isFinite(last.depth) ? last.depth : 3;
         const graph = await assembleGraphFromAnchorsLogged(last.anchors, depth, last.idx, { silent: true });
         applyAffinityClusters(graph, last.idx);
-        const layout = computeLayout(graph);
+        const layout = computeLayout(graph, last.idx, { scope: window.HLSF?.config?.hlsfScope });
         prepareBuffers(graph, layout, { glyphOnly: last.glyphOnly === true });
         showVisualizer();
         drawComposite(graph, { glyphOnly: last.glyphOnly === true });
