@@ -7249,7 +7249,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         safeStorageRemove(API_KEY_STORAGE_KEY);
       }
 
-      await tryBootstrapDb();
+      const bootstrapped = await tryBootstrapDb();
+      const dbAvailable = bootstrapped || !!getDb();
 
       const cachedCount = getCachedTokenCount();
       
@@ -7265,6 +7266,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         ${cachedCount > 0 ? `<br>✅ Loaded with ${cachedCount} cached tokens` : ''}
         <br><small>⚠️ Note: Download HTML and run locally for API calls to work.</small>
       `);
+
+      if (dbAvailable) {
+        queueMicrotask(() => { runHlsfSafely(''); });
+      }
       
       elements.input.focus();
     }
