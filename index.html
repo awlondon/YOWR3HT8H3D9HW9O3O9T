@@ -3396,6 +3396,61 @@
       return clean.length;
     }
 
+    function refreshDbReference(recordLike) {
+      const normalized = normalizeRecord(recordLike);
+      if (!normalized) return;
+
+      if (!normalized.cached_at) {
+        normalized.cached_at = new Date().toISOString();
+      }
+
+      let db = window.HLSF.dbCache;
+      if (!db || typeof db !== 'object') {
+        try {
+          const raw = localStorage.getItem(DB_RAW_KEY);
+          if (raw) {
+            db = JSON.parse(raw);
+          }
+        } catch (err) {
+          console.warn('Failed to hydrate existing DB snapshot:', err);
+          db = null;
+        }
+      }
+
+      if (!db || typeof db !== 'object') {
+        db = { full_token_data: [] };
+      }
+
+      if (!Array.isArray(db.full_token_data)) {
+        db.full_token_data = Array.isArray(db.full_token_data)
+          ? db.full_token_data.filter(Boolean).map(normalizeRecord).filter(Boolean)
+          : [];
+      }
+
+      const entries = db.full_token_data;
+      const idx = entries.findIndex(rec => rec && rec.token === normalized.token);
+      if (idx >= 0) {
+        const existing = entries[idx] || {};
+        entries[idx] = Object.assign({}, existing, normalized);
+        if (!entries[idx].cached_at) entries[idx].cached_at = normalized.cached_at;
+      } else {
+        entries.push(normalized);
+      }
+
+      window.HLSF.dbCache = db;
+      try {
+        safeStorageSet(DB_RAW_KEY, JSON.stringify(db));
+      } catch (err) {
+        console.warn('Failed to persist updated DB snapshot:', err);
+      }
+      window.HLSF.indexCache = null;
+      window.HLSF.indexCacheSource = null;
+      window.HLSF.matrices = null;
+      window.HLSF.layoutCache = null;
+      state.hlsfReady = false;
+      updateHeaderCounts();
+    }
+
     function getDb() {
       if (window.HLSF.dbCache) return window.HLSF.dbCache;
       let raw = null;
@@ -4035,14 +4090,18 @@
 
     function saveToCache(token, data) {
       try {
-        const payloadData = {
-          ...data,
+        const payloadData = Object.assign({ token }, data, {
           cached_at: new Date().toISOString(),
-        };
+        });
+        const recordToken = (typeof payloadData.token === 'string' && payloadData.token)
+          ? payloadData.token
+          : token;
+        payloadData.token = recordToken;
         const payload = JSON.stringify(payloadData);
-        const ok = safeStorageSet(getCacheKey(token), payload);
+        const ok = safeStorageSet(getCacheKey(recordToken), payload);
         if (!ok) return;
-        updateTokenIndex(token);
+        updateTokenIndex(recordToken);
+        refreshDbReference(payloadData);
       } catch (err) {
         if (err.name === 'QuotaExceededError') {
           logWarning('Cache full. Use /reset to clear old data.');
