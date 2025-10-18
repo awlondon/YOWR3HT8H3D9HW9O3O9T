@@ -322,6 +322,32 @@
       gap: 0.5rem;
     }
 
+    .hlsf-mental-state {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid #222;
+      border-radius: 6px;
+      padding: 0.75rem 0.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .hlsf-mental-name {
+      font-weight: 700;
+      color: var(--accent);
+      font-size: 0.95rem;
+    }
+
+    .hlsf-mental-desc,
+    .hlsf-mental-mechanics {
+      font-size: 0.8rem;
+      line-height: 1.3;
+    }
+
+    .hlsf-mental-mechanics {
+      opacity: 0.75;
+    }
+
     .hlsf-dimension-stats {
       display: flex;
       flex-direction: column;
@@ -2478,6 +2504,102 @@
       }
     }
 
+    function describeAffinityMentalState(threshold, iterations) {
+      const thr = Number.isFinite(threshold) ? threshold : 0.35;
+      const iters = Number.isFinite(iterations) ? iterations : 8;
+      const thrBand = thr <= 0.2 ? 'low'
+        : thr <= 0.4 ? 'medium'
+        : thr <= 0.6 ? 'high'
+        : 'veryHigh';
+      const iterBand = iters <= 4 ? 'brief'
+        : iters <= 9 ? 'steady'
+        : 'extended';
+
+      const STATES = {
+        low: {
+          brief: {
+            name: 'Impulsive ideation',
+            desc: 'Weak ties are welcomed but the loop stops quickly, so early, noisy neighbors shape the clusters.'
+          },
+          steady: {
+            name: 'Expansive brainstorming',
+            desc: 'Low thresholds keep associative links flowing while a few passes weave them into loose but lively groups.'
+          },
+          extended: {
+            name: 'Hypnagogic free association',
+            desc: 'Almost every tenuous link survives repeated revisits, letting clusters blend in a dreamlike drift.'
+          }
+        },
+        medium: {
+          brief: {
+            name: 'Decisive synthesis',
+            desc: 'Moderate evidence is required but only a handful of passes occur, yielding balanced snap decisions.'
+          },
+          steady: {
+            name: 'Focused yet flexible attention',
+            desc: 'Clustering balances evidence with patience, producing well-formed communities without overthinking.'
+          },
+          extended: {
+            name: 'Reflective integration',
+            desc: 'Moderate filters paired with long deliberation polish clusters through repeated, thoughtful reconciliation.'
+          }
+        },
+        high: {
+          brief: {
+            name: 'Surgical categorization',
+            desc: 'Only strong alignments are heeded and the loop resolves quickly, carving crisp, selective groups.'
+          },
+          steady: {
+            name: 'Structured analytical focus',
+            desc: 'Strict similarity demands with measured revisits create tight, compartmentalized communities.'
+          },
+          extended: {
+            name: 'Perfectionistic rumination',
+            desc: 'High selectivity and many passes continually prune ambiguous members in search of immaculate boundaries.'
+          }
+        },
+        veryHigh: {
+          brief: {
+            name: 'Rigid snap judgments',
+            desc: 'Only the strongest neighbors are considered and the process halts fast, leaving fragmented results.'
+          },
+          steady: {
+            name: 'Guarded deliberation',
+            desc: 'Strict gates with limited revisits keep clusters narrow while cautiously revisiting edge cases.'
+          },
+          extended: {
+            name: 'Tunnel-vision fixation',
+            desc: 'Extreme selectivity applied over many rounds replays only the most forceful convictions.'
+          }
+        }
+      };
+
+      const preset = STATES[thrBand] && STATES[thrBand][iterBand]
+        ? STATES[thrBand][iterBand]
+        : null;
+      if (preset) return preset;
+      return {
+        name: 'Adaptive clustering',
+        desc: `Threshold ${thr.toFixed(2)} with ${iters} iteration${iters === 1 ? '' : 's'} blends evidence filtering with iterative refinement.`
+      };
+    }
+
+    function updateAffinityAnnotations(wrapper, threshold, iterations) {
+      if (!wrapper) return;
+      const { name, desc } = describeAffinityMentalState(threshold, iterations);
+      const nameEl = wrapper.querySelector('#hlsf-mental-name');
+      if (nameEl) nameEl.textContent = name;
+      const descEl = wrapper.querySelector('#hlsf-mental-desc');
+      if (descEl) descEl.textContent = desc;
+      const mechanicsEl = wrapper.querySelector('#hlsf-affinity-mechanics');
+      if (mechanicsEl) {
+        const thr = Number.isFinite(threshold) ? threshold : 0.35;
+        const iters = Number.isFinite(iterations) ? iterations : 8;
+        const iterWord = iters === 1 ? 'iteration' : 'iterations';
+        mechanicsEl.textContent = `Neighbors must score at least ${thr.toFixed(2)} on the 60/40 cosine–Jaccard affinity mix to influence clustering. The loop will revisit labels for up to ${iters} ${iterWord} before settling.`;
+      }
+    }
+
     function ensureHLSFCanvas() {
       let wrapper = document.getElementById('hlsf-canvas-container');
       if (wrapper) {
@@ -2572,6 +2694,14 @@
             <div class="hlsf-control-group">
               <label for="hlsf-aff-iters">Affinity iterations <span id="hlsf-aff-iters-val">8</span></label>
               <input id="hlsf-aff-iters" type="range" min="1" max="20" step="1" value="8">
+            </div>
+            <div class="hlsf-control-group">
+              <label>Affinity cognition</label>
+              <div id="hlsf-affinity-mental-state" class="hlsf-mental-state">
+                <div id="hlsf-mental-name" class="hlsf-mental-name">Focused yet flexible attention</div>
+                <div id="hlsf-mental-desc" class="hlsf-mental-desc">Moderate evidence is required and several rounds are permitted, yielding balanced, well-formed communities without excessive rumination.</div>
+                <div id="hlsf-affinity-mechanics" class="hlsf-mental-mechanics">Neighbors must score at least 0.35 on the 60/40 cosine–Jaccard affinity mix to influence clustering. The loop allows up to 8 iterations before settling.</div>
+              </div>
             </div>
             <div class="hlsf-control-group">
               <label>Rotation modes</label>
@@ -2727,6 +2857,8 @@
           window.HLSF.config.affinity = Object.assign({}, window.HLSF.config.affinity, { threshold: value });
           thresholdSlider.value = value.toFixed(2);
           if (thresholdVal) thresholdVal.textContent = value.toFixed(2);
+          const currentIters = window.HLSF.config.affinity?.iterations;
+          updateAffinityAnnotations(wrapper, value, Number.isFinite(currentIters) ? currentIters : 8);
           recomputeAndRender();
         });
       }
@@ -2740,6 +2872,8 @@
           window.HLSF.config.affinity = Object.assign({}, window.HLSF.config.affinity, { iterations: value });
           iterSlider.value = String(value);
           if (iterVal) iterVal.textContent = String(value);
+          const currentThresh = window.HLSF.config.affinity?.threshold;
+          updateAffinityAnnotations(wrapper, Number.isFinite(currentThresh) ? currentThresh : 0.35, value);
           recomputeAndRender();
         });
       }
@@ -2920,6 +3054,11 @@
         });
       }
 
+      const affinityCfg = window.HLSF.config?.affinity || {};
+      const initialThresh = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
+      const initialIters = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
+      updateAffinityAnnotations(wrapper, initialThresh, initialIters);
+
       wrapper.dataset.controlsBound = 'true';
     }
 
@@ -3014,6 +3153,8 @@
       const iterVal = wrapper.querySelector('#hlsf-aff-iters-val');
       if (iterSlider) iterSlider.value = String(iterations);
       if (iterVal) iterVal.textContent = String(iterations);
+
+      updateAffinityAnnotations(wrapper, threshold, iterations);
 
       const edgeColorSelect = wrapper.querySelector('#hlsf-edge-color-mode');
       const colorMode = normalizeEdgeColorMode(config.edgeColorMode);
