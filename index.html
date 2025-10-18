@@ -3668,11 +3668,7 @@
       const index = clean.map(r => r.token);
       localStorage.setItem(DB_INDEX_KEY, JSON.stringify(index));
       window.HLSF.dbCache = out;
-      window.HLSF.matrices = null;
-      window.HLSF.layoutCache = null;
-      window.HLSF.indexCache = null;
-      window.HLSF.indexCacheSource = null;
-      state.hlsfReady = false;
+      markHlsfDataDirty();
       if (typeof buildHLSFMatrices === 'function') {
         try {
           buildHLSFMatrices(out);
@@ -3681,6 +3677,7 @@
         }
       }
       updateHeaderCounts();
+      scheduleHlsfReload('load-db');
       return clean.length;
     }
 
@@ -3731,11 +3728,7 @@
       } catch (err) {
         console.warn('Failed to persist updated DB snapshot:', err);
       }
-      window.HLSF.indexCache = null;
-      window.HLSF.indexCacheSource = null;
-      window.HLSF.matrices = null;
-      window.HLSF.layoutCache = null;
-      state.hlsfReady = false;
+      notifyHlsfAdjacencyChange('cache-update');
       updateHeaderCounts();
     }
 
@@ -3974,6 +3967,86 @@
 
     function getCachedTokenCount() {
       return safeStorageKeys(TOKEN_CACHE_PREFIX).length;
+    }
+
+    let pendingHlsfReloadTimer = null;
+    let hlsfReloadInFlight = false;
+
+    function markHlsfDataDirty() {
+      window.HLSF = window.HLSF || {};
+      window.HLSF.matrices = null;
+      window.HLSF.layoutCache = null;
+      window.HLSF.indexCache = null;
+      window.HLSF.indexCacheSource = null;
+      state.hlsfReady = false;
+    }
+
+    function scheduleHlsfReload(reason = 'cache-update', options = {}) {
+      const { immediate = false, debounceMs = 400 } = options || {};
+
+      const trigger = () => {
+        pendingHlsfReloadTimer = null;
+        if (hlsfReloadInFlight) return;
+
+        const finalize = () => { hlsfReloadInFlight = false; };
+
+        try {
+          const last = window.HLSF?.lastCommand;
+          const cachedCount = getCachedTokenCount();
+          const dbCount = Array.isArray(window.HLSF?.dbCache?.full_token_data)
+            ? window.HLSF.dbCache.full_token_data.length
+            : 0;
+          let task = null;
+
+          if (last && last.metricScope !== METRIC_SCOPE.DB && Array.isArray(last.anchors) && last.anchors.length) {
+            task = rebuildHlsfFromLastCommand(true);
+          } else if (last) {
+            const args = typeof last.rawArgs === 'string' ? last.rawArgs : '';
+            task = runHlsfSafely(args);
+          } else if (cachedCount > 0 || dbCount > 0) {
+            task = runHlsfSafely('');
+          } else {
+            stopHLSFAnimation();
+            hideVisualizer();
+            if (window.HLSF) {
+              window.HLSF.currentGraph = null;
+              window.HLSF.currentGlyphOnly = false;
+            }
+            finalize();
+            return;
+          }
+
+          if (!task || typeof task.then !== 'function') {
+            finalize();
+            return;
+          }
+
+          hlsfReloadInFlight = true;
+          task.then(finalize).catch(err => {
+            console.warn('Auto HLSF reload failed:', err);
+            finalize();
+          });
+        } catch (err) {
+          console.warn('Failed to refresh HLSF after cache update:', err);
+        }
+      };
+
+      if (pendingHlsfReloadTimer) {
+        clearTimeout(pendingHlsfReloadTimer);
+        pendingHlsfReloadTimer = null;
+      }
+
+      if (immediate) {
+        trigger();
+      } else {
+        const delay = Number.isFinite(debounceMs) ? Math.max(0, debounceMs) : 400;
+        pendingHlsfReloadTimer = setTimeout(trigger, delay);
+      }
+    }
+
+    function notifyHlsfAdjacencyChange(reason = 'cache-update', options = {}) {
+      markHlsfDataDirty();
+      scheduleHlsfReload(reason, options);
     }
 
     // ============================================
@@ -6082,7 +6155,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         seen.push(rec.token);
       }
       safeStorageSet(DB_INDEX_KEY, JSON.stringify(seen));
-      state.hlsfReady = false;
       window.HLSF_GRAPH = null;
       updateStats();
       addLog(`📊 Import: ${seen.length} tokens (${count} normalized).`);
@@ -6095,7 +6167,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const db = getDb();
         if (!db) throw new Error('Failed to hydrate database');
 
-        state.hlsfReady = false;
         let totalTokens = 0;
         try {
           totalTokens = loadDbObject(data);
@@ -6137,6 +6208,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           safeStorageSet(DB_INDEX_KEY, JSON.stringify(Array.from(seen)));
         }
         updateStats();
+        scheduleHlsfReload('import-db');
 
         const summary = [];
         if (imported > 0) summary.push(`${imported} new tokens imported`);
@@ -7073,20 +7145,17 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               console.warn('Unable to inspect DB snapshot state:', err);
             }
             safeStorageRemove(DB_RAW_KEY);
-            state.hlsfReady = false;
+            markHlsfDataDirty();
             window.HLSF_GRAPH = null;
             if (window.HLSF) {
-              window.HLSF.matrices = null;
-              window.HLSF.layoutCache = null;
               window.HLSF.dbCache = null;
-              window.HLSF.indexCache = null;
-              window.HLSF.indexCacheSource = null;
               window.HLSF.currentGraph = null;
               window.HLSF.currentGlyphOnly = false;
               window.HLSF.__centerInit = false;
             }
             Session.tokens.clear();
             updateStats();
+            scheduleHlsfReload('reset', { immediate: true });
             const clearedMsg = hadDbSnapshot
               ? `Cleared ${keys.length} tokens and database snapshot`
               : `Cleared ${keys.length} tokens`;
