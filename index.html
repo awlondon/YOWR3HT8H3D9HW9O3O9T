@@ -3207,7 +3207,10 @@
 
     window.HLSF = window.HLSF || {};
     const existingConfig = window.HLSF.config || {};
-    const DEFAULT_BOOTSTRAP_DB = "HLSF_Database_2025-10-15.json";
+    // Default cached database bundled with the repository. Keep this in sync with
+    // the actual JSON artifact checked into version control so the visualizer can
+    // bootstrap immediately without requiring a manual import.
+    const DEFAULT_BOOTSTRAP_DB = "HLSF_Database_2025-10-18.json";
     window.HLSF.config = Object.assign({
       bootstrapDbUrl: existingConfig.bootstrapDbUrl || DEFAULT_BOOTSTRAP_DB,
       rotationActive: true,
