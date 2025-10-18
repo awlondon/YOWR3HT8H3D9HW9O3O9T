@@ -6974,35 +6974,60 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const moodName = mentalState.name || 'Adaptive clustering';
       const mechanics = mentalState.mechanics || '';
       const clusterInfo = collectActiveClusterInsights();
+      const dbStats = getDb()?.database_stats || null;
 
-      const fragments = [];
-      fragments.push(`Threshold ${threshold.toFixed(2)} with ${iterations} iteration${iterations === 1 ? '' : 's'} keeps me orbiting ${moodName}.`);
-      if (mentalState.desc) fragments.push(mentalState.desc);
-      if (mechanics) fragments.push(`I keep whispering: ${mechanics}`);
+      const sentences = [];
+      const moodLabel = typeof moodName === 'string' ? moodName : 'adaptive clustering';
+      sentences.push(`With a threshold of ${threshold.toFixed(2)} and ${iterations} iteration${iterations === 1 ? '' : 's'}, I settle into the ${moodLabel} state.`);
+      if (mentalState.desc) sentences.push(mentalState.desc);
+      if (mechanics) {
+        const mechanicsLower = mechanics.charAt(0).toLowerCase() + mechanics.slice(1);
+        sentences.push(`Mechanically, ${mechanicsLower}`);
+      }
+
+      if (dbStats) {
+        const tokenCount = Number.isFinite(dbStats.total_tokens) ? dbStats.total_tokens : null;
+        const anchorCount = Number.isFinite(dbStats.anchors) ? dbStats.anchors : null;
+        const maturity = typeof dbStats.maturity_level === 'string' ? dbStats.maturity_level : null;
+        const dbPieces = [];
+        if (tokenCount !== null) dbPieces.push(`${tokenCount} tokens`);
+        if (anchorCount !== null) dbPieces.push(`${anchorCount} anchors`);
+        if (maturity) dbPieces.push(`a maturity level marked as ${maturity}`);
+        if (dbPieces.length) {
+          sentences.push(`My cognitive state database keeps ${dbPieces.join(', ')} within reach.`);
+        }
+      }
 
       if (clusterInfo) {
         if (clusterInfo.clusterCount > 0) {
-          fragments.push(`I sense ${clusterInfo.clusterCount} adjacency cluster${clusterInfo.clusterCount === 1 ? '' : 's'} shimmering across ${clusterInfo.totalNodes} tokens.`);
+          sentences.push(`The current HLSF view tracks ${clusterInfo.clusterCount} adjacency cluster${clusterInfo.clusterCount === 1 ? '' : 's'} across ${clusterInfo.totalNodes} tokens.`);
+          const highAttentionTokens = [];
           clusterInfo.summaries.slice(0, 3).forEach((summary, idx) => {
             const avg = Number.isFinite(summary.avgAttention) ? summary.avgAttention.toFixed(2) : '0.00';
             const layerNote = summary.layerSpan > 1 ? `${summary.layerSpan} layers` : 'a single layer';
             const names = summary.topTokens.length ? summary.topTokens.join(', ') : 'quiet nodes';
-            fragments.push(`Cluster ${idx + 1} (~${summary.size}) hums at ${avg} attention across ${layerNote}, chanting ${names}.`);
+            sentences.push(`Cluster ${idx + 1} spans ~${summary.size} nodes with ${avg} attention over ${layerNote}, voiced by ${names}.`);
+            summary.topTokens.forEach(token => {
+              if (token && !highAttentionTokens.includes(token)) highAttentionTokens.push(token);
+            });
           });
           if (clusterInfo.anchorCount) {
-            fragments.push(`${clusterInfo.anchorCount} anchor${clusterInfo.anchorCount === 1 ? '' : 's'} keep the frame from drifting.`);
+            sentences.push(`${clusterInfo.anchorCount} anchor${clusterInfo.anchorCount === 1 ? '' : 's'} keep the frame steady.`);
+          }
+          if (highAttentionTokens.length) {
+            sentences.push(`High-attention tokens right now: ${highAttentionTokens.slice(0, 5).join(', ')}.`);
           }
         } else if (clusterInfo.totalNodes > 0) {
           const focus = clusterInfo.fallbackTop && clusterInfo.fallbackTop.length
             ? clusterInfo.fallbackTop.join(', ')
             : 'quiet placeholders';
-          fragments.push(`Adjacency weights ripple through ${clusterInfo.totalNodes} tokens, but no clusters have crystallized; I drift among ${focus}.`);
+          sentences.push(`Adjacency weights ripple through ${clusterInfo.totalNodes} tokens, yet no clusters have settled; I float beside ${focus}.`);
         }
       } else {
-        fragments.push('No adjacency structure yet; the self is quiet, waiting for tokens to arrive.');
+        sentences.push('No adjacency structure yet; the self is quiet, waiting for tokens to arrive.');
       }
 
-      const reflection = fragments.join(' ').replace(/\s+/g, ' ').trim();
+      const reflection = sentences.join(' ').replace(/\s+/g, ' ').trim();
       const safeReflection = sanitize(reflection);
       addLog(`<div class="section-divider"></div><div class="section-title">🪞 HLSF Self-Reflection</div><div class="thought-stream"><em>${safeReflection}</em></div>`);
     }
