@@ -552,7 +552,7 @@
       </div>
     </div>
     <input id="db-file" type="file" accept=".json,application/json" style="display:none">
-    <div class="hlsf-canvas-container hidden" id="hlsf-canvas-container">
+    <div class="hlsf-canvas-container" id="hlsf-canvas-container">
       <div class="section-title">🔭 HLSF Matrix Visualizer</div>
       <details id="hlsf-batch-log" open>
         <summary>Batch log</summary>
@@ -3224,7 +3224,7 @@
       showEnglish: true,
       fullAnchorCap: 0,
       batchLogging: true,
-      deferredRender: true,
+      deferredRender: false,
       progressTick: 250,
       layout: 'dimension',
       hlsfScope: existingConfig.hlsfScope || 'db',
@@ -6627,6 +6627,130 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       logFinal(`Alpha = ${a.toFixed(2)}`);
     }
 
+    function collectActiveClusterInsights() {
+      const graph = window.HLSF?.currentGraph;
+      const idx = window.HLSF?.lastCommand?.idx;
+      if (graph && graph.nodes instanceof Map && graph.nodes.size) {
+        if (idx) applyAffinityClusters(graph, idx);
+        const bucket = new Map();
+        for (const [token, node] of graph.nodes) {
+          if (!token || !node) continue;
+          const clusterId = Number.isFinite(node.cluster) ? node.cluster : -1;
+          if (!bucket.has(clusterId)) {
+            bucket.set(clusterId, {
+              id: clusterId,
+              nodes: [],
+              attentionSum: 0,
+              layers: new Set(),
+            });
+          }
+          const entry = bucket.get(clusterId);
+          const layerVal = Number.isFinite(node.layer) ? node.layer : null;
+          if (Number.isFinite(layerVal)) entry.layers.add(layerVal);
+          const candidates = [node.attention, node.f, node.degree];
+          let attention = 0;
+          for (const candidate of candidates) {
+            const numeric = Number(candidate);
+            if (Number.isFinite(numeric)) { attention = numeric; break; }
+          }
+          entry.nodes.push({ token: String(token), attention });
+          if (Number.isFinite(attention)) entry.attentionSum += attention;
+        }
+
+        const summaries = [...bucket.values()]
+          .map(entry => {
+            entry.nodes.sort((a, b) => {
+              const attA = Number.isFinite(a.attention) ? a.attention : -Infinity;
+              const attB = Number.isFinite(b.attention) ? b.attention : -Infinity;
+              if (attB !== attA) return attB - attA;
+              return a.token.localeCompare(b.token);
+            });
+            const avgAttention = entry.nodes.length
+              ? entry.attentionSum / entry.nodes.length
+              : 0;
+            return {
+              id: entry.id,
+              size: entry.nodes.length,
+              avgAttention: Number.isFinite(avgAttention) ? avgAttention : 0,
+              topTokens: entry.nodes.slice(0, 3).map(n => n.token),
+              layerSpan: entry.layers.size || 0,
+            };
+          })
+          .filter(entry => entry.size > 0)
+          .sort((a, b) => {
+            if (b.size !== a.size) return b.size - a.size;
+            return b.avgAttention - a.avgAttention;
+          });
+
+        return {
+          summaries,
+          totalNodes: graph.nodes.size || 0,
+          clusterCount: summaries.length,
+          anchorCount: Array.isArray(graph.anchors) ? graph.anchors.length : 0,
+        };
+      }
+
+      const fallback = buildHLSF();
+      if (fallback && Array.isArray(fallback.nodes) && fallback.nodes.length) {
+        const fallbackTop = fallback.nodes
+          .filter(n => n && typeof n.id === 'string')
+          .sort((a, b) => (Number(b.attention) || 0) - (Number(a.attention) || 0))
+          .slice(0, 5)
+          .map(n => n.id);
+
+        return {
+          summaries: [],
+          totalNodes: fallback.nodes.length,
+          clusterCount: 0,
+          anchorCount: 0,
+          fallbackTop,
+        };
+      }
+
+      return null;
+    }
+
+    function cmd_self() {
+      const affinityCfg = window.HLSF?.config?.affinity || {};
+      const threshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
+      const iterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
+      const mentalState = describeAffinityMentalState(threshold, iterations) || {};
+      const moodName = mentalState.name || 'Adaptive clustering';
+      const mechanics = mentalState.mechanics || '';
+      const clusterInfo = collectActiveClusterInsights();
+
+      const fragments = [];
+      fragments.push(`Threshold ${threshold.toFixed(2)} with ${iterations} iteration${iterations === 1 ? '' : 's'} keeps me orbiting ${moodName}.`);
+      if (mentalState.desc) fragments.push(mentalState.desc);
+      if (mechanics) fragments.push(`I keep whispering: ${mechanics}`);
+
+      if (clusterInfo) {
+        if (clusterInfo.clusterCount > 0) {
+          fragments.push(`I sense ${clusterInfo.clusterCount} adjacency cluster${clusterInfo.clusterCount === 1 ? '' : 's'} shimmering across ${clusterInfo.totalNodes} tokens.`);
+          clusterInfo.summaries.slice(0, 3).forEach((summary, idx) => {
+            const avg = Number.isFinite(summary.avgAttention) ? summary.avgAttention.toFixed(2) : '0.00';
+            const layerNote = summary.layerSpan > 1 ? `${summary.layerSpan} layers` : 'a single layer';
+            const names = summary.topTokens.length ? summary.topTokens.join(', ') : 'quiet nodes';
+            fragments.push(`Cluster ${idx + 1} (~${summary.size}) hums at ${avg} attention across ${layerNote}, chanting ${names}.`);
+          });
+          if (clusterInfo.anchorCount) {
+            fragments.push(`${clusterInfo.anchorCount} anchor${clusterInfo.anchorCount === 1 ? '' : 's'} keep the frame from drifting.`);
+          }
+        } else if (clusterInfo.totalNodes > 0) {
+          const focus = clusterInfo.fallbackTop && clusterInfo.fallbackTop.length
+            ? clusterInfo.fallbackTop.join(', ')
+            : 'quiet placeholders';
+          fragments.push(`Adjacency weights ripple through ${clusterInfo.totalNodes} tokens, but no clusters have crystallized; I drift among ${focus}.`);
+        }
+      } else {
+        fragments.push('No adjacency structure yet; the self is quiet, waiting for tokens to arrive.');
+      }
+
+      const reflection = fragments.join(' ').replace(/\s+/g, ' ').trim();
+      const safeReflection = sanitize(reflection);
+      addLog(`<div class="section-divider"></div><div class="section-title">🪞 HLSF Self-Reflection</div><div class="thought-stream"><em>${safeReflection}</em></div>`);
+    }
+
     async function cmd_import() {
       await cmdImport();
     }
@@ -6695,6 +6819,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       await runHlsfSafely('');
     }
 
+    registerCommand('/self', cmd_self);
     registerCommand('/import', cmd_import);
     registerCommand('/loaddb', cmd_loaddb);
     window.COMMANDS = COMMANDS;
@@ -6831,6 +6956,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             /encrypt &lt;text&gt; - Encrypt text into weighted glyphs<br>
             /decrypt &lt;glyph+float&gt; - Decrypt using private ledger<br>
             /exportledger - Shortcut for /ledger export<br>
+            /self - Stream the current HLSF self-reflection<br>
             /hlsf or /visualize - Visualize database as Hierarchical-Level Semantic Framework — builds from anchors<br>
             /help - Show commands`);
           break;
@@ -7070,6 +7196,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     async function initialize() {
       updateStats();
+
+      const hlsfWrapper = document.getElementById('hlsf-canvas-container');
+      if (hlsfWrapper) {
+        bindHlsfControls(hlsfWrapper);
+        syncHlsfControls(hlsfWrapper);
+        showVisualizer();
+      }
 
       const storedKey = safeStorageGet(API_KEY_STORAGE_KEY, '');
       if (isValidApiKey(storedKey)) {
