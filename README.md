@@ -21,7 +21,7 @@ This repository contains a single-page application:
 
 For each submitted prompt, the engine performs the following stages:
 
-1. **Token validation** – Splits the prompt, enforces a 100-token ceiling, and annotates input/output token counts in the log. 【F:index.html†L532-L542】【F:index.html†L971-L1001】
+1. **Token validation** – Splits the prompt, enforces a 500-token ceiling, and annotates input/output token counts in the log. 【F:index.html†L3465-L3470】【F:index.html†L6214-L6245】
 2. **Primary response generation** – Sends the prompt to OpenAI (when authorized) or emits an offline placeholder if no key is present. 【F:index.html†L986-L997】
 3. **Adjacency acquisition** – Requests token adjacency matrices for both prompt and response tokens, with concurrency control, caching, and offline fallbacks. 【F:index.html†L671-L761】【F:index.html†L1002-L1016】
 4. **Attention analytics** – Calculates attention scores, densities, hubs, and bridge tokens, then summarizes high-salience nodes in the log. 【F:index.html†L764-L832】【F:index.html†L1017-L1028】
