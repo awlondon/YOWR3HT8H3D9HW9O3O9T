@@ -7406,6 +7406,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         
         logOK(`Processing complete (${time}s)`);
 
+        scheduleHlsfReload('prompt-complete', { immediate: true });
+
       } catch (err) {
         if (err.name === 'AbortError' || err.message === 'AbortError') {
           logWarning('Processing cancelled');
@@ -7531,9 +7533,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         <br><small>⚠️ Note: Download HTML and run locally for API calls to work.</small>
       `);
 
-      if (dbAvailable) {
+      const hasHlsfData = dbAvailable || cachedCount > 0;
+      if (hasHlsfData) {
         HlsfLoading.show('Preparing HLSF visualization…');
-        queueMicrotask(() => { runHlsfSafely(''); });
+        scheduleHlsfReload('startup', { immediate: true });
       }
 
       elements.input.focus();
