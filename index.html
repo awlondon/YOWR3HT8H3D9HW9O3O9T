@@ -595,6 +595,8 @@
       ESTIMATED_COST_PER_API_CALL: 0.02,
     };
 
+    const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
+
     // Canonical 50-type display names
     const REL_EN = {
       "≡":"Identity","⊃":"Contains","⊂":"Is Contained By","≈":"Variant","∈":"Is Instance Of","∋":"Has Instance",
@@ -799,17 +801,73 @@
     }
 
     function extractHlsfFlags(str) {
-      let text = (str || '').trim();
+      const raw = (str || '').trim();
+      if (!raw) return { text: '', flags: {} };
+
+      const parts = raw.split(/\s+/);
+      const remain = [];
       const flags = {};
-      const removeFlag = (regex, key, value) => {
-        if (regex.test(text)) {
-          flags[key] = value;
-          text = text.replace(regex, ' ');
-        }
+
+      const parseValue = (part, index) => {
+        const eqIdx = part.indexOf('=');
+        if (eqIdx >= 0) return part.slice(eqIdx + 1);
+        if (index + 1 < parts.length) return parts[index + 1];
+        return '';
       };
-      removeFlag(/(?:^|\s)--nowait\b/gi, 'deferredRender', false);
-      removeFlag(/(?:^|\s)--nolog\b/gi, 'batchLogging', false);
-      text = text.replace(/\s+/g, ' ').trim();
+
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const lower = part.toLowerCase();
+
+        if (lower === '--nolog') { flags.batchLogging = false; continue; }
+        if (lower === '--nowait') { flags.deferredRender = false; continue; }
+
+        if (lower.startsWith('--scope')) {
+          const value = parseValue(part, i).toLowerCase();
+          if (!part.includes('=')) i += 1;
+          if (value === METRIC_SCOPE.DB) flags.metricScope = METRIC_SCOPE.DB;
+          else if (value === METRIC_SCOPE.RUN) flags.metricScope = METRIC_SCOPE.RUN;
+          continue;
+        }
+
+        if (lower.startsWith('--depth')) {
+          const value = parseValue(part, i);
+          if (!part.includes('=')) i += 1;
+          const depth = parseFloat(value);
+          if (Number.isFinite(depth)) flags.depth = depth;
+          continue;
+        }
+
+        if (lower.startsWith('--types')) {
+          const value = parseValue(part, i);
+          if (!part.includes('=')) i += 1;
+          const valLower = typeof value === 'string' ? value.toLowerCase() : '';
+          if (valLower === 'all' || valLower === 'infinity' || valLower === 'inf' || valLower === '∞') {
+            flags.relationTypeCap = Infinity;
+          } else {
+            const n = parseInt(value, 10);
+            if (Number.isFinite(n)) flags.relationTypeCap = n;
+          }
+          continue;
+        }
+
+        if (lower.startsWith('--ept')) {
+          const value = parseValue(part, i);
+          if (!part.includes('=')) i += 1;
+          const valLower = typeof value === 'string' ? value.toLowerCase() : '';
+          if (valLower === 'all' || valLower === 'infinity' || valLower === 'inf' || valLower === '∞') {
+            flags.edgesPerType = Infinity;
+          } else {
+            const n = parseInt(value, 10);
+            if (Number.isFinite(n)) flags.edgesPerType = n;
+          }
+          continue;
+        }
+
+        remain.push(part);
+      }
+
+      const text = remain.join(' ').trim();
       return { text, flags };
     }
 
@@ -1009,16 +1067,16 @@
       debouncedLegacyRender();
     }
 
-    function edgesFrom(rec) {
-      if (!rec) return [];
-      const matrix = buildMatrixForRecord(rec);
-      const relationCap = clampRelationTypeCap(window.HLSF.config?.relationTypeCap);
-      const perType = clampEdgesPerType(window.HLSF.config?.edgesPerType);
-      return (matrix?.edges || []).slice(0, relationCap).map((relation) => ({
-        rtype: relation?.rtype,
-        aggWeight: relation?.aggWeight,
-        items: Array.isArray(relation?.items) ? relation.items.slice(0, perType) : []
-      }));
+    function getRelationTypeCap() {
+      const raw = window.HLSF?.config?.relationTypeCap;
+      if (raw === Infinity) return Infinity;
+      return clampRelationTypeCap(raw);
+    }
+
+    function getEdgesPerType() {
+      const raw = window.HLSF?.config?.edgesPerType;
+      if (raw === Infinity) return Infinity;
+      return clampEdgesPerType(raw);
     }
 
     async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, options = {}) {
@@ -1040,7 +1098,6 @@
       const loggingActive = !opts.silent && window.HLSF?.config?.batchLogging !== false;
       const logPhase = (evt, meta) => { if (loggingActive) BatchLog.phase('graph', evt, meta); };
       const logProgress = (done, total) => { if (loggingActive) BatchLog.progress(done, total); };
-      const expandedSrc = new Set();
       const seenTriple = new Set();
       const visitedSrc = new Set();
       const fractionalNodes = new Set();
@@ -1092,14 +1149,16 @@
         const rec = index.get(token);
         if (!rec) return;
         ensureNode(token, depth);
-        const relations = edgesFrom(rec);
-        if (!expandedSrc.has(token)) {
-          edgeTypeEnums += relations.length;
-          expandedSrc.add(token);
-        }
+        const matrix = buildMatrixForRecord(rec);
+        const relations = Array.isArray(matrix?.edges) ? matrix.edges.slice(0, getRelationTypeCap()) : [];
         for (const relation of relations) {
+          const items = Array.isArray(relation?.items)
+            ? relation.items.slice(0, getEdgesPerType())
+            : [];
+          if (!items.length) continue;
+          let enumerated = false;
           const nextDepth = depth + 1;
-          for (const item of relation.items) {
+          for (const item of items) {
             const target = item?.token;
             if (!target) continue;
             const targetRec = index.get(target);
@@ -1112,12 +1171,16 @@
                 : relation?.aggWeight;
             const normalizedWeight = Number(weight) || 0;
             const added = pushLink(token, target, relation?.rtype, normalizedWeight);
-            if (depth < maxDepth) {
-              if (added) queueNext(token, target, relation?.rtype, normalizedWeight, nextDepth);
-            } else if (frac > 0) {
-              fractionalNodes.add(target);
+            if (added) {
+              enumerated = true;
+              if (depth < maxDepth) {
+                queueNext(token, target, relation?.rtype, normalizedWeight, nextDepth);
+              } else if (frac > 0) {
+                fractionalNodes.add(target);
+              }
             }
           }
+          if (enumerated) edgeTypeEnums += 1;
         }
       };
 
@@ -1157,6 +1220,46 @@
       graph._metrics = metrics;
       logPhase('summary', metrics);
       return graph;
+    }
+
+    function computeDbStats(index) {
+      if (!(index instanceof Map)) {
+        return { tokens: 0, edges: 0, relationships: 0, nodes: 0, anchors: 0 };
+      }
+
+      const outSet = new Set();
+      const inSet = new Set();
+      let relInstances = 0;
+      let edgeTypeEnums = 0;
+
+      for (const [src, rec] of index) {
+        if (!rec || typeof rec !== 'object') continue;
+        const rels = rec.relationships || {};
+        let srcHasType = 0;
+        for (const [rtype, arr] of Object.entries(rels)) {
+          if (!Array.isArray(arr) || arr.length === 0) continue;
+          srcHasType += 1;
+          for (const rel of arr) {
+            const tgt = rel?.token;
+            if (!tgt) continue;
+            relInstances += 1;
+            outSet.add(src);
+            inSet.add(tgt);
+          }
+        }
+        edgeTypeEnums += srcHasType;
+      }
+
+      const tokens = index.size;
+      const anchors = [...outSet].filter((t) => inSet.has(t)).length;
+
+      return {
+        tokens,
+        edges: edgeTypeEnums,
+        relationships: relInstances,
+        nodes: outSet.size,
+        anchors,
+      };
     }
 
     function ensureGraphMetrics(graph) {
@@ -1745,14 +1848,26 @@
     const MAX_EDGES_PER_TYPE = 10;
 
     function clampRelationTypeCap(value) {
+      if (value === Infinity) return Infinity;
+      if (typeof value === 'string') {
+        const norm = value.trim().toLowerCase();
+        if (norm === 'all' || norm === '∞' || norm === 'infinity') return Infinity;
+      }
       const numeric = Math.floor(Number(value));
       if (!Number.isFinite(numeric)) return MAX_REL_TYPES;
+      if (numeric <= 0) return MAX_REL_TYPES;
       return Math.min(MAX_REL_TYPES, Math.max(1, numeric));
     }
 
     function clampEdgesPerType(value) {
+      if (value === Infinity) return Infinity;
+      if (typeof value === 'string') {
+        const norm = value.trim().toLowerCase();
+        if (norm === 'all' || norm === '∞' || norm === 'infinity') return Infinity;
+      }
       const numeric = Math.floor(Number(value));
       if (!Number.isFinite(numeric)) return 3;
+      if (numeric <= 0) return 3;
       return Math.min(MAX_EDGES_PER_TYPE, Math.max(1, numeric));
     }
 
@@ -1776,6 +1891,12 @@
         default:
           return 'theme';
       }
+    }
+
+    function normalizeMetricScope(value) {
+      if (value === METRIC_SCOPE.DB) return METRIC_SCOPE.DB;
+      if (typeof value === 'string' && value.toLowerCase() === METRIC_SCOPE.DB) return METRIC_SCOPE.DB;
+      return METRIC_SCOPE.RUN;
     }
 
     function normalizeLayout(value) {
@@ -2251,17 +2372,27 @@
 
       const relationInput = wrapper.querySelector('#hlsf-relation-cap');
       const relationVal = wrapper.querySelector('#hlsf-relation-cap-val');
-      const relationCap = clampRelationTypeCap(config.relationTypeCap);
+      const relationCapRaw = config.relationTypeCap;
+      const relationCap = relationCapRaw === Infinity
+        ? Infinity
+        : clampRelationTypeCap(relationCapRaw);
       window.HLSF.config.relationTypeCap = relationCap;
-      if (relationInput) relationInput.value = String(relationCap);
-      if (relationVal) relationVal.textContent = String(relationCap);
+      if (relationInput) {
+        relationInput.value = relationCap === Infinity ? String(MAX_REL_TYPES) : String(relationCap);
+      }
+      if (relationVal) relationVal.textContent = relationCap === Infinity ? '∞' : String(relationCap);
 
       const edgesInput = wrapper.querySelector('#hlsf-edges-per-type');
       const edgesVal = wrapper.querySelector('#hlsf-edges-per-type-val');
-      const edgesPerType = clampEdgesPerType(config.edgesPerType);
+      const edgesRaw = config.edgesPerType;
+      const edgesPerType = edgesRaw === Infinity
+        ? Infinity
+        : clampEdgesPerType(edgesRaw);
       window.HLSF.config.edgesPerType = edgesPerType;
-      if (edgesInput) edgesInput.value = String(edgesPerType);
-      if (edgesVal) edgesVal.textContent = String(edgesPerType);
+      if (edgesInput) {
+        edgesInput.value = edgesPerType === Infinity ? String(MAX_EDGES_PER_TYPE) : String(edgesPerType);
+      }
+      if (edgesVal) edgesVal.textContent = edgesPerType === Infinity ? '∞' : String(edgesPerType);
 
       const affinityCfg = (config.affinity && typeof config.affinity === 'object') ? config.affinity : {};
       const threshold = (() => {
@@ -2340,6 +2471,7 @@
       deferredRender: true,
       progressTick: 250,
       layout: 'affinity',
+      metricScope: METRIC_SCOPE.RUN,
       relationTypeCap: MAX_REL_TYPES,
       edgesPerType: 3,
       edgeWidth: 0.02,
@@ -2348,8 +2480,14 @@
       showNodeGlow: false,
       affinity: { threshold: 0.35, iterations: 8 },
     }, existingConfig);
-    window.HLSF.config.relationTypeCap = clampRelationTypeCap(window.HLSF.config.relationTypeCap);
-    window.HLSF.config.edgesPerType = clampEdgesPerType(window.HLSF.config.edgesPerType);
+    const initialRelationCap = window.HLSF.config.relationTypeCap;
+    window.HLSF.config.relationTypeCap = initialRelationCap === Infinity
+      ? Infinity
+      : clampRelationTypeCap(initialRelationCap);
+    const initialEdgesPerType = window.HLSF.config.edgesPerType;
+    window.HLSF.config.edgesPerType = initialEdgesPerType === Infinity
+      ? Infinity
+      : clampEdgesPerType(initialEdgesPerType);
     window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
     window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
     window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
@@ -2358,6 +2496,7 @@
     window.HLSF.config.batchLogging = window.HLSF.config.batchLogging !== false;
     window.HLSF.config.deferredRender = window.HLSF.config.deferredRender !== false;
     window.HLSF.config.progressTick = Math.max(1, Math.round(Number(window.HLSF.config.progressTick) || 250));
+    window.HLSF.config.metricScope = normalizeMetricScope(window.HLSF.config.metricScope);
     const affinityCfg = window.HLSF.config.affinity;
     if (!affinityCfg || typeof affinityCfg !== 'object') {
       window.HLSF.config.affinity = { threshold: 0.35, iterations: 8 };
@@ -4345,6 +4484,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
       const tokens = [];
       const tokenFrequency = new Map();
+      const index = new Map();
       let totalAttentionScore = 0;
       let oldestToken = null;
       let newestToken = null;
@@ -4352,7 +4492,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       for (const key of keys) {
         try {
           const data = safeStorageGet(key);
-          tokens.push(data);
+          if (data && typeof data === 'object') {
+            tokens.push(data);
+            if (data.token) index.set(data.token, data);
+          }
 
           // Track oldest and newest
           if (data.cached_at) {
@@ -4391,7 +4534,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       const relHistogramEntries = computeRelHistogramEntries({ full_token_data: tokens });
       const relHistogramRows = computeRelHistogram(null, relHistogramEntries);
-      const totalRelationships = relHistogramEntries.reduce((sum, [, count]) => sum + count, 0);
+      const dbStats = computeDbStats(index);
+      const totalRelationships = dbStats.relationships;
       const topRelationships = relHistogramEntries.slice(0, 10);
       const topRelationshipRows = relHistogramRows.slice(0, 10);
 
@@ -4405,7 +4549,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         .slice(0, 10);
 
       return {
-        totalTokens: tokens.length,
+        totalTokens: dbStats.tokens,
         totalRelationships,
         avgAttentionScore: tokens.length > 0 ? (totalAttentionScore / tokens.length).toFixed(3) : 0,
         topRelationships,
@@ -4416,16 +4560,18 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         oldestToken,
         newestToken,
         estimatedValue: tokens.length * CONFIG.ESTIMATED_COST_PER_API_CALL,
-        rawData: tokens
+        rawData: tokens,
+        dbStats,
       };
     }
 
     function showDatabaseMetadata() {
       const metadata = analyzeDatabaseMetadata();
-      
+      const dbStats = metadata.dbStats || { tokens: metadata.totalTokens, relationships: metadata.totalRelationships, nodes: 0, edges: 0, anchors: 0 };
+
       const maturityLevel = metadata.totalTokens > 100 ? 'Mature' : metadata.totalTokens > 20 ? 'Growing' : 'Early';
       const maturityColor = metadata.totalTokens > 100 ? 'var(--success)' : metadata.totalTokens > 20 ? 'var(--warning)' : 'var(--accent)';
-      
+
       addLog(`
         <div class="section-divider"></div>
         <div class="section-title">📊 Collective Database Metadata</div>
@@ -4445,6 +4591,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           <strong>💾 Database Size:</strong><br>
           • Total cached tokens: <strong>${metadata.totalTokens}</strong><br>
           • Total relationships: <strong>${metadata.totalRelationships}</strong><br>
+          • Graph nodes (≥1 outgoing): <strong>${dbStats.nodes}</strong><br>
+          • Edge types enumerated: <strong>${dbStats.edges}</strong><br>
+          • Anchors (in ∩ out): <strong>${dbStats.anchors}</strong><br>
           • Average attention score: <strong>${metadata.avgAttentionScore}</strong><br>
           • Network density: <strong>${(metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)}</strong> edges/token<br>
           • Estimated saved cost: <strong>${formatCurrency(Math.ceil(metadata.estimatedValue * 100))}</strong>
@@ -4492,6 +4641,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             top_5_relationship_types: metadata.topRelationships.slice(0, 5).map(([rel]) => relDisplay(rel)),
             relationship_histogram_named: metadata.relHistogramRows,
             top_5_hub_concepts: metadata.topTokens.slice(0, 5).map(([token]) => token),
+            db_graph_metrics: dbStats,
             growth_metrics: {
               tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
               avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)
@@ -4993,6 +5143,20 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       window.HLSF.config.batchLogging = runOptions.batchLogging;
       window.HLSF.config.deferredRender = runOptions.deferredRender;
 
+      if (flags.metricScope) {
+        window.HLSF.config.metricScope = normalizeMetricScope(flags.metricScope);
+      }
+      if (Object.prototype.hasOwnProperty.call(flags, 'relationTypeCap')) {
+        window.HLSF.config.relationTypeCap = flags.relationTypeCap === Infinity
+          ? Infinity
+          : clampRelationTypeCap(flags.relationTypeCap);
+      }
+      if (Object.prototype.hasOwnProperty.call(flags, 'edgesPerType')) {
+        window.HLSF.config.edgesPerType = flags.edgesPerType === Infinity
+          ? Infinity
+          : clampEdgesPerType(flags.edgesPerType);
+      }
+
       BatchLog.clear();
 
       const canvas = ensureHLSFCanvas();
@@ -5030,49 +5194,93 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             args: originalArgs || '',
             resolved: sanitizedArgs || '',
             flags: runOptions,
+            scope: window.HLSF.config.metricScope,
           });
         }
 
         const index = await time('index', async () => loadOrGetIndex());
         const { anchors, idx, glyphOnly } = await time('anchors', async () => anchorsForMode(args, index));
-        if (!Array.isArray(anchors) || !anchors.length) {
+        const effectiveIndex = idx || index;
+        const metricScope = window.HLSF.config.metricScope || METRIC_SCOPE.RUN;
+        let anchorsToUse = Array.isArray(anchors) ? [...anchors] : [];
+        if (metricScope === METRIC_SCOPE.DB) {
+          anchorsToUse = effectiveIndex instanceof Map ? Array.from(effectiveIndex.keys()) : anchorsToUse;
+        }
+
+        if (!Array.isArray(anchorsToUse) || !anchorsToUse.length) {
           logError('DB is empty. Use /loaddb or /import.');
           return;
         }
 
-        const depth = Number.isFinite(args.depth) ? args.depth : 3;
-        const graph = await time('graph', async () => assembleGraphFromAnchorsLogged(anchors, depth, idx || index));
-        await time('cluster', async () => { applyAffinityClusters(graph, idx || index); });
-        const layout = await time('layout', async () => computeLayout(graph));
-        await time('stage', async () => prepareBuffers(graph, layout, { glyphOnly: glyphOnly === true }));
-        await time('render', async () => {
-          showVisualizer();
-          drawComposite(graph, { glyphOnly: glyphOnly === true });
-          animateComposite(graph, glyphOnly === true);
-        });
+        let depth = Number.isFinite(args.depth) ? args.depth : 3;
+        if (Number.isFinite(flags.depth)) depth = flags.depth;
+        if (metricScope === METRIC_SCOPE.DB) depth = 0;
+
+        let graph = null;
+        let runMetrics = { nodes: 0, edges: 0, relationships: 0, anchors: 0 };
+
+        if (metricScope === METRIC_SCOPE.RUN) {
+          graph = await time('graph', async () => assembleGraphFromAnchorsLogged(anchorsToUse, depth, effectiveIndex));
+          await time('cluster', async () => { applyAffinityClusters(graph, effectiveIndex); });
+          const layout = await time('layout', async () => computeLayout(graph));
+          await time('stage', async () => prepareBuffers(graph, layout, { glyphOnly: glyphOnly === true }));
+          await time('render', async () => {
+            showVisualizer();
+            drawComposite(graph, { glyphOnly: glyphOnly === true });
+            animateComposite(graph, glyphOnly === true);
+          });
+          runMetrics = graph?._metrics || ensureGraphMetrics(graph);
+        } else {
+          if (loggingActive) BatchLog.phase('graph', 'skip', { scope: METRIC_SCOPE.DB });
+          stopHLSFAnimation();
+          hideVisualizer();
+          window.HLSF.currentGraph = null;
+          window.HLSF.currentGlyphOnly = false;
+          runMetrics = computeDbStats(effectiveIndex);
+        }
+
+        const dbStats = metricScope === METRIC_SCOPE.RUN
+          ? computeDbStats(effectiveIndex)
+          : runMetrics;
+
+        window.HLSF.metrics = Object.assign({}, window.HLSF.metrics || {}, { db: dbStats });
+
+        const suffix = originalArgs ? ` ${originalArgs}` : '';
+        logOK(`/hlsf${suffix} → nodes ${runMetrics.nodes} / ${dbStats.nodes}, edges ${runMetrics.edges} / ${dbStats.edges}, relationships ${runMetrics.relationships} / ${dbStats.relationships}, anchors ${runMetrics.anchors} / ${dbStats.anchors}`);
+        addLog(`ⓘ run / db • tokens(db) ${dbStats.tokens}`);
+
+        if (runMetrics.relationships < runMetrics.edges) {
+          addLog('⚠ run relationships < run edge-types; check dedupe or caps.');
+        }
+        if (window.HLSF.config.metricScope === METRIC_SCOPE.RUN && runMetrics.nodes > dbStats.tokens) {
+          addLog('⚠ run nodes > db tokens; index inconsistency.');
+        }
 
         window.HLSF.lastCommand = {
           rawArgs: originalArgs,
           resolvedArgs: sanitizedArgs,
           args,
-          anchors: [...anchors],
-          idx: idx || index,
+          anchors: [...anchorsToUse],
+          idx: effectiveIndex,
           glyphOnly: glyphOnly === true,
           depth,
           flags: runOptions,
+          metricScope,
         };
         syncHlsfControls(document.getElementById('hlsf-canvas-container'));
-        const suffix = originalArgs ? ` ${originalArgs}` : '';
-        const m = graph?._metrics || ensureGraphMetrics(graph);
-        logOK(`/hlsf${suffix} → nodes ${m.nodes}, edges ${m.edges}, relationships ${m.relationships}, anchors ${m.anchors}`);
 
         if (loggingActive) {
           BatchLog.phase('hlsf', 'end', {
             total_ms: (performance.now() - start) | 0,
-            nodes: m.nodes,
-            edges: m.edges,
-            relationships: m.relationships,
-            anchors: m.anchors,
+            nodes: runMetrics.nodes,
+            edges: runMetrics.edges,
+            relationships: runMetrics.relationships,
+            anchors: runMetrics.anchors,
+            metric_scope: metricScope,
+            db_nodes: dbStats.nodes,
+            db_edges: dbStats.edges,
+            db_relationships: dbStats.relationships,
+            db_tokens: dbStats.tokens,
           });
         }
       } finally {
@@ -5096,6 +5304,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     async function rebuildHlsfFromLastCommand(logUpdate = false) {
       const last = window.HLSF?.lastCommand;
       if (!last || !last.idx || !Array.isArray(last.anchors) || !last.anchors.length) return null;
+      if (last.metricScope === METRIC_SCOPE.DB) {
+        if (logUpdate) {
+          const suffix = last.rawArgs ? ` ${last.rawArgs}` : '';
+          logStatus(`↻ /hlsf${suffix} (scope=db) → metrics-only run; nothing to rebuild.`);
+        }
+        return null;
+      }
       try {
         const depth = Number.isFinite(last.depth) ? last.depth : 3;
         const graph = await assembleGraphFromAnchorsLogged(last.anchors, depth, last.idx, { silent: true });
