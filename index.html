@@ -1843,7 +1843,15 @@
     }
 
     function edgeLabel(rtype) {
-      return typeof rtype === 'string' ? rtype : '';
+      if (typeof rtype !== 'string') return '';
+      const cleaned = rtype.trim();
+      if (!cleaned) return '';
+
+      const normalized = normRelKey(cleaned);
+      if (normalized) return REL_EN[normalized] || '';
+
+      const withoutGlyph = cleaned.replace(/^[\p{S}\p{P}]+\s*/u, '');
+      return withoutGlyph || cleaned;
     }
 
     function legacyPositions(graph, width, height, scale, centerX, centerY) {
