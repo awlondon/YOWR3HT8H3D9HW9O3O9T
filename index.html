@@ -1149,11 +1149,12 @@
         graph.nodes.set(token, node);
         return node;
       };
-      const pushLink = (from, to, rtype, weight) => {
+      const pushLink = (from, to, rtype, weight, hiddenTokens = []) => {
         const key = `${from}|${rtype}|${to}`;
         if (seenTriple.has(key)) return false;
         seenTriple.add(key);
-        graph.links.push({ from, to, rtype, w: weight });
+        const hidden = Array.isArray(hiddenTokens) ? hiddenTokens.filter(Boolean) : [];
+        graph.links.push({ from, to, rtype, w: weight, hiddenTokens: hidden });
         outSet.add(from);
         inSet.add(to);
         const fromNode = graph.nodes.get(from);
@@ -1177,13 +1178,18 @@
         const matrix = buildMatrixForRecord(rec);
         const relations = Array.isArray(matrix?.edges) ? matrix.edges.slice(0, getRelationTypeCap()) : [];
         for (const relation of relations) {
-          const items = Array.isArray(relation?.items)
-            ? relation.items.slice(0, getEdgesPerType())
+          const rawItems = Array.isArray(relation?.items)
+            ? relation.items.slice()
             : [];
-          if (!items.length) continue;
+          if (!rawItems.length) continue;
+          const limit = getEdgesPerType();
+          const visibleItems = limit === Infinity ? rawItems : rawItems.slice(0, limit);
+          if (!visibleItems.length) continue;
+          const hiddenItems = limit === Infinity ? [] : rawItems.slice(visibleItems.length);
+          const hiddenTokens = hiddenItems.map(item => item?.token).filter(Boolean);
           let enumerated = false;
           const nextDepth = depth + 1;
-          for (const item of items) {
+          for (const item of visibleItems) {
             const target = item?.token;
             if (!target) continue;
             const targetRec = index.get(target);
@@ -1195,7 +1201,7 @@
                 ? item.w
                 : relation?.aggWeight;
             const normalizedWeight = Number(weight) || 0;
-            const added = pushLink(token, target, relation?.rtype, normalizedWeight);
+            const added = pushLink(token, target, relation?.rtype, normalizedWeight, hiddenTokens);
             if (added) {
               enumerated = true;
               if (depth < maxDepth) {
@@ -1837,9 +1843,7 @@
     }
 
     function edgeLabel(rtype) {
-      return window.HLSF.config.showEnglish
-        ? `${rtype} ${REL_EN[rtype] || ''}`.trim()
-        : rtype;
+      return typeof rtype === 'string' ? rtype : '';
     }
 
     function legacyPositions(graph, width, height, scale, centerX, centerY) {
@@ -2167,8 +2171,30 @@
               const mx = (from.x + to.x) / 2;
               const my = (from.y + to.y) / 2;
               ctx.globalAlpha = baseAlpha();
-              ctx.fillStyle = theme.hint;
-              ctx.fillText(edgeLabel(edge.rtype), mx, my - 10);
+              const glyph = edgeLabel(edge.rtype);
+              if (glyph) {
+                ctx.fillStyle = theme.hint;
+                ctx.fillText(glyph, mx, my - 10);
+              }
+              const hiddenTokens = Array.isArray(edge.hiddenTokens) ? edge.hiddenTokens : [];
+              if (hiddenTokens.length) {
+                const preview = hiddenTokens.slice(0, 3);
+                let hiddenLabel = preview.join(', ');
+                const remaining = hiddenTokens.length - preview.length;
+                if (remaining > 0) hiddenLabel += ` +${remaining}`;
+                if (hiddenLabel) {
+                  const dx = to.x - from.x;
+                  const dy = to.y - from.y;
+                  const dist = Math.hypot(dx, dy) || 1;
+                  const offset = 16;
+                  const hx = to.x + (dx / dist) * offset;
+                  const hy = to.y + (dy / dist) * offset;
+                  ctx.globalAlpha = baseAlpha() * 0.75;
+                  ctx.fillStyle = cfg.whiteBg ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)';
+                  ctx.fillText(hiddenLabel, hx, hy);
+                  ctx.globalAlpha = baseAlpha();
+                }
+              }
               ctx.fillStyle = theme.fg;
             }
           }
