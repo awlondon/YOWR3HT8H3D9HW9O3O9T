@@ -2021,8 +2021,10 @@
       ctx.textBaseline = 'middle';
       const controlValue = edgeWidthControl ? parseFloat(edgeWidthControl.value) : NaN;
       const edgeWidthValue = Number.isFinite(controlValue) ? controlValue : edgeWidth;
-      ctx.lineWidth = Math.max(0.01, edgeWidthValue) * dpr;
-      const fontScale = Math.max(0.6, Math.min(2.5, Math.sqrt(zoom)));
+      const safeZoom = Math.max(zoom, 1e-4);
+      const zoomAttenuation = Math.max(0.2, Math.min(5, 1 / Math.sqrt(safeZoom)));
+      ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
+      const fontScale = Math.max(0.35, Math.min(3, zoomAttenuation));
       ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
 
       const layoutScale = 1;
@@ -2063,7 +2065,7 @@
       if (layoutMode === 'dimension' && graph.dimensionLayout) {
         ctx.save();
         ctx.globalAlpha = 0.35;
-        const polyWidth = Math.max(0.01, Math.min(1, edgeWidthValue)) * dpr;
+        const polyWidth = Math.max(0.01, Math.min(1, edgeWidthValue * zoomAttenuation)) * dpr;
         ctx.lineWidth = polyWidth;
         ctx.strokeStyle = theme.hint;
         const cells = Array.isArray(graph.dimensionLayout.cells) ? graph.dimensionLayout.cells : [];
@@ -2084,7 +2086,7 @@
 
       const glyphOnly = opts.glyphOnly === true;
 
-      ctx.lineWidth = Math.max(0.01, edgeWidthValue) * dpr;
+      ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
 
       if (cfg.showEdges !== false) {
         const batches = new Map();
