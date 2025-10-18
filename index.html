@@ -609,7 +609,15 @@
       MAX_RETRY_ATTEMPTS: 3,
       RETRY_BASE_DELAY_MS: 500,
       DEFAULT_MODEL: 'gpt-4o-mini',
-      ESTIMATED_COST_PER_API_CALL: 0.02,
+      MODEL_PRICING: {
+        default: { inputPerMillion: 0.15, outputPerMillion: 0.60 },
+        'gpt-4o-mini': { inputPerMillion: 0.15, outputPerMillion: 0.60 },
+      },
+      ESTIMATED_COMPLETION_RATIO: 0.7,
+      ADJACENCY_TOKEN_ESTIMATES: {
+        prompt: 220,
+        completion: 320,
+      },
     };
 
     const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
@@ -3363,7 +3371,7 @@
       sessionStats: {
         totalApiCalls: 0,
         totalCacheHits: 0,
-        totalCostCents: 0,
+        totalCostUsd: 0,
       },
       hlsfReady: false,
     };
@@ -3470,6 +3478,38 @@
         .map(t => t.toLowerCase());
     }
 
+    function estimateTokensForText(text) {
+      return tokenize(text).length;
+    }
+
+    function estimateTokensForMessages(messages) {
+      if (!Array.isArray(messages)) return 0;
+      let total = 0;
+      for (const message of messages) {
+        if (!message) continue;
+        const contentTokens = estimateTokensForText(message.content || '');
+        const roleTokens = message.role ? 4 : 0;
+        total += contentTokens + roleTokens;
+      }
+      return total + 3; // minimal overhead for chat formatting
+    }
+
+    function estimateCompletionTokens(promptTokenCount) {
+      const ratio = CONFIG.ESTIMATED_COMPLETION_RATIO ?? 0.7;
+      const estimate = Math.round(promptTokenCount * ratio);
+      return Math.max(32, estimate);
+    }
+
+    function getModelPricing(model) {
+      const pricing = CONFIG.MODEL_PRICING?.[model];
+      return pricing || CONFIG.MODEL_PRICING?.default || { inputPerMillion: 0, outputPerMillion: 0 };
+    }
+
+    function estimateCostUsd(promptTokens = 0, completionTokens = 0, model = CONFIG.DEFAULT_MODEL) {
+      const pricing = getModelPricing(model);
+      return ((promptTokens * pricing.inputPerMillion) + (completionTokens * pricing.outputPerMillion)) / 1_000_000;
+    }
+
     const Session = (() => {
       const existing = window.Session && typeof window.Session === 'object'
         ? window.Session
@@ -3490,8 +3530,15 @@
       addConversationTokens(toks);
     }
 
-    function formatCurrency(cents) {
-      return `$${(cents / 100).toFixed(2)}`;
+    function formatCurrency(amountUsd) {
+      if (!amountUsd || isNaN(amountUsd)) return '$0.0000';
+      const abs = Math.abs(amountUsd);
+      if (abs > 0 && abs < 0.0001) {
+        return amountUsd < 0 ? '-<$0.0001' : '<$0.0001';
+      }
+      const decimals = abs >= 1 ? 2 : abs >= 0.01 ? 3 : 4;
+      const prefix = amountUsd < 0 ? '-$' : '$';
+      return `${prefix}${Math.abs(amountUsd).toFixed(decimals)}`;
     }
 
     function getCachedTokenCount() {
@@ -3841,7 +3888,7 @@
     // STATS
     // ============================================
     function updateStats() {
-      const { totalApiCalls, totalCacheHits, totalCostCents } = state.sessionStats;
+      const { totalApiCalls, totalCacheHits, totalCostUsd } = state.sessionStats;
       const total = totalApiCalls + totalCacheHits;
       const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) + '%' : '—';
 
@@ -3849,7 +3896,7 @@
 
       elements.cacheHitRate.textContent = hitRate;
       elements.cachedTokens.textContent = cachedCount;
-      elements.sessionCost.textContent = formatCurrency(totalCostCents);
+      elements.sessionCost.textContent = formatCurrency(totalCostUsd);
 
       // Visual feedback for database growth
       if (cachedCount > 0) {
@@ -3867,6 +3914,14 @@
     function getCacheKey(token) {
       const normalized = token == null ? '' : String(token);
       return `${TOKEN_CACHE_PREFIX}${normalized.toLowerCase()}`;
+    }
+
+    function isTokenCached(token) {
+      try {
+        return localStorage.getItem(getCacheKey(token)) != null;
+      } catch {
+        return false;
+      }
     }
 
     function updateTokenIndex(token) {
@@ -3970,10 +4025,16 @@
 
           const data = await response.json();
           state.sessionStats.totalApiCalls++;
-          state.sessionStats.totalCostCents += Math.ceil(CONFIG.ESTIMATED_COST_PER_API_CALL * 100);
+
+          const content = data.choices?.[0]?.message?.content?.trim() || '';
+          const usage = data.usage || {};
+          const promptTokens = usage.prompt_tokens ?? estimateTokensForMessages(messages);
+          const completionTokens = usage.completion_tokens ?? estimateTokensForText(content);
+          const callCost = estimateCostUsd(promptTokens, completionTokens, body.model);
+          state.sessionStats.totalCostUsd += callCost;
           updateStats();
 
-          return data.choices?.[0]?.message?.content?.trim() || '';
+          return content;
         } catch (err) {
           if (err.name === 'AbortError') throw err;
           if (err.message === 'Failed to fetch') {
@@ -5148,6 +5209,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         .sort((a, b) => (b.attention_score || 0) - (a.attention_score || 0))
         .slice(0, 10);
 
+      const adjacencyCostPerToken = estimateCostUsd(
+        CONFIG.ADJACENCY_TOKEN_ESTIMATES.prompt,
+        CONFIG.ADJACENCY_TOKEN_ESTIMATES.completion
+      );
+
       return {
         totalTokens: dbStats.tokens,
         totalRelationships,
@@ -5159,7 +5225,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         highAttentionTokens,
         oldestToken,
         newestToken,
-        estimatedValue: tokens.length * CONFIG.ESTIMATED_COST_PER_API_CALL,
+        estimatedValue: tokens.length * adjacencyCostPerToken,
         rawData: tokens,
         dbStats,
         sessionTokenCount,
@@ -5222,7 +5288,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           • Anchors (in ∩ out): <strong>${dbStats.anchors}</strong><br>
           • Average attention score: <strong>${metadata.avgAttentionScore}</strong><br>
           • Network density: <strong>${(metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)}</strong> edges/token<br>
-          • Estimated saved cost: <strong>${formatCurrency(Math.ceil(metadata.estimatedValue * 100))}</strong>
+          • Estimated saved cost: <strong>${formatCurrency(metadata.estimatedValue || 0)}</strong>
         </div>
 
         <div class="adjacency-insight">
@@ -6200,14 +6266,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           }
           break;
         case 'stats':
-          const { totalApiCalls, totalCacheHits, totalCostCents } = state.sessionStats;
+          const { totalApiCalls, totalCacheHits, totalCostUsd } = state.sessionStats;
           const total = totalApiCalls + totalCacheHits;
           const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) : 0;
           addLog(`<strong>Session Stats:</strong><br>
             • Requests: ${total}<br>
             • Cache hits: ${totalCacheHits} (${hitRate}%)<br>
             • API calls: ${totalApiCalls}<br>
-            • Cost: ${formatCurrency(totalCostCents)}<br>
+            • Cost: ${formatCurrency(totalCostUsd)}<br>
             • Cached tokens: ${getCachedTokenCount()}`);
           break;
         case 'database':
@@ -6280,10 +6346,35 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           return;
         }
 
-        const estimatedCalls = tokens.length * 2 + 3;
-        const estimatedCost = estimatedCalls * CONFIG.ESTIMATED_COST_PER_API_CALL;
+        const uniqueTokens = [...new Set(tokens)];
+        const cachedTokens = uniqueTokens.filter(isTokenCached).length;
+        const newTokenCount = Math.max(0, uniqueTokens.length - cachedTokens);
+
+        const chatMessages = [
+          { role: 'system', content: 'You are an expert assistant.' },
+          { role: 'user', content: prompt },
+        ];
+        const chatPromptTokens = estimateTokensForMessages(chatMessages);
+        const chatCompletionTokens = estimateCompletionTokens(chatPromptTokens);
+        const chatCallCount = state.apiKey ? 3 : 0;
+        const chatCostEstimate = chatCallCount * estimateCostUsd(chatPromptTokens, chatCompletionTokens);
+
+        const adjacencyCallCount = state.apiKey ? newTokenCount : 0;
+        const adjacencyCostEstimate = adjacencyCallCount > 0
+          ? adjacencyCallCount * estimateCostUsd(
+              CONFIG.ADJACENCY_TOKEN_ESTIMATES.prompt,
+              CONFIG.ADJACENCY_TOKEN_ESTIMATES.completion
+            )
+          : 0;
+
+        const estimatedCost = chatCostEstimate + adjacencyCostEstimate;
+        const totalEstimatedCalls = chatCallCount + adjacencyCallCount;
+
         addLog(`<div class="cost-estimate">
-          📊 <strong>Estimate:</strong> ${tokens.length} tokens, ~${estimatedCalls} API calls, ~${formatCurrency(Math.ceil(estimatedCost * 100))}
+          📊 <strong>Estimate:</strong> ${tokens.length} input tokens observed (${newTokenCount} new, ${cachedTokens} cached).<br>
+          • Chat completions: ~${chatCallCount} call${chatCallCount === 1 ? '' : 's'} (${formatCurrency(chatCostEstimate)}).<br>
+          • Adjacency builds: ~${adjacencyCallCount} new call${adjacencyCallCount === 1 ? '' : 's'} (${formatCurrency(adjacencyCostEstimate)}).<br>
+          <strong>Total projected cost:</strong> ${formatCurrency(estimatedCost)} across ~${totalEstimatedCalls} API call${totalEstimatedCalls === 1 ? '' : 's'} (final depends on model output).
         </div>`);
 
         // Step 1: Initial response
