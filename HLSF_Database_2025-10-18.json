@@ -1,0 +1,72 @@
+{
+  "header": {
+    "schema_version": "2025-10-18a",
+    "total_tokens": 3,
+    "total_edge_types": 4,
+    "total_relationships": 4,
+    "avg_edges_per_token": 1.3333333333,
+    "network_density": 0.6666666667,
+    "total_nodes_out": 3,
+    "total_nodes_in": 3,
+    "total_anchor_tokens": 3
+  },
+  "records": {
+    "Consciousness": {
+      "token": "Consciousness",
+      "relationships": {
+        "≈": [
+          { "token": "Awareness", "weight": 1 }
+        ],
+        "⊂": [
+          { "token": "Mind", "weight": 0.8 }
+        ]
+      }
+    },
+    "Awareness": {
+      "token": "Awareness",
+      "relationships": {
+        "≈": [
+          { "token": "Consciousness", "weight": 1 }
+        ]
+      }
+    },
+    "Mind": {
+      "token": "Mind",
+      "relationships": {
+        "⊃": [
+          { "token": "Consciousness", "weight": 0.8 }
+        ]
+      }
+    }
+  },
+  "full_token_data": [
+    {
+      "token": "Consciousness",
+      "relationships": {
+        "≈": [
+          { "token": "Awareness", "weight": 1 }
+        ],
+        "⊂": [
+          { "token": "Mind", "weight": 0.8 }
+        ]
+      }
+    },
+    {
+      "token": "Awareness",
+      "relationships": {
+        "≈": [
+          { "token": "Consciousness", "weight": 1 }
+        ]
+      }
+    },
+    {
+      "token": "Mind",
+      "relationships": {
+        "⊃": [
+          { "token": "Consciousness", "weight": 0.8 }
+        ]
+      }
+    }
+  ],
+  "index": ["Consciousness", "Awareness", "Mind"]
+}

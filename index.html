@@ -3261,16 +3261,256 @@
       return out;
     }
 
+    function recomputeDbHeader(db) {
+      const recs = db.records || {};
+      const seen = new Set(Object.keys(recs));
+      const outSet = new Set();
+      const inSet = new Set();
+      let edgeTypes = 0;
+      let triples = 0;
+
+      for (const [src, rec] of Object.entries(recs)) {
+        let typesHere = 0;
+        for (const [rtype, arr] of Object.entries(rec.relationships || {})) {
+          if (!Array.isArray(arr) || arr.length === 0) continue;
+          typesHere += 1;
+          edgeTypes += 1;
+          for (const e of arr) {
+            triples += 1;
+            if (e?.token) inSet.add(e.token);
+          }
+        }
+        if (typesHere > 0) outSet.add(src);
+      }
+
+      const N = seen.size;
+      const anchors = [...outSet].filter((token) => inSet.has(token)).length;
+
+      db.header = {
+        schema_version: '2025-10-18a',
+        total_tokens: N,
+        total_edge_types: edgeTypes,
+        total_relationships: triples,
+        avg_edges_per_token: N ? edgeTypes / N : 0,
+        network_density: N > 1 ? (triples / (N * (N - 1))) : 0,
+        total_nodes_out: outSet.size,
+        total_nodes_in: inSet.size,
+        total_anchor_tokens: anchors,
+      };
+      db.index = Array.from(seen);
+      return db;
+    }
+
+    function sanitizeDB(db) {
+      const out = { ...db };
+      const recs = {};
+
+      const rels = (x) => x?.relationships || {};
+      const tokens = Object.keys(db.records || {});
+      const onlySymbols = (s) => /^[\p{P}\p{S}]+$/u.test(s);
+      const normToken = (s) => s.trim();
+
+      const sym = { symmetric: new Set(['≈', '∼', '⇄', '↔']), setIn: '⊂', setOut: '⊃' };
+
+      for (const t of tokens) {
+        const t0 = normToken(t);
+        if (!t0 || onlySymbols(t0)) continue;
+
+        const rIn = db.records[t] || {};
+        const R = { ...rIn, token: t0, relationships: {} };
+
+        for (const [rtype, arr] of Object.entries(rels(rIn))) {
+          if (!Array.isArray(arr) || arr.length === 0) continue;
+
+          const cleaned = [];
+          for (const e of arr) {
+            const tgt = normToken(e?.token || '');
+            if (!tgt || onlySymbols(tgt)) continue;
+            if (tgt === t0 && !sym.symmetric.has(rtype)) continue;
+            cleaned.push({ token: tgt, weight: +(e?.weight || 1) });
+          }
+          if (cleaned.length) R.relationships[rtype] = cleaned;
+        }
+        recs[t0] = R;
+      }
+
+      for (const [src, rec] of Object.entries(recs)) {
+        for (const [rtype, arr] of Object.entries(rec.relationships)) {
+          if (!sym.symmetric.has(rtype)) continue;
+          for (const e of arr) {
+            const trg = recs[e.token];
+            if (!trg) continue;
+            const back = (trg.relationships[rtype] ||= []);
+            if (!back.some((x) => x.token === src)) back.push({ token: src, weight: e.weight });
+          }
+        }
+      }
+
+      out.records = recs;
+      return recomputeDbHeader(out);
+    }
+
+    function exportFullTokenData(db) {
+      return Object.values(db.records || {}).map((rec) => {
+        const clone = { ...rec, relationships: {} };
+        for (const [rtype, arr] of Object.entries(rec.relationships || {})) {
+          clone.relationships[rtype] = arr.map((edge) => ({ token: edge.token, weight: edge.weight }));
+        }
+        return clone;
+      });
+    }
+
+    async function llmSemanticRepairs(db) {
+      const sample = [];
+      for (const [src, rec] of Object.entries(db.records || {})) {
+        for (const [rtype, arr] of Object.entries(rec.relationships || {})) {
+          if (rtype === '⊂' || rtype === '⊃' || rtype === '≈' || rtype === '∼') {
+            for (const e of arr) {
+              sample.push({ src, rtype, tgt: e.token });
+              if (sample.length >= 800) break;
+            }
+          }
+          if (sample.length >= 800) break;
+        }
+        if (sample.length >= 800) break;
+      }
+
+      if (!sample.length) return db;
+
+      const { system, user } = promptRelationValidator(sample);
+      const res = await llmJSON({ system, user, schema: REL_VALIDATOR_SCHEMA });
+
+      for (const f of res.fixes || []) {
+        const rec = db.records?.[f.src];
+        if (!rec) continue;
+        const arr = rec.relationships?.[f.rtype];
+        if (!arr) continue;
+        if (f.action === 'drop') {
+          rec.relationships[f.rtype] = arr.filter((x) => x.token !== f.tgt);
+        } else if (f.action === 'retag' && f.new_rtype) {
+          rec.relationships[f.rtype] = arr.filter((x) => x.token !== f.tgt);
+          (rec.relationships[f.new_rtype] ||= []).push({ token: f.tgt, weight: 1 });
+        }
+      }
+
+      return recomputeDbHeader(db);
+    }
+
+    function safetyCheckDatabase(db) {
+      if (!db || typeof db !== 'object') return;
+      const records = db.records || {};
+      const header = db.header || {};
+      const symmetric = new Set(['≈', '∼', '⇄', '↔']);
+      const antisymmetric = new Set(['⊂', '⊃', '→', '↠', '⇐']);
+      let triples = 0;
+      const antisymmetricViolations = [];
+
+      for (const [src, rec] of Object.entries(records)) {
+        for (const [rtype, arr] of Object.entries(rec.relationships || {})) {
+          if (!Array.isArray(arr)) continue;
+          for (const edge of arr) {
+            if (!edge?.token) continue;
+            triples += 1;
+            if (symmetric.has(rtype)) {
+              const back = records[edge.token]?.relationships?.[rtype] || [];
+              if (!back.some((x) => x.token === src)) {
+                (records[edge.token] ||= { token: edge.token, relationships: {} });
+                (records[edge.token].relationships[rtype] ||= []).push({ token: src, weight: edge.weight ?? 1 });
+              }
+            }
+            if (antisymmetric.has(rtype)) {
+              const reverse = records[edge.token]?.relationships?.[rtype] || [];
+              if (reverse.some((x) => x.token === src)) {
+                antisymmetricViolations.push(`${src} ${rtype} ${edge.token}`);
+              }
+            }
+          }
+        }
+      }
+
+      if (antisymmetricViolations.length) {
+        throw new Error(`Antisymmetric contradiction detected: ${antisymmetricViolations.slice(0, 5).join(', ')}`);
+      }
+
+      const expected = header.total_relationships ?? triples;
+      const tolerance = Math.max(1, Math.round((expected || 0) * 0.01));
+      if (Math.abs(triples - expected) > tolerance) {
+        logWarning(`⚠️ Relationship count mismatch: header=${expected}, actual=${triples}`);
+      }
+
+      recomputeDbHeader(db);
+    }
+
+    function collectAuditIssues(db) {
+      const issues = { selfLoops: [], punctuationTokens: [], emptyTypes: [] };
+      const symmetric = new Set(['≈', '∼', '⇄', '↔']);
+      const onlySymbols = (s) => /^[\p{P}\p{S}]+$/u.test(s);
+
+      for (const [token, rec] of Object.entries(db.records || {})) {
+        if (!token || onlySymbols(token)) {
+          issues.punctuationTokens.push(token);
+        }
+        for (const [rtype, arr] of Object.entries(rec.relationships || {})) {
+          if (!Array.isArray(arr) || arr.length === 0) {
+            issues.emptyTypes.push({ token, rtype });
+            continue;
+          }
+          for (const edge of arr) {
+            if (!edge?.token) continue;
+            if (edge.token === token && !symmetric.has(rtype)) {
+              issues.selfLoops.push({ token, rtype });
+            }
+          }
+        }
+      }
+
+      return issues;
+    }
+
+    function ensureTokenRecord(token) {
+      const normalized = typeof token === 'string' ? token.trim() : '';
+      if (!normalized) return null;
+      const db = getDb();
+      if (!db) return null;
+      if (!db.records || typeof db.records !== 'object') db.records = {};
+      if (!db.records[normalized]) {
+        db.records[normalized] = { token: normalized, relationships: {} };
+        recomputeDbHeader(db);
+        db.full_token_data = exportFullTokenData(db);
+        safetyCheckDatabase(db);
+        localStorage.setItem(DB_RAW_KEY, JSON.stringify(db));
+        localStorage.setItem(DB_INDEX_KEY, JSON.stringify(db.index || []));
+        window.HLSF.dbCache = db;
+        updateHeaderCounts();
+      }
+      return db.records[normalized];
+    }
+
     function loadDbObject(dbLike) {
       const db = coerceDb(dbLike);
       const raw = Array.from(db.full_token_data || []);
       const clean = raw.map(normalizeRecord).filter(Boolean);
       if (!clean.length) throw new Error('No valid token records');
-      const out = Object.assign({}, db, { full_token_data: clean });
-      localStorage.setItem(DB_RAW_KEY, JSON.stringify(out));
-      const index = clean.map(r => r.token);
-      localStorage.setItem(DB_INDEX_KEY, JSON.stringify(index));
-      window.HLSF.dbCache = out;
+
+      const records = {};
+      for (const rec of clean) {
+        const rels = {};
+        for (const [rtype, arr] of Object.entries(rec.relationships || {})) {
+          if (!Array.isArray(arr)) continue;
+          rels[rtype] = arr.map((edge) => ({ token: edge?.token, weight: edge?.weight }));
+        }
+        records[rec.token] = { ...rec, relationships: rels };
+      }
+
+      let normalized = { ...db, records };
+      normalized = sanitizeDB(normalized);
+
+      normalized.full_token_data = exportFullTokenData(normalized);
+
+      const serialized = JSON.stringify(normalized);
+      localStorage.setItem(DB_RAW_KEY, serialized);
+      localStorage.setItem(DB_INDEX_KEY, JSON.stringify(normalized.index || []));
+      window.HLSF.dbCache = normalized;
       window.HLSF.matrices = null;
       window.HLSF.layoutCache = null;
       window.HLSF.indexCache = null;
@@ -3278,13 +3518,14 @@
       state.hlsfReady = false;
       if (typeof buildHLSFMatrices === 'function') {
         try {
-          buildHLSFMatrices(out);
+          buildHLSFMatrices(normalized);
         } catch (err) {
           console.warn('Failed to rebuild HLSF matrices:', err);
         }
       }
       updateHeaderCounts();
-      return clean.length;
+      safetyCheckDatabase(normalized);
+      return normalized.header?.total_tokens || clean.length;
     }
 
     function getDb() {
@@ -3306,13 +3547,53 @@
       }
       if (!raw) return null;
       try {
-        const parsed = JSON.parse(raw);
+        let parsed = JSON.parse(raw);
+        if (!parsed.records && Array.isArray(parsed.full_token_data)) {
+          parsed = sanitizeDB({ ...parsed, records: Object.fromEntries(parsed.full_token_data.map((rec) => [rec.token, rec])) });
+          parsed.full_token_data = exportFullTokenData(parsed);
+        }
+        recomputeDbHeader(parsed);
+        safetyCheckDatabase(parsed);
         window.HLSF.dbCache = parsed;
         return parsed;
       } catch (err) {
         console.warn('Stored DB is not valid JSON:', err);
         return null;
       }
+    }
+
+    async function loadDB() {
+      const db = getDb();
+      if (!db) throw new Error('Database not loaded');
+      return JSON.parse(JSON.stringify(db));
+    }
+
+    async function repairDatabase({ useLLM = false, writeFile = true } = {}) {
+      let db = await loadDB();
+      db = sanitizeDB(db);
+      if (useLLM) {
+        db = await llmSemanticRepairs(db);
+      }
+      db.full_token_data = exportFullTokenData(db);
+      safetyCheckDatabase(db);
+
+      const serialized = JSON.stringify(db, null, 2);
+      const blob = new Blob([serialized], { type: 'application/json' });
+      const name = `HLSF_Database_2025-10-18.cleaned${useLLM ? '.llm' : ''}.json`;
+      if (writeFile) {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      }
+
+      localStorage.setItem(DB_RAW_KEY, serialized);
+      localStorage.setItem(DB_INDEX_KEY, JSON.stringify(db.index || []));
+      window.HLSF.dbCache = db;
+      updateHeaderCounts();
+      addLog(`✅ rewrote ${name} • tokens ${db.header.total_tokens} • relationships ${db.header.total_relationships}`);
+      return db;
     }
 
     // Symbolic glyphs for complex number representation
@@ -3901,10 +4182,139 @@
     };
 
     // ============================================
+    // LLM CLIENT
+    // ============================================
+    const LLM_CFG = {
+      baseUrl: window.HLSF?.config?.llmBaseUrl || '/v1/chat/completions',
+      model: window.HLSF?.config?.llmModel || 'model-x',
+      timeoutMs: 30000,
+      maxRetries: 3,
+      jitterMs: 1500,
+    };
+
+    function getApiKey() {
+      return state.apiKey || '';
+    }
+
+    async function llmFetch(body, attempt = 1) {
+      const ctl = new AbortController();
+      const timeout = setTimeout(() => ctl.abort(), LLM_CFG.timeoutMs);
+
+      try {
+        const res = await fetch(LLM_CFG.baseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${getApiKey()}`,
+          },
+          body: JSON.stringify(body),
+          signal: ctl.signal,
+        });
+
+        if (res.status === 429 || res.status >= 500) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        return await res.json();
+      } catch (err) {
+        if (attempt < LLM_CFG.maxRetries) {
+          const backoff = Math.min(2000 * attempt, 6000) + Math.random() * LLM_CFG.jitterMs;
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+          return llmFetch(body, attempt + 1);
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    function llmJSON({ system, user, schema }) {
+      return llmFetch({
+        model: LLM_CFG.model,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.1,
+        top_p: 0.9,
+      }).then((r) => {
+        try {
+          return JSON.parse(r.choices?.[0]?.message?.content || '{}');
+        } catch (err) {
+          console.warn('Failed to parse JSON response', err);
+          return {};
+        }
+      });
+    }
+
+    const REL_VALIDATOR_SCHEMA = {
+      type: 'object',
+      properties: {
+        fixes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              src: { type: 'string' },
+              rtype: { type: 'string' },
+              tgt: { type: 'string' },
+              action: { type: 'string', enum: ['keep', 'drop', 'retag'] },
+              new_rtype: { type: 'string' },
+            },
+            required: ['src', 'rtype', 'tgt', 'action'],
+          },
+        },
+      },
+      required: ['fixes'],
+    };
+
+    const TOKEN_HYGIENE_SCHEMA = {
+      type: 'object',
+      properties: {
+        drops: { type: 'array', items: { type: 'string' } },
+        renames: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              from: { type: 'string' },
+              to: { type: 'string' },
+            },
+            required: ['from', 'to'],
+          },
+        },
+      },
+      required: ['drops', 'renames'],
+    };
+
+    function promptRelationValidator(sampleTriples) {
+      return {
+        system: 'You validate relation semantics. Output JSON only. No prose.',
+        user: JSON.stringify({
+          policy: {
+            symmetric: ['≈', '∼', '⇄', '↔'],
+            set_part: { in: '⊂', out: '⊃' },
+            sequence: ['→', '⇐', '↠'],
+          },
+          rules: [
+            'No self loops except synonyms (≈,∼)',
+            '⊂/⊃ only for set/part-of',
+            'sequence for time/order',
+            'If symmetric used, ensure reciprocity',
+          ],
+          triples: sampleTriples,
+        }),
+      };
+    }
+
+    // ============================================
     // OPENAI API
     // ============================================
     async function callOpenAI(messages, options = {}) {
-      if (!state.apiKey) throw new Error('No API key configured');
+      if (!getApiKey()) throw new Error('No API key configured');
 
       const body = {
         model: options.model || CONFIG.DEFAULT_MODEL,
@@ -3913,61 +4323,24 @@
         temperature: options.temperature || 0.7,
       };
 
-      let attempt = 0;
-      while (attempt < CONFIG.MAX_RETRY_ATTEMPTS) {
-        if (currentAbortController?.signal.aborted) {
-          const error = new Error('Cancelled');
-          error.name = 'AbortError';
-          throw error;
+      if (currentAbortController?.signal.aborted) {
+        const error = new Error('Cancelled');
+        error.name = 'AbortError';
+        throw error;
+      }
+
+      try {
+        const data = await llmFetch(body);
+        state.sessionStats.totalApiCalls++;
+        state.sessionStats.totalCostCents += Math.ceil(CONFIG.ESTIMATED_COST_PER_API_CALL * 100);
+        updateStats();
+        return data.choices?.[0]?.message?.content?.trim() || '';
+      } catch (err) {
+        if (err.name === 'AbortError') throw err;
+        if (err.message === 'Failed to fetch') {
+          throw new Error('Network error - check connection or download HTML to run locally');
         }
-
-        attempt++;
-        try {
-          const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${state.apiKey}`,
-            },
-            body: JSON.stringify(body),
-          });
-
-          if (response.status === 429 && attempt < CONFIG.MAX_RETRY_ATTEMPTS) {
-            await new Promise(r => setTimeout(r, CONFIG.RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)));
-            continue;
-          }
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            let errorMessage = `API error (${response.status})`;
-            
-            try {
-              const errorData = JSON.parse(errorText);
-              if (errorData.error?.message) errorMessage = errorData.error.message;
-            } catch (e) {
-              if (errorText) errorMessage = errorText;
-            }
-            
-            if (response.status === 401) errorMessage = 'Invalid API key';
-            else if (response.status === 403) errorMessage = 'Access forbidden - check billing setup';
-            else if (response.status === 429) errorMessage = 'Rate limit exceeded';
-            
-            throw new Error(errorMessage);
-          }
-
-          const data = await response.json();
-          state.sessionStats.totalApiCalls++;
-          state.sessionStats.totalCostCents += Math.ceil(CONFIG.ESTIMATED_COST_PER_API_CALL * 100);
-          updateStats();
-
-          return data.choices?.[0]?.message?.content?.trim() || '';
-        } catch (err) {
-          if (err.name === 'AbortError') throw err;
-          if (err.message === 'Failed to fetch') {
-            throw new Error('Network error - check connection or download HTML to run locally');
-          }
-          if (attempt === CONFIG.MAX_RETRY_ATTEMPTS) throw err;
-        }
+        throw err;
       }
     }
 
@@ -4984,61 +5357,59 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     function analyzeDatabaseMetadata() {
-      const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
-      const tokens = [];
+      const db = getDb();
+      if (!db) {
+        return {
+          totalTokens: 0,
+          totalRelationships: 0,
+          avgAttentionScore: '0.000',
+          topRelationships: [],
+          topRelationshipRows: [],
+          relHistogramRows: [],
+          topTokens: [],
+          highAttentionTokens: [],
+          oldestToken: null,
+          newestToken: null,
+          estimatedValue: 0,
+          rawData: [],
+          dbStats: { tokens: 0, relationships: 0, nodes: 0, edges: 0, anchors: 0 },
+          header: null,
+        };
+      }
+
+      const header = db.header || recomputeDbHeader(db).header;
+      const records = db.records || {};
+      const tokens = Object.values(records);
       const tokenFrequency = new Map();
-      const index = new Map();
       let totalAttentionScore = 0;
+      let attentionCount = 0;
       let oldestToken = null;
       let newestToken = null;
 
-      for (const key of keys) {
-        try {
-          const data = safeStorageGet(key);
-          if (data && typeof data === 'object') {
-            tokens.push(data);
-            if (data.token) index.set(data.token, data);
+      for (const rec of tokens) {
+        if (typeof rec.attention_score === 'number') {
+          totalAttentionScore += rec.attention_score;
+          attentionCount += 1;
+        }
+        if (rec.cached_at) {
+          const ts = new Date(rec.cached_at);
+          if (!Number.isNaN(ts.getTime())) {
+            if (!oldestToken || ts < new Date(oldestToken.cached_at)) oldestToken = rec;
+            if (!newestToken || ts > new Date(newestToken.cached_at)) newestToken = rec;
           }
+        }
 
-          // Track oldest and newest
-          if (data.cached_at) {
-            const timestamp = new Date(data.cached_at);
-            if (!oldestToken || timestamp < new Date(oldestToken.cached_at)) {
-              oldestToken = data;
-            }
-            if (!newestToken || timestamp > new Date(newestToken.cached_at)) {
-              newestToken = data;
-            }
+        for (const arr of Object.values(rec.relationships || {})) {
+          if (!Array.isArray(arr)) continue;
+          for (const edge of arr) {
+            const t = edge?.token?.toLowerCase();
+            if (t) tokenFrequency.set(t, (tokenFrequency.get(t) || 0) + 1);
           }
-
-          // Count relationships
-          const rels = data.relationships || {};
-          for (const [relType, edges] of Object.entries(rels)) {
-            if (!Array.isArray(edges)) continue;
-            const glyph = normalizeRelKeyForStats(relType);
-            if (!glyph) continue;
-
-            // Track token frequency across relationships
-            for (const edge of edges) {
-              const token = edge.token?.toLowerCase();
-              if (token) {
-                tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
-              }
-            }
-          }
-
-          if (data.attention_score) {
-            totalAttentionScore += data.attention_score;
-          }
-        } catch (err) {
-          console.error('Failed to parse token:', key, err);
         }
       }
 
       const relHistogramEntries = computeRelHistogramEntries({ full_token_data: tokens });
       const relHistogramRows = computeRelHistogram(null, relHistogramEntries);
-      const dbStats = computeDbStats(index);
-      const totalRelationships = dbStats.relationships;
       const topRelationships = relHistogramEntries.slice(0, 10);
       const topRelationshipRows = relHistogramRows.slice(0, 10);
 
@@ -5047,14 +5418,22 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         .slice(0, 20);
 
       const highAttentionTokens = tokens
-        .filter(t => t.attention_score)
-        .sort((a, b) => b.attention_score - a.attention_score)
+        .filter((t) => typeof t.attention_score === 'number')
+        .sort((a, b) => (b.attention_score || 0) - (a.attention_score || 0))
         .slice(0, 10);
 
+      const dbStats = {
+        tokens: header.total_tokens || 0,
+        relationships: header.total_relationships || 0,
+        nodes: header.total_nodes_out || 0,
+        edges: header.total_edge_types || 0,
+        anchors: header.total_anchor_tokens || 0,
+      };
+
       return {
-        totalTokens: dbStats.tokens,
-        totalRelationships,
-        avgAttentionScore: tokens.length > 0 ? (totalAttentionScore / tokens.length).toFixed(3) : 0,
+        totalTokens: header.total_tokens || 0,
+        totalRelationships: header.total_relationships || 0,
+        avgAttentionScore: attentionCount > 0 ? (totalAttentionScore / attentionCount).toFixed(3) : '0.000',
         topRelationships,
         topRelationshipRows,
         relHistogramRows,
@@ -5062,29 +5441,41 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         highAttentionTokens,
         oldestToken,
         newestToken,
-        estimatedValue: tokens.length * CONFIG.ESTIMATED_COST_PER_API_CALL,
+        estimatedValue: (header.total_tokens || 0) * CONFIG.ESTIMATED_COST_PER_API_CALL,
         rawData: tokens,
         dbStats,
+        header,
       };
     }
 
     function showDatabaseMetadata() {
       const metadata = analyzeDatabaseMetadata();
-      const dbStats = metadata.dbStats || { tokens: metadata.totalTokens, relationships: metadata.totalRelationships, nodes: 0, edges: 0, anchors: 0 };
+      const header = metadata.header || {};
+      const totalTokens = header.total_tokens ?? metadata.totalTokens;
+      const totalRelationships = header.total_relationships ?? metadata.totalRelationships;
+      const dbStats = metadata.dbStats || { tokens: totalTokens, relationships: totalRelationships, nodes: 0, edges: 0, anchors: 0 };
 
-      const maturityLevel = metadata.totalTokens > 100 ? 'Mature' : metadata.totalTokens > 20 ? 'Growing' : 'Early';
-      const maturityColor = metadata.totalTokens > 100 ? 'var(--success)' : metadata.totalTokens > 20 ? 'var(--warning)' : 'var(--accent)';
+      const maturityLevel = totalTokens > 100 ? 'Mature' : totalTokens > 20 ? 'Growing' : 'Early';
+      const maturityColor = totalTokens > 100 ? 'var(--success)' : totalTokens > 20 ? 'var(--warning)' : 'var(--accent)';
+      const networkDensity = header.network_density ?? 0;
+      const avgEdgesPerToken = header.avg_edges_per_token ?? (totalTokens ? totalRelationships / totalTokens : 0);
+      const edgesPerTokenDisplay = typeof avgEdgesPerToken === 'number' ? avgEdgesPerToken.toFixed(2) : String(avgEdgesPerToken);
+      const networkDensityDisplay = typeof networkDensity === 'number' ? networkDensity.toFixed(4) : String(networkDensity);
+      const networkDensityNumeric = typeof networkDensity === 'number' ? networkDensity : Number(networkDensity) || 0;
+      const avgEdgesPerTokenNumeric = typeof avgEdgesPerToken === 'number' ? avgEdgesPerToken : Number(avgEdgesPerToken) || 0;
+      const relationshipsCount = totalRelationships || 0;
+      const tokensPerRelationship = relationshipsCount ? totalTokens / relationshipsCount : 0;
 
       addLog(`
         <div class="section-divider"></div>
         <div class="section-title">📊 Collective Database Metadata</div>
-        
+
         <div class="adjacency-insight">
           <strong>🌐 Knowledge Base Status:</strong> <span style="color: ${maturityColor}; font-weight: bold;">${maturityLevel}</span><br>
           <small style="opacity: 0.8;">
-            ${metadata.totalTokens < 20 ? 
+            ${totalTokens < 20 ?
               'Building foundational knowledge. Each query adds to the collective intelligence.' :
-              metadata.totalTokens < 100 ?
+              totalTokens < 100 ?
               'Database is maturing. Cache hit rate improving with each session.' :
               'Mature knowledge base. Most queries benefit from cached insights.'}
           </small>
@@ -5092,13 +5483,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         <div class="adjacency-insight">
           <strong>💾 Database Size:</strong><br>
-          • Total cached tokens: <strong>${metadata.totalTokens}</strong><br>
-          • Total relationships: <strong>${metadata.totalRelationships}</strong><br>
+          • Total cached tokens: <strong>${totalTokens}</strong><br>
+          • Total relationships: <strong>${totalRelationships}</strong><br>
           • Graph nodes (≥1 outgoing): <strong>${dbStats.nodes}</strong><br>
           • Edge types enumerated: <strong>${dbStats.edges}</strong><br>
           • Anchors (in ∩ out): <strong>${dbStats.anchors}</strong><br>
           • Average attention score: <strong>${metadata.avgAttentionScore}</strong><br>
-          • Network density: <strong>${(metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)}</strong> edges/token<br>
+          • Avg edges/token: <strong>${edgesPerTokenDisplay}</strong><br>
+          • Network density: <strong>${networkDensityDisplay}</strong><br>
           • Estimated saved cost: <strong>${formatCurrency(Math.ceil(metadata.estimatedValue * 100))}</strong>
         </div>
 
@@ -5140,14 +5532,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           <summary>📊 View knowledge graph analytics</summary>
           <pre>${JSON.stringify({
             database_maturity: maturityLevel,
-            network_density: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2),
+            network_density: networkDensityNumeric,
             top_5_relationship_types: metadata.topRelationships.slice(0, 5).map(([rel]) => relDisplay(rel)),
             relationship_histogram_named: metadata.relHistogramRows,
             top_5_hub_concepts: metadata.topTokens.slice(0, 5).map(([token]) => token),
             db_graph_metrics: dbStats,
             growth_metrics: {
-              tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
-              avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)
+              tokens_per_relationship: tokensPerRelationship,
+              avg_edges_per_token: avgEdgesPerTokenNumeric,
             }
           }, null, 2)}</pre>
         </details>
@@ -5163,7 +5555,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     function exportDatabaseMetadata() {
       const metadata = analyzeDatabaseMetadata();
-      
+      const header = metadata.header || {};
+      const totalTokens = header.total_tokens ?? metadata.totalTokens;
+      const totalRelationships = header.total_relationships ?? metadata.totalRelationships;
+      const networkDensityNumeric = header.network_density ?? 0;
+      const avgEdgesPerTokenNumeric = header.avg_edges_per_token ?? (totalTokens ? totalRelationships / totalTokens : 0);
+      const tokensPerRelationship = totalRelationships ? totalTokens / totalRelationships : 0;
+
       const exportData = {
         export_timestamp: new Date().toISOString(),
         readme: {
@@ -5173,11 +5571,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           version: "2.0"
         },
         database_stats: {
-          total_tokens: metadata.totalTokens,
-          total_relationships: metadata.totalRelationships,
+          total_tokens: totalTokens,
+          total_relationships: totalRelationships,
           avg_attention_score: metadata.avgAttentionScore,
           estimated_value_usd: metadata.estimatedValue.toFixed(2),
-          maturity_level: metadata.totalTokens > 100 ? 'mature' : metadata.totalTokens > 20 ? 'growing' : 'early'
+          maturity_level: totalTokens > 100 ? 'mature' : totalTokens > 20 ? 'growing' : 'early'
         },
         relationship_distribution: Object.fromEntries(metadata.topRelationships),
         relationship_distribution_named: Object.fromEntries(metadata.topRelationships.map(([glyph, count]) => [relDisplay(glyph), count])),
@@ -5188,12 +5586,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           total_relationships: t.total_relationships
         })),
         knowledge_graph_metrics: {
-          network_density: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(3),
-          avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2),
-          tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
+          network_density: Number(networkDensityNumeric.toFixed ? networkDensityNumeric.toFixed(6) : networkDensityNumeric),
+          avg_edges_per_token: Number(avgEdgesPerTokenNumeric.toFixed ? avgEdgesPerTokenNumeric.toFixed(6) : avgEdgesPerTokenNumeric),
+          tokens_per_relationship: Number(tokensPerRelationship.toFixed ? tokensPerRelationship.toFixed(6) : tokensPerRelationship),
           oldest_entry: metadata.oldestToken?.cached_at,
           newest_entry: metadata.newestToken?.cached_at,
-          date_range_days: metadata.oldestToken && metadata.newestToken ? 
+          date_range_days: metadata.oldestToken && metadata.newestToken ?
             Math.ceil((new Date(metadata.newestToken.cached_at) - new Date(metadata.oldestToken.cached_at)) / (1000 * 60 * 60 * 24)) : 0
         },
         full_token_data: metadata.rawData
@@ -5209,7 +5607,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      logOK(`Database metadata exported: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships, ${(new Blob([JSON.stringify(exportData)]).size / 1024).toFixed(1)}KB`);
+      logOK(`Database metadata exported: ${totalTokens} tokens, ${totalRelationships} relationships, ${(new Blob([JSON.stringify(exportData)]).size / 1024).toFixed(1)}KB`);
     }
 
     async function importHLSFDBFromFile(file) {
@@ -5344,9 +5742,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     function dbIndex() {
       const db = getDb();
       const idx = new Map();
-      (db?.full_token_data || []).forEach(record => {
-        if (record?.token) idx.set(record.token, record);
-      });
+      if (db?.records && typeof db.records === 'object') {
+        for (const [token, record] of Object.entries(db.records)) {
+          if (token) idx.set(token, record);
+        }
+      } else {
+        (db?.full_token_data || []).forEach(record => {
+          if (record?.token) idx.set(record.token, record);
+        });
+      }
       return idx;
     }
 
@@ -5461,6 +5865,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       let mutated = false;
 
       for (const word of words) {
+        if (!idx.has(word)) {
+          const record = ensureTokenRecord(word);
+          if (record) idx.set(word, record);
+        }
         const glyph = glyphForToken(word);
         const weight = tokenWeight(word, idx);
         if (persistUnknown || idx.has(word)) {
@@ -5625,6 +6033,64 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
 
+    async function cmdAuditDb() {
+      try {
+        const db = await loadDB();
+        const before = db.header ? { ...db.header } : recomputeDbHeader(db).header;
+        const sanitized = sanitizeDB({ ...db, records: JSON.parse(JSON.stringify(db.records || {})) });
+        const after = sanitized.header || {};
+        const issues = collectAuditIssues(db);
+
+        const headerDelta = [
+          ['tokens', before.total_tokens ?? 0, after.total_tokens ?? 0],
+          ['edge_types', before.total_edge_types ?? 0, after.total_edge_types ?? 0],
+          ['relationships', before.total_relationships ?? 0, after.total_relationships ?? 0],
+          ['anchors', before.total_anchor_tokens ?? 0, after.total_anchor_tokens ?? 0],
+        ];
+
+        const issueLines = [];
+        const pushIssues = (items, formatter) => {
+          for (const item of items) {
+            if (issueLines.length >= 10) break;
+            issueLines.push(formatter(item));
+          }
+        };
+
+        pushIssues(issues.selfLoops, (item) => `Self-loop: ${sanitize(item.token)} ${sanitize(item.rtype)}`);
+        pushIssues(issues.punctuationTokens, (token) => `Punctuation token: ${sanitize(token || '(blank)')}`);
+        pushIssues(issues.emptyTypes, (item) => `Empty type: ${sanitize(item.token)} ${sanitize(item.rtype)}`);
+
+        const deltas = headerDelta.map(([label, beforeVal, afterVal]) => {
+          const delta = (afterVal - beforeVal) || 0;
+          const sign = delta > 0 ? '+' : '';
+          return `• ${label}: ${beforeVal} → ${afterVal} (${sign}${delta})`;
+        }).join('<br>');
+
+        addLog(`
+          <div class="section-divider"></div>
+          <div class="section-title">🧹 Database Audit</div>
+          <div class="adjacency-insight">
+            <strong>Header deltas:</strong><br>${deltas}
+          </div>
+          <div class="adjacency-insight">
+            <strong>Top issues:</strong><br>
+            ${issueLines.length ? issueLines.map((line) => `• ${line}`).join('<br>') : '<em>No issues detected</em>'}
+          </div>
+        `);
+      } catch (err) {
+        logError(`audit failed: ${String(err.message || err)}`);
+      }
+    }
+
+    async function cmdRepairDb(args) {
+      try {
+        const useLLM = Array.isArray(args) && args.some((arg) => typeof arg === 'string' && arg.toLowerCase() === '--llm');
+        await repairDatabase({ useLLM, writeFile: true });
+      } catch (err) {
+        logError(`repair failed: ${String(err.message || err)}`);
+      }
+    }
+
     async function cmdHlsf(rawArgs) {
       if (!getDb()) {
         const ok = await tryBootstrapDb();
@@ -5743,9 +6209,24 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           runMetrics = computeDbStats(effectiveIndex);
         }
 
-        const dbStats = metricScope === METRIC_SCOPE.RUN
-          ? computeDbStats(effectiveIndex)
-          : runMetrics;
+        const activeDb = getDb();
+        const headerStats = activeDb?.header || {};
+        const dbStats = {
+          tokens: headerStats.total_tokens || 0,
+          nodes: headerStats.total_nodes_out || 0,
+          edges: headerStats.total_edge_types || 0,
+          relationships: headerStats.total_relationships || 0,
+          anchors: headerStats.total_anchor_tokens || 0,
+        };
+
+        if (metricScope === METRIC_SCOPE.DB) {
+          runMetrics = {
+            nodes: dbStats.nodes,
+            edges: dbStats.edges,
+            relationships: dbStats.relationships,
+            anchors: dbStats.anchors,
+          };
+        }
 
         window.HLSF.metrics = Object.assign({}, window.HLSF.metrics || {}, { db: dbStats });
 
@@ -5756,7 +6237,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const lastComponents = layoutInfo ? layoutInfo.lastLevelComponents || 0 : 0;
         const scopeUsed = (layoutInfo?.scope || window.HLSF?.config?.hlsfScope || 'db').toString().toLowerCase();
         logOK(`/hlsf${suffix} → nodes ${runMetrics.nodes} / ${dbStats.nodes}, edges ${runMetrics.edges} / ${dbStats.edges}, relationships ${runMetrics.relationships} / ${dbStats.relationships}, anchors ${runMetrics.anchors} / ${dbStats.anchors} D=${dimVal}, levels=${levelCount}, last_level_components=${lastComponents}, scope=${scopeUsed}`);
-        addLog(`ⓘ run / db • tokens(db) ${dbStats.tokens}`);
+        addLog(`ⓘ db tokens ${dbStats.tokens}`);
 
         if (runMetrics.relationships < runMetrics.edges) {
           addLog('⚠ run relationships < run edge-types; check dedupe or caps.');
@@ -5908,6 +6389,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       await cmdLoadDb(joined);
     }
 
+    async function cmd_auditdb() {
+      await cmdAuditDb();
+    }
+
+    async function cmd_repairdb(args) {
+      await cmdRepairDb(Array.isArray(args) ? args : []);
+    }
+
     function getRelationshipPriority(relType) {
       if (RELATIONSHIP_PRIORITIES instanceof Map) {
         return RELATIONSHIP_PRIORITIES.get(relType) ?? 1;
@@ -5969,6 +6458,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     registerCommand('/import', cmd_import);
     registerCommand('/loaddb', cmd_loaddb);
+    registerCommand('/auditdb', cmd_auditdb);
+    registerCommand('/repairdb', cmd_repairdb);
     window.COMMANDS = COMMANDS;
     // Router guard (prevents duplicate logs)
     if (!COMMANDS.__hlsf_bound) {
@@ -6086,6 +6577,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             /export - Export database metadata as JSON<br>
             /import - Import database from JSON file<br>
             /loaddb &lt;url&gt; - Load database JSON from URL<br>
+            /auditdb - Dry-run sanitizer and report issues<br>
+            /repairdb [--llm] - Rewrite database JSON (optionally with LLM validation)<br>
             /glyph &lt;token1 token2 ...&gt; - Show weighted glyph assignments<br>
             /ledger [show|export|import] - Manage private glyph ledger<br>
             /encrypt &lt;text&gt; - Encrypt text into weighted glyphs<br>
