@@ -6046,6 +6046,38 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       COMMANDS[key] = handler;
     }
 
+    async function fetchBootstrapText(href) {
+      try {
+        const res = await fetch(href, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.text();
+      } catch (err) {
+        const isLocal = location.protocol === 'file:';
+        const isNetworkErr = err && err.name === 'TypeError';
+        if (!isLocal && !isNetworkErr) throw err;
+
+        return await new Promise((resolve, reject) => {
+          try {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', href, true);
+            xhr.overrideMimeType('application/json');
+            xhr.onreadystatechange = () => {
+              if (xhr.readyState !== 4) return;
+              if (xhr.status === 0 || (xhr.status >= 200 && xhr.status < 300)) {
+                resolve(xhr.responseText);
+              } else {
+                reject(new Error(`XHR ${xhr.status}`));
+              }
+            };
+            xhr.onerror = () => reject(new Error('XHR network error'));
+            xhr.send();
+          } catch (xhrErr) {
+            reject(xhrErr);
+          }
+        });
+      }
+    }
+
     async function tryBootstrapDb() {
       if (getDb()) return true;
 
@@ -6060,14 +6092,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (!href) return false;
 
       try {
-        const res = await fetch(href, { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
+        const text = await fetchBootstrapText(href);
+        if (!text) throw new Error('Empty response');
         const n = loadDbObject(text);
         logFinal(`DB loaded. Tokens: ${n}`);
         return true;
       } catch (e) {
-        logStatus(`Bootstrap DB fetch failed: ${String(e.message || e)}`);
+        const reason = e?.message || String(e) || 'Unknown error';
+        logStatus(`Bootstrap DB fetch failed: ${reason}`);
         return false;
       }
     }
