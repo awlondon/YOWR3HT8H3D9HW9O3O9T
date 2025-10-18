@@ -538,7 +538,7 @@
         </div>
         <div class="hlsf-control-group">
           <label>Edge width <span id="edgew-val">0.02</span></label>
-          <input id="edgew" type="range" min="0.01" max="0.10" step="0.005" value="0.02">
+          <input id="edgew" type="range" min="0.01" max="1.00" step="0.005" value="0.02">
         </div>
         <div class="hlsf-control-group">
           <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
@@ -2021,7 +2021,7 @@
       ctx.textBaseline = 'middle';
       const controlValue = edgeWidthControl ? parseFloat(edgeWidthControl.value) : NaN;
       const edgeWidthValue = Number.isFinite(controlValue) ? controlValue : edgeWidth;
-      ctx.lineWidth = Math.max(0.005, edgeWidthValue) * dpr;
+      ctx.lineWidth = Math.max(0.01, edgeWidthValue) * dpr;
       const fontScale = Math.max(0.6, Math.min(2.5, Math.sqrt(zoom)));
       ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
 
@@ -2063,7 +2063,7 @@
       if (layoutMode === 'dimension' && graph.dimensionLayout) {
         ctx.save();
         ctx.globalAlpha = 0.35;
-        const polyWidth = Math.max(0.01, Math.min(0.1, edgeWidthValue)) * dpr;
+        const polyWidth = Math.max(0.01, Math.min(1, edgeWidthValue)) * dpr;
         ctx.lineWidth = polyWidth;
         ctx.strokeStyle = theme.hint;
         const cells = Array.isArray(graph.dimensionLayout.cells) ? graph.dimensionLayout.cells : [];
@@ -2084,7 +2084,7 @@
 
       const glyphOnly = opts.glyphOnly === true;
 
-      ctx.lineWidth = Math.max(0.005, edgeWidthValue) * dpr;
+      ctx.lineWidth = Math.max(0.01, edgeWidthValue) * dpr;
 
       if (cfg.showEdges !== false) {
         const batches = new Map();
@@ -2337,7 +2337,7 @@
     function clampEdgeWidth(value) {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return 0.02;
-      return Math.min(0.1, Math.max(0.01, numeric));
+      return Math.min(1, Math.max(0.01, numeric));
     }
 
     function clampNodeSize(value) {
@@ -2430,7 +2430,7 @@
             </div>
             <div class="hlsf-control-group">
               <label>Edge width <span id="edgew-val">0.02</span></label>
-              <input id="edgew" type="range" min="0.01" max="0.10" step="0.005" value="0.02">
+              <input id="edgew" type="range" min="0.01" max="1.00" step="0.005" value="0.02">
             </div>
             <div class="hlsf-control-group">
               <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
