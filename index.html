@@ -3266,6 +3266,18 @@
       const raw = Array.from(db.full_token_data || []);
       const clean = raw.map(normalizeRecord).filter(Boolean);
       if (!clean.length) throw new Error('No valid token records');
+      // Reset existing cached tokens so the cache matches the imported database
+      const existingKeys = safeStorageKeys(TOKEN_CACHE_PREFIX);
+      for (const key of existingKeys) {
+        safeStorageRemove(key);
+      }
+      const now = new Date().toISOString();
+      for (const record of clean) {
+        const payload = Object.assign({ cached_at: now }, record);
+        if (!payload.cached_at) payload.cached_at = now;
+        const cacheKey = getCacheKey(record.token);
+        safeStorageSet(cacheKey, JSON.stringify(payload));
+      }
       const out = Object.assign({}, db, { full_token_data: clean });
       localStorage.setItem(DB_RAW_KEY, JSON.stringify(out));
       const index = clean.map(r => r.token);
