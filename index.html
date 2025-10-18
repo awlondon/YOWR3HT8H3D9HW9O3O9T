@@ -4983,26 +4983,97 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return base.map(([glyph, count]) => renderRelTypeRow(glyph, count));
     }
 
+    function edgeSignatureForMerge(edge) {
+      if (!edge || typeof edge !== 'object') return '';
+      const token = edge.token ?? '';
+      const relType = edge.type ?? edge.relationship ?? '';
+      const weight = Number.isFinite(edge.weight)
+        ? edge.weight
+        : Number.isFinite(edge.w)
+          ? edge.w
+          : Number.isFinite(edge.attention)
+            ? edge.attention
+            : 0;
+      return `${token}::${relType}::${weight}`;
+    }
+
+    function mergeRelationshipLists(existing, incoming) {
+      const base = Array.isArray(existing) ? existing : [];
+      const next = Array.isArray(incoming) ? incoming : [];
+      if (base.length === 0) return next.slice();
+      if (next.length === 0) return base.slice();
+
+      const merged = base.slice();
+      const seen = new Set(base.map(edgeSignatureForMerge));
+      for (const edge of next) {
+        const sig = edgeSignatureForMerge(edge);
+        if (!seen.has(sig)) {
+          seen.add(sig);
+          merged.push(edge);
+        }
+      }
+      return merged;
+    }
+
+    function mergeTokenRecords(existing, incoming) {
+      if (!existing) return incoming;
+      if (!incoming) return existing;
+
+      const merged = Object.assign({}, existing, incoming);
+      const baseRels = existing.relationships || {};
+      const incomingRels = incoming.relationships || {};
+      const relKeys = new Set([...Object.keys(baseRels), ...Object.keys(incomingRels)]);
+      const outRels = {};
+      for (const key of relKeys) {
+        outRels[key] = mergeRelationshipLists(baseRels[key], incomingRels[key]);
+      }
+      merged.relationships = outRels;
+      if (!merged.cached_at) {
+        merged.cached_at = existing.cached_at || incoming.cached_at || null;
+      }
+      return merged;
+    }
+
     function analyzeDatabaseMetadata() {
-      const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
-      const tokens = [];
       const tokenFrequency = new Map();
       const index = new Map();
       let totalAttentionScore = 0;
       let oldestToken = null;
       let newestToken = null;
 
+      const addRecord = (rec) => {
+        const normalized = normalizeRecord(rec);
+        if (!normalized) return;
+        const existing = index.get(normalized.token);
+        const merged = mergeTokenRecords(existing, normalized);
+        index.set(normalized.token, merged);
+      };
+
+      const db = getDb();
+      if (db?.full_token_data?.length) {
+        for (const rec of db.full_token_data) addRecord(rec);
+      }
+
+      const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
       for (const key of keys) {
         try {
           const data = safeStorageGet(key);
           if (data && typeof data === 'object') {
-            tokens.push(data);
-            if (data.token) index.set(data.token, data);
+            addRecord(data);
           }
+        } catch (err) {
+          console.error('Failed to parse token:', key, err);
+        }
+      }
 
-          // Track oldest and newest
-          if (data.cached_at) {
-            const timestamp = new Date(data.cached_at);
+      const tokens = Array.from(index.values());
+
+      for (const data of tokens) {
+        if (!data || typeof data !== 'object') continue;
+
+        if (data.cached_at) {
+          const timestamp = new Date(data.cached_at);
+          if (!Number.isNaN(timestamp.getTime())) {
             if (!oldestToken || timestamp < new Date(oldestToken.cached_at)) {
               oldestToken = data;
             }
@@ -5010,28 +5081,24 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               newestToken = data;
             }
           }
+        }
 
-          // Count relationships
-          const rels = data.relationships || {};
-          for (const [relType, edges] of Object.entries(rels)) {
-            if (!Array.isArray(edges)) continue;
-            const glyph = normalizeRelKeyForStats(relType);
-            if (!glyph) continue;
+        const rels = data.relationships || {};
+        for (const [relType, edges] of Object.entries(rels)) {
+          if (!Array.isArray(edges)) continue;
+          const glyph = normalizeRelKeyForStats(relType);
+          if (!glyph) continue;
 
-            // Track token frequency across relationships
-            for (const edge of edges) {
-              const token = edge.token?.toLowerCase();
-              if (token) {
-                tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
-              }
+          for (const edge of edges) {
+            const token = edge?.token?.toLowerCase();
+            if (token) {
+              tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
             }
           }
+        }
 
-          if (data.attention_score) {
-            totalAttentionScore += data.attention_score;
-          }
-        } catch (err) {
-          console.error('Failed to parse token:', key, err);
+        if (data.attention_score) {
+          totalAttentionScore += data.attention_score;
         }
       }
 
@@ -5047,8 +5114,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         .slice(0, 20);
 
       const highAttentionTokens = tokens
-        .filter(t => t.attention_score)
-        .sort((a, b) => b.attention_score - a.attention_score)
+        .filter(t => t?.attention_score)
+        .sort((a, b) => (b.attention_score || 0) - (a.attention_score || 0))
         .slice(0, 10);
 
       return {
@@ -6029,19 +6096,31 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
             keys.forEach(k => safeStorageRemove(k));
             safeStorageRemove(DB_INDEX_KEY);
+            let hadDbSnapshot = false;
+            try {
+              hadDbSnapshot = localStorage.getItem(DB_RAW_KEY) != null;
+            } catch (err) {
+              console.warn('Unable to inspect DB snapshot state:', err);
+            }
+            safeStorageRemove(DB_RAW_KEY);
             state.hlsfReady = false;
             window.HLSF_GRAPH = null;
             if (window.HLSF) {
               window.HLSF.matrices = null;
               window.HLSF.layoutCache = null;
               window.HLSF.dbCache = null;
+              window.HLSF.indexCache = null;
+              window.HLSF.indexCacheSource = null;
               window.HLSF.currentGraph = null;
               window.HLSF.currentGlyphOnly = false;
               window.HLSF.__centerInit = false;
             }
             Session.tokens.clear();
             updateStats();
-            logOK(`Cleared ${keys.length} tokens`);
+            const clearedMsg = hadDbSnapshot
+              ? `Cleared ${keys.length} tokens and database snapshot`
+              : `Cleared ${keys.length} tokens`;
+            logOK(clearedMsg);
           }
           break;
         case 'stats':
