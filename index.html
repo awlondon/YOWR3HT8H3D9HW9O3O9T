@@ -603,7 +603,8 @@
     // CONFIGURATION
     // ============================================
     const CONFIG = {
-      MAX_TOKENS_PER_PROMPT: 100,
+      MAX_TOKENS_PER_PROMPT: 500,
+      MAX_TOKENS_PER_RESPONSE: 500,
       MAX_CONCURRENCY: 5,
       MAX_RETRY_ATTEMPTS: 3,
       RETRY_BASE_DELAY_MS: 500,
@@ -3266,6 +3267,18 @@
       const raw = Array.from(db.full_token_data || []);
       const clean = raw.map(normalizeRecord).filter(Boolean);
       if (!clean.length) throw new Error('No valid token records');
+      // Reset existing cached tokens so the cache matches the imported database
+      const existingKeys = safeStorageKeys(TOKEN_CACHE_PREFIX);
+      for (const key of existingKeys) {
+        safeStorageRemove(key);
+      }
+      const now = new Date().toISOString();
+      for (const record of clean) {
+        const payload = Object.assign({ cached_at: now }, record);
+        if (!payload.cached_at) payload.cached_at = now;
+        const cacheKey = getCacheKey(record.token);
+        safeStorageSet(cacheKey, JSON.stringify(payload));
+      }
       const out = Object.assign({}, db, { full_token_data: clean });
       localStorage.setItem(DB_RAW_KEY, JSON.stringify(out));
       const index = clean.map(r => r.token);
@@ -3909,7 +3922,7 @@
       const body = {
         model: options.model || CONFIG.DEFAULT_MODEL,
         messages,
-        max_tokens: options.max_tokens || 1000,
+        max_tokens: options.max_tokens ?? CONFIG.MAX_TOKENS_PER_RESPONSE,
         temperature: options.temperature || 0.7,
       };
 
@@ -4983,26 +4996,114 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return base.map(([glyph, count]) => renderRelTypeRow(glyph, count));
     }
 
+    function edgeSignatureForMerge(edge) {
+      if (!edge || typeof edge !== 'object') return '';
+      const token = edge.token ?? '';
+      const relType = edge.type ?? edge.relationship ?? '';
+      const weight = Number.isFinite(edge.weight)
+        ? edge.weight
+        : Number.isFinite(edge.w)
+          ? edge.w
+          : Number.isFinite(edge.attention)
+            ? edge.attention
+            : 0;
+      return `${token}::${relType}::${weight}`;
+    }
+
+    function mergeRelationshipLists(existing, incoming) {
+      const base = Array.isArray(existing) ? existing : [];
+      const next = Array.isArray(incoming) ? incoming : [];
+      if (base.length === 0) return next.slice();
+      if (next.length === 0) return base.slice();
+
+      const merged = base.slice();
+      const seen = new Set(base.map(edgeSignatureForMerge));
+      for (const edge of next) {
+        const sig = edgeSignatureForMerge(edge);
+        if (!seen.has(sig)) {
+          seen.add(sig);
+          merged.push(edge);
+        }
+      }
+      return merged;
+    }
+
+    function mergeTokenRecords(existing, incoming) {
+      if (!existing) return incoming;
+      if (!incoming) return existing;
+
+      const merged = Object.assign({}, existing, incoming);
+      const baseRels = existing.relationships || {};
+      const incomingRels = incoming.relationships || {};
+      const relKeys = new Set([...Object.keys(baseRels), ...Object.keys(incomingRels)]);
+      const outRels = {};
+      for (const key of relKeys) {
+        outRels[key] = mergeRelationshipLists(baseRels[key], incomingRels[key]);
+      }
+      merged.relationships = outRels;
+      if (!merged.cached_at) {
+        merged.cached_at = existing.cached_at || incoming.cached_at || null;
+      }
+      return merged;
+    }
+
     function analyzeDatabaseMetadata() {
-      const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
-      const tokens = [];
       const tokenFrequency = new Map();
       const index = new Map();
       let totalAttentionScore = 0;
       let oldestToken = null;
       let newestToken = null;
 
+      const addRecord = (rec) => {
+        const normalized = normalizeRecord(rec);
+        if (!normalized) return;
+        const existing = index.get(normalized.token);
+        const merged = mergeTokenRecords(existing, normalized);
+        index.set(normalized.token, merged);
+      };
+
+      const db = getDb();
+      if (db?.full_token_data?.length) {
+        for (const rec of db.full_token_data) addRecord(rec);
+      }
+
+      const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
       for (const key of keys) {
         try {
           const data = safeStorageGet(key);
           if (data && typeof data === 'object') {
-            tokens.push(data);
-            if (data.token) index.set(data.token, data);
+            addRecord(data);
           }
+        } catch (err) {
+          console.error('Failed to parse token:', key, err);
+        }
+      }
 
-          // Track oldest and newest
-          if (data.cached_at) {
-            const timestamp = new Date(data.cached_at);
+      const tokens = Array.from(index.values());
+
+      const cachedTokenSet = new Set();
+      for (const key of index.keys()) {
+        if (key == null) continue;
+        cachedTokenSet.add(String(key).toLowerCase());
+      }
+
+      const sessionTokenSet = window.Session?.tokens instanceof Set ? window.Session.tokens : new Set();
+      let cachedSessionTokens = 0;
+      for (const token of sessionTokenSet) {
+        if (!token) continue;
+        if (cachedTokenSet.has(String(token).toLowerCase())) {
+          cachedSessionTokens += 1;
+        }
+      }
+      const sessionTokenCount = sessionTokenSet instanceof Set ? sessionTokenSet.size : 0;
+      const sessionCoverage = sessionTokenCount > 0 ? cachedSessionTokens / sessionTokenCount : 0;
+
+      for (const data of tokens) {
+        if (!data || typeof data !== 'object') continue;
+
+        if (data.cached_at) {
+          const timestamp = new Date(data.cached_at);
+          if (!Number.isNaN(timestamp.getTime())) {
             if (!oldestToken || timestamp < new Date(oldestToken.cached_at)) {
               oldestToken = data;
             }
@@ -5010,28 +5111,24 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               newestToken = data;
             }
           }
+        }
 
-          // Count relationships
-          const rels = data.relationships || {};
-          for (const [relType, edges] of Object.entries(rels)) {
-            if (!Array.isArray(edges)) continue;
-            const glyph = normalizeRelKeyForStats(relType);
-            if (!glyph) continue;
+        const rels = data.relationships || {};
+        for (const [relType, edges] of Object.entries(rels)) {
+          if (!Array.isArray(edges)) continue;
+          const glyph = normalizeRelKeyForStats(relType);
+          if (!glyph) continue;
 
-            // Track token frequency across relationships
-            for (const edge of edges) {
-              const token = edge.token?.toLowerCase();
-              if (token) {
-                tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
-              }
+          for (const edge of edges) {
+            const token = edge?.token?.toLowerCase();
+            if (token) {
+              tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
             }
           }
+        }
 
-          if (data.attention_score) {
-            totalAttentionScore += data.attention_score;
-          }
-        } catch (err) {
-          console.error('Failed to parse token:', key, err);
+        if (data.attention_score) {
+          totalAttentionScore += data.attention_score;
         }
       }
 
@@ -5047,8 +5144,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         .slice(0, 20);
 
       const highAttentionTokens = tokens
-        .filter(t => t.attention_score)
-        .sort((a, b) => b.attention_score - a.attention_score)
+        .filter(t => t?.attention_score)
+        .sort((a, b) => (b.attention_score || 0) - (a.attention_score || 0))
         .slice(0, 10);
 
       return {
@@ -5065,6 +5162,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         estimatedValue: tokens.length * CONFIG.ESTIMATED_COST_PER_API_CALL,
         rawData: tokens,
         dbStats,
+        sessionTokenCount,
+        cachedSessionTokens,
+        sessionCoverage,
       };
     }
 
@@ -5072,8 +5172,36 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const metadata = analyzeDatabaseMetadata();
       const dbStats = metadata.dbStats || { tokens: metadata.totalTokens, relationships: metadata.totalRelationships, nodes: 0, edges: 0, anchors: 0 };
 
-      const maturityLevel = metadata.totalTokens > 100 ? 'Mature' : metadata.totalTokens > 20 ? 'Growing' : 'Early';
-      const maturityColor = metadata.totalTokens > 100 ? 'var(--success)' : metadata.totalTokens > 20 ? 'var(--warning)' : 'var(--accent)';
+      const sessionTokenCount = metadata.sessionTokenCount || 0;
+      const coverageRatioRaw = (typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage))
+        ? metadata.sessionCoverage
+        : 0;
+      const coverageRatio = Math.min(Math.max(coverageRatioRaw, 0), 1);
+      const coverageDisplay = sessionTokenCount > 0 ? `${(coverageRatio * 100).toFixed(1)}%` : '0.0%';
+      const coverageCountSummary = sessionTokenCount > 0
+        ? `Coverage: <strong>${metadata.cachedSessionTokens || 0}</strong> / <strong>${sessionTokenCount}</strong> (${coverageDisplay})`
+        : 'Coverage: No session tokens observed yet';
+
+      let maturityLevel;
+      let maturityColor;
+      let maturityMessage;
+      if (sessionTokenCount === 0) {
+        maturityLevel = 'Early';
+        maturityColor = 'var(--accent)';
+        maturityMessage = 'No session tokens analyzed yet. Run a prompt to begin building cache coverage.';
+      } else if (coverageRatio >= 0.95) {
+        maturityLevel = 'Mature';
+        maturityColor = 'var(--success)';
+        maturityMessage = 'Cached knowledge covers 95%+ of observed inputs and outputs. Most queries reuse stored insights.';
+      } else if (coverageRatio >= 0.6) {
+        maturityLevel = 'Growing';
+        maturityColor = 'var(--warning)';
+        maturityMessage = 'Coverage is building. Many session tokens are cached but new ones still appear.';
+      } else {
+        maturityLevel = 'Early';
+        maturityColor = 'var(--accent)';
+        maturityMessage = 'Cache coverage is limited. Expect frequent new adjacency generation.';
+      }
 
       addLog(`
         <div class="section-divider"></div>
@@ -5081,13 +5209,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         
         <div class="adjacency-insight">
           <strong>🌐 Knowledge Base Status:</strong> <span style="color: ${maturityColor}; font-weight: bold;">${maturityLevel}</span><br>
-          <small style="opacity: 0.8;">
-            ${metadata.totalTokens < 20 ? 
-              'Building foundational knowledge. Each query adds to the collective intelligence.' :
-              metadata.totalTokens < 100 ?
-              'Database is maturing. Cache hit rate improving with each session.' :
-              'Mature knowledge base. Most queries benefit from cached insights.'}
-          </small>
+          <small style="opacity: 0.8;">${maturityMessage}</small><br>
+          <small style="opacity: 0.8; display: block; margin-top: 0.25rem;">${coverageCountSummary}</small>
         </div>
 
         <div class="adjacency-insight">
@@ -5148,6 +5271,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             growth_metrics: {
               tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
               avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)
+            },
+            session_cache_coverage: {
+              observed_tokens: sessionTokenCount,
+              cached_tokens: metadata.cachedSessionTokens || 0,
+              coverage_ratio: Number(coverageRatio.toFixed(3)),
+              coverage_percent: sessionTokenCount > 0 ? Number((coverageRatio * 100).toFixed(1)) : 0
             }
           }, null, 2)}</pre>
         </details>
@@ -5163,7 +5292,17 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     function exportDatabaseMetadata() {
       const metadata = analyzeDatabaseMetadata();
-      
+
+      const sessionTokenCount = metadata.sessionTokenCount || 0;
+      const coverageRatioRaw = (typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage))
+        ? metadata.sessionCoverage
+        : 0;
+      const coverageRatio = Math.min(Math.max(coverageRatioRaw, 0), 1);
+      const coveragePercent = sessionTokenCount > 0 ? Number((coverageRatio * 100).toFixed(1)) : 0;
+      const maturityLevel = sessionTokenCount === 0
+        ? 'early'
+        : (coverageRatio >= 0.95 ? 'mature' : coverageRatio >= 0.6 ? 'growing' : 'early');
+
       const exportData = {
         export_timestamp: new Date().toISOString(),
         readme: {
@@ -5177,7 +5316,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           total_relationships: metadata.totalRelationships,
           avg_attention_score: metadata.avgAttentionScore,
           estimated_value_usd: metadata.estimatedValue.toFixed(2),
-          maturity_level: metadata.totalTokens > 100 ? 'mature' : metadata.totalTokens > 20 ? 'growing' : 'early'
+          maturity_level: maturityLevel,
+          session_token_count: sessionTokenCount,
+          session_tokens_cached: metadata.cachedSessionTokens || 0,
+          session_token_coverage_ratio: Number(coverageRatio.toFixed(3)),
+          session_token_coverage_percent: coveragePercent
         },
         relationship_distribution: Object.fromEntries(metadata.topRelationships),
         relationship_distribution_named: Object.fromEntries(metadata.topRelationships.map(([glyph, count]) => [relDisplay(glyph), count])),
@@ -6029,19 +6172,31 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
             keys.forEach(k => safeStorageRemove(k));
             safeStorageRemove(DB_INDEX_KEY);
+            let hadDbSnapshot = false;
+            try {
+              hadDbSnapshot = localStorage.getItem(DB_RAW_KEY) != null;
+            } catch (err) {
+              console.warn('Unable to inspect DB snapshot state:', err);
+            }
+            safeStorageRemove(DB_RAW_KEY);
             state.hlsfReady = false;
             window.HLSF_GRAPH = null;
             if (window.HLSF) {
               window.HLSF.matrices = null;
               window.HLSF.layoutCache = null;
               window.HLSF.dbCache = null;
+              window.HLSF.indexCache = null;
+              window.HLSF.indexCacheSource = null;
               window.HLSF.currentGraph = null;
               window.HLSF.currentGlyphOnly = false;
               window.HLSF.__centerInit = false;
             }
             Session.tokens.clear();
             updateStats();
-            logOK(`Cleared ${keys.length} tokens`);
+            const clearedMsg = hadDbSnapshot
+              ? `Cleared ${keys.length} tokens and database snapshot`
+              : `Cleared ${keys.length} tokens`;
+            logOK(clearedMsg);
           }
           break;
         case 'stats':
