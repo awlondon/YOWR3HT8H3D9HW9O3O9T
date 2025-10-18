@@ -5080,6 +5080,23 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       const tokens = Array.from(index.values());
 
+      const cachedTokenSet = new Set();
+      for (const key of index.keys()) {
+        if (key == null) continue;
+        cachedTokenSet.add(String(key).toLowerCase());
+      }
+
+      const sessionTokenSet = window.Session?.tokens instanceof Set ? window.Session.tokens : new Set();
+      let cachedSessionTokens = 0;
+      for (const token of sessionTokenSet) {
+        if (!token) continue;
+        if (cachedTokenSet.has(String(token).toLowerCase())) {
+          cachedSessionTokens += 1;
+        }
+      }
+      const sessionTokenCount = sessionTokenSet instanceof Set ? sessionTokenSet.size : 0;
+      const sessionCoverage = sessionTokenCount > 0 ? cachedSessionTokens / sessionTokenCount : 0;
+
       for (const data of tokens) {
         if (!data || typeof data !== 'object') continue;
 
@@ -5144,6 +5161,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         estimatedValue: tokens.length * CONFIG.ESTIMATED_COST_PER_API_CALL,
         rawData: tokens,
         dbStats,
+        sessionTokenCount,
+        cachedSessionTokens,
+        sessionCoverage,
       };
     }
 
@@ -5151,8 +5171,36 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const metadata = analyzeDatabaseMetadata();
       const dbStats = metadata.dbStats || { tokens: metadata.totalTokens, relationships: metadata.totalRelationships, nodes: 0, edges: 0, anchors: 0 };
 
-      const maturityLevel = metadata.totalTokens > 100 ? 'Mature' : metadata.totalTokens > 20 ? 'Growing' : 'Early';
-      const maturityColor = metadata.totalTokens > 100 ? 'var(--success)' : metadata.totalTokens > 20 ? 'var(--warning)' : 'var(--accent)';
+      const sessionTokenCount = metadata.sessionTokenCount || 0;
+      const coverageRatioRaw = (typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage))
+        ? metadata.sessionCoverage
+        : 0;
+      const coverageRatio = Math.min(Math.max(coverageRatioRaw, 0), 1);
+      const coverageDisplay = sessionTokenCount > 0 ? `${(coverageRatio * 100).toFixed(1)}%` : '0.0%';
+      const coverageCountSummary = sessionTokenCount > 0
+        ? `Coverage: <strong>${metadata.cachedSessionTokens || 0}</strong> / <strong>${sessionTokenCount}</strong> (${coverageDisplay})`
+        : 'Coverage: No session tokens observed yet';
+
+      let maturityLevel;
+      let maturityColor;
+      let maturityMessage;
+      if (sessionTokenCount === 0) {
+        maturityLevel = 'Early';
+        maturityColor = 'var(--accent)';
+        maturityMessage = 'No session tokens analyzed yet. Run a prompt to begin building cache coverage.';
+      } else if (coverageRatio >= 0.95) {
+        maturityLevel = 'Mature';
+        maturityColor = 'var(--success)';
+        maturityMessage = 'Cached knowledge covers 95%+ of observed inputs and outputs. Most queries reuse stored insights.';
+      } else if (coverageRatio >= 0.6) {
+        maturityLevel = 'Growing';
+        maturityColor = 'var(--warning)';
+        maturityMessage = 'Coverage is building. Many session tokens are cached but new ones still appear.';
+      } else {
+        maturityLevel = 'Early';
+        maturityColor = 'var(--accent)';
+        maturityMessage = 'Cache coverage is limited. Expect frequent new adjacency generation.';
+      }
 
       addLog(`
         <div class="section-divider"></div>
@@ -5160,13 +5208,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         
         <div class="adjacency-insight">
           <strong>🌐 Knowledge Base Status:</strong> <span style="color: ${maturityColor}; font-weight: bold;">${maturityLevel}</span><br>
-          <small style="opacity: 0.8;">
-            ${metadata.totalTokens < 20 ? 
-              'Building foundational knowledge. Each query adds to the collective intelligence.' :
-              metadata.totalTokens < 100 ?
-              'Database is maturing. Cache hit rate improving with each session.' :
-              'Mature knowledge base. Most queries benefit from cached insights.'}
-          </small>
+          <small style="opacity: 0.8;">${maturityMessage}</small><br>
+          <small style="opacity: 0.8; display: block; margin-top: 0.25rem;">${coverageCountSummary}</small>
         </div>
 
         <div class="adjacency-insight">
@@ -5227,6 +5270,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             growth_metrics: {
               tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
               avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)
+            },
+            session_cache_coverage: {
+              observed_tokens: sessionTokenCount,
+              cached_tokens: metadata.cachedSessionTokens || 0,
+              coverage_ratio: Number(coverageRatio.toFixed(3)),
+              coverage_percent: sessionTokenCount > 0 ? Number((coverageRatio * 100).toFixed(1)) : 0
             }
           }, null, 2)}</pre>
         </details>
@@ -5242,7 +5291,17 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     function exportDatabaseMetadata() {
       const metadata = analyzeDatabaseMetadata();
-      
+
+      const sessionTokenCount = metadata.sessionTokenCount || 0;
+      const coverageRatioRaw = (typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage))
+        ? metadata.sessionCoverage
+        : 0;
+      const coverageRatio = Math.min(Math.max(coverageRatioRaw, 0), 1);
+      const coveragePercent = sessionTokenCount > 0 ? Number((coverageRatio * 100).toFixed(1)) : 0;
+      const maturityLevel = sessionTokenCount === 0
+        ? 'early'
+        : (coverageRatio >= 0.95 ? 'mature' : coverageRatio >= 0.6 ? 'growing' : 'early');
+
       const exportData = {
         export_timestamp: new Date().toISOString(),
         readme: {
@@ -5256,7 +5315,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           total_relationships: metadata.totalRelationships,
           avg_attention_score: metadata.avgAttentionScore,
           estimated_value_usd: metadata.estimatedValue.toFixed(2),
-          maturity_level: metadata.totalTokens > 100 ? 'mature' : metadata.totalTokens > 20 ? 'growing' : 'early'
+          maturity_level: maturityLevel,
+          session_token_count: sessionTokenCount,
+          session_tokens_cached: metadata.cachedSessionTokens || 0,
+          session_token_coverage_ratio: Number(coverageRatio.toFixed(3)),
+          session_token_coverage_percent: coveragePercent
         },
         relationship_distribution: Object.fromEntries(metadata.topRelationships),
         relationship_distribution_named: Object.fromEntries(metadata.topRelationships.map(([glyph, count]) => [relDisplay(glyph), count])),
