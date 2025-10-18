@@ -3681,7 +3681,8 @@
       return clean.length;
     }
 
-    function refreshDbReference(recordLike) {
+    function refreshDbReference(recordLike, options = {}) {
+      const { deferReload = false } = options || {};
       const normalized = normalizeRecord(recordLike);
       if (!normalized) return;
 
@@ -3728,7 +3729,11 @@
       } catch (err) {
         console.warn('Failed to persist updated DB snapshot:', err);
       }
-      notifyHlsfAdjacencyChange('cache-update');
+      if (deferReload) {
+        markHlsfDataDirty();
+      } else {
+        notifyHlsfAdjacencyChange('cache-update');
+      }
       updateHeaderCounts();
     }
 
@@ -4449,7 +4454,8 @@
       } catch { return null; }
     }
 
-    function saveToCache(token, data) {
+    function saveToCache(token, data, options = {}) {
+      const { deferReload = false } = options || {};
       try {
         const payloadData = Object.assign({ token }, data, {
           cached_at: new Date().toISOString(),
@@ -4462,7 +4468,7 @@
         const ok = safeStorageSet(getCacheKey(recordToken), payload);
         if (!ok) return;
         updateTokenIndex(recordToken);
-        refreshDbReference(payloadData);
+        refreshDbReference(payloadData, { deferReload });
       } catch (err) {
         if (err.name === 'QuotaExceededError') {
           logWarning('Cache full. Use /reset to clear old data.');
@@ -4628,7 +4634,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const jsonStart = content.indexOf('{');
         const jsonEnd = content.lastIndexOf('}');
         const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
-        saveToCache(token, parsed);
+        saveToCache(token, parsed, { deferReload: true });
         return { ...parsed, cache_hit: false };
       } catch {
         return { token, relationships: {}, error: 'Parse failed' };
@@ -4664,6 +4670,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const hits = Array.from(results.values()).filter(r => r.cache_hit).length;
       progress.complete(`${label}: ${hits} cached, ${results.size - hits} new`);
       return results;
+    }
+
+    function hasNewAdjacencyData(matrices) {
+      if (!(matrices instanceof Map)) return false;
+      for (const entry of matrices.values()) {
+        if (entry && entry.cache_hit === false && !entry.error && !entry.offline) {
+          return true;
+        }
+      }
+      return false;
     }
 
     window.CognitionEngine.processing = {
@@ -7321,6 +7337,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           batchFetchAdjacencies(tokens, prompt, 'input'),
           batchFetchAdjacencies(responseTokens, initialResponse, 'output'),
         ]);
+
+        const shouldReloadHlsf = hasNewAdjacencyData(inputMatrices) || hasNewAdjacencyData(outputMatrices);
+        if (shouldReloadHlsf) {
+          notifyHlsfAdjacencyChange('prompt-adjacencies', { immediate: true });
+        }
 
         calculateAttention(inputMatrices);
         calculateAttention(outputMatrices);
