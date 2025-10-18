@@ -1249,21 +1249,35 @@
 
     function computeDbStats(index) {
       if (!(index instanceof Map)) {
-        return { tokens: 0, edges: 0, relationships: 0, nodes: 0, anchors: 0 };
+        return {
+          tokens: 0,
+          edges: 0,
+          relationships: 0,
+          nodes: 0,
+          anchors: 0,
+          minEdges: { count: 0, tokens: [] },
+          maxEdges: { count: 0, tokens: [] },
+        };
       }
 
       const outSet = new Set();
       const inSet = new Set();
       let relInstances = 0;
       let edgeTypeEnums = 0;
+      let minEdgeCount = Infinity;
+      let maxEdgeCount = 0;
+      const minEdgeTokens = new Set();
+      const maxEdgeTokens = new Set();
 
       for (const [src, rec] of index) {
         if (!rec || typeof rec !== 'object') continue;
         const rels = rec.relationships || {};
         let srcHasType = 0;
+        let srcEdgeCount = 0;
         for (const [rtype, arr] of Object.entries(rels)) {
           if (!Array.isArray(arr) || arr.length === 0) continue;
           srcHasType += 1;
+          srcEdgeCount += arr.length;
           for (const rel of arr) {
             const tgt = rel?.token;
             if (!tgt) continue;
@@ -1273,10 +1287,40 @@
           }
         }
         edgeTypeEnums += srcHasType;
+
+        if (srcEdgeCount < minEdgeCount) {
+          minEdgeCount = srcEdgeCount;
+          minEdgeTokens.clear();
+          minEdgeTokens.add(src);
+        } else if (srcEdgeCount === minEdgeCount) {
+          minEdgeTokens.add(src);
+        }
+
+        if (srcEdgeCount > maxEdgeCount) {
+          maxEdgeCount = srcEdgeCount;
+          maxEdgeTokens.clear();
+          maxEdgeTokens.add(src);
+        } else if (srcEdgeCount === maxEdgeCount) {
+          maxEdgeTokens.add(src);
+        }
       }
 
       const tokens = index.size;
       const anchors = [...outSet].filter((t) => inSet.has(t)).length;
+
+      if (minEdgeCount === Infinity) {
+        minEdgeCount = 0;
+      }
+
+      const limitTokenList = (set) => {
+        if (!(set instanceof Set) || set.size === 0) return [];
+        const out = [];
+        for (const token of set) {
+          out.push(token);
+          if (out.length >= 50) break;
+        }
+        return out;
+      };
 
       return {
         tokens,
@@ -1284,6 +1328,14 @@
         relationships: relInstances,
         nodes: outSet.size,
         anchors,
+        minEdges: {
+          count: minEdgeCount,
+          tokens: limitTokenList(minEdgeTokens),
+        },
+        maxEdges: {
+          count: maxEdgeCount,
+          tokens: limitTokenList(maxEdgeTokens),
+        },
       };
     }
 
@@ -5236,7 +5288,45 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     function showDatabaseMetadata() {
       const metadata = analyzeDatabaseMetadata();
-      const dbStats = metadata.dbStats || { tokens: metadata.totalTokens, relationships: metadata.totalRelationships, nodes: 0, edges: 0, anchors: 0 };
+      const dbStats = Object.assign({
+        tokens: metadata.totalTokens,
+        relationships: metadata.totalRelationships,
+        nodes: 0,
+        edges: 0,
+        anchors: 0,
+        minEdges: { count: 0, tokens: [] },
+        maxEdges: { count: 0, tokens: [] },
+      }, metadata.dbStats || {});
+
+      const formatEdgeTokens = (edgeInfo) => {
+        if (!edgeInfo || !Array.isArray(edgeInfo.tokens) || edgeInfo.tokens.length === 0) {
+          return '';
+        }
+        const maxDisplay = 5;
+        const rendered = edgeInfo.tokens.slice(0, maxDisplay)
+          .map(token => `<span class="token-highlight">${token}</span>`)
+          .join(', ');
+        const extraCount = edgeInfo.tokens.length - maxDisplay;
+        const extra = extraCount > 0
+          ? ` <small style="opacity: 0.65;">(+${extraCount} more)</small>`
+          : '';
+        return `${rendered}${extra}`;
+      };
+
+      const formatEdgeSummary = (edgeInfo) => {
+        const count = Number.isFinite(edgeInfo?.count) ? edgeInfo.count : 0;
+        const tokensDisplay = formatEdgeTokens(edgeInfo);
+        if (tokensDisplay) {
+          return `<strong>${count}</strong> (${tokensDisplay})`;
+        }
+        if ((dbStats.tokens || 0) === 0) {
+          return `<strong>${count}</strong> <small style="opacity: 0.65;">(n/a)</small>`;
+        }
+        return `<strong>${count}</strong>`;
+      };
+
+      const minEdgeSummary = formatEdgeSummary(dbStats.minEdges);
+      const maxEdgeSummary = formatEdgeSummary(dbStats.maxEdges);
 
       const sessionTokenCount = metadata.sessionTokenCount || 0;
       const coverageRatioRaw = (typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage))
@@ -5286,6 +5376,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           • Graph nodes (≥1 outgoing): <strong>${dbStats.nodes}</strong><br>
           • Edge types enumerated: <strong>${dbStats.edges}</strong><br>
           • Anchors (in ∩ out): <strong>${dbStats.anchors}</strong><br>
+          • Minimum edges per token: ${minEdgeSummary}<br>
+          • Maximum edges per token: ${maxEdgeSummary}<br>
           • Average attention score: <strong>${metadata.avgAttentionScore}</strong><br>
           • Network density: <strong>${(metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)}</strong> edges/token<br>
           • Estimated saved cost: <strong>${formatCurrency(metadata.estimatedValue || 0)}</strong>
@@ -5358,6 +5450,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     function exportDatabaseMetadata() {
       const metadata = analyzeDatabaseMetadata();
+      const dbStats = Object.assign({
+        tokens: metadata.totalTokens,
+        relationships: metadata.totalRelationships,
+        nodes: 0,
+        edges: 0,
+        anchors: 0,
+        minEdges: { count: 0, tokens: [] },
+        maxEdges: { count: 0, tokens: [] },
+      }, metadata.dbStats || {});
 
       const sessionTokenCount = metadata.sessionTokenCount || 0;
       const coverageRatioRaw = (typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage))
@@ -5380,6 +5481,17 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         database_stats: {
           total_tokens: metadata.totalTokens,
           total_relationships: metadata.totalRelationships,
+          graph_nodes: dbStats.nodes,
+          edge_types_enumerated: dbStats.edges,
+          anchors: dbStats.anchors,
+          min_edges_per_token: {
+            count: Number.isFinite(dbStats.minEdges?.count) ? dbStats.minEdges.count : 0,
+            tokens: Array.isArray(dbStats.minEdges?.tokens) ? dbStats.minEdges.tokens : [],
+          },
+          max_edges_per_token: {
+            count: Number.isFinite(dbStats.maxEdges?.count) ? dbStats.maxEdges.count : 0,
+            tokens: Array.isArray(dbStats.maxEdges?.tokens) ? dbStats.maxEdges.tokens : [],
+          },
           avg_attention_score: metadata.avgAttentionScore,
           estimated_value_usd: metadata.estimatedValue.toFixed(2),
           maturity_level: maturityLevel,
