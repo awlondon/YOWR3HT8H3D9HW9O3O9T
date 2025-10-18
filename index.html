@@ -338,6 +338,12 @@
       font-size: 0.95rem;
     }
 
+    .hlsf-mental-summary {
+      font-size: 0.85rem;
+      font-style: italic;
+      opacity: 0.8;
+    }
+
     .hlsf-mental-desc,
     .hlsf-mental-mechanics {
       font-size: 0.8rem;
@@ -603,6 +609,9 @@
         <div class="hlsf-control-group">
           <label for="hlsf-aff-iters">Affinity iterations <span id="hlsf-aff-iters-val">8</span></label>
           <input id="hlsf-aff-iters" type="range" min="1" max="20" step="1" value="8">
+        </div>
+        <div class="hlsf-control-group">
+          <em id="hlsf-affinity-summary" class="hlsf-mental-summary">Current mental state: Focused yet flexible attention.</em>
         </div>
         <div class="hlsf-control-group">
           <label>Rotation modes</label>
@@ -2589,6 +2598,8 @@
       const { name, desc } = describeAffinityMentalState(threshold, iterations);
       const nameEl = wrapper.querySelector('#hlsf-mental-name');
       if (nameEl) nameEl.textContent = name;
+      const summaryEl = wrapper.querySelector('#hlsf-affinity-summary');
+      if (summaryEl) summaryEl.textContent = `Current mental state: ${name}.`;
       const descEl = wrapper.querySelector('#hlsf-mental-desc');
       if (descEl) descEl.textContent = desc;
       const mechanicsEl = wrapper.querySelector('#hlsf-affinity-mechanics');
@@ -2694,6 +2705,9 @@
             <div class="hlsf-control-group">
               <label for="hlsf-aff-iters">Affinity iterations <span id="hlsf-aff-iters-val">8</span></label>
               <input id="hlsf-aff-iters" type="range" min="1" max="20" step="1" value="8">
+            </div>
+            <div class="hlsf-control-group">
+              <em id="hlsf-affinity-summary" class="hlsf-mental-summary">Current mental state: Focused yet flexible attention.</em>
             </div>
             <div class="hlsf-control-group">
               <label>Affinity cognition</label>
