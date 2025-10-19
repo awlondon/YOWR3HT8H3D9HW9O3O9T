@@ -39,6 +39,7 @@ Use leading slashes to control the environment without leaving the keyboard. Com
 | `/clear` | Clear the command log. 【F:index.html†L573-L579】|
 | `/export` | Download a JSON bundle of the current session matrices and cached data. 【F:index.html†L573-L582】【F:index.html†L907-L944】|
 | `/reset` | Purge cached adjacency matrices from `localStorage`. 【F:index.html†L583-L586】|
+| `/hlsf [-db]` | Render the Hierarchical-Level Semantic Framework; append `-db` to work from the fully imported or cached database snapshot. 【F:index.html†L987-L1014】【F:index.html†L6926-L7038】|
 | `/depth [1-5]` | Adjust recursion depth used for multi-pass processing. 【F:index.html†L587-L600】|
 
 ## Data Artifacts
