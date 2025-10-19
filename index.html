@@ -2256,7 +2256,9 @@
       const layoutScale = 1;
       const layoutMode = normalizeLayout(window.HLSF.config.layout);
       let pos;
-      if (layoutMode === 'dimension' && graph.dimensionLayout) {
+      if (graph.live) {
+        pos = ringPositions(graph, width, height, layoutScale, 0, 0);
+      } else if (layoutMode === 'dimension' && graph.dimensionLayout) {
         const dim = graph.dimensionLayout;
         const radialMax = Math.max(1, dim.maxRadius || 1);
         const radiusScale = Math.min(width, height) * 0.42 * layoutScale;
@@ -2378,12 +2380,20 @@
         if (!position) continue;
         const freq = typeof data.f === 'number' ? data.f : 1;
         const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * nodeScale);
-        ctx.globalAlpha = baseAlpha();
+        const nodeColor = data?.color
+          || (data?.status === 'cached' ? '#44ff44' : data?.status === 'unknown' ? '#ff8800' : theme.fg);
         ctx.save();
         if (showGlow) {
           ctx.shadowColor = 'rgba(0, 255, 136, 0.35)';
           ctx.shadowBlur = 14 * Math.max(1, zoom);
         }
+        ctx.beginPath();
+        ctx.fillStyle = nodeColor;
+        ctx.globalAlpha = 0.9;
+        ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = baseAlpha();
+        ctx.strokeStyle = theme.fg;
         ctx.beginPath();
         ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
         ctx.stroke();
@@ -3343,9 +3353,9 @@
     // Default cached database bundled with the repository. Keep this in sync with
     // the actual JSON artifact checked into version control so the visualizer can
     // bootstrap immediately without requiring a manual import.
-    const DEFAULT_BOOTSTRAP_DB = "HLSF_Database_2025-10-18.json";
+    const DEFAULT_BOOTSTRAP_DB = '';
     window.HLSF.config = Object.assign({
-      bootstrapDbUrl: existingConfig.bootstrapDbUrl || DEFAULT_BOOTSTRAP_DB,
+      bootstrapDbUrl: typeof existingConfig.bootstrapDbUrl === 'string' ? existingConfig.bootstrapDbUrl : DEFAULT_BOOTSTRAP_DB,
       rotationActive: true,
       rotationOmega: 0.30,
       alpha: 0.10,
@@ -3673,6 +3683,7 @@
       const index = clean.map(r => r.token);
       localStorage.setItem(DB_INDEX_KEY, JSON.stringify(index));
       window.HLSF.dbCache = out;
+      state.liveGraphMode = false;
       markHlsfDataDirty();
       if (typeof buildHLSFMatrices === 'function') {
         try {
@@ -3808,6 +3819,10 @@
         totalCostUsd: 0,
       },
       hlsfReady: false,
+      tokenSources: new Map(),
+      tokenOrder: [],
+      liveGraph: { nodes: new Map(), links: [] },
+      liveGraphMode: true,
     };
 
     state.hlsfReady = false;
@@ -3959,6 +3974,113 @@
       }
     }
 
+    function normalizeTokenList(input) {
+      if (!input) return [];
+      const array = Array.isArray(input)
+        ? input
+        : String(input).split(/\s+/);
+      const out = [];
+      const seen = new Set();
+      for (const raw of array) {
+        if (!raw) continue;
+        const token = raw.toLowerCase();
+        if (!token || seen.has(token)) continue;
+        seen.add(token);
+        out.push(token);
+      }
+      return out;
+    }
+
+    function ensureTokenOrder(token) {
+      if (!token) return;
+      const key = token.toLowerCase();
+      if (!state.tokenOrder.includes(key)) {
+        state.tokenOrder.push(key);
+      }
+    }
+
+    function ensureTokenEntry(token) {
+      if (!token) return null;
+      const key = token.toLowerCase();
+      let entry = state.tokenSources.get(key);
+      if (!entry) {
+        entry = { input: false, committed: false, output: false };
+        state.tokenSources.set(key, entry);
+        ensureTokenOrder(key);
+      }
+      return entry;
+    }
+
+    function isTokenActive(token) {
+      const entry = state.tokenSources.get(token);
+      return !!entry && (entry.input || entry.output || entry.committed);
+    }
+
+    function pruneInactiveTokens() {
+      for (const [token, entry] of state.tokenSources.entries()) {
+        if (!isTokenActive(token)) {
+          state.tokenSources.delete(token);
+        }
+      }
+      state.tokenOrder = state.tokenOrder.filter(token => state.tokenSources.has(token));
+    }
+
+    function setInputPreviewTokens(tokens, options = {}) {
+      const { render = true } = options;
+      const normalized = normalizeTokenList(tokens);
+      const previewSet = new Set(normalized);
+      for (const [token, entry] of state.tokenSources.entries()) {
+        entry.input = previewSet.has(token);
+      }
+      for (const token of normalized) {
+        const entry = ensureTokenEntry(token);
+        if (entry) entry.input = true;
+      }
+      if (render) rebuildLiveGraph();
+    }
+
+    function commitTokens(tokens, options = {}) {
+      const { render = true } = options;
+      const normalized = normalizeTokenList(tokens);
+      for (const token of normalized) {
+        const entry = ensureTokenEntry(token);
+        if (!entry) continue;
+        entry.committed = true;
+        entry.input = false;
+      }
+      if (render) rebuildLiveGraph();
+    }
+
+    function addOutputTokens(tokens, options = {}) {
+      const { render = true } = options;
+      const normalized = normalizeTokenList(tokens);
+      if (!normalized.length) return;
+      for (const token of normalized) {
+        const entry = ensureTokenEntry(token);
+        if (entry) entry.output = true;
+      }
+      if (render) rebuildLiveGraph();
+    }
+
+    function tokensFromCompletedInput(text) {
+      if (!text) return [];
+      const hasTrailingSpace = /\s$/.test(text);
+      const portion = hasTrailingSpace ? text : text.replace(/\S+$/, ' ');
+      return tokenize(portion);
+    }
+
+    function handleLiveInputChange(text) {
+      const previewTokens = tokensFromCompletedInput(text);
+      setInputPreviewTokens(previewTokens);
+    }
+
+    function commitInputTokensFromText(text) {
+      const committedTokens = tokenize(text || '');
+      if (!committedTokens.length) return committedTokens;
+      commitTokens(committedTokens, { render: false });
+      return committedTokens;
+    }
+
     function onUserPromptSubmitted(text) {
       const toks = text.trim().split(/\s+/).filter(Boolean);
       addConversationTokens(toks);
@@ -4007,6 +4129,13 @@
             ? window.HLSF.dbCache.full_token_data.length
             : 0;
           let task = null;
+
+          const hasLiveTokens = Array.isArray(state.tokenOrder) && state.tokenOrder.length > 0;
+          if (!dbCount && hasLiveTokens) {
+            rebuildLiveGraph();
+            finalize();
+            return;
+          }
 
           if (last && last.metricScope !== METRIC_SCOPE.DB && Array.isArray(last.anchors) && last.anchors.length) {
             task = rebuildHlsfFromLastCommand(true);
@@ -4487,6 +4616,115 @@
       key: getCacheKey,
     };
 
+    function getCachedRecordForToken(token) {
+      if (!token) return null;
+      try {
+        const raw = safeStorageGet(getCacheKey(token));
+        if (!raw) return null;
+        if (typeof raw === 'string') {
+          try { return JSON.parse(raw); } catch { return null; }
+        }
+        return raw;
+      } catch {
+        return null;
+      }
+    }
+
+    function computeLiveGraphEdges(nodes) {
+      const edges = [];
+      const activeTokens = Array.from(nodes.keys());
+      const activeSet = new Set(activeTokens);
+      const seen = new Set();
+
+      for (const node of nodes.values()) {
+        node.degree = 0;
+      }
+
+      for (const token of activeTokens) {
+        if (!isTokenCached(token)) continue;
+        const record = getCachedRecordForToken(token);
+        if (!record || typeof record !== 'object') continue;
+        const rels = record.relationships || {};
+        const candidates = [];
+        for (const [rawRel, arr] of Object.entries(rels)) {
+          if (!Array.isArray(arr)) continue;
+          const rel = normRelKey(rawRel) || rawRel;
+          for (const relEntry of arr) {
+            const neighbor = typeof relEntry?.token === 'string' ? relEntry.token.toLowerCase() : null;
+            if (!neighbor || neighbor === token || !activeSet.has(neighbor)) continue;
+            const weight = Number(relEntry.weight) || 0;
+            candidates.push({ neighbor, weight, rel });
+          }
+        }
+        candidates.sort((a, b) => b.weight - a.weight);
+        const limit = Math.min(4, candidates.length);
+        for (let i = 0; i < limit; i++) {
+          const candidate = candidates[i];
+          const from = token;
+          const to = candidate.neighbor;
+          const key = from < to ? `${from}->${to}->${candidate.rel}` : `${to}->${from}->${candidate.rel}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const edge = { from, to, rtype: candidate.rel, w: candidate.weight, hiddenTokens: [] };
+          edges.push(edge);
+          const fromNode = nodes.get(from);
+          const toNode = nodes.get(to);
+          if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
+          if (toNode) toNode.degree = (toNode.degree || 0) + 1;
+        }
+      }
+
+      return edges;
+    }
+
+    function rebuildLiveGraph(options = {}) {
+      const { render = true } = options;
+      const graph = state.liveGraph || { nodes: new Map(), links: [] };
+      state.liveGraph = graph;
+
+      pruneInactiveTokens();
+      const activeTokens = state.tokenOrder.slice();
+      const nodes = new Map();
+      activeTokens.forEach((token, index) => {
+        const status = isTokenCached(token) ? 'cached' : 'unknown';
+        nodes.set(token, {
+          token,
+          layer: 0,
+          cluster: index,
+          f: 1,
+          status,
+          color: status === 'cached' ? '#00ff88' : '#ff8800',
+        });
+      });
+
+      graph.nodes = nodes;
+      const edges = computeLiveGraphEdges(nodes);
+      graph.links = edges;
+      graph.edges = edges;
+      graph.nodeCount = nodes.size;
+      graph.dimensionLayout = null;
+      graph.live = true;
+
+      if (!render) return graph;
+
+      if (graph.nodeCount > 0) {
+        state.hlsfReady = true;
+        state.liveGraphMode = !getDb();
+        if (state.liveGraphMode) {
+          window.HLSF.config.layout = 'layered';
+        }
+        window.HLSF.currentGraph = graph;
+        showVisualizer();
+        animateHLSF(graph, false);
+      } else if (!getDb()) {
+        stopHLSFAnimation();
+        hideVisualizer();
+        window.HLSF.currentGraph = null;
+      }
+
+      return graph;
+    }
+
     // ============================================
     // OPENAI API
     // ============================================
@@ -4749,6 +4987,67 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
       }
       return relationships;
+    }
+
+    function formatListForPrompt(list) {
+      const tokens = normalizeTokenList(list);
+      if (!tokens.length) return '';
+      if (tokens.length === 1) return tokens[0];
+      if (tokens.length === 2) return `${tokens[0]} and ${tokens[1]}`;
+      return `${tokens.slice(0, -1).join(', ')} and ${tokens[tokens.length - 1]}`;
+    }
+
+    function buildAfterStatePrompt(matrices) {
+      const graph = state.liveGraph || {};
+      const nodes = graph.nodes instanceof Map ? graph.nodes : new Map();
+      const nodeCount = nodes.size;
+      const edgeCount = Array.isArray(graph.links) ? graph.links.length : 0;
+      const cachedTokens = [];
+      const newTokens = [];
+      for (const token of state.tokenOrder) {
+        const node = nodes.get(token);
+        if (!node) continue;
+        if (node.status === 'cached') cachedTokens.push(token);
+        else newTokens.push(token);
+      }
+
+      const topTokens = summarizeAttention(matrices);
+      const keyRels = extractKeyRelationships(matrices);
+      const focus = [];
+      if (cachedTokens.length) {
+        focus.push(`leverage cached knowledge around ${formatListForPrompt(cachedTokens)}`);
+      }
+      if (newTokens.length) {
+        focus.push(`establish context for new or uncached terms ${formatListForPrompt(newTokens)}`);
+      }
+      if (topTokens.length) {
+        const attentionSummary = topTokens
+          .slice(0, 5)
+          .map(t => `${t.token} (${t.attention.toFixed(2)})`)
+          .join(', ');
+        focus.push(`prioritize attention hotspots ${attentionSummary}`);
+      }
+      if (keyRels.length) {
+        focus.push(`highlight relationships such as ${keyRels.join('; ')}`);
+      }
+      focus.push(`maintain coherence across ${nodeCount} active nodes and ${edgeCount} live adjacencies`);
+
+      const lines = [
+        'Craft the next response by reasoning over the stabilized HLSF state.',
+        'Goals:',
+        ...focus.map(item => `- ${item}.`),
+        'Keep explanations grounded in observed tokens and their relationships.'
+      ];
+
+      return {
+        text: lines.join('\n'),
+        cachedTokens,
+        newTokens,
+        topTokens,
+        keyRels,
+        nodeCount,
+        edgeCount,
+      };
     }
 
     // ============================================
@@ -7426,6 +7725,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         // Step 2: Adjacency analysis
         const responseTokens = tokenize(initialResponse);
         addConversationTokens(responseTokens);
+        addOutputTokens(responseTokens, { render: false });
         const [inputMatrices, outputMatrices] = await Promise.all([
           batchFetchAdjacencies(tokens, prompt, 'input'),
           batchFetchAdjacencies(responseTokens, initialResponse, 'output'),
@@ -7460,44 +7760,83 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             { role: 'user', content: `Based on these adjacency insights, generate a stream-of-consciousness internal monologue:\n\nTop tokens: ${JSON.stringify(topTokens)}\nRelationships: ${keyRels.join('; ')}\n\nWrite as flowing natural thought connecting these elements.` },
           ]);
           s2.innerHTML = '✅ Thought stream captured';
-          
+
           addLog(`<div class="section-divider"></div>
             <div class="section-title">💭 Emergent Thought Stream</div>
             <div class="thought-stream">${sanitize(thoughtStream)}</div>`);
+          addOutputTokens(tokenize(thoughtStream), { render: false });
         }
 
-        // Step 4: Refined response
-        let refinedResponse = initialResponse;
-        if (state.apiKey) {
-          const s3 = logStatus('⏳ Refining response...');
-          refinedResponse = await callOpenAI([
-            { role: 'system', content: 'You refine responses based on adjacency insights.' },
-            { role: 'user', content: `Original: "${initialResponse}"\n\nInsights: ${thoughtStream}\n\nRevise by: 1) Incorporating emergent insights 2) Restructuring based on token relationships 3) Enhancing coherence. Provide revised response only.` },
-          ]);
-          s3.innerHTML = '✅ Response refined';
+        // Step 4: After-state prompt synthesis
+        const afterState = buildAfterStatePrompt(allMatrices);
+        const localPrompt = afterState.text;
+        let finalPrompt = localPrompt;
+
+        if (state.apiKey && localPrompt.trim()) {
+          const s3 = logStatus('⏳ Polishing after-state prompt...');
+          const polished = await safeAsync(
+            () => callOpenAI([
+              { role: 'system', content: 'Polish the provided prompt for clarity without adding new ideas.' },
+              { role: 'user', content: localPrompt },
+            ], { max_tokens: 200, temperature: 0.2 }),
+            'Prompt polish failed'
+          );
+          if (polished) {
+            finalPrompt = polished.trim();
+            s3.innerHTML = '✅ Prompt polished';
+          } else {
+            s3.innerHTML = '⚠️ Prompt polish skipped';
+          }
+        } else if (!state.apiKey) {
+          logWarning('Grammar polish skipped (offline)');
         }
-        addConversationTokens(tokenize(refinedResponse));
+
+        const localTokens = tokenize(localPrompt);
+        const polishedTokens = tokenize(finalPrompt);
+        const unionTokens = [...new Set([...localTokens, ...polishedTokens])];
+        if (unionTokens.length) {
+          addConversationTokens(unionTokens);
+          addOutputTokens(unionTokens, { render: false });
+        }
+
+        rebuildLiveGraph();
 
         // Display final output
         const time = ((performance.now() - startTime) / 1000).toFixed(1);
         addLog(`<div class="section-divider"></div>
           <div class="final-output">
-            <h3>✨ REFINED RESPONSE</h3>
-            <pre>${sanitize(refinedResponse)}</pre>
-            
+            <h3>🧠 After-State Cognitive Prompt</h3>
+            <pre>${sanitize(finalPrompt)}</pre>
+
             <details>
-              <summary>Compare with original response</summary>
+              <summary>View raw after-state synthesis</summary>
+              <pre>${sanitize(localPrompt)}</pre>
+            </details>
+
+            <details>
+              <summary>Graph summary (${state.liveGraph?.nodes?.size || 0} nodes)</summary>
+              <pre>${JSON.stringify({
+                nodes: afterState.nodeCount,
+                edges: afterState.edgeCount,
+                cached: afterState.cachedTokens.length,
+                uncached: afterState.newTokens.length,
+                attention: afterState.topTokens.slice(0, 5),
+              }, null, 2)}</pre>
+            </details>
+
+            <details>
+              <summary>Initial model output</summary>
               <pre>${sanitize(initialResponse)}</pre>
             </details>
-            
+
             <details>
               <summary>View adjacency data (${allMatrices.size} tokens)</summary>
               <pre>${JSON.stringify(Array.from(allMatrices.entries()).slice(0, 5), null, 2)}</pre>
             </details>
           </div>
         `);
-        
-        logOK(`Processing complete (${time}s)`);
+
+        logOK(`After-state prompt ready (${time}s)`);
 
         scheduleHlsfReload('prompt-complete', { immediate: true });
 
@@ -7552,12 +7891,21 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     });
 
     elements.sendBtn.addEventListener('click', () => {
-      const input = elements.input.value.trim();
+      const rawValue = elements.input.value;
+      const input = rawValue.trim();
       if (!input) return;
-      
+
+      const isCmd = isCommand(input);
+      if (!isCmd) {
+        const committedTokens = commitInputTokensFromText(rawValue);
+        if (committedTokens.length) addConversationTokens(committedTokens);
+      }
+      setInputPreviewTokens([], { render: false });
+      rebuildLiveGraph();
+
       addLog(`> ${sanitize(input)}`);
-      
-      if (isCommand(input)) {
+
+      if (isCmd) {
         handleCommand(input);
         elements.input.value = '';
       } else {
@@ -7578,6 +7926,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         e.preventDefault();
         elements.sendBtn.click();
       }
+    });
+
+    elements.input.addEventListener('input', (e) => {
+      handleLiveInputChange(e.target.value);
     });
 
     // ============================================
