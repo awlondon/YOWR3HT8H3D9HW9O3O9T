@@ -2252,6 +2252,91 @@
       ctx.restore();
     }
 
+    function colorWithAlpha(color, alpha) {
+      const normalized = Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 0));
+      if (typeof color !== 'string' || !color) {
+        return `rgba(0, 0, 0, ${normalized})`;
+      }
+      if (color.startsWith('#')) {
+        let hex = color.slice(1);
+        if (hex.length === 3) {
+          hex = hex.split('').map((ch) => ch + ch).join('');
+        }
+        if (hex.length >= 6) {
+          const r = parseInt(hex.slice(0, 2), 16);
+          const g = parseInt(hex.slice(2, 4), 16);
+          const b = parseInt(hex.slice(4, 6), 16);
+          return `rgba(${r}, ${g}, ${b}, ${normalized})`;
+        }
+      }
+      const rgbaMatch = color.match(/rgba?\(([^)]+)\)/i);
+      if (rgbaMatch) {
+        const [r = '0', g = '0', b = '0'] = rgbaMatch[1].split(',').map((c) => c.trim());
+        return `rgba(${r}, ${g}, ${b}, ${normalized})`;
+      }
+      return color;
+    }
+
+    function drawRoundedRectPath(ctx, x, y, width, height, radius) {
+      const r = Math.max(0, Math.min(radius, Math.min(width / 2, height / 2)));
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, r);
+        return;
+      }
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + width - r, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+      ctx.lineTo(x + width, y + height - r);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+      ctx.lineTo(x + r, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function renderNodeLabelOverlay(ctx, text, centerX, baselineY, radius, theme, nodeColor, inFocus, alphaValue) {
+      if (!text) return;
+      const metrics = ctx.measureText(text);
+      const width = metrics.width || 0;
+      const ascent = metrics.actualBoundingBoxAscent || 9;
+      const descent = metrics.actualBoundingBoxDescent || 3;
+      const padX = 6;
+      const padY = 4;
+      const boxWidth = width + padX * 2;
+      const boxHeight = ascent + descent + padY * 2;
+      const boxX = centerX - boxWidth / 2;
+      const boxY = baselineY - ascent - padY;
+      const overlayAlpha = Math.max(0.2, Math.min(1, (Number.isFinite(alphaValue) ? alphaValue : 0.1) * 1.2));
+      const baseColor = inFocus
+        ? 'rgba(0, 255, 153, 0.35)'
+        : (theme.bg === '#fff'
+            ? 'rgba(255, 255, 255, 0.82)'
+            : 'rgba(0, 0, 0, 0.72)');
+
+      ctx.save();
+      ctx.globalAlpha = overlayAlpha;
+      ctx.fillStyle = baseColor;
+      drawRoundedRectPath(ctx, boxX, boxY, boxWidth, boxHeight, Math.min(12, boxHeight / 2));
+      ctx.fill();
+      ctx.restore();
+
+      const trailTop = boxY + boxHeight - 1;
+      const trailBottom = baselineY + radius + 6;
+      if (trailBottom > trailTop) {
+        ctx.save();
+        const gradient = ctx.createLinearGradient(0, trailTop, 0, trailBottom);
+        gradient.addColorStop(0, colorWithAlpha(baseColor, overlayAlpha * 0.85));
+        gradient.addColorStop(1, colorWithAlpha(nodeColor, 0));
+        ctx.globalAlpha = Math.min(1, Number.isFinite(alphaValue) ? alphaValue : 0.1);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(boxX + padX, trailTop, Math.max(0, boxWidth - padX * 2), trailBottom - trailTop);
+        ctx.restore();
+      }
+    }
+
     function drawComposite(graph, opts = {}) {
       const cfg = window.HLSF.config;
       const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
@@ -2455,6 +2540,7 @@
           ? '#00ff88'
           : data?.color
             || (data?.status === 'cached' ? '#44ff44' : data?.status === 'unknown' ? '#ff8800' : theme.fg);
+        const alphaValue = baseAlpha();
         ctx.save();
         if (showGlow) {
           ctx.shadowColor = inFocus ? 'rgba(0, 255, 200, 0.65)' : 'rgba(0, 255, 136, 0.35)';
@@ -2462,10 +2548,10 @@
         }
         ctx.beginPath();
         ctx.fillStyle = nodeColor;
-        ctx.globalAlpha = baseAlpha();
+        ctx.globalAlpha = alphaValue;
         ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
         ctx.fill();
-        ctx.globalAlpha = baseAlpha();
+        ctx.globalAlpha = alphaValue;
         ctx.strokeStyle = inFocus ? '#00ffcc' : theme.fg;
         ctx.beginPath();
         ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
@@ -2473,9 +2559,12 @@
         ctx.restore();
         ctx.globalAlpha = 1.0;
         if (cfg.showLabels !== false) {
-          ctx.globalAlpha = baseAlpha();
+          const labelText = nodeLabel(token, glyphOnly);
+          const labelY = position.y - (radius + 12);
+          renderNodeLabelOverlay(ctx, labelText, position.x, labelY, radius, theme, nodeColor, inFocus, alphaValue);
+          ctx.globalAlpha = alphaValue;
           ctx.fillStyle = inFocus ? '#00ffcc' : theme.fg;
-          ctx.fillText(nodeLabel(token, glyphOnly), position.x, position.y - (radius + 12));
+          ctx.fillText(labelText, position.x, labelY);
           ctx.globalAlpha = 1.0;
         }
       }
