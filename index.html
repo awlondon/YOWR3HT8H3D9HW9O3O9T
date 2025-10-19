@@ -3998,7 +3998,10 @@
         pendingHlsfReloadTimer = null;
         if (hlsfReloadInFlight) return;
 
-        const finalize = () => { hlsfReloadInFlight = false; };
+        const finalize = () => {
+          hlsfReloadInFlight = false;
+          HlsfLoading.hide(0);
+        };
 
         try {
           const last = window.HLSF?.lastCommand;
