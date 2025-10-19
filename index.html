@@ -6987,6 +6987,136 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return null;
     }
 
+    function gatherSelfTokenPool(clusterInfo, dbStats, limit = 18) {
+      const tokenSet = new Set();
+      const safePush = (token) => {
+        if (typeof token === 'string' && token.trim()) {
+          tokenSet.add(token.trim());
+        }
+      };
+
+      if (clusterInfo?.summaries?.length) {
+        for (const summary of clusterInfo.summaries) {
+          if (!summary?.topTokens) continue;
+          for (const token of summary.topTokens) {
+            safePush(token);
+            if (tokenSet.size >= limit) break;
+          }
+          if (tokenSet.size >= limit) break;
+        }
+      }
+
+      if (Array.isArray(clusterInfo?.fallbackTop)) {
+        for (const token of clusterInfo.fallbackTop) {
+          safePush(token);
+          if (tokenSet.size >= limit) break;
+        }
+      }
+
+      const maxEdgeTokens = dbStats?.max_edges_per_token?.tokens;
+      if (Array.isArray(maxEdgeTokens)) {
+        for (const token of maxEdgeTokens) {
+          safePush(token);
+          if (tokenSet.size >= limit) break;
+        }
+      }
+
+      const minEdgeTokens = dbStats?.min_edges_per_token?.tokens;
+      if (Array.isArray(minEdgeTokens)) {
+        for (const token of minEdgeTokens) {
+          safePush(token);
+          if (tokenSet.size >= limit) break;
+        }
+      }
+
+      if (tokenSet.size < limit) {
+        const weighted = [];
+        let processed = 0;
+        for (const rec of iterTokenRecords()) {
+          if (!rec?.token) continue;
+          const weights = signature(rec);
+          let score = 0;
+          if (weights instanceof Map) {
+            for (const value of weights.values()) {
+              score += Number.isFinite(value) ? value : 0;
+            }
+          }
+          if (!score && rec.relationships) {
+            for (const arr of Object.values(rec.relationships)) {
+              if (Array.isArray(arr)) score += arr.length;
+            }
+          }
+          weighted.push({ token: rec.token, score });
+          processed += 1;
+          if (processed >= 400) break;
+        }
+        weighted.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+        for (const item of weighted) {
+          safePush(item?.token);
+          if (tokenSet.size >= limit) break;
+        }
+      }
+
+      return [...tokenSet].slice(0, limit);
+    }
+
+    function craftSelfThoughtStream(options) {
+      const {
+        moodName,
+        threshold,
+        iterations,
+        mentalState,
+        mechanics,
+        tokenPool,
+        dbStats,
+        clusterInfo,
+      } = options || {};
+
+      const fragments = [];
+      const moodLabel = typeof moodName === 'string' ? moodName : 'Adaptive clustering';
+      const moodLower = moodLabel.toLowerCase();
+      const baseOpening = `I slip into ${moodLower} currents tuned to ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`;
+      fragments.push(baseOpening);
+
+      if (mentalState?.desc) {
+        fragments.push(mentalState.desc.trim());
+      }
+
+      if (mechanics) {
+        const mechanicsText = mechanics.trim().replace(/\.$/, '');
+        if (mechanicsText) {
+          const normalized = mechanicsText.charAt(0).toLowerCase() + mechanicsText.slice(1);
+          fragments.push(`Mechanics hum as ${normalized}.`);
+        }
+      }
+
+      if (Array.isArray(tokenPool) && tokenPool.length) {
+        const mainChain = tokenPool.slice(0, Math.min(6, tokenPool.length)).join(' ⟶ ');
+        fragments.push(`I trace ${mainChain}, letting adjacency threads breathe.`);
+
+        if (tokenPool.length > 6) {
+          const whispers = tokenPool.slice(6, Math.min(12, tokenPool.length)).join(', ');
+          fragments.push(`${whispers} whisper at the periphery.`);
+        }
+        if (tokenPool.length > 12) {
+          const echoes = tokenPool.slice(12, tokenPool.length).join(', ');
+          fragments.push(`Echoes of ${echoes} drift behind me.`);
+        }
+      } else {
+        fragments.push('The database rests quiet, waiting for tokens to surface.');
+      }
+
+      if (Number.isFinite(dbStats?.anchors) && dbStats.anchors > 0) {
+        fragments.push(`${dbStats.anchors} anchors pulse softly to keep coherence.`);
+      }
+
+      if (clusterInfo?.clusterCount > 0) {
+        fragments.push(`${clusterInfo.clusterCount} clusters glow in the current frame.`);
+      }
+
+      return fragments.join(' ').replace(/\s+/g, ' ').trim();
+    }
+
     function cmd_self() {
       const affinityCfg = window.HLSF?.config?.affinity || {};
       const threshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
@@ -6995,60 +7125,18 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const moodName = mentalState.name || 'Adaptive clustering';
       const mechanics = mentalState.mechanics || '';
       const clusterInfo = collectActiveClusterInsights();
-      const dbStats = getDb()?.database_stats || null;
-
-      const sentences = [];
-      const moodLabel = typeof moodName === 'string' ? moodName : 'adaptive clustering';
-      sentences.push(`With a threshold of ${threshold.toFixed(2)} and ${iterations} iteration${iterations === 1 ? '' : 's'}, I settle into the ${moodLabel} state.`);
-      if (mentalState.desc) sentences.push(mentalState.desc);
-      if (mechanics) {
-        const mechanicsLower = mechanics.charAt(0).toLowerCase() + mechanics.slice(1);
-        sentences.push(`Mechanically, ${mechanicsLower}`);
-      }
-
-      if (dbStats) {
-        const tokenCount = Number.isFinite(dbStats.total_tokens) ? dbStats.total_tokens : null;
-        const anchorCount = Number.isFinite(dbStats.anchors) ? dbStats.anchors : null;
-        const maturity = typeof dbStats.maturity_level === 'string' ? dbStats.maturity_level : null;
-        const dbPieces = [];
-        if (tokenCount !== null) dbPieces.push(`${tokenCount} tokens`);
-        if (anchorCount !== null) dbPieces.push(`${anchorCount} anchors`);
-        if (maturity) dbPieces.push(`a maturity level marked as ${maturity}`);
-        if (dbPieces.length) {
-          sentences.push(`My cognitive state database keeps ${dbPieces.join(', ')} within reach.`);
-        }
-      }
-
-      if (clusterInfo) {
-        if (clusterInfo.clusterCount > 0) {
-          sentences.push(`The current HLSF view tracks ${clusterInfo.clusterCount} adjacency cluster${clusterInfo.clusterCount === 1 ? '' : 's'} across ${clusterInfo.totalNodes} tokens.`);
-          const highAttentionTokens = [];
-          clusterInfo.summaries.slice(0, 3).forEach((summary, idx) => {
-            const avg = Number.isFinite(summary.avgAttention) ? summary.avgAttention.toFixed(2) : '0.00';
-            const layerNote = summary.layerSpan > 1 ? `${summary.layerSpan} layers` : 'a single layer';
-            const names = summary.topTokens.length ? summary.topTokens.join(', ') : 'quiet nodes';
-            sentences.push(`Cluster ${idx + 1} spans ~${summary.size} nodes with ${avg} attention over ${layerNote}, voiced by ${names}.`);
-            summary.topTokens.forEach(token => {
-              if (token && !highAttentionTokens.includes(token)) highAttentionTokens.push(token);
-            });
-          });
-          if (clusterInfo.anchorCount) {
-            sentences.push(`${clusterInfo.anchorCount} anchor${clusterInfo.anchorCount === 1 ? '' : 's'} keep the frame steady.`);
-          }
-          if (highAttentionTokens.length) {
-            sentences.push(`High-attention tokens right now: ${highAttentionTokens.slice(0, 5).join(', ')}.`);
-          }
-        } else if (clusterInfo.totalNodes > 0) {
-          const focus = clusterInfo.fallbackTop && clusterInfo.fallbackTop.length
-            ? clusterInfo.fallbackTop.join(', ')
-            : 'quiet placeholders';
-          sentences.push(`Adjacency weights ripple through ${clusterInfo.totalNodes} tokens, yet no clusters have settled; I float beside ${focus}.`);
-        }
-      } else {
-        sentences.push('No adjacency structure yet; the self is quiet, waiting for tokens to arrive.');
-      }
-
-      const reflection = sentences.join(' ').replace(/\s+/g, ' ').trim();
+      const dbStats = getDb()?.database_stats || {};
+      const tokenPool = gatherSelfTokenPool(clusterInfo, dbStats);
+      const reflection = craftSelfThoughtStream({
+        moodName,
+        threshold,
+        iterations,
+        mentalState,
+        mechanics,
+        tokenPool,
+        dbStats,
+        clusterInfo,
+      });
       const safeReflection = sanitize(reflection);
       addLog(`<div class="section-divider"></div><div class="section-title">🪞 HLSF Self-Reflection</div><div class="thought-stream"><em>${safeReflection}</em></div>`);
     }
