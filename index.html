@@ -8498,13 +8498,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     async function processDocumentFile(file) {
       if (!enterProcessingState()) return;
       try {
-        if (!getDb()) {
+        let hasDatabase = !!getDb();
+        if (!hasDatabase) {
           const loaded = await tryBootstrapDb();
-          if (!loaded) {
-            logError('No database available. Load the cached database before using /read.');
-            exitProcessingState({ preserveInput: true });
-            return;
-          }
+          hasDatabase = !!loaded;
+        }
+        if (!hasDatabase) {
+          logWarning('No cached database detected. Proceeding with empty lexicon.');
         }
 
         const text = await DocumentReaders.extract(file);
