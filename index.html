@@ -595,6 +595,7 @@
       </div>
     </div>
     <input id="db-file" type="file" accept=".json,application/json" style="display:none">
+    <input id="read-file" type="file" accept=".txt,text/plain,.pdf,application/pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none">
     <div class="hlsf-canvas-container" id="hlsf-canvas-container">
       <div class="section-title">🔭 HLSF Matrix Visualizer</div>
       <details id="hlsf-batch-log" open>
@@ -696,10 +697,11 @@
     // ============================================
     const CONFIG = {
       MAX_TOKENS_PER_PROMPT: 500,
-      MAX_TOKENS_PER_RESPONSE: 500,
+      MAX_TOKENS_PER_RESPONSE: 1500,
       MAX_CONCURRENCY: 5,
       MAX_RETRY_ATTEMPTS: 3,
       RETRY_BASE_DELAY_MS: 500,
+      DOCUMENT_CHUNK_SIZE: 100,
       DEFAULT_MODEL: 'gpt-4o-mini',
       MODEL_PRICING: {
         default: { inputPerMillion: 0.15, outputPerMillion: 0.60 },
@@ -2364,6 +2366,9 @@
       }
 
       const glyphOnly = opts.glyphOnly === true;
+      const focusSet = window.HLSF?.state?.documentFocus instanceof Set
+        ? window.HLSF.state.documentFocus
+        : null;
 
       ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
 
@@ -2378,14 +2383,18 @@
           const dx = (toPos.x - fromPos.x) * viewScale;
           const dy = (toPos.y - fromPos.y) * viewScale;
           if ((dx * dx + dy * dy) < 0.25) continue;
-          const strokeColor = compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
+          const fromFocus = focusSet && focusSet.has((edge.from || '').toLowerCase());
+          const toFocus = focusSet && focusSet.has((edge.to || '').toLowerCase());
+          const edgeFocus = fromFocus && toFocus;
+          const strokeColor = edgeFocus ? '#00ffcc' : compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
           if (!batches.has(strokeColor)) batches.set(strokeColor, []);
-          batches.get(strokeColor).push({ from: fromPos, to: toPos, edge });
+          batches.get(strokeColor).push({ from: fromPos, to: toPos, edge, edgeFocus });
         }
         for (const [color, edges] of batches.entries()) {
           ctx.strokeStyle = color;
-          for (const { from, to, edge } of edges) {
-            ctx.globalAlpha = edgeAlphaFromWeight(edge.w);
+          for (const { from, to, edge, edgeFocus } of edges) {
+            ctx.globalAlpha = edgeFocus ? Math.min(1, baseAlpha() * 1.5) : edgeAlphaFromWeight(edge.w);
+            ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation * (edgeFocus ? 1.8 : 1)) * dpr;
             ctx.beginPath();
             ctx.moveTo(from.x, from.y);
             ctx.lineTo(to.x, to.y);
@@ -2418,25 +2427,30 @@
                   ctx.globalAlpha = baseAlpha();
                 }
               }
-              ctx.fillStyle = theme.fg;
+              ctx.fillStyle = edgeFocus ? '#00ffcc' : theme.fg;
             }
           }
         }
         ctx.globalAlpha = 1.0;
         ctx.strokeStyle = theme.fg;
+        ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
       }
 
       for (const [token, data] of graph.nodes.entries()) {
         const position = rotatedPositions.get(token);
         if (!position) continue;
         const freq = typeof data.f === 'number' ? data.f : 1;
-        const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * nodeScale);
-        const nodeColor = data?.color
-          || (data?.status === 'cached' ? '#44ff44' : data?.status === 'unknown' ? '#ff8800' : theme.fg);
+        const nodeKey = (token || '').toLowerCase();
+        const inFocus = focusSet && focusSet.has(nodeKey);
+        const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * nodeScale * (inFocus ? 1.6 : 1));
+        const nodeColor = inFocus
+          ? '#00ff88'
+          : data?.color
+            || (data?.status === 'cached' ? '#44ff44' : data?.status === 'unknown' ? '#ff8800' : theme.fg);
         ctx.save();
         if (showGlow) {
-          ctx.shadowColor = 'rgba(0, 255, 136, 0.35)';
-          ctx.shadowBlur = 14 * Math.max(1, zoom);
+          ctx.shadowColor = inFocus ? 'rgba(0, 255, 200, 0.65)' : 'rgba(0, 255, 136, 0.35)';
+          ctx.shadowBlur = (inFocus ? 24 : 14) * Math.max(1, zoom);
         }
         ctx.beginPath();
         ctx.fillStyle = nodeColor;
@@ -2444,7 +2458,7 @@
         ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = baseAlpha();
-        ctx.strokeStyle = theme.fg;
+        ctx.strokeStyle = inFocus ? '#00ffcc' : theme.fg;
         ctx.beginPath();
         ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
         ctx.stroke();
@@ -2452,7 +2466,7 @@
         ctx.globalAlpha = 1.0;
         if (cfg.showLabels !== false) {
           ctx.globalAlpha = baseAlpha();
-          ctx.fillStyle = theme.fg;
+          ctx.fillStyle = inFocus ? '#00ffcc' : theme.fg;
           ctx.fillText(nodeLabel(token, glyphOnly), position.x, position.y - (radius + 12));
           ctx.globalAlpha = 1.0;
         }
@@ -3897,6 +3911,7 @@
       cachedTokens: document.getElementById('cached-tokens'),
       sessionCost: document.getElementById('session-cost'),
       dbFileInput: document.getElementById('db-file'),
+      readFileInput: document.getElementById('read-file'),
     };
 
     // ============================================
@@ -3907,6 +3922,152 @@
       div.textContent = text;
       return div.innerHTML;
     }
+
+    const ExternalLoaders = (() => {
+      let pdfPromise = null;
+      let jszipPromise = null;
+
+      function loadScript(src, checkFn) {
+        return new Promise((resolve, reject) => {
+          try {
+            if (typeof checkFn === 'function') {
+              const existing = checkFn();
+              if (existing) {
+                resolve(existing);
+                return;
+              }
+            }
+
+            const script = document.createElement('script');
+            script.src = src;
+            script.async = true;
+            script.onload = () => {
+              try {
+                resolve(typeof checkFn === 'function' ? checkFn() : true);
+              } catch (err) {
+                resolve(true);
+              }
+            };
+            script.onerror = () => reject(new Error(`Failed to load ${src}`));
+            document.head.appendChild(script);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+
+      async function loadPdfJs() {
+        if (window.pdfjsLib) {
+          if (window.pdfjsLib.GlobalWorkerOptions) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = window.pdfjsLib.GlobalWorkerOptions.workerSrc
+              || 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
+          }
+          return window.pdfjsLib;
+        }
+        if (!pdfPromise) {
+          pdfPromise = loadScript(
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js',
+            () => window.pdfjsLib
+          ).then(lib => {
+            if (lib?.GlobalWorkerOptions) {
+              lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
+            }
+            return lib;
+          });
+        }
+        return pdfPromise;
+      }
+
+      async function loadJsZip() {
+        if (window.JSZip) return window.JSZip;
+        if (!jszipPromise) {
+          jszipPromise = loadScript(
+            'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+            () => window.JSZip
+          );
+        }
+        return jszipPromise;
+      }
+
+      return { loadPdfJs, loadJsZip };
+    })();
+
+    const DocumentReaders = (() => {
+      async function extractPdfText(file) {
+        const pdfjs = await ExternalLoaders.loadPdfJs();
+        if (!pdfjs?.getDocument) throw new Error('PDF parser unavailable');
+        const data = await file.arrayBuffer();
+        const pdf = await pdfjs.getDocument({ data }).promise;
+        let text = '';
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          const page = await pdf.getPage(pageNum);
+          const content = await page.getTextContent();
+          const pageText = content.items.map(item => item.str).join(' ');
+          text += pageText + '\n';
+        }
+        return text;
+      }
+
+      async function extractDocxText(file) {
+        const JSZip = await ExternalLoaders.loadJsZip();
+        if (!JSZip?.loadAsync) throw new Error('DOCX parser unavailable');
+        const data = await file.arrayBuffer();
+        const zip = await JSZip.loadAsync(data);
+        const docFile = zip.file('word/document.xml');
+        if (!docFile) throw new Error('DOCX archive missing document.xml');
+        const xml = await docFile.async('string');
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(xml, 'application/xml');
+        const nodes = Array.from(doc.getElementsByTagName('w:t'));
+        return nodes.map(node => node.textContent || '').join(' ');
+      }
+
+      async function extractDocBinary(file) {
+        const data = await file.arrayBuffer();
+        const bytes = new Uint8Array(data);
+        let text = '';
+        for (let i = 0; i < bytes.length; i++) {
+          const code = bytes[i];
+          if (code === 0) continue;
+          if (code === 10 || code === 13) {
+            text += ' ';
+            continue;
+          }
+          if (code < 32) {
+            text += ' ';
+            continue;
+          }
+          text += String.fromCharCode(code);
+        }
+        return text.replace(/\s+/g, ' ');
+      }
+
+      async function extractPlainText(file) {
+        return await file.text();
+      }
+
+      async function extract(file) {
+        if (!file) throw new Error('No file selected');
+        const name = (file.name || '').toLowerCase();
+        const type = (file.type || '').toLowerCase();
+        try {
+          if (name.endsWith('.pdf') || type === 'application/pdf') {
+            return await extractPdfText(file);
+          }
+          if (name.endsWith('.docx') || type.includes('officedocument.wordprocessingml.document')) {
+            return await extractDocxText(file);
+          }
+          if (name.endsWith('.doc') && !name.endsWith('.docx')) {
+            return await extractDocBinary(file);
+          }
+          return await extractPlainText(file);
+        } catch (err) {
+          throw new Error(err?.message || 'Unable to extract document text');
+        }
+      }
+
+      return { extract };
+    })();
 
     function validatePrompt(prompt) {
       if (!prompt || typeof prompt !== 'string') {
@@ -5043,6 +5204,67 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return relationships;
     }
 
+    function cloneAdjacencyEntry(entry, fallbackToken) {
+      if (!entry) return null;
+      const relationships = {};
+      for (const [rel, edges] of Object.entries(entry.relationships || {})) {
+        if (!Array.isArray(edges)) continue;
+        relationships[rel] = edges.map(edge => ({
+          token: edge?.token || '',
+          weight: Number(edge?.weight) || 0,
+        }));
+      }
+      return {
+        token: entry.token || fallbackToken || '',
+        relationships,
+        attention_score: Number(entry.attention_score) || 0,
+        total_relationships: Number(entry.total_relationships) || 0,
+      };
+    }
+
+    function mergeAdjacencyMaps(target, source) {
+      const map = target instanceof Map ? target : new Map();
+      if (!(source instanceof Map)) return map;
+      for (const [token, entry] of source.entries()) {
+        if (!token || !entry) continue;
+        const key = (token || '').toLowerCase();
+        const existing = map.get(key);
+        if (!existing) {
+          const clone = cloneAdjacencyEntry(entry, key);
+          if (clone) map.set(key, clone);
+          continue;
+        }
+        const relationships = existing.relationships || (existing.relationships = {});
+        const incoming = entry.relationships || {};
+        for (const [rel, edges] of Object.entries(incoming)) {
+          if (!Array.isArray(edges)) continue;
+          if (!Array.isArray(relationships[rel])) relationships[rel] = [];
+          const list = relationships[rel];
+          for (const edge of edges) {
+            if (!edge || !edge.token) continue;
+            const weight = Number(edge.weight) || 0;
+            const existingEdge = list.find(item => item.token === edge.token);
+            if (existingEdge) {
+              existingEdge.weight = Math.max(Number(existingEdge.weight) || 0, weight);
+            } else {
+              list.push({ token: edge.token, weight });
+            }
+          }
+        }
+        const attn = Number(entry.attention_score);
+        if (Number.isFinite(attn)) {
+          existing.attention_score = Math.max(Number(existing.attention_score) || 0, attn);
+        }
+        const total = Number(entry.total_relationships);
+        if (Number.isFinite(total)) {
+          existing.total_relationships = Math.max(Number(existing.total_relationships) || 0, total);
+        }
+        if (!existing.token) existing.token = key;
+        map.set(key, existing);
+      }
+      return map;
+    }
+
     function formatListForPrompt(list) {
       const tokens = normalizeTokenList(list);
       if (!tokens.length) return '';
@@ -5711,6 +5933,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
         const edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
         const effectiveEdgeWidth = edgeWidth * Math.max(0.6, window.HLSF.config.scale || 1);
+        const focusSet = window.HLSF?.state?.documentFocus instanceof Set
+          ? window.HLSF.state.documentFocus
+          : null;
 
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1.0;
@@ -5745,6 +5970,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           let centerPoint = Array.isArray(node.center) ? node.center : [0, 0];
           const nodeColor = Array.isArray(node.color) ? node.color : [0, 255, 136];
           const [r, g, b] = nodeColor;
+          const tokenKey = typeof node.token === 'string' ? node.token.toLowerCase() : '';
+          const inFocus = focusSet && focusSet.has(tokenKey);
 
           if (window.HLSF.config.emergentActive) {
             const angle = window.HLSF.state?.emergentRot ?? 0;
@@ -5772,12 +5999,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           const screenVertices = vertices.map(([x, y]) => worldToScreen(x, y));
 
           ctx.globalAlpha = baseAlpha();
-          ctx.strokeStyle = theme.fg;
-          ctx.lineWidth = effectiveEdgeWidth;
+          ctx.strokeStyle = inFocus ? '#00ffcc' : theme.fg;
+          ctx.lineWidth = effectiveEdgeWidth * (inFocus ? 1.6 : 1);
           ctx.save();
           if (window.HLSF.config.showNodeGlow) {
-            ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.35)`;
-            ctx.shadowBlur = 16 * Math.max(1, window.HLSF.config.scale || 1);
+            const glowColor = inFocus ? `rgba(0, 255, 200, 0.65)` : `rgba(${r}, ${g}, ${b}, 0.35)`;
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = (inFocus ? 28 : 16) * Math.max(1, window.HLSF.config.scale || 1);
           }
 
           strokePolygon(ctx, screenVertices);
@@ -5791,14 +6019,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               if (i === anchorIndex) continue;
               const [vx, vy] = screenVertices[i];
               const strokeColor = nodeEdgeStrokeColor(node, i, edgeColorMode) || theme.fg;
-              ctx.strokeStyle = strokeColor;
-              ctx.lineWidth = effectiveEdgeWidth;
+              const edgeFocus = inFocus && focusSet && focusSet.has((node.verticesLabels?.[i] || '').toLowerCase());
+              ctx.strokeStyle = edgeFocus ? '#00ffcc' : strokeColor;
+              ctx.lineWidth = effectiveEdgeWidth * (edgeFocus ? 1.5 : 1);
               ctx.beginPath();
               ctx.moveTo(anchor[0], anchor[1]);
               ctx.lineTo(vx, vy);
               ctx.stroke();
             }
             ctx.strokeStyle = theme.fg;
+            ctx.lineWidth = effectiveEdgeWidth;
           }
 
           ctx.globalAlpha = 1.0;
@@ -5810,18 +6040,21 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             const [sx, sy] = worldToScreen(centerForLabel[0], centerForLabel[1]);
             ctx.save();
             if (window.HLSF.config.showNodeGlow) {
-              ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.45)`;
-              ctx.shadowBlur = 18 * Math.max(1, window.HLSF.config.scale || 1);
+              const glowColor = inFocus ? 'rgba(0, 255, 200, 0.75)' : `rgba(${r}, ${g}, ${b}, 0.45)`;
+              ctx.shadowColor = glowColor;
+              ctx.shadowBlur = (inFocus ? 32 : 18) * Math.max(1, window.HLSF.config.scale || 1);
             }
             ctx.globalAlpha = baseAlpha();
-            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+            ctx.fillStyle = inFocus ? 'rgba(0, 255, 204, 0.9)' : `rgba(${r}, ${g}, ${b}, 0.9)`;
             ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(node.glyph, sx, sy);
             ctx.restore();
 
-            ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
+            ctx.fillStyle = inFocus
+              ? (window.HLSF.config.whiteBg ? 'rgba(0, 128, 128, 0.8)' : 'rgba(0, 255, 204, 0.8)')
+              : window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
             ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
             ctx.fillText(node.token, sx, sy + 25 * window.HLSF.config.scale);
             ctx.globalAlpha = 1.0;
@@ -5849,6 +6082,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     function requestRender() {
       debouncedLegacyRender();
+    }
+
+    function setDocumentFocusTokens(tokens) {
+      const normalized = normalizeTokenList(tokens);
+      window.HLSF = window.HLSF || {};
+      window.HLSF.state = window.HLSF.state || {};
+      window.HLSF.state.documentFocus = new Set(normalized);
+      requestRender();
     }
 
     function animateViewport(target, ms = 300) {
@@ -6687,6 +6928,165 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return idx;
     }
 
+    const DbLexicon = (() => {
+      let cache = null;
+
+      function buildLexicon() {
+        const db = getDb();
+        const idx = dbIndex();
+        const tokens = Array.from(idx.keys());
+        const buckets = new Map();
+        for (const token of tokens) {
+          const key = token.charAt(0) || '_';
+          if (!buckets.has(key)) buckets.set(key, []);
+          const bucket = buckets.get(key);
+          if (bucket.length < 800) bucket.push(token);
+        }
+        return { db, idx, tokens, buckets };
+      }
+
+      function ensure() {
+        const db = getDb();
+        if (!db) {
+          return { db: null, idx: new Map(), tokens: [], buckets: new Map() };
+        }
+        if (!cache || cache.db !== db) {
+          cache = buildLexicon();
+        }
+        return cache;
+      }
+
+      function levenshtein(a, b) {
+        const la = a.length;
+        const lb = b.length;
+        if (la === 0) return lb;
+        if (lb === 0) return la;
+        let previous = new Array(lb + 1);
+        let current = new Array(lb + 1);
+        for (let j = 0; j <= lb; j++) previous[j] = j;
+        for (let i = 1; i <= la; i++) {
+          current[0] = i;
+          const ai = a.charCodeAt(i - 1);
+          for (let j = 1; j <= lb; j++) {
+            const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+            const deletion = previous[j] + 1;
+            const insertion = current[j - 1] + 1;
+            const substitution = previous[j - 1] + cost;
+            current[j] = Math.min(deletion, insertion, substitution);
+          }
+          const temp = previous;
+          previous = current;
+          current = temp;
+        }
+        return previous[lb];
+      }
+
+      function matchCase(source, pattern) {
+        if (!pattern) return source;
+        if (pattern.toUpperCase() === pattern) return source.toUpperCase();
+        if (pattern[0] && pattern[0] === pattern[0].toUpperCase()) {
+          return source.charAt(0).toUpperCase() + source.slice(1);
+        }
+        return source;
+      }
+
+      function candidateList(token, lexicon) {
+        if (!token) return lexicon.tokens.slice(0, 400);
+        const key = token.charAt(0);
+        const candidates = [];
+        if (key && lexicon.buckets.has(key)) {
+          candidates.push(...lexicon.buckets.get(key));
+        }
+        if (candidates.length < 200) {
+          const fallback = lexicon.tokens.slice(0, 600);
+          for (const cand of fallback) {
+            if (!candidates.includes(cand)) candidates.push(cand);
+            if (candidates.length >= 600) break;
+          }
+        }
+        return candidates;
+      }
+
+      function findClosest(token, lexicon) {
+        if (!token) return null;
+        const candidates = candidateList(token, lexicon);
+        let best = null;
+        let bestScore = Infinity;
+        const maxChecks = Math.min(candidates.length, 600);
+        for (let i = 0; i < maxChecks; i++) {
+          const candidate = candidates[i];
+          const distance = levenshtein(token, candidate);
+          const normalized = distance / Math.max(1, Math.max(candidate.length, token.length));
+          if (normalized < bestScore) {
+            bestScore = normalized;
+            best = candidate;
+            if (bestScore === 0) break;
+          }
+        }
+        if (!best || bestScore > 0.6) return null;
+        return best;
+      }
+
+      function alignTokens(tokens) {
+        const lex = ensure();
+        if (!Array.isArray(tokens)) return [];
+        return tokens.map(token => {
+          const lower = (token || '').toLowerCase();
+          if (lex.idx.has(lower)) return lower;
+          const replacement = findClosest(lower, lex);
+          return replacement || lower;
+        });
+      }
+
+      function rewriteText(text) {
+        const lex = ensure();
+        if (!text) return '';
+        return text.replace(/[\p{L}][\p{L}\p{N}'-]*/gu, (match) => {
+          const lower = match.toLowerCase();
+          if (lex.idx.has(lower)) return match;
+          const replacement = findClosest(lower, lex);
+          if (!replacement) return match;
+          return matchCase(replacement, match);
+        });
+      }
+
+      function padToTokenCount(text, target) {
+        const lex = ensure();
+        const baseTokens = tokenize(text);
+        if (baseTokens.length >= target) return text;
+        const needed = target - baseTokens.length;
+        const lexTokens = lex.tokens.length ? lex.tokens : baseTokens;
+        if (!lexTokens.length || needed <= 0) return text;
+        const filler = [];
+        for (let i = 0; i < needed; i++) {
+          filler.push(lexTokens[i % lexTokens.length]);
+        }
+        const sentences = [];
+        for (let i = 0; i < filler.length; i += 25) {
+          const slice = filler.slice(i, i + 25);
+          if (!slice.length) continue;
+          const sentence = slice.join(' ');
+          sentences.push(sentence.charAt(0).toUpperCase() + sentence.slice(1) + '.');
+        }
+        const trimmed = text.trim();
+        const fillerText = sentences.join(' ');
+        return trimmed ? `${trimmed}\n\n${fillerText}` : fillerText;
+      }
+
+      function uniqueTokens(limit = 120) {
+        const lex = ensure();
+        return lex.tokens.slice(0, limit);
+      }
+
+      return {
+        ensure,
+        alignTokens,
+        rewriteText,
+        padToTokenCount,
+        uniqueTokens,
+      };
+    })();
+
     function tokenWeight(token, idx) {
       const rec = idx.get(token);
       if (!rec) return 0.5;
@@ -6942,6 +7342,33 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           logError(String(err.message || err));
         } finally {
           e.target.value = '';
+          input.onchange = null;
+        }
+      };
+      input.click();
+    }
+
+    async function cmdRead() {
+      if (state.isProcessing) {
+        logWarning('Processing already in progress');
+        return;
+      }
+      const input = elements.readFileInput;
+      if (!input) {
+        logError('Reader input unavailable');
+        return;
+      }
+      input.value = '';
+      input.onchange = async (event) => {
+        try {
+          const file = event.target.files?.[0];
+          if (!file) {
+            logWarning('No file selected');
+            return;
+          }
+          await processDocumentFile(file);
+        } finally {
+          event.target.value = '';
           input.onchange = null;
         }
       };
@@ -7564,6 +7991,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     registerCommand('/self', cmd_self);
     registerCommand('/import', cmd_import);
+    registerCommand('/read', () => cmdRead());
     registerCommand('/loaddb', cmd_loaddb);
     window.COMMANDS = COMMANDS;
     // Router guard (prevents duplicate logs)
@@ -7583,6 +8011,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const arg = rest.join(' ').trim();
 
       if (command === '/import') { await cmdImport(); return true; }
+      if (command === '/read') { await cmdRead(); return true; }
       if (command === '/loaddb') { await cmdLoadDb(arg); return true; }
       if (command === '/hlsf') { await runHlsfSafely(arg); return true; }
       if (command === '/scheme') { cmdScheme(arg || 'black'); return true; }
@@ -7690,6 +8119,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             /database or /db - View database metadata<br>
             /export - Export database metadata as JSON<br>
             /import - Import database from JSON file<br>
+            /read - Import and analyze a document in 100-token segments<br>
             /loaddb &lt;url&gt; - Load database JSON from URL<br>
             /glyph &lt;token1 token2 ...&gt; - Show weighted glyph assignments<br>
             /ledger [show|export|import] - Manage private glyph ledger<br>
@@ -7708,14 +8138,31 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     // ============================================
     // MAIN PROCESSING
     // ============================================
-    async function processPrompt(prompt) {
-      if (state.isProcessing) return;
-      
+    function enterProcessingState() {
+      if (state.isProcessing) return false;
       state.isProcessing = true;
       currentAbortController = new AbortController();
-      elements.sendBtn.disabled = true;
-      elements.cancelBtn.style.display = 'inline-block';
-      elements.input.disabled = true;
+      if (elements.sendBtn) elements.sendBtn.disabled = true;
+      if (elements.cancelBtn) elements.cancelBtn.style.display = 'inline-block';
+      if (elements.input) elements.input.disabled = true;
+      return true;
+    }
+
+    function exitProcessingState(options = {}) {
+      const { preserveInput = false } = options || {};
+      state.isProcessing = false;
+      currentAbortController = null;
+      if (elements.sendBtn) elements.sendBtn.disabled = false;
+      if (elements.cancelBtn) elements.cancelBtn.style.display = 'none';
+      if (elements.input) {
+        elements.input.disabled = false;
+        if (!preserveInput) elements.input.value = '';
+        elements.input.focus();
+      }
+    }
+
+    async function processPrompt(prompt) {
+      if (!enterProcessingState()) return;
 
       const startTime = performance.now();
 
@@ -7902,13 +8349,231 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           console.error(err);
         }
       } finally {
-        state.isProcessing = false;
-        currentAbortController = null;
-        elements.sendBtn.disabled = false;
-        elements.cancelBtn.style.display = 'none';
-        elements.input.disabled = false;
-        elements.input.value = '';
-        elements.input.focus();
+        exitProcessingState();
+      }
+    }
+
+    async function analyzeDocumentChunk(chunkTokens, index, totalChunks) {
+      const chunkLabel = `Segment ${index + 1}/${totalChunks}`;
+      const previewTokens = chunkTokens.slice(0, 18).join(' ');
+      addLog(`<div class="section-divider"></div><div class="section-title">📚 ${sanitize(chunkLabel)}</div><div>${sanitize(previewTokens)}${chunkTokens.length > 18 ? ' …' : ''}</div>`);
+
+      const uniqueTokens = [...new Set(chunkTokens)].slice(0, 80);
+      const lexiconHint = uniqueTokens.join(', ');
+      let reflection = '';
+      const reflectionStatus = logStatus(`⏳ ${chunkLabel}: generating reflection`);
+
+      if (state.apiKey) {
+        const messages = [
+          { role: 'system', content: 'You reflect on passages using only the supplied lexicon. Compose fluent, introspective prose anchored to the provided tokens.' },
+          { role: 'user', content: `Lexicon: ${lexiconHint || '(empty)'}\nTokens: ${chunkTokens.join(' ')}\nWrite a reflective synthesis of this passage in the voice of the cached database.` }
+        ];
+        reflection = await safeAsync(
+          () => callOpenAI(messages, { temperature: 0.45, max_tokens: 420 }),
+          `${chunkLabel} reflection failed`
+        ) || '';
+        reflectionStatus.innerHTML = `✅ ${chunkLabel}: reflection ready`;
+      } else {
+        reflection = chunkTokens.join(' ');
+        reflectionStatus.innerHTML = `⚠️ ${chunkLabel}: offline placeholder`;
+      }
+
+      reflection = DbLexicon.rewriteText(reflection);
+      addOutputTokens(tokenize(reflection), { render: false });
+      addLog(`<div class="thought-stream">${sanitize(reflection)}</div>`);
+
+      const chunkPrompt = chunkTokens.join(' ');
+      const reflectionTokens = tokenize(reflection);
+      const [inputMatrices, outputMatrices] = await Promise.all([
+        batchFetchAdjacencies(chunkTokens, chunkPrompt, `${chunkLabel} prompt adjacencies`),
+        batchFetchAdjacencies(reflectionTokens, reflection, `${chunkLabel} reflection adjacencies`)
+      ]);
+
+      calculateAttention(inputMatrices);
+      calculateAttention(outputMatrices);
+      const allMatrices = new Map([...inputMatrices, ...outputMatrices]);
+      calculateAttention(allMatrices);
+      const topTokens = summarizeAttention(allMatrices);
+      const keyRels = extractKeyRelationships(allMatrices);
+
+      addLog(`<div class="adjacency-insight"><strong>🎯 ${sanitize(chunkLabel)} Focus:</strong> ${formatTopTokens(topTokens)}</div>`);
+      if (keyRels.length) {
+        addLog(`<div class="adjacency-insight"><strong>🔗 Relationships:</strong><br>${keyRels.map(rel => `• ${sanitize(rel)}`).join('<br>')}</div>`);
+      }
+
+      let thoughtStream = '';
+      const thoughtStatus = logStatus(`⏳ ${chunkLabel}: distilling HLSF thoughts`);
+      if (state.apiKey) {
+        const thoughtMessages = [
+          { role: 'system', content: 'You translate adjacency metrics into connected internal thoughts using the cached lexicon.' },
+          { role: 'user', content: `Tokens: ${chunkTokens.join(' ')}\nAttention hotspots: ${topTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ')}\nKey relationships: ${keyRels.join('; ')}\nCompose a flowing interior monologue grounded in these ties.` }
+        ];
+        thoughtStream = await safeAsync(
+          () => callOpenAI(thoughtMessages, { temperature: 0.5, max_tokens: 380 }),
+          `${chunkLabel} thought stream failed`
+        ) || '';
+        thoughtStatus.innerHTML = `✅ ${chunkLabel}: HLSF thoughts ready`;
+      } else {
+        thoughtStream = `Offline thoughts: ${chunkTokens.slice(0, 25).join(' ')}`;
+        thoughtStatus.innerHTML = `⚠️ ${chunkLabel}: offline thought stream`;
+      }
+
+      thoughtStream = DbLexicon.rewriteText(thoughtStream);
+      if (thoughtStream) {
+        addOutputTokens(tokenize(thoughtStream), { render: false });
+        addLog(`<div class="section-title">💭 Chunk Thought Stream</div><div class="thought-stream">${sanitize(thoughtStream)}</div>`);
+      }
+
+      const afterState = buildAfterStatePrompt(allMatrices);
+      let refinedResponse = '';
+      const refineStatus = logStatus(`⏳ ${chunkLabel}: composing refined response`);
+      if (state.apiKey) {
+        const refineMessages = [
+          { role: 'system', content: 'You create refined HLSF responses anchored to cached vocabulary and observed adjacencies.' },
+          { role: 'user', content: `${afterState.text}\nSegment focus: ${chunkTokens.join(' ')}\nEnsure language mirrors cached database expressions.` }
+        ];
+        refinedResponse = await safeAsync(
+          () => callOpenAI(refineMessages, { temperature: 0.4, max_tokens: 420 }),
+          `${chunkLabel} refined response failed`
+        ) || '';
+        refineStatus.innerHTML = `✅ ${chunkLabel}: refined response ready`;
+      } else {
+        refinedResponse = `Offline refinement: ${chunkTokens.slice(0, 30).join(' ')}`;
+        refineStatus.innerHTML = `⚠️ ${chunkLabel}: offline refinement`;
+      }
+
+      refinedResponse = DbLexicon.rewriteText(refinedResponse);
+      if (refinedResponse) {
+        addOutputTokens(tokenize(refinedResponse), { render: false });
+        addLog(`<div class="section-title">🧠 HLSF Refined Response</div><div class="thought-stream">${sanitize(refinedResponse)}</div>`);
+      }
+
+      rebuildLiveGraph({ render: false });
+
+      return {
+        tokens: chunkTokens,
+        reflection,
+        thoughtStream,
+        refinedResponse,
+        matrices: allMatrices,
+        topTokens,
+        keyRelationships: keyRels,
+      };
+    }
+
+    async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, focusTokens, docName) {
+      calculateAttention(aggregateMatrices);
+      const docTopTokens = summarizeAttention(aggregateMatrices);
+      const docRelationships = extractKeyRelationships(aggregateMatrices);
+      const lexiconSeeds = Array.from(focusTokens).slice(0, 160);
+      const chunkSummaries = chunkResults.map((result, idx) => {
+        const tops = result.topTokens.slice(0, 5).map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ') || 'none';
+        const rels = result.keyRelationships.slice(0, 4).join('; ') || 'none';
+        return `Segment ${idx + 1}: tokens ${tops}; links ${rels}.`;
+      }).join('\n');
+
+      let finalReflection = '';
+      const reflectionStatus = logStatus('⏳ Building document-scale reflection');
+      if (state.apiKey) {
+        const messages = [
+          { role: 'system', content: 'You craft extensive reflections using cached database language and HLSF adjacency insights.' },
+          { role: 'user', content: `Document: ${docName}\nLexicon anchors: ${lexiconSeeds.join(', ')}\nGlobal attention: ${docTopTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ')}\nRelationships: ${docRelationships.join('; ')}\nChunk breakdown:\n${chunkSummaries}\nProduce an approximately 1000-token synthesis that traces these relationships, highlights correlated nodes, and concludes with an integrative perspective. Maintain vocabulary from the cached database.` }
+        ];
+        finalReflection = await safeAsync(
+          () => callOpenAI(messages, { temperature: 0.55, max_tokens: 1200 }),
+          'Document reflection failed'
+        ) || '';
+        reflectionStatus.innerHTML = '✅ Document reflection ready';
+      } else {
+        finalReflection = `Offline document reflection for ${docName}: ${lexiconSeeds.join(' ')}`;
+        reflectionStatus.innerHTML = '⚠️ Offline document reflection placeholder';
+      }
+
+      finalReflection = DbLexicon.rewriteText(finalReflection);
+      finalReflection = DbLexicon.padToTokenCount(finalReflection, 1000);
+      addOutputTokens(tokenize(finalReflection), { render: false });
+      addLog(`<div class="section-divider"></div><div class="section-title">🧾 Document Reflection</div><div class="thought-stream">${sanitize(finalReflection)}</div>`);
+    }
+
+    async function processDocumentFile(file) {
+      if (!enterProcessingState()) return;
+      try {
+        if (!getDb()) {
+          const loaded = await tryBootstrapDb();
+          if (!loaded) {
+            logError('No database available. Load the cached database before using /read.');
+            exitProcessingState({ preserveInput: true });
+            return;
+          }
+        }
+
+        const text = await DocumentReaders.extract(file);
+        if (currentAbortController?.signal.aborted) throw new Error('AbortError');
+        const rawTokens = tokenize(text);
+        if (!rawTokens.length) {
+          logError('Document contained no readable tokens.');
+          exitProcessingState({ preserveInput: true });
+          return;
+        }
+
+        const alignedTokens = DbLexicon.alignTokens(rawTokens).filter(Boolean);
+        if (!alignedTokens.length) {
+          logError('Unable to align document tokens with cached database vocabulary.');
+          exitProcessingState({ preserveInput: true });
+          return;
+        }
+
+        const chunkSize = CONFIG.DOCUMENT_CHUNK_SIZE || 100;
+        const chunks = [];
+        for (let i = 0; i < alignedTokens.length; i += chunkSize) {
+          chunks.push(alignedTokens.slice(i, i + chunkSize));
+        }
+
+        addLog(`📥 Processing <strong>${sanitize(file.name || 'document')}</strong> (${alignedTokens.length} tokens → ${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
+
+        const aggregateMatrices = new Map();
+        const focusTokens = new Set();
+        const chunkResults = [];
+
+        for (let i = 0; i < chunks.length; i++) {
+          if (currentAbortController?.signal.aborted) {
+            logWarning('Document processing cancelled.');
+            break;
+          }
+          const chunk = chunks[i];
+          chunk.forEach(token => focusTokens.add(token));
+          commitTokens(chunk, { render: false });
+          addConversationTokens(chunk);
+          const result = await analyzeDocumentChunk(chunk, i, chunks.length);
+          if (result) {
+            chunkResults.push(result);
+            mergeAdjacencyMaps(aggregateMatrices, result.matrices);
+          }
+        }
+
+        if (!chunkResults.length) {
+          exitProcessingState({ preserveInput: true });
+          return;
+        }
+
+        setDocumentFocusTokens(focusTokens);
+        rebuildLiveGraph();
+        notifyHlsfAdjacencyChange('document-read', { immediate: true });
+
+        if (!currentAbortController?.signal.aborted) {
+          await synthesizeDocumentReflection(chunkResults, aggregateMatrices, focusTokens, file.name || 'document');
+        }
+
+        logOK('Document ingestion complete');
+      } catch (err) {
+        if (err?.name === 'AbortError' || err?.message === 'AbortError') {
+          logWarning('Document ingestion cancelled');
+        } else {
+          logError(err?.message || 'Document ingestion failed');
+          console.error(err);
+        }
+      } finally {
+        exitProcessingState({ preserveInput: true });
       }
     }
 
@@ -8027,7 +8692,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         4. Response refinement based on insights<br>
         5. <strong>Symbolic glyph encryption</strong> (complex number encoding)<br>
         6. <strong>HLSF visualization</strong> (hierarchical semantic framework)<br><br>
-        <strong>Commands:</strong> /help, /hlsf, /glyph, /encrypt, /decrypt<br>
+        <strong>Commands:</strong> /help, /hlsf, /read, /glyph, /encrypt, /decrypt<br>
         ${cachedCount > 0 ? `<br>✅ Loaded with ${cachedCount} cached tokens` : ''}
         <br><small>⚠️ Note: Download HTML and run locally for API calls to work.</small>
       `);
