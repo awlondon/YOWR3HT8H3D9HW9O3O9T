@@ -4420,6 +4420,20 @@
       return `${prefix}${Math.abs(amountUsd).toFixed(decimals)}`;
     }
 
+    function formatDuration(ms) {
+      if (!Number.isFinite(ms) || ms <= 0) return '0s';
+      if (ms < 1000) return '<1s';
+      const totalSeconds = Math.round(ms / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      const parts = [];
+      if (hours) parts.push(`${hours}h`);
+      if (minutes) parts.push(`${minutes}m`);
+      if (seconds || parts.length === 0) parts.push(`${seconds}s`);
+      return parts.join(' ');
+    }
+
     function getCachedTokenCount() {
       return safeStorageKeys(TOKEN_CACHE_PREFIX).length;
     }
@@ -5239,6 +5253,21 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const hits = Array.from(results.values()).filter(r => r.cache_hit).length;
       progress.complete(`${label}: ${hits} cached, ${results.size - hits} new`);
       return results;
+    }
+
+    function summarizeAdjacencyResults(map) {
+      let hits = 0;
+      let misses = 0;
+      let total = 0;
+      if (map instanceof Map) {
+        for (const entry of map.values()) {
+          if (!entry) continue;
+          total++;
+          if (entry.cache_hit === true) hits++;
+          else misses++;
+        }
+      }
+      return { hits, misses, total };
     }
 
     function hasNewAdjacencyData(matrices) {
@@ -8535,8 +8564,270 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return polished?.trim() || text;
     }
 
-    async function analyzeDocumentChunk(chunkTokens, index, totalChunks) {
+    class DocumentReadEstimator {
+      constructor(chunks) {
+        this.chunks = Array.isArray(chunks) ? chunks : [];
+        this.totalChunks = this.chunks.length;
+        this.chunksProcessed = 0;
+        this.statusElement = null;
+        this.cancelled = false;
+        this.isComplete = false;
+
+        this.currentSeenTokens = new Set();
+        this.initialSeenTokens = new Set();
+        this.cachePresence = new Map();
+        this.totalDurationMs = 0;
+        this.totalAdjacencyDurationMs = 0;
+        this.totalAdjacencyRequests = 0;
+        this.totalAdjacencyHits = 0;
+        this.totalAdjacencyMisses = 0;
+        this.totalAdjacencyHitDurationMs = 0;
+        this.totalAdjacencyMissDurationMs = 0;
+        this.totalNonAdjacencyDurationMs = 0;
+        this.totalUniqueTokensObserved = 0;
+      }
+
+      setStatusElement(element) {
+        this.statusElement = element || null;
+        this.updateStatus();
+      }
+
+      getTokenKey(token) {
+        return (token == null ? '' : String(token)).toLowerCase();
+      }
+
+      fetchCachedPresence(token) {
+        const key = this.getTokenKey(token);
+        if (this.cachePresence.has(key)) return this.cachePresence.get(key);
+        const cached = isTokenCached(token);
+        this.cachePresence.set(key, cached);
+        if (cached) this.initialSeenTokens.add(key);
+        return cached;
+      }
+
+      prepareChunk(index, chunk) {
+        const list = Array.isArray(chunk) ? chunk : [];
+        const seenInChunk = new Set();
+        const uniqueKeys = [];
+        const originalTokens = [];
+        for (const token of list) {
+          const key = this.getTokenKey(token);
+          if (!key || seenInChunk.has(key)) continue;
+          seenInChunk.add(key);
+          uniqueKeys.push(key);
+          originalTokens.push(token);
+        }
+
+        let cachedBefore = 0;
+        const cachedFlags = [];
+        for (let i = 0; i < uniqueKeys.length; i++) {
+          const key = uniqueKeys[i];
+          let warm = this.currentSeenTokens.has(key);
+          if (!warm) {
+            warm = this.fetchCachedPresence(originalTokens[i]);
+          }
+          cachedFlags.push(warm);
+          if (warm) cachedBefore++;
+        }
+
+        return {
+          uniqueTokens: uniqueKeys.length,
+          cachedBefore,
+          newBefore: Math.max(0, uniqueKeys.length - cachedBefore),
+          keys: uniqueKeys,
+          cachedFlags,
+        };
+      }
+
+      getSimulationSeed() {
+        return new Set([...this.initialSeenTokens, ...this.currentSeenTokens]);
+      }
+
+      recordChunk(index, stats = {}, metaOverride = null) {
+        const meta = metaOverride || this.prepareChunk(index, this.chunks[index] || []);
+        for (const key of meta.keys) this.currentSeenTokens.add(key);
+
+        this.chunksProcessed = Math.max(this.chunksProcessed, index + 1);
+        this.totalUniqueTokensObserved += meta.uniqueTokens;
+
+        const durationMs = Number(stats.durationMs) || 0;
+        const adjacencyDurationMs = Number(stats.adjacencyDurationMs) || 0;
+        const adjacencyHits = Number(stats.adjacencyHits) || 0;
+        const adjacencyMisses = Number(stats.adjacencyMisses) || 0;
+        const adjacencyRequests = Number(stats.adjacencyRequests) || (adjacencyHits + adjacencyMisses);
+        const totalAdjEntries = adjacencyHits + adjacencyMisses;
+
+        const nonAdjacencyMs = Math.max(0, durationMs - adjacencyDurationMs);
+        this.totalDurationMs += durationMs;
+        this.totalAdjacencyDurationMs += adjacencyDurationMs;
+        this.totalAdjacencyHits += adjacencyHits;
+        this.totalAdjacencyMisses += adjacencyMisses;
+        this.totalAdjacencyRequests += adjacencyRequests;
+        this.totalNonAdjacencyDurationMs += nonAdjacencyMs;
+
+        if (adjacencyDurationMs > 0 && totalAdjEntries > 0) {
+          const missShare = Math.min(1, adjacencyMisses / totalAdjEntries);
+          const missDuration = adjacencyDurationMs * missShare;
+          const hitDuration = adjacencyDurationMs - missDuration;
+          this.totalAdjacencyMissDurationMs += missDuration;
+          this.totalAdjacencyHitDurationMs += hitDuration;
+        }
+
+        this.isComplete = this.chunksProcessed >= this.totalChunks;
+        this.updateStatus();
+      }
+
+      computeRemainingForecast() {
+        const remainingChunks = this.totalChunks - this.chunksProcessed;
+        if (remainingChunks <= 0) {
+          const hitRate = this.totalAdjacencyRequests > 0
+            ? this.totalAdjacencyHits / this.totalAdjacencyRequests
+            : 0;
+          return {
+            remainingMs: 0,
+            remainingChunks: 0,
+            predictedAdjRequests: 0,
+            predictedNewAdjRequests: 0,
+            predictedCachedAdjRequests: 0,
+            projectedHitRate: hitRate,
+          };
+        }
+
+        const avgChunkDuration = this.chunksProcessed > 0
+          ? this.totalDurationMs / this.chunksProcessed
+          : 0;
+        const avgNonAdjDuration = this.chunksProcessed > 0
+          ? this.totalNonAdjacencyDurationMs / this.chunksProcessed
+          : 0;
+        const avgAdjRequestsPerToken = this.totalUniqueTokensObserved > 0
+          ? this.totalAdjacencyRequests / this.totalUniqueTokensObserved
+          : 0;
+        const avgMissDuration = this.totalAdjacencyMisses > 0
+          ? this.totalAdjacencyMissDurationMs / this.totalAdjacencyMisses
+          : 0;
+        const avgHitDuration = this.totalAdjacencyHits > 0
+          ? this.totalAdjacencyHitDurationMs / this.totalAdjacencyHits
+          : 0;
+
+        const simSeen = this.getSimulationSeed();
+        let simulatedUnique = 0;
+        let simulatedNew = 0;
+
+        for (let idx = this.chunksProcessed; idx < this.totalChunks; idx++) {
+          const chunk = this.chunks[idx] || [];
+          const meta = this.prepareChunk(idx, chunk);
+          simulatedUnique += meta.uniqueTokens;
+          let newCount = 0;
+          for (let i = 0; i < meta.keys.length; i++) {
+            const key = meta.keys[i];
+            if (simSeen.has(key)) continue;
+            const initialWarm = this.initialSeenTokens.has(key);
+            if (!initialWarm) newCount++;
+            simSeen.add(key);
+          }
+          simulatedNew += newCount;
+        }
+
+        const predictedAdjRequests = simulatedUnique * Math.max(0, avgAdjRequestsPerToken);
+        const predictedNewAdjRequests = simulatedNew * Math.max(0, avgAdjRequestsPerToken);
+        const predictedCachedAdjRequests = Math.max(0, predictedAdjRequests - predictedNewAdjRequests);
+
+        const effectiveMissDuration = avgMissDuration || avgHitDuration || avgNonAdjDuration;
+        const effectiveHitDuration = avgHitDuration || (avgMissDuration * 0.4) || (avgNonAdjDuration * 0.25);
+
+        let adjacencyMs = 0;
+        if (predictedAdjRequests > 0 && Number.isFinite(effectiveMissDuration)) {
+          adjacencyMs = (predictedNewAdjRequests * (effectiveMissDuration || 0))
+            + (predictedCachedAdjRequests * (effectiveHitDuration || 0));
+        }
+
+        let nonAdjMs = remainingChunks * Math.max(0, avgNonAdjDuration);
+        let remainingMs = adjacencyMs + nonAdjMs;
+
+        if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+          remainingMs = remainingChunks * Math.max(0, avgChunkDuration);
+        }
+
+        if (!Number.isFinite(remainingMs)) remainingMs = 0;
+
+        const totalAdjFuture = this.totalAdjacencyRequests + Math.max(0, predictedAdjRequests);
+        const totalHitsFuture = this.totalAdjacencyHits + Math.max(0, predictedCachedAdjRequests);
+        const projectedHitRate = totalAdjFuture > 0 ? totalHitsFuture / totalAdjFuture : 0;
+
+        return {
+          remainingMs: Math.max(0, remainingMs),
+          remainingChunks,
+          predictedAdjRequests: Math.max(0, predictedAdjRequests),
+          predictedNewAdjRequests: Math.max(0, predictedNewAdjRequests),
+          predictedCachedAdjRequests: Math.max(0, predictedCachedAdjRequests),
+          projectedHitRate,
+        };
+      }
+
+      estimateRemainingMs() {
+        return this.computeRemainingForecast().remainingMs;
+      }
+
+      markCancelled() {
+        this.cancelled = true;
+        this.isComplete = false;
+        this.updateStatus();
+      }
+
+      complete() {
+        this.isComplete = true;
+        this.cancelled = false;
+        this.updateStatus();
+      }
+
+      updateStatus() {
+        if (!this.statusElement) return;
+        if (this.totalChunks === 0) {
+          this.statusElement.innerHTML = '⚠️ No document segments detected.';
+          return;
+        }
+
+        if (this.cancelled) {
+          const percent = ((this.chunksProcessed / this.totalChunks) * 100).toFixed(1);
+          const elapsed = formatDuration(this.totalDurationMs);
+          this.statusElement.innerHTML = `⚠️ Document ingestion cancelled (${percent}% complete, elapsed ${elapsed}).`;
+          return;
+        }
+
+        if (this.isComplete) {
+          const elapsed = formatDuration(this.totalDurationMs);
+          const hitRate = this.totalAdjacencyRequests > 0
+            ? (this.totalAdjacencyHits / this.totalAdjacencyRequests) * 100
+            : 0;
+          this.statusElement.innerHTML = `✅ Document processed in ${elapsed} • cache hits ${hitRate.toFixed(1)}%.`;
+          return;
+        }
+
+        if (this.chunksProcessed === 0) {
+          const preview = this.prepareChunk(0, this.chunks[0] || []);
+          const chunkWord = this.totalChunks === 1 ? 'segment' : 'segments';
+          this.statusElement.innerHTML = `⏳ Document ETA ready • ${this.totalChunks} ${chunkWord}.<br><small>Segment 1 preview: ${preview.uniqueTokens} unique tokens (${preview.newBefore} new, ${preview.cachedBefore} cached).</small>`;
+          return;
+        }
+
+        const forecast = this.computeRemainingForecast();
+        const remainingMs = forecast.remainingMs;
+        const percent = ((this.chunksProcessed / this.totalChunks) * 100).toFixed(1);
+        const etaText = formatDuration(remainingMs);
+        const elapsed = formatDuration(this.totalDurationMs);
+        const hitRate = this.totalAdjacencyRequests > 0
+          ? (this.totalAdjacencyHits / this.totalAdjacencyRequests) * 100
+          : 0;
+        const projected = (forecast.projectedHitRate || 0) * 100;
+        const chunkWord = this.totalChunks === 1 ? 'segment' : 'segments';
+
+        this.statusElement.innerHTML = `⏳ Document ETA: ${etaText} remaining (${percent}% of ${this.totalChunks} ${chunkWord}).<br><small>Elapsed ${elapsed}, cache hits ${hitRate.toFixed(1)}% → ${projected.toFixed(1)}% projected.</small>`;
+      }
+    }
+
+    async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta = {}) {
       const chunkLabel = `Segment ${index + 1}/${totalChunks}`;
+      const chunkStart = performance.now();
       const previewTokens = chunkTokens.slice(0, 18).join(' ');
       addLog(`<div class="section-divider"></div><div class="section-title">📚 ${sanitize(chunkLabel)}</div><div>${sanitize(previewTokens)}${chunkTokens.length > 18 ? ' …' : ''}</div>`);
 
@@ -8584,10 +8875,23 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       const chunkPrompt = chunkTokens.join(' ');
       const reflectionTokens = tokenize(reflection);
-      const [inputMatrices, outputMatrices] = await Promise.all([
-        batchFetchAdjacencies(chunkTokens, chunkPrompt, `${chunkLabel} prompt adjacencies`),
-        batchFetchAdjacencies(reflectionTokens, reflection, `${chunkLabel} reflection adjacencies`)
+      const measure = async (fn) => {
+        const start = performance.now();
+        const result = await fn();
+        return { result, duration: performance.now() - start };
+      };
+
+      const [inputData, outputData] = await Promise.all([
+        measure(() => batchFetchAdjacencies(chunkTokens, chunkPrompt, `${chunkLabel} prompt adjacencies`)),
+        measure(() => batchFetchAdjacencies(reflectionTokens, reflection, `${chunkLabel} reflection adjacencies`)),
       ]);
+
+      const inputMatrices = inputData.result;
+      const outputMatrices = outputData.result;
+      const inputAdjDuration = inputData.duration || 0;
+      const outputAdjDuration = outputData.duration || 0;
+      const inputAdjStats = summarizeAdjacencyResults(inputMatrices);
+      const outputAdjStats = summarizeAdjacencyResults(outputMatrices);
 
       calculateAttention(inputMatrices);
       calculateAttention(outputMatrices);
@@ -8686,6 +8990,37 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       rebuildLiveGraph({ render: false });
 
+      const metaUnique = Number(chunkMeta.uniqueTokens);
+      const fallbackUnique = (() => {
+        const uniqueSet = new Set();
+        for (const token of chunkTokens) {
+          const key = (token == null ? '' : String(token)).toLowerCase();
+          if (key) uniqueSet.add(key);
+        }
+        return uniqueSet.size;
+      })();
+      const uniqueTokenCount = Number.isFinite(metaUnique) && metaUnique > 0 ? metaUnique : fallbackUnique;
+
+      const metaNew = Number(chunkMeta.newBefore);
+      const metaCached = Number(chunkMeta.cachedBefore);
+      let newBefore = Number.isFinite(metaNew) && metaNew >= 0 ? metaNew : NaN;
+      let cachedBefore = Number.isFinite(metaCached) && metaCached >= 0 ? metaCached : NaN;
+      if (!Number.isFinite(newBefore) && Number.isFinite(cachedBefore)) {
+        newBefore = Math.max(0, uniqueTokenCount - cachedBefore);
+      } else if (!Number.isFinite(cachedBefore) && Number.isFinite(newBefore)) {
+        cachedBefore = Math.max(0, uniqueTokenCount - newBefore);
+      } else if (!Number.isFinite(cachedBefore) && !Number.isFinite(newBefore)) {
+        cachedBefore = 0;
+        newBefore = uniqueTokenCount;
+      }
+
+      const adjacencyDurationMs = inputAdjDuration + outputAdjDuration;
+      const adjacencyHits = inputAdjStats.hits + outputAdjStats.hits;
+      const adjacencyMisses = inputAdjStats.misses + outputAdjStats.misses;
+      const adjacencyRequests = inputAdjStats.total + outputAdjStats.total;
+      const totalDurationMs = performance.now() - chunkStart;
+      const adjacencyHitRate = adjacencyRequests > 0 ? adjacencyHits / adjacencyRequests : 0;
+
       return {
         tokens: chunkTokens,
         reflection,
@@ -8694,6 +9029,17 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         matrices: allMatrices,
         topTokens,
         keyRelationships: keyRels,
+        metrics: {
+          durationMs: totalDurationMs,
+          adjacencyDurationMs,
+          adjacencyHits,
+          adjacencyMisses,
+          adjacencyRequests,
+          adjacencyHitRate,
+          uniqueInputTokens: uniqueTokenCount,
+          cachedInputTokensBefore: cachedBefore,
+          newInputTokensBefore: newBefore,
+        },
       };
     }
 
@@ -8733,6 +9079,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     async function processDocumentFile(file) {
       if (!enterProcessingState()) return;
+      let estimator = null;
+      let wasCancelled = false;
       try {
         let hasDatabase = !!getDb();
         if (!hasDatabase) {
@@ -8766,24 +9114,42 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           addLog(`ℹ️ ${oversizedSentences} sentence${oversizedSentences === 1 ? '' : 's'} exceeded ${chunkSize} characters and were split.`);
         }
 
+        estimator = new DocumentReadEstimator(chunks);
+        const etaStatus = logStatus('⏳ Document ETA initializing…');
+        estimator.setStatusElement(etaStatus);
+
         const aggregateMatrices = new Map();
         const focusTokens = new Set();
         const chunkResults = [];
 
+        let cancelledMidway = false;
         for (let i = 0; i < chunks.length; i++) {
           if (currentAbortController?.signal.aborted) {
             logWarning('Document processing cancelled.');
+            cancelledMidway = true;
             break;
           }
           const chunk = chunks[i];
           chunk.forEach(token => focusTokens.add(token));
           commitTokens(chunk, { render: false });
           addConversationTokens(chunk);
-          const result = await analyzeDocumentChunk(chunk, i, chunks.length);
+          const chunkMeta = estimator ? estimator.prepareChunk(i, chunk) : {};
+          const result = await analyzeDocumentChunk(chunk, i, chunks.length, chunkMeta);
           if (result) {
             chunkResults.push(result);
             mergeAdjacencyMaps(aggregateMatrices, result.matrices);
+            if (estimator) estimator.recordChunk(i, result.metrics || {}, chunkMeta);
           }
+        }
+
+        if (cancelledMidway) {
+          wasCancelled = true;
+          estimator?.markCancelled();
+        }
+
+        if (!cancelledMidway && currentAbortController?.signal.aborted) {
+          wasCancelled = true;
+          estimator?.markCancelled();
         }
 
         if (!chunkResults.length) {
@@ -8799,15 +9165,24 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           await synthesizeDocumentReflection(chunkResults, aggregateMatrices, focusTokens, file.name || 'document');
         }
 
+        if (!wasCancelled) {
+          estimator?.complete();
+        }
+
         logOK('Document ingestion complete');
       } catch (err) {
         if (err?.name === 'AbortError' || err?.message === 'AbortError') {
+          wasCancelled = true;
           logWarning('Document ingestion cancelled');
         } else {
+          wasCancelled = true;
           logError(err?.message || 'Document ingestion failed');
           console.error(err);
         }
       } finally {
+        if (wasCancelled) {
+          estimator?.markCancelled();
+        }
         exitProcessingState({ preserveInput: true });
       }
     }
