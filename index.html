@@ -1005,6 +1005,8 @@
 
         if (lower === '--nolog') { flags.batchLogging = false; continue; }
         if (lower === '--nowait') { flags.deferredRender = false; continue; }
+        if (lower === '-db') { flags.metricScope = METRIC_SCOPE.DB; continue; }
+        if (lower === '-run') { flags.metricScope = METRIC_SCOPE.RUN; continue; }
 
         if (lower.startsWith('--scope')) {
           const value = parseValue(part, i).toLowerCase();
