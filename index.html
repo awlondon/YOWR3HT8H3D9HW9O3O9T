@@ -657,8 +657,16 @@
             <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
             <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
             <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
-            <button id="hlsf-toggle-layout" class="btn btn-secondary">Layout: Affinity</button>
           </div>
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-layout">Layout</label>
+          <select id="hlsf-layout">
+            <option value="dimension">Dimension NAM</option>
+            <option value="affinity">Clusters × Levels</option>
+            <option value="layered">Layered</option>
+            <option value="legacy">Legacy</option>
+          </select>
         </div>
         <div class="hlsf-control-group">
           <label for="hlsf-aff-thresh">Affinity threshold <span id="hlsf-aff-thresh-val">0.35</span></label>
@@ -2700,21 +2708,6 @@
       }
     }
 
-    function layoutLabel(value) {
-      switch (normalizeLayout(value)) {
-        case 'dimension':
-          return 'Dimension NAM';
-        case 'affinity':
-          return 'Clusters × Levels';
-        case 'layered':
-          return 'Layered';
-        case 'legacy':
-          return 'Legacy';
-        default:
-          return 'Dimension NAM';
-      }
-    }
-
     function describeAffinityMentalState(threshold, iterations) {
       const thr = Number.isFinite(threshold) ? threshold : 0.35;
       const iters = Number.isFinite(iterations) ? iterations : 8;
@@ -2990,8 +2983,16 @@
                 <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
                 <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
                 <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
-                <button id="hlsf-toggle-layout" class="btn btn-secondary">Layout: Affinity</button>
               </div>
+            </div>
+            <div class="hlsf-control-group">
+              <label for="hlsf-layout">Layout</label>
+              <select id="hlsf-layout">
+                <option value="dimension">Dimension NAM</option>
+                <option value="affinity">Clusters × Levels</option>
+                <option value="layered">Layered</option>
+                <option value="legacy">Legacy</option>
+              </select>
             </div>
             <div class="hlsf-control-group">
               <label for="hlsf-aff-thresh">Affinity threshold <span id="hlsf-aff-thresh-val">0.35</span></label>
@@ -3339,15 +3340,12 @@
         });
       }
 
-      const layoutBtn = wrapper.querySelector('#hlsf-toggle-layout');
-      if (layoutBtn) {
-        layoutBtn.addEventListener('click', () => {
-          const layouts = ['dimension', 'affinity', 'layered', 'legacy'];
-          const current = normalizeLayout(window.HLSF.config.layout);
-          const index = layouts.indexOf(current);
-          const next = layouts[(index + 1) % layouts.length];
+      const layoutSelect = wrapper.querySelector('#hlsf-layout');
+      if (layoutSelect) {
+        layoutSelect.addEventListener('change', () => {
+          const next = normalizeLayout(layoutSelect.value);
           window.HLSF.config.layout = next;
-          layoutBtn.textContent = `Layout: ${layoutLabel(next)}`;
+          layoutSelect.value = next;
           debouncedLegacyRender();
         });
       }
@@ -3512,11 +3510,11 @@
       const bgBtn = wrapper.querySelector('#hlsf-toggle-bg');
       if (bgBtn) bgBtn.textContent = config.whiteBg ? 'BG: Light' : 'BG: Dark';
 
-      const layoutBtn = wrapper.querySelector('#hlsf-toggle-layout');
-      if (layoutBtn) {
+      const layoutSelect = wrapper.querySelector('#hlsf-layout');
+      if (layoutSelect) {
         const layout = normalizeLayout(config.layout);
         window.HLSF.config.layout = layout;
-        layoutBtn.textContent = `Layout: ${layoutLabel(layout)}`;
+        layoutSelect.value = layout;
       }
     }
 
