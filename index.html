@@ -2798,6 +2798,90 @@
       };
     }
 
+    const MENTAL_STATE_PRESET_CONFIGS = [
+      { id: 'low-brief', threshold: 0.18, iterations: 3 },
+      { id: 'low-steady', threshold: 0.18, iterations: 6 },
+      { id: 'low-extended', threshold: 0.18, iterations: 12 },
+      { id: 'medium-brief', threshold: 0.35, iterations: 4 },
+      { id: 'medium-steady', threshold: 0.35, iterations: 8 },
+      { id: 'medium-extended', threshold: 0.35, iterations: 12 },
+      { id: 'high-brief', threshold: 0.55, iterations: 4 },
+      { id: 'high-steady', threshold: 0.55, iterations: 8 },
+      { id: 'high-extended', threshold: 0.55, iterations: 12 },
+      { id: 'veryHigh-brief', threshold: 0.72, iterations: 3 },
+      { id: 'veryHigh-steady', threshold: 0.72, iterations: 8 },
+      { id: 'veryHigh-extended', threshold: 0.72, iterations: 12 },
+    ];
+
+    const MENTAL_STATE_PRESETS = MENTAL_STATE_PRESET_CONFIGS.map(preset => {
+      const meta = describeAffinityMentalState(preset.threshold, preset.iterations) || {};
+      const label = `${meta.name || 'Preset'} — ${preset.threshold.toFixed(2)} · ${preset.iterations}`;
+      return Object.assign({ label }, preset, meta);
+    });
+
+    const MENTAL_STATE_THRESHOLD_TOLERANCE = 0.005;
+
+    function getMentalStatePresetById(id) {
+      return MENTAL_STATE_PRESETS.find(preset => preset.id === id) || null;
+    }
+
+    function matchMentalStatePreset(threshold, iterations) {
+      const thr = Number(threshold);
+      const iters = Math.round(Number(iterations));
+      if (!Number.isFinite(thr) || !Number.isFinite(iters)) return null;
+      return MENTAL_STATE_PRESETS.find(preset =>
+        Math.abs(preset.threshold - thr) <= MENTAL_STATE_THRESHOLD_TOLERANCE && preset.iterations === iters
+      ) || null;
+    }
+
+    function populateMentalStatePresetOptions(select) {
+      if (!select) return;
+      select.innerHTML = '';
+      const customOption = document.createElement('option');
+      customOption.value = 'custom';
+      customOption.textContent = 'Custom (manual sliders)';
+      select.appendChild(customOption);
+      for (const preset of MENTAL_STATE_PRESETS) {
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.label;
+        option.dataset.threshold = preset.threshold.toFixed(2);
+        option.dataset.iterations = String(preset.iterations);
+        select.appendChild(option);
+      }
+    }
+
+    function syncMentalStatePresetControl(wrapper, threshold, iterations) {
+      if (!wrapper) return;
+      const select = wrapper.querySelector('#hlsf-mental-preset');
+      if (!select) return;
+      const matched = matchMentalStatePreset(threshold, iterations);
+      const value = matched ? matched.id : 'custom';
+      if (select.value !== value) select.value = value;
+    }
+
+    function applyMentalStatePreset(wrapper, preset) {
+      if (!wrapper || !preset) return;
+      const thr = Number(preset.threshold);
+      const iters = Number(preset.iterations);
+      if (!Number.isFinite(thr) || !Number.isFinite(iters)) return;
+      const affinityConfig = Object.assign({}, window.HLSF.config?.affinity || {}, {
+        threshold: thr,
+        iterations: iters,
+      });
+      window.HLSF.config.affinity = affinityConfig;
+      const thresholdSlider = wrapper.querySelector('#hlsf-aff-thresh');
+      const thresholdVal = wrapper.querySelector('#hlsf-aff-thresh-val');
+      if (thresholdSlider) thresholdSlider.value = thr.toFixed(2);
+      if (thresholdVal) thresholdVal.textContent = thr.toFixed(2);
+      const iterSlider = wrapper.querySelector('#hlsf-aff-iters');
+      const iterVal = wrapper.querySelector('#hlsf-aff-iters-val');
+      if (iterSlider) iterSlider.value = String(iters);
+      if (iterVal) iterVal.textContent = String(iters);
+      updateAffinityAnnotations(wrapper, thr, iters);
+      recomputeAndRender();
+    }
+
     function updateAffinityAnnotations(wrapper, threshold, iterations) {
       if (!wrapper) return;
       const { name, desc, mechanics } = describeAffinityMentalState(threshold, iterations);
@@ -2809,6 +2893,7 @@
       if (descEl) descEl.textContent = desc;
       const mechanicsEl = wrapper.querySelector('#hlsf-affinity-mechanics');
       if (mechanicsEl) mechanicsEl.textContent = mechanics;
+      syncMentalStatePresetControl(wrapper, threshold, iterations);
     }
 
     function ensureHLSFCanvas() {
@@ -2915,6 +3000,12 @@
             <div class="hlsf-control-group">
               <label for="hlsf-aff-iters">Affinity iterations <span id="hlsf-aff-iters-val">8</span></label>
               <input id="hlsf-aff-iters" type="range" min="1" max="20" step="1" value="8">
+            </div>
+            <div class="hlsf-control-group">
+              <label for="hlsf-mental-preset">Mental state preset</label>
+              <select id="hlsf-mental-preset">
+                <option value="custom">Custom (manual sliders)</option>
+              </select>
             </div>
             <div class="hlsf-control-group">
               <em id="hlsf-affinity-summary" class="hlsf-mental-summary">Current mental state: Focused yet flexible attention.</em>
@@ -3068,6 +3159,22 @@
           edgesInput.value = String(next);
           if (edgesVal) edgesVal.textContent = String(next);
           rebuildHlsfFromLastCommand(true);
+        });
+      }
+
+      const presetSelect = wrapper.querySelector('#hlsf-mental-preset');
+      if (presetSelect && !presetSelect.dataset.populated) {
+        populateMentalStatePresetOptions(presetSelect);
+        presetSelect.dataset.populated = 'true';
+      }
+      if (presetSelect) {
+        presetSelect.addEventListener('change', () => {
+          if (presetSelect.value === 'custom') return;
+          const preset = getMentalStatePresetById(presetSelect.value);
+          if (preset) {
+            applyMentalStatePreset(wrapper, preset);
+            logStatus(`Mental state preset applied: ${preset.name}`);
+          }
         });
       }
 
@@ -8037,6 +8144,129 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return fragments.join(' ').replace(/\s+/g, ' ').trim();
     }
 
+    function parseStateTokens(args) {
+      if (!Array.isArray(args)) return [];
+      const tokens = [];
+      for (const segment of args) {
+        if (!segment) continue;
+        const parts = segment.split(',');
+        for (const raw of parts) {
+          const cleaned = raw.trim();
+          if (cleaned) tokens.push(cleaned);
+        }
+      }
+      return tokens;
+    }
+
+    function selectFocusTokens(primary, secondary, idx, idxLower, limit = 8) {
+      const selected = [];
+      const missing = [];
+      const seen = new Set();
+
+      const pushRecord = (record) => {
+        if (!record?.token) return;
+        const token = String(record.token);
+        const key = token.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        selected.push(token);
+      };
+
+      const tryCandidates = (candidates, trackMissing = false) => {
+        if (!Array.isArray(candidates)) return;
+        for (const candidate of candidates) {
+          if (!candidate) continue;
+          const normalized = String(candidate).trim();
+          if (!normalized) continue;
+          const lower = normalized.toLowerCase();
+          const record = idx.get(normalized) || idxLower.get(lower) || null;
+          if (record) {
+            pushRecord(record);
+          } else if (trackMissing) {
+            missing.push(normalized);
+          }
+          if (selected.length >= limit) break;
+        }
+      };
+
+      tryCandidates(primary, true);
+      if (selected.length < limit) tryCandidates(secondary, false);
+      if (selected.length < limit) {
+        for (const record of idx.values()) {
+          pushRecord(record);
+          if (selected.length >= limit) break;
+        }
+      }
+
+      return { tokens: selected.slice(0, limit), missing };
+    }
+
+    function buildAdjacencyPromptSummary(tokens, idx, idxLower, options = {}) {
+      const opts = options || {};
+      const maxRelations = Number.isFinite(opts.maxRelations) ? opts.maxRelations : 4;
+      const maxNeighbors = Number.isFinite(opts.maxNeighbors) ? opts.maxNeighbors : 4;
+      const lines = [];
+
+      for (const token of tokens) {
+        if (!token) continue;
+        const normalized = String(token);
+        const record = idx.get(normalized) || idxLower.get(normalized.toLowerCase());
+        if (!record || !record.relationships) continue;
+        lines.push(`Token: ${record.token}`);
+        const relations = Object.entries(record.relationships)
+          .filter(([, edges]) => Array.isArray(edges) && edges.length)
+          .map(([relType, edges]) => ({
+            relType,
+            edges: edges.slice().sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+          }))
+          .sort((a, b) => b.edges.length - a.edges.length)
+          .slice(0, maxRelations);
+
+        for (const entry of relations) {
+          const neighbors = entry.edges.slice(0, maxNeighbors)
+            .map(edge => `${edge.token} (${Number(edge.weight || 0).toFixed(2)})`)
+            .join(', ');
+          if (neighbors) {
+            lines.push(`  ${relDisplay(entry.relType)} -> ${neighbors}`);
+          }
+        }
+      }
+
+      if (!lines.length) lines.push('No adjacency data available.');
+      return lines.join('\n');
+    }
+
+    function formatClusterSummaryForPrompt(clusterInfo) {
+      if (!clusterInfo) return 'No active cluster summary available.';
+      const lines = [];
+
+      if (Number.isFinite(clusterInfo.totalNodes)) {
+        lines.push(`Total nodes: ${clusterInfo.totalNodes}`);
+      }
+      if (Number.isFinite(clusterInfo.clusterCount)) {
+        lines.push(`Cluster count: ${clusterInfo.clusterCount}`);
+      }
+      if (Number.isFinite(clusterInfo.anchorCount)) {
+        lines.push(`Anchors: ${clusterInfo.anchorCount}`);
+      }
+
+      if (Array.isArray(clusterInfo.summaries) && clusterInfo.summaries.length) {
+        clusterInfo.summaries.slice(0, 5).forEach(summary => {
+          const tops = Array.isArray(summary.topTokens) && summary.topTokens.length
+            ? summary.topTokens.slice(0, 4).join(', ')
+            : '—';
+          const att = Number.isFinite(summary.avgAttention)
+            ? summary.avgAttention.toFixed(3)
+            : '—';
+          lines.push(`Cluster ${summary.id}: size=${summary.size}, avgAttention=${att}, top=${tops}`);
+        });
+      } else if (Array.isArray(clusterInfo.fallbackTop) && clusterInfo.fallbackTop.length) {
+        lines.push(`Fallback top tokens: ${clusterInfo.fallbackTop.slice(0, 8).join(', ')}`);
+      }
+
+      return lines.length ? lines.join('\n') : 'No active cluster summary available.';
+    }
+
     function cmd_self() {
       const affinityCfg = window.HLSF?.config?.affinity || {};
       const threshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
@@ -8068,6 +8298,147 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     async function cmd_loaddb(args) {
       const joined = Array.isArray(args) ? args.join(' ') : args;
       await cmdLoadDb(joined);
+    }
+
+    async function cmd_state(args = []) {
+      if (!state.apiKey) {
+        logError('Configure an API key to use /state.');
+        return;
+      }
+
+      if (!getDb()) {
+        const ok = await tryBootstrapDb();
+        if (!ok) {
+          logError('No HLSF database loaded. Use /loaddb or /import first.');
+          return;
+        }
+      }
+
+      if (!enterProcessingState()) return;
+
+      const start = performance.now();
+      let statusEl = null;
+
+      try {
+        const affinityCfg = window.HLSF?.config?.affinity || {};
+        const threshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
+        const iterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
+        const mentalState = describeAffinityMentalState(threshold, iterations) || {};
+        const clusterInfo = collectActiveClusterInsights();
+        const db = getDb();
+        const dbStats = db?.database_stats || {};
+        const tokenPool = gatherSelfTokenPool(clusterInfo, dbStats);
+        const manualTokens = parseStateTokens(args);
+
+        const index = dbIndex();
+        const indexLower = new Map();
+        for (const [key, record] of index.entries()) {
+          if (!key) continue;
+          indexLower.set(String(key).toLowerCase(), record);
+        }
+
+        const { tokens: focusTokens, missing } = selectFocusTokens(manualTokens, tokenPool, index, indexLower, 8);
+        if (missing.length) {
+          logWarning(`Tokens not found in database: ${missing.join(', ')}`);
+        }
+
+        if (!focusTokens.length) {
+          logError('No adjacency data available to summarize.');
+          return;
+        }
+
+        const adjacencyExcerpt = buildAdjacencyPromptSummary(focusTokens, index, indexLower, {
+          maxRelations: 4,
+          maxNeighbors: 4,
+        });
+        const clusterSummary = formatClusterSummaryForPrompt(clusterInfo);
+
+        const dbSummaryParts = [];
+        if (Number.isFinite(dbStats.total_tokens)) dbSummaryParts.push(`tokens=${dbStats.total_tokens}`);
+        if (Number.isFinite(dbStats.total_relationships)) dbSummaryParts.push(`relationships=${dbStats.total_relationships}`);
+        if (dbStats.maturity_level) dbSummaryParts.push(`maturity=${dbStats.maturity_level}`);
+        if (Number.isFinite(dbStats.estimated_value_usd)) {
+          dbSummaryParts.push(`estimated_value_usd=${dbStats.estimated_value_usd}`);
+        }
+        const dbSummary = dbSummaryParts.length ? dbSummaryParts.join(', ') : 'unavailable';
+
+        const safeName = sanitize(mentalState.name || '');
+        const safeDesc = sanitize(mentalState.desc || '').replace(/\n/g, '<br>');
+        const safeMechanics = sanitize(mentalState.mechanics || '').replace(/\n/g, '<br>');
+        const safeFocus = sanitize(focusTokens.join(', '));
+        const contextPieces = [
+          '<div class="section-divider"></div>',
+          '<div class="section-title">🧭 Mental State Context</div>',
+          `<div class="adjacency-insight"><strong>${safeName}</strong><br>${safeDesc}<br><em>${safeMechanics}</em><br>Threshold: ${threshold.toFixed(2)} · Iterations: ${iterations}</div>`,
+          `<div class="adjacency-insight"><strong>Focus tokens:</strong> ${safeFocus}</div>`,
+          `<div class="adjacency-insight">Database stats: ${sanitize(dbSummary)}</div>`,
+        ];
+
+        if (manualTokens.length) {
+          contextPieces.splice(3, 0, `<div class="adjacency-insight"><strong>Requested tokens:</strong> ${sanitize(manualTokens.join(', '))}</div>`);
+        }
+
+        if (adjacencyExcerpt) {
+          contextPieces.push(`<details><summary>Adjacency excerpt (${focusTokens.length} tokens)</summary><pre>${sanitize(adjacencyExcerpt)}</pre></details>`);
+        }
+        if (clusterSummary) {
+          contextPieces.push(`<details><summary>Cluster summary</summary><pre>${sanitize(clusterSummary)}</pre></details>`);
+        }
+
+        addLog(contextPieces.join(''));
+
+        const systemPrompt = 'You are the Higher-Level Semantic Framework cognition engine. You traverse HLSF adjacency matrices and follow instructions precisely.';
+        const userPrompt = [
+          'HLSF mental state exploration',
+          '',
+          `Mental state: ${mentalState.name || 'Unknown'}`,
+          `Threshold: ${threshold.toFixed(2)}`,
+          `Iterations: ${iterations}`,
+          `Description: ${mentalState.desc || 'N/A'}`,
+          `Mechanics: ${mentalState.mechanics || 'N/A'}`,
+          '',
+          `Database stats: ${dbSummary}`,
+          '',
+          'Active cluster summary:',
+          clusterSummary || 'No active cluster data.',
+          '',
+          'Adjacency excerpt:',
+          adjacencyExcerpt,
+          '',
+          'Instructions:',
+          '1. Step through the adjacency matrices using this mental state, narrating a stream-of-consciousness of exactly 200 words.',
+          '2. After the stream, produce a structured analytical response of exactly 100 words summarizing adjacency-driven insights.',
+          '3. Separate the sections with the headings "STREAM (200 words)" and "STRUCTURED (100 words)", grounding observations in the provided tokens and relationships.',
+        ].join('\n');
+
+        statusEl = logStatus('⏳ Synthesizing mental state narrative...');
+        const completion = await callOpenAI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ], { temperature: 0.65, max_tokens: 900 });
+
+        if (statusEl) statusEl.innerHTML = '✅ Mental state narrative synthesized';
+
+        const safeCompletion = sanitize(completion || '').replace(/\n{3,}/g, '\n\n');
+        addLog(`<div class="section-divider"></div><div class="section-title">🧠 Mental State Walkthrough</div><pre>${safeCompletion}</pre>`);
+
+        if (completion) {
+          addOutputTokens(tokenize(completion), { render: false });
+        }
+
+        const elapsed = ((performance.now() - start) / 1000).toFixed(1);
+        logOK(`Mental state response ready (${elapsed}s)`);
+      } catch (err) {
+        if (statusEl) statusEl.innerHTML = '❌ Mental state narrative failed';
+        if (err?.name === 'AbortError') {
+          logWarning('Mental state walkthrough cancelled');
+        } else {
+          logError(err?.message || 'Mental state walkthrough failed');
+          console.error(err);
+        }
+      } finally {
+        exitProcessingState();
+      }
     }
 
     function getRelationshipPriority(relType) {
@@ -8130,6 +8501,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     registerCommand('/self', cmd_self);
+    registerCommand('/state', cmd_state);
     registerCommand('/import', cmd_import);
     registerCommand('/read', () => cmdRead());
     registerCommand('/loaddb', cmd_loaddb);
@@ -8266,6 +8638,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             /encrypt &lt;text&gt; - Encrypt text into weighted glyphs<br>
             /decrypt &lt;glyph+float&gt; - Decrypt using private ledger<br>
             /exportledger - Shortcut for /ledger export<br>
+            /state [tokens...] - Mental state walkthrough with 200-word stream and 100-word structure<br>
             /self - Stream the current HLSF self-reflection<br>
             /hlsf or /visualize - Visualize database as Hierarchical-Level Semantic Framework — builds from anchors<br>
             /help - Show commands`);
