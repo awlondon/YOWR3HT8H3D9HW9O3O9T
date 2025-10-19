@@ -826,11 +826,16 @@
       let hideTimer = null;
       const defaultDetail = 'This can take a few seconds for large datasets.';
 
+      function resolve(id) {
+        const el = document.getElementById(id);
+        return el || null;
+      }
+
       function ensure() {
-        if (!panel) panel = document.getElementById('hlsf-loading-panel');
-        if (!bar) bar = document.getElementById('hlsf-loading-progress');
-        if (!label) label = document.getElementById('hlsf-loading-label');
-        if (!detail) detail = document.getElementById('hlsf-loading-detail');
+        if (!panel || !panel.isConnected) panel = resolve('hlsf-loading-panel');
+        if (!bar || !bar.isConnected) bar = resolve('hlsf-loading-progress');
+        if (!label || !label.isConnected) label = resolve('hlsf-loading-label');
+        if (!detail || !detail.isConnected) detail = resolve('hlsf-loading-detail');
         return panel && bar;
       }
 
