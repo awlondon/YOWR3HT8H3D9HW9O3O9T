@@ -701,7 +701,7 @@
       MAX_CONCURRENCY: 5,
       MAX_RETRY_ATTEMPTS: 3,
       RETRY_BASE_DELAY_MS: 500,
-      DOCUMENT_CHUNK_SIZE: 100,
+      DOCUMENT_CHUNK_SIZE: 1000,
       DEFAULT_MODEL: 'gpt-4o-mini',
       MODEL_PRICING: {
         default: { inputPerMillion: 0.15, outputPerMillion: 0.60 },
@@ -8230,7 +8230,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             /database or /db - View database metadata<br>
             /export - Export database metadata as JSON<br>
             /import - Import database from JSON file<br>
-            /read - Import and analyze a document in 100-token segments<br>
+            /read - Import and analyze a document in 1,000-character segments<br>
             /loaddb &lt;url&gt; - Load database JSON from URL<br>
             /glyph &lt;token1 token2 ...&gt; - Show weighted glyph assignments<br>
             /ledger [show|export|import] - Manage private glyph ledger<br>
@@ -8464,48 +8464,55 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
 
-    function buildDocumentChunks(text, maxTokens = 100) {
+    function buildDocumentChunks(text, maxChars = 1000) {
       const sentences = splitIntoSentences(text);
-      const rawChunks = [];
-      let current = [];
+      const rawChunkTexts = [];
+      let currentText = '';
       let oversizedSentences = 0;
       let rawTokenCount = 0;
 
       const flushCurrent = () => {
-        if (current.length) {
-          rawChunks.push(current);
-          current = [];
+        if (currentText.trim()) {
+          rawChunkTexts.push(currentText.trim());
+          currentText = '';
         }
       };
 
       for (const sentence of sentences) {
-        const sentenceTokens = tokenize(sentence);
+        const trimmed = sentence.trim();
+        if (!trimmed) continue;
+        const sentenceTokens = tokenize(trimmed);
         if (!sentenceTokens.length) continue;
         rawTokenCount += sentenceTokens.length;
-        if (sentenceTokens.length > maxTokens) {
+        const sentenceLength = trimmed.length;
+
+        if (sentenceLength > maxChars) {
           flushCurrent();
           oversizedSentences += 1;
-          for (let i = 0; i < sentenceTokens.length; i += maxTokens) {
-            rawChunks.push(sentenceTokens.slice(i, i + maxTokens));
+          for (let i = 0; i < sentenceLength; i += maxChars) {
+            const slice = trimmed.slice(i, i + maxChars).trim();
+            if (slice) rawChunkTexts.push(slice);
           }
           continue;
         }
-        if (current.length && (current.length + sentenceTokens.length) > maxTokens) {
-          flushCurrent();
-        }
-        current = current.concat(sentenceTokens);
+
+        const needsFlush = currentText && (currentText.length + 1 + sentenceLength) > maxChars;
+        if (needsFlush) flushCurrent();
+
+        currentText = currentText ? `${currentText} ${trimmed}` : trimmed;
       }
 
       flushCurrent();
 
-      if (!rawChunks.length && sentences.length) {
-        const fallbackTokens = tokenize(sentences.join(' '));
+      if (!rawChunkTexts.length && sentences.length) {
+        const fallback = sentences.join(' ').trim();
+        const fallbackTokens = tokenize(fallback);
         rawTokenCount += fallbackTokens.length;
-        if (fallbackTokens.length) rawChunks.push(fallbackTokens);
+        if (fallback) rawChunkTexts.push(fallback);
       }
 
-      const alignedChunks = rawChunks
-        .map(chunk => DbLexicon.alignTokens(chunk).filter(Boolean))
+      const alignedChunks = rawChunkTexts
+        .map(chunkText => DbLexicon.alignTokens(tokenize(chunkText)).filter(Boolean))
         .filter(chunk => chunk.length);
 
       const totalTokens = alignedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -8738,7 +8745,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         const text = await DocumentReaders.extract(file);
         if (currentAbortController?.signal.aborted) throw new Error('AbortError');
-        const chunkSize = CONFIG.DOCUMENT_CHUNK_SIZE || 100;
+        const chunkSize = CONFIG.DOCUMENT_CHUNK_SIZE || 1000;
         const chunkInfo = buildDocumentChunks(text, chunkSize);
         const { chunks, totalTokens, oversizedSentences, rawTokenCount } = chunkInfo;
 
@@ -8756,7 +8763,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         addLog(`📥 Processing <strong>${sanitize(file.name || 'document')}</strong> (${totalTokens} tokens → ${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
         if (oversizedSentences) {
-          addLog(`ℹ️ ${oversizedSentences} sentence${oversizedSentences === 1 ? '' : 's'} exceeded ${chunkSize} tokens and were split.`);
+          addLog(`ℹ️ ${oversizedSentences} sentence${oversizedSentences === 1 ? '' : 's'} exceeded ${chunkSize} characters and were split.`);
         }
 
         const aggregateMatrices = new Map();
