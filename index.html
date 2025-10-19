@@ -4123,6 +4123,108 @@
       }
     }
 
+    const LessonStore = (() => {
+      const STORAGE_KEY = 'hlsf-lessons-v1';
+      const MAX_ENTRIES = 500;
+      let cache = null;
+
+      function load() {
+        if (cache) return cache;
+        const map = new Map();
+        const raw = safeStorageGet(STORAGE_KEY);
+        if (raw) {
+          try {
+            const parsed = Array.isArray(raw) ? raw : JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              for (const entry of parsed) {
+                if (!entry || typeof entry.key !== 'string' || !entry.key) continue;
+                const { key, ...rest } = entry;
+                map.set(key, {
+                  tokens: Array.isArray(rest.tokens) ? rest.tokens : [],
+                  reflection: typeof rest.reflection === 'string' ? rest.reflection : '',
+                  thoughtStream: typeof rest.thoughtStream === 'string' ? rest.thoughtStream : '',
+                  refinedResponse: typeof rest.refinedResponse === 'string' ? rest.refinedResponse : '',
+                  updatedAt: Number.isFinite(rest.updatedAt) ? rest.updatedAt : Date.now(),
+                });
+              }
+            }
+          } catch (err) {
+            console.warn('LessonStore load failed:', err);
+          }
+        }
+        cache = map;
+        return map;
+      }
+
+      function persist(map) {
+        if (!(map instanceof Map)) return;
+        const payload = [];
+        for (const [key, value] of map.entries()) {
+          payload.push({
+            key,
+            tokens: Array.isArray(value?.tokens) ? value.tokens : [],
+            reflection: typeof value?.reflection === 'string' ? value.reflection : '',
+            thoughtStream: typeof value?.thoughtStream === 'string' ? value.thoughtStream : '',
+            refinedResponse: typeof value?.refinedResponse === 'string' ? value.refinedResponse : '',
+            updatedAt: Number.isFinite(value?.updatedAt) ? value.updatedAt : Date.now(),
+          });
+        }
+        safeStorageSet(STORAGE_KEY, JSON.stringify(payload));
+        cache = map;
+      }
+
+      function keyFromTokens(tokens) {
+        if (!Array.isArray(tokens) || !tokens.length) return null;
+        return tokens.join(' ');
+      }
+
+      function fetch(tokens) {
+        const key = keyFromTokens(tokens);
+        if (!key) return null;
+        const map = load();
+        return map.get(key) || null;
+      }
+
+      function record(tokens, lesson = {}) {
+        const key = keyFromTokens(tokens);
+        if (!key) return;
+        const map = load();
+        const existing = map.get(key) || {
+          tokens: tokens.slice(0, 160),
+          reflection: '',
+          thoughtStream: '',
+          refinedResponse: '',
+          updatedAt: 0,
+        };
+        const next = {
+          tokens: existing.tokens && existing.tokens.length ? existing.tokens : tokens.slice(0, 160),
+          reflection: typeof lesson.reflection === 'string' && lesson.reflection.trim()
+            ? lesson.reflection
+            : existing.reflection || '',
+          thoughtStream: typeof lesson.thoughtStream === 'string' && lesson.thoughtStream.trim()
+            ? lesson.thoughtStream
+            : existing.thoughtStream || '',
+          refinedResponse: typeof lesson.refinedResponse === 'string' && lesson.refinedResponse.trim()
+            ? lesson.refinedResponse
+            : existing.refinedResponse || '',
+          updatedAt: Date.now(),
+        };
+        map.set(key, next);
+
+        if (map.size > MAX_ENTRIES) {
+          const ordered = Array.from(map.entries()).sort((a, b) => (a[1]?.updatedAt || 0) - (b[1]?.updatedAt || 0));
+          while (ordered.length > MAX_ENTRIES) {
+            const [removeKey] = ordered.shift() || [];
+            if (removeKey) map.delete(removeKey);
+          }
+        }
+
+        persist(map);
+      }
+
+      return { fetch, record };
+    })();
+
     function isValidApiKey(key) {
       if (typeof key !== 'string') return false;
       const trimmed = key.trim();
@@ -4137,6 +4239,15 @@
         .split(/[^\p{L}\p{N}\-']+/u)
         .filter(Boolean)
         .map(t => t.toLowerCase());
+    }
+
+    function splitIntoSentences(text) {
+      if (!text) return [];
+      const normalized = text.replace(/\s+/g, ' ').trim();
+      if (!normalized) return [];
+      const matches = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g);
+      if (!matches) return [normalized];
+      return matches.map(sentence => sentence.trim()).filter(Boolean);
     }
 
     function estimateTokensForText(text) {
@@ -8353,14 +8464,81 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
     }
 
+    function buildDocumentChunks(text, maxTokens = 100) {
+      const sentences = splitIntoSentences(text);
+      const rawChunks = [];
+      let current = [];
+      let oversizedSentences = 0;
+      let rawTokenCount = 0;
+
+      const flushCurrent = () => {
+        if (current.length) {
+          rawChunks.push(current);
+          current = [];
+        }
+      };
+
+      for (const sentence of sentences) {
+        const sentenceTokens = tokenize(sentence);
+        if (!sentenceTokens.length) continue;
+        rawTokenCount += sentenceTokens.length;
+        if (sentenceTokens.length > maxTokens) {
+          flushCurrent();
+          oversizedSentences += 1;
+          for (let i = 0; i < sentenceTokens.length; i += maxTokens) {
+            rawChunks.push(sentenceTokens.slice(i, i + maxTokens));
+          }
+          continue;
+        }
+        if (current.length && (current.length + sentenceTokens.length) > maxTokens) {
+          flushCurrent();
+        }
+        current = current.concat(sentenceTokens);
+      }
+
+      flushCurrent();
+
+      if (!rawChunks.length && sentences.length) {
+        const fallbackTokens = tokenize(sentences.join(' '));
+        rawTokenCount += fallbackTokens.length;
+        if (fallbackTokens.length) rawChunks.push(fallbackTokens);
+      }
+
+      const alignedChunks = rawChunks
+        .map(chunk => DbLexicon.alignTokens(chunk).filter(Boolean))
+        .filter(chunk => chunk.length);
+
+      const totalTokens = alignedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+
+      return { chunks: alignedChunks, totalTokens, oversizedSentences, rawTokenCount };
+    }
+
+    async function editForCoherence(kind, chunkLabel, text) {
+      if (!state.apiKey || !text || !text.trim()) return text;
+      const messages = [
+        { role: 'system', content: 'You are an editorial assistant who improves coherence and clarity while preserving intent and vocabulary.' },
+        { role: 'user', content: `Polish the following ${kind} so it reads smoothly while keeping terminology consistent with the cached lexicon. Do not add new ideas.\n\n${text}` },
+      ];
+      const tokenCount = tokenize(text).length;
+      const maxTokens = Math.min(420, Math.max(120, estimateCompletionTokens(tokenCount)));
+      const polished = await safeAsync(
+        () => callOpenAI(messages, { temperature: 0.2, max_tokens: maxTokens }),
+        `${chunkLabel} ${kind} edit failed`
+      );
+      return polished?.trim() || text;
+    }
+
     async function analyzeDocumentChunk(chunkTokens, index, totalChunks) {
       const chunkLabel = `Segment ${index + 1}/${totalChunks}`;
       const previewTokens = chunkTokens.slice(0, 18).join(' ');
       addLog(`<div class="section-divider"></div><div class="section-title">📚 ${sanitize(chunkLabel)}</div><div>${sanitize(previewTokens)}${chunkTokens.length > 18 ? ' …' : ''}</div>`);
 
+      const storedLesson = LessonStore.fetch(chunkTokens);
+      const lessonUpdates = {};
       const uniqueTokens = [...new Set(chunkTokens)].slice(0, 80);
       const lexiconHint = uniqueTokens.join(', ');
       let reflection = '';
+      let reflectionFromLive = false;
       const reflectionStatus = logStatus(`⏳ ${chunkLabel}: generating reflection`);
 
       if (state.apiKey) {
@@ -8368,11 +8546,22 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           { role: 'system', content: 'You reflect on passages using only the supplied lexicon. Compose fluent, introspective prose anchored to the provided tokens.' },
           { role: 'user', content: `Lexicon: ${lexiconHint || '(empty)'}\nTokens: ${chunkTokens.join(' ')}\nWrite a reflective synthesis of this passage in the voice of the cached database.` }
         ];
-        reflection = await safeAsync(
+        const draftReflection = await safeAsync(
           () => callOpenAI(messages, { temperature: 0.45, max_tokens: 420 }),
           `${chunkLabel} reflection failed`
         ) || '';
-        reflectionStatus.innerHTML = `✅ ${chunkLabel}: reflection ready`;
+        reflection = draftReflection.trim();
+        if (reflection) {
+          reflectionStatus.innerHTML = `⏳ ${chunkLabel}: editing reflection`;
+          reflection = await editForCoherence('reflection', chunkLabel, reflection);
+          reflectionStatus.innerHTML = `✅ ${chunkLabel}: reflection ready`;
+          reflectionFromLive = true;
+        } else {
+          reflectionStatus.innerHTML = `⚠️ ${chunkLabel}: reflection empty`;
+        }
+      } else if (storedLesson?.reflection) {
+        reflection = storedLesson.reflection;
+        reflectionStatus.innerHTML = `✅ ${chunkLabel}: reflection recalled`;
       } else {
         reflection = chunkTokens.join(' ');
         reflectionStatus.innerHTML = `⚠️ ${chunkLabel}: offline placeholder`;
@@ -8381,6 +8570,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       reflection = DbLexicon.rewriteText(reflection);
       addOutputTokens(tokenize(reflection), { render: false });
       addLog(`<div class="thought-stream">${sanitize(reflection)}</div>`);
+
+      if (reflectionFromLive && reflection) {
+        lessonUpdates.reflection = reflection;
+      }
 
       const chunkPrompt = chunkTokens.join(' ');
       const reflectionTokens = tokenize(reflection);
@@ -8402,17 +8595,29 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
 
       let thoughtStream = '';
+      let thoughtFromLive = false;
       const thoughtStatus = logStatus(`⏳ ${chunkLabel}: distilling HLSF thoughts`);
       if (state.apiKey) {
         const thoughtMessages = [
           { role: 'system', content: 'You translate adjacency metrics into connected internal thoughts using the cached lexicon.' },
           { role: 'user', content: `Tokens: ${chunkTokens.join(' ')}\nAttention hotspots: ${topTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ')}\nKey relationships: ${keyRels.join('; ')}\nCompose a flowing interior monologue grounded in these ties.` }
         ];
-        thoughtStream = await safeAsync(
+        const draftThoughts = await safeAsync(
           () => callOpenAI(thoughtMessages, { temperature: 0.5, max_tokens: 380 }),
           `${chunkLabel} thought stream failed`
         ) || '';
-        thoughtStatus.innerHTML = `✅ ${chunkLabel}: HLSF thoughts ready`;
+        thoughtStream = draftThoughts.trim();
+        if (thoughtStream) {
+          thoughtStatus.innerHTML = `⏳ ${chunkLabel}: editing HLSF thoughts`;
+          thoughtStream = await editForCoherence('thought stream', chunkLabel, thoughtStream);
+          thoughtStatus.innerHTML = `✅ ${chunkLabel}: HLSF thoughts ready`;
+          thoughtFromLive = true;
+        } else {
+          thoughtStatus.innerHTML = `⚠️ ${chunkLabel}: HLSF thoughts empty`;
+        }
+      } else if (storedLesson?.thoughtStream) {
+        thoughtStream = storedLesson.thoughtStream;
+        thoughtStatus.innerHTML = `✅ ${chunkLabel}: cached HLSF thoughts`;
       } else {
         thoughtStream = `Offline thoughts: ${chunkTokens.slice(0, 25).join(' ')}`;
         thoughtStatus.innerHTML = `⚠️ ${chunkLabel}: offline thought stream`;
@@ -8424,19 +8629,35 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         addLog(`<div class="section-title">💭 Chunk Thought Stream</div><div class="thought-stream">${sanitize(thoughtStream)}</div>`);
       }
 
+      if (thoughtFromLive && thoughtStream) {
+        lessonUpdates.thoughtStream = thoughtStream;
+      }
+
       const afterState = buildAfterStatePrompt(allMatrices);
       let refinedResponse = '';
+      let refinedFromLive = false;
       const refineStatus = logStatus(`⏳ ${chunkLabel}: composing refined response`);
       if (state.apiKey) {
         const refineMessages = [
           { role: 'system', content: 'You create refined HLSF responses anchored to cached vocabulary and observed adjacencies.' },
           { role: 'user', content: `${afterState.text}\nSegment focus: ${chunkTokens.join(' ')}\nEnsure language mirrors cached database expressions.` }
         ];
-        refinedResponse = await safeAsync(
+        const draftRefinement = await safeAsync(
           () => callOpenAI(refineMessages, { temperature: 0.4, max_tokens: 420 }),
           `${chunkLabel} refined response failed`
         ) || '';
-        refineStatus.innerHTML = `✅ ${chunkLabel}: refined response ready`;
+        refinedResponse = draftRefinement.trim();
+        if (refinedResponse) {
+          refineStatus.innerHTML = `⏳ ${chunkLabel}: editing refined response`;
+          refinedResponse = await editForCoherence('refined response', chunkLabel, refinedResponse);
+          refineStatus.innerHTML = `✅ ${chunkLabel}: refined response ready`;
+          refinedFromLive = true;
+        } else {
+          refineStatus.innerHTML = `⚠️ ${chunkLabel}: refined response empty`;
+        }
+      } else if (storedLesson?.refinedResponse) {
+        refinedResponse = storedLesson.refinedResponse;
+        refineStatus.innerHTML = `✅ ${chunkLabel}: cached refinement`;
       } else {
         refinedResponse = `Offline refinement: ${chunkTokens.slice(0, 30).join(' ')}`;
         refineStatus.innerHTML = `⚠️ ${chunkLabel}: offline refinement`;
@@ -8446,6 +8667,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (refinedResponse) {
         addOutputTokens(tokenize(refinedResponse), { render: false });
         addLog(`<div class="section-title">🧠 HLSF Refined Response</div><div class="thought-stream">${sanitize(refinedResponse)}</div>`);
+      }
+
+      if (refinedFromLive && refinedResponse) {
+        lessonUpdates.refinedResponse = refinedResponse;
+      }
+
+      if (state.apiKey && Object.keys(lessonUpdates).length) {
+        LessonStore.record(chunkTokens, lessonUpdates);
       }
 
       rebuildLiveGraph({ render: false });
@@ -8509,27 +8738,26 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         const text = await DocumentReaders.extract(file);
         if (currentAbortController?.signal.aborted) throw new Error('AbortError');
-        const rawTokens = tokenize(text);
-        if (!rawTokens.length) {
+        const chunkSize = CONFIG.DOCUMENT_CHUNK_SIZE || 100;
+        const chunkInfo = buildDocumentChunks(text, chunkSize);
+        const { chunks, totalTokens, oversizedSentences, rawTokenCount } = chunkInfo;
+
+        if (!rawTokenCount) {
           logError('Document contained no readable tokens.');
           exitProcessingState({ preserveInput: true });
           return;
         }
 
-        const alignedTokens = DbLexicon.alignTokens(rawTokens).filter(Boolean);
-        if (!alignedTokens.length) {
+        if (!chunks.length || !totalTokens) {
           logError('Unable to align document tokens with cached database vocabulary.');
           exitProcessingState({ preserveInput: true });
           return;
         }
 
-        const chunkSize = CONFIG.DOCUMENT_CHUNK_SIZE || 100;
-        const chunks = [];
-        for (let i = 0; i < alignedTokens.length; i += chunkSize) {
-          chunks.push(alignedTokens.slice(i, i + chunkSize));
+        addLog(`📥 Processing <strong>${sanitize(file.name || 'document')}</strong> (${totalTokens} tokens → ${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
+        if (oversizedSentences) {
+          addLog(`ℹ️ ${oversizedSentences} sentence${oversizedSentences === 1 ? '' : 's'} exceeded ${chunkSize} tokens and were split.`);
         }
-
-        addLog(`📥 Processing <strong>${sanitize(file.name || 'document')}</strong> (${alignedTokens.length} tokens → ${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
 
         const aggregateMatrices = new Map();
         const focusTokens = new Set();
