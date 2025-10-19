@@ -1960,6 +1960,48 @@
       }
     }
 
+    function collectWorkingMemoryAnchors(index, limit) {
+      if (!(index instanceof Map)) return [];
+
+      const anchors = [];
+      const seen = new Set();
+      const limitValue = Number.isFinite(limit) && limit > 0 ? limit : Infinity;
+
+      const caseMap = new Map();
+      for (const key of index.keys()) {
+        if (typeof key !== 'string') continue;
+        const lower = key.toLowerCase();
+        if (!caseMap.has(lower)) caseMap.set(lower, key);
+      }
+
+      const pushToken = (token) => {
+        if (anchors.length >= limitValue) return;
+        if (!token) return;
+        const lookup = typeof token === 'string' ? token.toLowerCase() : '';
+        if (!lookup) return;
+        const resolved = caseMap.get(lookup);
+        if (!resolved || seen.has(resolved)) return;
+        seen.add(resolved);
+        anchors.push(resolved);
+      };
+
+      const liveState = typeof state !== 'undefined' ? state : window.CognitionEngine?.state;
+      const stateTokens = Array.isArray(liveState?.tokenOrder) ? liveState.tokenOrder : [];
+      for (const token of stateTokens) pushToken(token);
+
+      const sessionTokens = window.Session?.tokens;
+      if (sessionTokens instanceof Set) {
+        for (const token of sessionTokens) pushToken(token);
+      }
+
+      const liveNodes = liveState?.liveGraph?.nodes;
+      if (liveNodes instanceof Map) {
+        for (const token of liveNodes.keys()) pushToken(token);
+      }
+
+      return anchors;
+    }
+
     function anchorsForMode(args, idx){
       let index = idx;
       if (!(index instanceof Map)) {
@@ -1997,6 +2039,13 @@
 
       const cap = getAnchorCap(index);
       const limit = cap > 0 ? cap : index.size;
+      const scope = window.HLSF?.config?.metricScope;
+      if (scope === METRIC_SCOPE.RUN) {
+        const liveAnchors = collectWorkingMemoryAnchors(index, limit);
+        if (liveAnchors.length) {
+          return { anchors: liveAnchors, idx: index };
+        }
+      }
       return { anchors: defaultAnchors(index, limit), idx: index };
     }
 
