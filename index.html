@@ -706,6 +706,9 @@
     const CONFIG = {
       MAX_TOKENS_PER_PROMPT: 500,
       MAX_TOKENS_PER_RESPONSE: 1500,
+      INPUT_WORD_LIMIT: 100,
+      ORIGINAL_OUTPUT_WORD_LIMIT: 200,
+      LOCAL_OUTPUT_WORD_LIMIT: 100,
       MAX_CONCURRENCY: 5,
       MAX_RETRY_ATTEMPTS: 3,
       RETRY_BASE_DELAY_MS: 500,
@@ -4435,6 +4438,59 @@
         .map(t => t.toLowerCase());
     }
 
+    function countWords(text) {
+      if (!text) return 0;
+      const words = String(text).trim().match(/\S+/g);
+      return words ? words.length : 0;
+    }
+
+    function limitWords(text, maxWords) {
+      const limit = Number.isFinite(maxWords) && maxWords > 0 ? Math.floor(maxWords) : 0;
+      if (!text || limit <= 0) {
+        return { text: '', wordCount: 0, totalWords: 0, trimmed: Boolean(text) };
+      }
+
+      const normalized = String(text).trim();
+      const matches = normalized.match(/\S+/g) || [];
+      if (matches.length <= limit) {
+        return {
+          text: normalized,
+          wordCount: matches.length,
+          totalWords: matches.length,
+          trimmed: false,
+        };
+      }
+
+      let cutoffIndex = normalized.length;
+      const re = /\S+/g;
+      let match;
+      let seen = 0;
+      while ((match = re.exec(normalized)) !== null) {
+        seen += 1;
+        if (seen === limit) {
+          cutoffIndex = match.index + match[0].length;
+          break;
+        }
+      }
+
+      const clipped = normalized.slice(0, cutoffIndex).trim();
+      return {
+        text: clipped,
+        wordCount: limit,
+        totalWords: matches.length,
+        trimmed: true,
+      };
+    }
+
+    function enforcePromptLimit(content, contextLabel = '') {
+      const result = limitWords(content, CONFIG.INPUT_WORD_LIMIT);
+      if (result.trimmed) {
+        const scope = contextLabel ? `${contextLabel}: ` : '';
+        logWarning(`${scope}prompt truncated to ${CONFIG.INPUT_WORD_LIMIT} words to satisfy pipeline constraints.`);
+      }
+      return result;
+    }
+
     function splitIntoSentences(text) {
       if (!text) return [];
       const normalized = text.replace(/\s+/g, ' ').trim();
@@ -5536,6 +5592,128 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
       }
       return relationships;
+    }
+
+    function gatherAdjacencyWalk(matrices, options = {}) {
+      const steps = [];
+      if (!(matrices instanceof Map) || matrices.size === 0) return steps;
+
+      const opts = options || {};
+      const maxSteps = Number.isFinite(opts.maxSteps) && opts.maxSteps > 0
+        ? Math.floor(opts.maxSteps)
+        : 12;
+
+      const topTokens = summarizeAttention(matrices);
+      const queue = topTokens.map(item => item.token).filter(Boolean);
+      const visitedTokens = new Set();
+      const seenPairs = new Set();
+
+      while (queue.length && steps.length < maxSteps) {
+        const current = queue.shift();
+        if (!current) continue;
+        const currentKey = current.toLowerCase();
+        if (visitedTokens.has(currentKey)) continue;
+        visitedTokens.add(currentKey);
+
+        const entry = matrices.get(current)
+          || matrices.get(currentKey)
+          || null;
+        if (!entry) continue;
+
+        const rels = entry.relationships || {};
+        const candidates = [];
+        for (const [rel, edges] of Object.entries(rels)) {
+          if (!Array.isArray(edges)) continue;
+          for (const edge of edges) {
+            if (!edge || !edge.token) continue;
+            candidates.push({
+              from: entry.token || current,
+              to: edge.token,
+              relation: rel,
+              weight: Number(edge.weight) || 0,
+            });
+          }
+        }
+
+        candidates.sort((a, b) => b.weight - a.weight);
+        for (const candidate of candidates) {
+          const pairKey = `${candidate.from}→${candidate.relation}→${candidate.to}`.toLowerCase();
+          if (seenPairs.has(pairKey)) continue;
+          seenPairs.add(pairKey);
+          steps.push(candidate);
+          queue.push(candidate.to);
+          if (steps.length >= maxSteps) break;
+        }
+      }
+
+      return steps;
+    }
+
+    function generateLocalHlsfOutput(matrices, options = {}) {
+      const opts = options || {};
+      const wordLimit = Number.isFinite(opts.wordLimit) && opts.wordLimit > 0
+        ? Math.floor(opts.wordLimit)
+        : CONFIG.LOCAL_OUTPUT_WORD_LIMIT;
+
+      const affinityThreshold = Number.isFinite(opts.threshold) ? opts.threshold : undefined;
+      const affinityIterations = Number.isFinite(opts.iterations) ? opts.iterations : undefined;
+      const mentalState = opts.mentalState || {};
+      const topTokens = Array.isArray(opts.topTokens) && opts.topTokens.length
+        ? opts.topTokens
+        : summarizeAttention(matrices);
+      const keyRelationships = Array.isArray(opts.keyRelationships) && opts.keyRelationships.length
+        ? opts.keyRelationships
+        : extractKeyRelationships(matrices);
+
+      const walk = gatherAdjacencyWalk(matrices, { maxSteps: opts.maxSteps || 16 });
+      const fragments = [];
+
+      if (mentalState.name) {
+        fragments.push(`Mental state ${mentalState.name.toLowerCase()} guides traversal.`);
+      }
+      if (mentalState.desc) {
+        fragments.push(mentalState.desc.trim());
+      }
+      if (affinityThreshold !== undefined && affinityIterations !== undefined) {
+        fragments.push(`Threshold ${affinityThreshold.toFixed(2)} after ${affinityIterations} iteration${affinityIterations === 1 ? '' : 's'} frames the loop.`);
+      }
+      if (mentalState.mechanics) {
+        const mechanics = mentalState.mechanics.trim();
+        if (mechanics) fragments.push(mechanics);
+      }
+
+      const focusTokens = topTokens.map(t => t.token).filter(Boolean).slice(0, 6);
+      if (focusTokens.length) {
+        fragments.push(`Focus tokens: ${focusTokens.join(', ')}.`);
+      }
+
+      if (keyRelationships.length) {
+        fragments.push(`Key relationships: ${keyRelationships.slice(0, 6).join('; ')}.`);
+      }
+
+      if (walk.length) {
+        const walkFragments = walk.map(step => {
+          const relation = relDisplay(step.relation || '∼');
+          const weight = Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00';
+          return `${step.from} ${relation} ${step.to} [${weight}]`;
+        });
+        fragments.push(`Adjacency walk: ${walkFragments.join(' | ')}.`);
+      } else {
+        fragments.push('Adjacency walk unavailable; relying on token summaries.');
+      }
+
+      const rawOutput = fragments.join(' ').replace(/\s+/g, ' ').trim();
+      const limited = limitWords(rawOutput, wordLimit);
+
+      return {
+        text: limited.text,
+        wordCount: limited.wordCount,
+        totalWords: limited.totalWords,
+        trimmed: limited.trimmed,
+        walk,
+        focusTokens,
+        keyRelationships,
+      };
     }
 
     function cloneAdjacencyEntry(entry, fallbackToken) {
@@ -8767,7 +8945,19 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const startTime = performance.now();
 
       try {
-        const tokens = tokenize(prompt);
+        const limitedPrompt = limitWords(prompt, CONFIG.INPUT_WORD_LIMIT);
+        const normalizedPrompt = limitedPrompt.text;
+
+        if (!normalizedPrompt) {
+          logError('Prompt cannot be empty');
+          return;
+        }
+
+        if (limitedPrompt.trimmed) {
+          logWarning(`Prompt truncated to ${CONFIG.INPUT_WORD_LIMIT} words to meet pipeline constraints.`);
+        }
+
+        const tokens = tokenize(normalizedPrompt);
         if (tokens.length === 0) {
           logError('Prompt cannot be empty');
           return;
@@ -8783,12 +8973,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const newTokenCount = Math.max(0, uniqueTokens.length - cachedTokens);
 
         const chatMessages = [
-          { role: 'system', content: 'You are an expert assistant.' },
-          { role: 'user', content: prompt },
+          { role: 'system', content: `You are an expert assistant. Limit your reply to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words.` },
+          { role: 'user', content: normalizedPrompt },
         ];
         const chatPromptTokens = estimateTokensForMessages(chatMessages);
         const chatCompletionTokens = estimateCompletionTokens(chatPromptTokens);
-        const chatCallCount = state.apiKey ? 3 : 0;
+        const chatCallCount = state.apiKey ? 2 : 0;
         const chatCostEstimate = chatCallCount * estimateCostUsd(chatPromptTokens, chatCompletionTokens);
 
         const adjacencyCallCount = state.apiKey ? newTokenCount : 0;
@@ -8814,21 +9004,28 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (state.apiKey) {
           const s1 = logStatus('⏳ Generating initial response...');
           initialResponse = await callOpenAI([
-            { role: 'system', content: 'You are an expert assistant.' },
-            { role: 'user', content: prompt },
-          ]);
+            { role: 'system', content: `You are an expert assistant. Limit your reply to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words.` },
+            { role: 'user', content: normalizedPrompt },
+          ], { max_tokens: 600, temperature: 0.6 });
           s1.innerHTML = `✅ Initial response generated`;
         } else {
           initialResponse = '⚠️ Offline mode';
           logWarning('Skipped (offline)');
         }
 
+        const initialWordInfo = limitWords(initialResponse, CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT);
+        if (initialWordInfo.trimmed) {
+          logWarning(`Initial response trimmed to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words for archival.`);
+        }
+        initialResponse = initialWordInfo.text;
+        const originalWordCount = initialWordInfo.wordCount;
+
         // Step 2: Adjacency analysis
         const responseTokens = tokenize(initialResponse);
         addConversationTokens(responseTokens);
         addOutputTokens(responseTokens, { render: false });
         const [inputMatrices, outputMatrices] = await Promise.all([
-          batchFetchAdjacencies(tokens, prompt, 'input'),
+          batchFetchAdjacencies(tokens, normalizedPrompt, 'input'),
           batchFetchAdjacencies(responseTokens, initialResponse, 'output'),
         ]);
 
@@ -8852,92 +9049,130 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           ${keyRels.map(r => `• ${r}`).join('<br>')}
         </div>`);
 
-        // Step 3: Thought stream
-        let thoughtStream = '';
-        if (state.apiKey) {
-          const s2 = logStatus('⏳ Synthesizing thought stream...');
-          thoughtStream = await callOpenAI([
-            { role: 'system', content: 'You create reflective thought streams from analytical insights.' },
-            { role: 'user', content: `Based on these adjacency insights, generate a stream-of-consciousness internal monologue:\n\nTop tokens: ${JSON.stringify(topTokens)}\nRelationships: ${keyRels.join('; ')}\n\nWrite as flowing natural thought connecting these elements.` },
-          ]);
-          s2.innerHTML = '✅ Thought stream captured';
+        const affinityCfg = window.HLSF?.config?.affinity || {};
+        const affinityThreshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
+        const affinityIterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
+        const mentalState = describeAffinityMentalState(affinityThreshold, affinityIterations) || {};
 
-          addLog(`<div class="section-divider"></div>
-            <div class="section-title">💭 Emergent Thought Stream</div>
-            <div class="thought-stream">${sanitize(thoughtStream)}</div>`);
-          addOutputTokens(tokenize(thoughtStream), { render: false });
+        const localOutputData = generateLocalHlsfOutput(allMatrices, {
+          wordLimit: CONFIG.LOCAL_OUTPUT_WORD_LIMIT,
+          threshold: affinityThreshold,
+          iterations: affinityIterations,
+          mentalState,
+          topTokens,
+          keyRelationships: keyRels,
+        });
+
+        let localOutput = localOutputData.text;
+        if (!localOutput) {
+          localOutput = 'Adjacency walk could not assemble a local output with the available data.';
+        }
+        if (localOutputData.trimmed) {
+          logWarning(`Local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words before refinement.`);
+        }
+        let localWordCount = localOutputData.wordCount || countWords(localOutput);
+
+        const localTokens = tokenize(localOutput);
+        if (localTokens.length) {
+          addConversationTokens(localTokens);
+          addOutputTokens(localTokens, { render: false });
         }
 
-        // Step 4: After-state prompt synthesis
-        const afterState = buildAfterStatePrompt(allMatrices);
-        const localPrompt = afterState.text;
-        let finalPrompt = localPrompt;
+        const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
+          ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
+          : '';
 
-        if (state.apiKey && localPrompt.trim()) {
-          const s3 = logStatus('⏳ Polishing after-state prompt...');
-          const polished = await safeAsync(
-            () => callOpenAI([
-              { role: 'system', content: 'Polish the provided prompt for clarity without adding new ideas.' },
-              { role: 'user', content: localPrompt },
-            ], { max_tokens: 200, temperature: 0.2 }),
-            'Prompt polish failed'
+        const mentalSummary = [
+          mentalState.name ? `<strong>${sanitize(mentalState.name)}</strong>` : '',
+          mentalState.desc ? sanitize(mentalState.desc) : '',
+          `Threshold ${affinityThreshold.toFixed(2)} · Iterations ${affinityIterations}`,
+        ].filter(Boolean).join('<br>');
+
+        addLog(`<div class="section-divider"></div>
+          <div class="section-title">🤖 Local HLSF AGI Output</div>
+          <div class="thought-stream">${sanitize(localOutput)}</div>
+          <div class="adjacency-insight">${mentalSummary}</div>
+          ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
+        `);
+
+        let refinedOutput = localOutput;
+        let refinedWordCount = localWordCount;
+        if (state.apiKey && localOutput.trim()) {
+          const refineStatus = logStatus('⏳ Refining local HLSF output...');
+          const refineMessages = [
+            { role: 'system', content: `You rewrite adjacency-based notes into a coherent paragraph of at most ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words. Preserve the mentioned tokens and relationships.` },
+            { role: 'user', content: [
+              `Mental state: ${mentalState.name || 'Unknown'}`,
+              mentalState.desc ? `Description: ${mentalState.desc}` : null,
+              `Focus tokens: ${localOutputData.focusTokens.join(', ') || 'none'}`,
+              `Key relationships: ${localOutputData.keyRelationships.join('; ') || 'none'}`,
+              '',
+              'Raw local output:',
+              localOutput,
+            ].filter(Boolean).join('\n') },
+          ];
+
+          const refinedDraft = await safeAsync(
+            () => callOpenAI(refineMessages, { temperature: 0.2, max_tokens: 420 }),
+            'Local refinement failed'
           );
-          if (polished) {
-            finalPrompt = polished.trim();
-            s3.innerHTML = '✅ Prompt polished';
-          } else {
-            s3.innerHTML = '⚠️ Prompt polish skipped';
+
+          if (refinedDraft) {
+            const refinedLimited = limitWords(refinedDraft, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+            refinedOutput = refinedLimited.text;
+            refinedWordCount = refinedLimited.wordCount;
+            if (refinedLimited.trimmed) {
+              logWarning(`Refined output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words to meet suite requirements.`);
+            }
+            if (refineStatus) refineStatus.innerHTML = '✅ Local output refined';
+          } else if (refineStatus) {
+            refineStatus.innerHTML = '⚠️ Local refinement skipped';
           }
         } else if (!state.apiKey) {
-          logWarning('Grammar polish skipped (offline)');
+          logWarning('Refinement skipped (offline mode)');
         }
 
-        const localTokens = tokenize(localPrompt);
-        const polishedTokens = tokenize(finalPrompt);
-        const unionTokens = [...new Set([...localTokens, ...polishedTokens])];
-        if (unionTokens.length) {
-          addConversationTokens(unionTokens);
-          addOutputTokens(unionTokens, { render: false });
+        const refinedTokens = tokenize(refinedOutput);
+        if (refinedTokens.length) {
+          addConversationTokens(refinedTokens);
+          addOutputTokens(refinedTokens, { render: false });
         }
+
+        addLog(`<div class="section-divider"></div>
+          <div class="section-title">🪞 LLM Refined AGI Output</div>
+          <div class="thought-stream">${sanitize(refinedOutput)}</div>
+        `);
 
         rebuildLiveGraph();
 
-        // Display final output
         const time = ((performance.now() - startTime) / 1000).toFixed(1);
+        const safeOriginal = sanitize(initialResponse);
+        const safeLocal = sanitize(localOutput);
+        const safeRefined = sanitize(refinedOutput);
+
         addLog(`<div class="section-divider"></div>
           <div class="final-output">
-            <h3>🧠 After-State Cognitive Prompt</h3>
-            <pre>${sanitize(finalPrompt)}</pre>
-
-            <details>
-              <summary>View raw after-state synthesis</summary>
-              <pre>${sanitize(localPrompt)}</pre>
+            <h3>🧩 HLSF Output Suite</h3>
+            <details open>
+              <summary>Original LLM response (${originalWordCount} words)</summary>
+              <pre>${safeOriginal}</pre>
             </details>
-
-            <details>
-              <summary>Graph summary (${state.liveGraph?.nodes?.size || 0} nodes)</summary>
-              <pre>${JSON.stringify({
-                nodes: afterState.nodeCount,
-                edges: afterState.edgeCount,
-                cached: afterState.cachedTokens.length,
-                uncached: afterState.newTokens.length,
-                attention: afterState.topTokens.slice(0, 5),
-              }, null, 2)}</pre>
+            <details open>
+              <summary>Local HLSF AGI output (${localWordCount} words)</summary>
+              <pre>${safeLocal}</pre>
             </details>
-
-            <details>
-              <summary>Initial model output</summary>
-              <pre>${sanitize(initialResponse)}</pre>
+            <details open>
+              <summary>LLM refined AGI output (${refinedWordCount} words)</summary>
+              <pre>${safeRefined}</pre>
             </details>
-
             <details>
-              <summary>View adjacency data (${allMatrices.size} tokens)</summary>
+              <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
               <pre>${JSON.stringify(Array.from(allMatrices.entries()).slice(0, 5), null, 2)}</pre>
             </details>
           </div>
         `);
 
-        logOK(`After-state prompt ready (${time}s)`);
+        logOK(`Output suite ready (${time}s)`);
 
         scheduleHlsfReload('prompt-complete', { immediate: true });
 
@@ -9011,9 +9246,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     async function editForCoherence(kind, chunkLabel, text) {
       if (!state.apiKey || !text || !text.trim()) return text;
+      const promptLines = [
+        `Polish the following ${kind} so it reads smoothly while keeping terminology consistent with the cached lexicon. Do not add new ideas.`,
+        '',
+        text,
+      ];
+      const limitedPrompt = enforcePromptLimit(promptLines.join('\n'), `${chunkLabel} ${kind}`.trim());
       const messages = [
         { role: 'system', content: 'You are an editorial assistant who improves coherence and clarity while preserving intent and vocabulary.' },
-        { role: 'user', content: `Polish the following ${kind} so it reads smoothly while keeping terminology consistent with the cached lexicon. Do not add new ideas.\n\n${text}` },
+        { role: 'user', content: limitedPrompt.text },
       ];
       const tokenCount = tokenize(text).length;
       const maxTokens = Math.min(420, Math.max(120, estimateCompletionTokens(tokenCount)));
@@ -9300,9 +9541,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const reflectionStatus = logStatus(`⏳ ${chunkLabel}: generating reflection`);
 
       if (state.apiKey) {
+        const reflectionPromptLines = [
+          'Write a reflective synthesis of this passage in the voice of the cached database.',
+          lexiconHint ? `Lexicon hints: ${lexiconHint}` : 'Lexicon hints: (none)',
+          chunkTokens.length ? `Tokens: ${chunkTokens.join(' ')}` : 'Tokens: (none)',
+        ].filter(Boolean);
+        const limitedReflectionPrompt = enforcePromptLimit(reflectionPromptLines.join('\n'), `${chunkLabel} reflection`);
         const messages = [
           { role: 'system', content: 'You reflect on passages using only the supplied lexicon. Compose fluent, introspective prose anchored to the provided tokens.' },
-          { role: 'user', content: `Lexicon: ${lexiconHint || '(empty)'}\nTokens: ${chunkTokens.join(' ')}\nWrite a reflective synthesis of this passage in the voice of the cached database.` }
+          { role: 'user', content: limitedReflectionPrompt.text }
         ];
         const draftReflection = await safeAsync(
           () => callOpenAI(messages, { temperature: 0.45, max_tokens: 420 }),
@@ -9369,9 +9616,18 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       let thoughtFromLive = false;
       const thoughtStatus = logStatus(`⏳ ${chunkLabel}: distilling HLSF thoughts`);
       if (state.apiKey) {
+        const attentionSummary = topTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ');
+        const relationshipSummary = keyRels.join('; ');
+        const thoughtPromptLines = [
+          'Compose a flowing interior monologue grounded in the supplied tokens, attention hotspots, and relationships.',
+          chunkTokens.length ? `Tokens: ${chunkTokens.join(' ')}` : 'Tokens: (none)',
+          attentionSummary ? `Attention hotspots: ${attentionSummary}` : null,
+          relationshipSummary ? `Key relationships: ${relationshipSummary}` : null,
+        ].filter(Boolean);
+        const limitedThoughtPrompt = enforcePromptLimit(thoughtPromptLines.join('\n'), `${chunkLabel} thought stream`);
         const thoughtMessages = [
           { role: 'system', content: 'You translate adjacency metrics into connected internal thoughts using the cached lexicon.' },
-          { role: 'user', content: `Tokens: ${chunkTokens.join(' ')}\nAttention hotspots: ${topTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ')}\nKey relationships: ${keyRels.join('; ')}\nCompose a flowing interior monologue grounded in these ties.` }
+          { role: 'user', content: limitedThoughtPrompt.text }
         ];
         const draftThoughts = await safeAsync(
           () => callOpenAI(thoughtMessages, { temperature: 0.5, max_tokens: 380 }),
@@ -9409,9 +9665,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       let refinedFromLive = false;
       const refineStatus = logStatus(`⏳ ${chunkLabel}: composing refined response`);
       if (state.apiKey) {
+        const refinePromptLines = [
+          'Use the stabilized HLSF guidance to craft the refined response while respecting cached vocabulary.',
+          afterState.text,
+          chunkTokens.length ? `Segment focus tokens: ${chunkTokens.join(' ')}` : 'Segment focus tokens: (none)',
+        ].filter(Boolean);
+        const limitedRefinePrompt = enforcePromptLimit(refinePromptLines.join('\n'), `${chunkLabel} refinement`);
         const refineMessages = [
           { role: 'system', content: 'You create refined HLSF responses anchored to cached vocabulary and observed adjacencies.' },
-          { role: 'user', content: `${afterState.text}\nSegment focus: ${chunkTokens.join(' ')}\nEnsure language mirrors cached database expressions.` }
+          { role: 'user', content: limitedRefinePrompt.text }
         ];
         const draftRefinement = await safeAsync(
           () => callOpenAI(refineMessages, { temperature: 0.4, max_tokens: 420 }),
@@ -9517,9 +9779,20 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       let finalReflection = '';
       const reflectionStatus = logStatus('⏳ Building document-scale reflection');
       if (state.apiKey) {
+        const docAttentionSummary = docTopTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ');
+        const docRelationshipSummary = docRelationships.join('; ');
+        const reflectionPromptLines = [
+          'Produce an approximately 1000-token synthesis that traces observed relationships, highlights correlated nodes, and concludes with an integrative perspective. Maintain vocabulary from the cached database.',
+          docName ? `Document: ${docName}` : null,
+          lexiconSeeds.length ? `Lexicon anchors: ${lexiconSeeds.join(', ')}` : 'Lexicon anchors: (none)',
+          docAttentionSummary ? `Global attention: ${docAttentionSummary}` : 'Global attention: (none)',
+          docRelationshipSummary ? `Relationships: ${docRelationshipSummary}` : 'Relationships: (none)',
+          chunkSummaries ? `Chunk breakdown:\n${chunkSummaries}` : null,
+        ].filter(Boolean);
+        const limitedReflectionPrompt = enforcePromptLimit(reflectionPromptLines.join('\n'), 'Document reflection');
         const messages = [
           { role: 'system', content: 'You craft extensive reflections using cached database language and HLSF adjacency insights.' },
-          { role: 'user', content: `Document: ${docName}\nLexicon anchors: ${lexiconSeeds.join(', ')}\nGlobal attention: ${docTopTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ')}\nRelationships: ${docRelationships.join('; ')}\nChunk breakdown:\n${chunkSummaries}\nProduce an approximately 1000-token synthesis that traces these relationships, highlights correlated nodes, and concludes with an integrative perspective. Maintain vocabulary from the cached database.` }
+          { role: 'user', content: limitedReflectionPrompt.text }
         ];
         finalReflection = await safeAsync(
           () => callOpenAI(messages, { temperature: 0.55, max_tokens: 1200 }),
