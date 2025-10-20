@@ -4336,11 +4336,26 @@
               for (const entry of parsed) {
                 if (!entry || typeof entry.key !== 'string' || !entry.key) continue;
                 const { key, ...rest } = entry;
+                const original = typeof rest.originalResponse === 'string' && rest.originalResponse.trim()
+                  ? rest.originalResponse
+                  : typeof rest.reflection === 'string'
+                    ? rest.reflection
+                    : '';
+                const local = typeof rest.localOutput === 'string' && rest.localOutput.trim()
+                  ? rest.localOutput
+                  : typeof rest.thoughtStream === 'string'
+                    ? rest.thoughtStream
+                    : '';
+                const refined = typeof rest.refinedOutput === 'string' && rest.refinedOutput.trim()
+                  ? rest.refinedOutput
+                  : typeof rest.refinedResponse === 'string'
+                    ? rest.refinedResponse
+                    : '';
                 map.set(key, {
                   tokens: Array.isArray(rest.tokens) ? rest.tokens : [],
-                  reflection: typeof rest.reflection === 'string' ? rest.reflection : '',
-                  thoughtStream: typeof rest.thoughtStream === 'string' ? rest.thoughtStream : '',
-                  refinedResponse: typeof rest.refinedResponse === 'string' ? rest.refinedResponse : '',
+                  originalResponse: original,
+                  localOutput: local,
+                  refinedOutput: refined,
                   updatedAt: Number.isFinite(rest.updatedAt) ? rest.updatedAt : Date.now(),
                 });
               }
@@ -4357,12 +4372,30 @@
         if (!(map instanceof Map)) return;
         const payload = [];
         for (const [key, value] of map.entries()) {
+          const original = typeof value?.originalResponse === 'string' && value.originalResponse.trim()
+            ? value.originalResponse
+            : typeof value?.reflection === 'string'
+              ? value.reflection
+              : '';
+          const local = typeof value?.localOutput === 'string' && value.localOutput.trim()
+            ? value.localOutput
+            : typeof value?.thoughtStream === 'string'
+              ? value.thoughtStream
+              : '';
+          const refined = typeof value?.refinedOutput === 'string' && value.refinedOutput.trim()
+            ? value.refinedOutput
+            : typeof value?.refinedResponse === 'string'
+              ? value.refinedResponse
+              : '';
           payload.push({
             key,
             tokens: Array.isArray(value?.tokens) ? value.tokens : [],
-            reflection: typeof value?.reflection === 'string' ? value.reflection : '',
-            thoughtStream: typeof value?.thoughtStream === 'string' ? value.thoughtStream : '',
-            refinedResponse: typeof value?.refinedResponse === 'string' ? value.refinedResponse : '',
+            originalResponse: original,
+            localOutput: local,
+            refinedOutput: refined,
+            reflection: original,
+            thoughtStream: local,
+            refinedResponse: refined,
             updatedAt: Number.isFinite(value?.updatedAt) ? value.updatedAt : Date.now(),
           });
         }
@@ -4386,26 +4419,41 @@
         const key = keyFromTokens(tokens);
         if (!key) return;
         const map = load();
-        const existing = map.get(key) || {
-          tokens: tokens.slice(0, 160),
-          reflection: '',
-          thoughtStream: '',
-          refinedResponse: '',
-          updatedAt: 0,
+        const existingEntry = map.get(key) || {};
+        const prefer = (...values) => {
+          for (const value of values) {
+            if (typeof value !== 'string') continue;
+            const trimmed = value.trim();
+            if (trimmed) return trimmed;
+          }
+          return '';
         };
+
         const next = {
-          tokens: existing.tokens && existing.tokens.length ? existing.tokens : tokens.slice(0, 160),
-          reflection: typeof lesson.reflection === 'string' && lesson.reflection.trim()
-            ? lesson.reflection
-            : existing.reflection || '',
-          thoughtStream: typeof lesson.thoughtStream === 'string' && lesson.thoughtStream.trim()
-            ? lesson.thoughtStream
-            : existing.thoughtStream || '',
-          refinedResponse: typeof lesson.refinedResponse === 'string' && lesson.refinedResponse.trim()
-            ? lesson.refinedResponse
-            : existing.refinedResponse || '',
+          tokens: Array.isArray(existingEntry.tokens) && existingEntry.tokens.length
+            ? existingEntry.tokens
+            : tokens.slice(0, 160),
+          originalResponse: prefer(
+            lesson.originalResponse,
+            lesson.reflection,
+            existingEntry.originalResponse,
+            existingEntry.reflection
+          ),
+          localOutput: prefer(
+            lesson.localOutput,
+            lesson.thoughtStream,
+            existingEntry.localOutput,
+            existingEntry.thoughtStream
+          ),
+          refinedOutput: prefer(
+            lesson.refinedOutput,
+            lesson.refinedResponse,
+            existingEntry.refinedOutput,
+            existingEntry.refinedResponse
+          ),
           updatedAt: Date.now(),
         };
+
         map.set(key, next);
 
         if (map.size > MAX_ENTRIES) {
@@ -4421,6 +4469,7 @@
 
       return { fetch, record };
     })();
+
 
     function isValidApiKey(key) {
       if (typeof key !== 'string') return false;
@@ -9519,57 +9568,81 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       const storedLesson = LessonStore.fetch(chunkTokens);
       const lessonUpdates = {};
-      const uniqueTokens = [...new Set(chunkTokens)].slice(0, 80);
+
+      const limitedChunkTokens = chunkTokens.slice(0, CONFIG.INPUT_WORD_LIMIT);
+      if (chunkTokens.length > limitedChunkTokens.length) {
+        logWarning(`${chunkLabel}: prompt truncated to ${CONFIG.INPUT_WORD_LIMIT} tokens for pipeline compliance.`);
+      }
+
+      const promptWordInfo = limitWords(limitedChunkTokens.join(' '), CONFIG.INPUT_WORD_LIMIT);
+      if (promptWordInfo.trimmed && chunkTokens.length <= limitedChunkTokens.length) {
+        logWarning(`${chunkLabel}: prompt trimmed to ${CONFIG.INPUT_WORD_LIMIT} words for pipeline compliance.`);
+      }
+
+      const promptText = promptWordInfo.text;
+      const promptTokens = tokenize(promptText);
+      if (!promptTokens.length) {
+        logWarning(`${chunkLabel}: no usable tokens after prompt truncation.`);
+        return null;
+      }
+
+      const uniqueTokens = [...new Set(promptTokens)].slice(0, 80);
       const lexiconHint = uniqueTokens.join(', ');
-      let reflection = '';
-      let reflectionFromLive = false;
-      const reflectionStatus = logStatus(`⏳ ${chunkLabel}: generating reflection`);
+
+      let originalResponse = '';
+      let originalFromLive = false;
+      const originalStatus = logStatus(`⏳ ${chunkLabel}: generating original response`);
 
       if (state.apiKey) {
         const messages = [
-          { role: 'system', content: 'You reflect on passages using only the supplied lexicon. Compose fluent, introspective prose anchored to the provided tokens.' },
-          { role: 'user', content: `Lexicon: ${lexiconHint || '(empty)'}\nTokens: ${chunkTokens.join(' ')}\nWrite a reflective synthesis of this passage in the voice of the cached database.` }
+          { role: 'system', content: `You reflect on passages using only the supplied lexicon. Limit your response to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words.` },
+          { role: 'user', content: `Lexicon: ${lexiconHint || '(empty)'}
+Tokens: ${promptTokens.join(' ')}
+Write a reflective synthesis of this passage in the voice of the cached database.` }
         ];
-        const draftReflection = await safeAsync(
+        const draftOriginal = await safeAsync(
           () => callOpenAI(messages, { temperature: 0.45, max_tokens: 420 }),
-          `${chunkLabel} reflection failed`
+          `${chunkLabel} original response failed`
         ) || '';
-        reflection = draftReflection.trim();
-        if (reflection) {
-          reflectionStatus.innerHTML = `⏳ ${chunkLabel}: editing reflection`;
-          reflection = await editForCoherence('reflection', chunkLabel, reflection);
-          reflectionStatus.innerHTML = `✅ ${chunkLabel}: reflection ready`;
-          reflectionFromLive = true;
+        originalResponse = draftOriginal.trim();
+        if (originalResponse) {
+          originalStatus.innerHTML = `✅ ${chunkLabel}: original response ready`;
+          originalFromLive = true;
         } else {
-          reflectionStatus.innerHTML = `⚠️ ${chunkLabel}: reflection empty`;
+          originalStatus.innerHTML = `⚠️ ${chunkLabel}: original response empty`;
         }
-      } else if (storedLesson?.reflection) {
-        reflection = storedLesson.reflection;
-        reflectionStatus.innerHTML = `✅ ${chunkLabel}: reflection recalled`;
-      } else {
-        reflection = chunkTokens.join(' ');
-        reflectionStatus.innerHTML = `⚠️ ${chunkLabel}: offline placeholder`;
       }
 
-      reflection = DbLexicon.rewriteText(reflection);
-      addOutputTokens(tokenize(reflection), { render: false });
-      addLog(`<div class="thought-stream">${sanitize(reflection)}</div>`);
-
-      if (reflectionFromLive && reflection) {
-        lessonUpdates.reflection = reflection;
+      if (!originalResponse && storedLesson?.originalResponse) {
+        originalResponse = storedLesson.originalResponse;
+        originalStatus.innerHTML = `✅ ${chunkLabel}: cached original response`;
+      } else if (!originalResponse) {
+        originalResponse = promptText;
+        originalStatus.innerHTML = `⚠️ ${chunkLabel}: offline original response`;
       }
 
-      const chunkPrompt = chunkTokens.join(' ');
-      const reflectionTokens = tokenize(reflection);
+      originalResponse = DbLexicon.rewriteText(originalResponse);
+      const originalLimited = limitWords(originalResponse, CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT);
+      if (originalLimited.trimmed) {
+        logWarning(`${chunkLabel}: original response truncated to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words.`);
+      }
+      originalResponse = originalLimited.text;
+      const originalWordCount = originalLimited.wordCount;
+
+      const originalTokens = tokenize(originalResponse);
+      if (originalTokens.length) {
+        addOutputTokens(originalTokens, { render: false });
+      }
+
       const measure = async (fn) => {
-        const start = performance.now();
+        const startTime = performance.now();
         const result = await fn();
-        return { result, duration: performance.now() - start };
+        return { result, duration: performance.now() - startTime };
       };
 
       const [inputData, outputData] = await Promise.all([
-        measure(() => batchFetchAdjacencies(chunkTokens, chunkPrompt, `${chunkLabel} prompt adjacencies`)),
-        measure(() => batchFetchAdjacencies(reflectionTokens, reflection, `${chunkLabel} reflection adjacencies`)),
+        measure(() => batchFetchAdjacencies(promptTokens, promptText, `${chunkLabel} prompt adjacencies`)),
+        measure(() => batchFetchAdjacencies(originalTokens, originalResponse, `${chunkLabel} original response adjacencies`)),
       ]);
 
       const inputMatrices = inputData.result;
@@ -9591,83 +9664,144 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         addLog(`<div class="adjacency-insight"><strong>🔗 Relationships:</strong><br>${keyRels.map(rel => `• ${sanitize(rel)}`).join('<br>')}</div>`);
       }
 
-      let thoughtStream = '';
-      let thoughtFromLive = false;
-      const thoughtStatus = logStatus(`⏳ ${chunkLabel}: distilling HLSF thoughts`);
-      if (state.apiKey) {
-        const thoughtMessages = [
-          { role: 'system', content: 'You translate adjacency metrics into connected internal thoughts using the cached lexicon.' },
-          { role: 'user', content: `Tokens: ${chunkTokens.join(' ')}\nAttention hotspots: ${topTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ')}\nKey relationships: ${keyRels.join('; ')}\nCompose a flowing interior monologue grounded in these ties.` }
-        ];
-        const draftThoughts = await safeAsync(
-          () => callOpenAI(thoughtMessages, { temperature: 0.5, max_tokens: 380 }),
-          `${chunkLabel} thought stream failed`
-        ) || '';
-        thoughtStream = draftThoughts.trim();
-        if (thoughtStream) {
-          thoughtStatus.innerHTML = `⏳ ${chunkLabel}: editing HLSF thoughts`;
-          thoughtStream = await editForCoherence('thought stream', chunkLabel, thoughtStream);
-          thoughtStatus.innerHTML = `✅ ${chunkLabel}: HLSF thoughts ready`;
-          thoughtFromLive = true;
-        } else {
-          thoughtStatus.innerHTML = `⚠️ ${chunkLabel}: HLSF thoughts empty`;
-        }
-      } else if (storedLesson?.thoughtStream) {
-        thoughtStream = storedLesson.thoughtStream;
-        thoughtStatus.innerHTML = `✅ ${chunkLabel}: cached HLSF thoughts`;
-      } else {
-        thoughtStream = `Offline thoughts: ${chunkTokens.slice(0, 25).join(' ')}`;
-        thoughtStatus.innerHTML = `⚠️ ${chunkLabel}: offline thought stream`;
+      const affinityCfg = window.HLSF?.config?.affinity || {};
+      const affinityThreshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
+      const affinityIterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
+      const mentalState = describeAffinityMentalState(affinityThreshold, affinityIterations) || {};
+
+      const localOutputData = generateLocalHlsfOutput(allMatrices, {
+        wordLimit: CONFIG.LOCAL_OUTPUT_WORD_LIMIT,
+        threshold: affinityThreshold,
+        iterations: affinityIterations,
+        mentalState,
+        topTokens,
+        keyRelationships: keyRels,
+      });
+
+      let localOutput = localOutputData.text || 'Adjacency walk could not assemble a local output with the available data.';
+      if (localOutputData.trimmed) {
+        logWarning(`${chunkLabel}: local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words before refinement.`);
+      }
+      localOutput = DbLexicon.rewriteText(localOutput);
+      const localLimited = limitWords(localOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+      if (localLimited.trimmed) {
+        logWarning(`${chunkLabel}: local output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words for archival.`);
+      }
+      localOutput = localLimited.text;
+      const localWordCount = localLimited.wordCount;
+
+      const localTokens = tokenize(localOutput);
+      if (localTokens.length) {
+        addOutputTokens(localTokens, { render: false });
       }
 
-      thoughtStream = DbLexicon.rewriteText(thoughtStream);
-      if (thoughtStream) {
-        addOutputTokens(tokenize(thoughtStream), { render: false });
-        addLog(`<div class="section-title">💭 Chunk Thought Stream</div><div class="thought-stream">${sanitize(thoughtStream)}</div>`);
-      }
+      const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
+        ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
+        : '';
 
-      if (thoughtFromLive && thoughtStream) {
-        lessonUpdates.thoughtStream = thoughtStream;
-      }
+      const mentalSummary = [
+        mentalState.name ? `<strong>${sanitize(mentalState.name)}</strong>` : '',
+        mentalState.desc ? sanitize(mentalState.desc) : '',
+        `Threshold ${affinityThreshold.toFixed(2)} · Iterations ${affinityIterations}`,
+      ].filter(Boolean).join('<br>');
 
-      const afterState = buildAfterStatePrompt(allMatrices);
-      let refinedResponse = '';
+      addLog(`<div class="section-divider"></div>
+        <div class="section-title">🤖 Local HLSF AGI Output</div>
+        <div class="thought-stream">${sanitize(localOutput)}</div>
+        <div class="adjacency-insight">${mentalSummary}</div>
+        ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
+      `);
+
+      let refinedOutput = storedLesson?.refinedOutput || '';
       let refinedFromLive = false;
-      const refineStatus = logStatus(`⏳ ${chunkLabel}: composing refined response`);
-      if (state.apiKey) {
+      const refineStatus = logStatus(`⏳ ${chunkLabel}: refining local output`);
+
+      if (state.apiKey && localOutput.trim()) {
         const refineMessages = [
-          { role: 'system', content: 'You create refined HLSF responses anchored to cached vocabulary and observed adjacencies.' },
-          { role: 'user', content: `${afterState.text}\nSegment focus: ${chunkTokens.join(' ')}\nEnsure language mirrors cached database expressions.` }
+          { role: 'system', content: `You rewrite adjacency-based notes into a coherent paragraph of at most ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words. Preserve the mentioned tokens and relationships.` },
+          { role: 'user', content: [
+            `Segment: ${chunkLabel}`,
+            `Mental state: ${mentalState.name || 'Unknown'}`,
+            mentalState.desc ? `Description: ${mentalState.desc}` : null,
+            `Focus tokens: ${localOutputData.focusTokens.join(', ') || 'none'}`,
+            `Key relationships: ${localOutputData.keyRelationships.join('; ') || 'none'}`,
+            '',
+            'Raw local output:',
+            localOutput,
+          ].filter(Boolean).join('\n') },
         ];
-        const draftRefinement = await safeAsync(
-          () => callOpenAI(refineMessages, { temperature: 0.4, max_tokens: 420 }),
-          `${chunkLabel} refined response failed`
-        ) || '';
-        refinedResponse = draftRefinement.trim();
-        if (refinedResponse) {
-          refineStatus.innerHTML = `⏳ ${chunkLabel}: editing refined response`;
-          refinedResponse = await editForCoherence('refined response', chunkLabel, refinedResponse);
-          refineStatus.innerHTML = `✅ ${chunkLabel}: refined response ready`;
+
+        const refinedDraft = await safeAsync(
+          () => callOpenAI(refineMessages, { temperature: 0.2, max_tokens: 420 }),
+          `${chunkLabel} refined AGI output failed`
+        );
+
+        if (refinedDraft) {
+          refinedOutput = refinedDraft.trim();
+          const refinedLimited = limitWords(refinedOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+          refinedOutput = refinedLimited.text;
+          if (refinedLimited.trimmed) {
+            logWarning(`${chunkLabel}: refined output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words to meet suite requirements.`);
+          }
           refinedFromLive = true;
+          refineStatus.innerHTML = `✅ ${chunkLabel}: refined output ready`;
         } else {
-          refineStatus.innerHTML = `⚠️ ${chunkLabel}: refined response empty`;
+          refineStatus.innerHTML = `⚠️ ${chunkLabel}: refinement empty`;
         }
-      } else if (storedLesson?.refinedResponse) {
-        refinedResponse = storedLesson.refinedResponse;
-        refineStatus.innerHTML = `✅ ${chunkLabel}: cached refinement`;
+      } else if (refinedOutput) {
+        refineStatus.innerHTML = `✅ ${chunkLabel}: cached refined output`;
       } else {
-        refinedResponse = `Offline refinement: ${chunkTokens.slice(0, 30).join(' ')}`;
-        refineStatus.innerHTML = `⚠️ ${chunkLabel}: offline refinement`;
+        refinedOutput = localOutput;
+        refineStatus.innerHTML = `⚠️ ${chunkLabel}: refinement unavailable`;
       }
 
-      refinedResponse = DbLexicon.rewriteText(refinedResponse);
-      if (refinedResponse) {
-        addOutputTokens(tokenize(refinedResponse), { render: false });
-        addLog(`<div class="section-title">🧠 HLSF Refined Response</div><div class="thought-stream">${sanitize(refinedResponse)}</div>`);
+      refinedOutput = DbLexicon.rewriteText(refinedOutput);
+      const refinedLimited = limitWords(refinedOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+      if (refinedLimited.trimmed) {
+        logWarning(`${chunkLabel}: refined output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words for archival.`);
+      }
+      refinedOutput = refinedLimited.text;
+      const refinedWordCount = refinedLimited.wordCount;
+
+      const refinedTokens = tokenize(refinedOutput);
+      if (refinedTokens.length) {
+        addOutputTokens(refinedTokens, { render: false });
       }
 
-      if (refinedFromLive && refinedResponse) {
-        lessonUpdates.refinedResponse = refinedResponse;
+      const safeOriginal = sanitize(originalResponse);
+      const safeLocal = sanitize(localOutput);
+      const safeRefined = sanitize(refinedOutput);
+
+      addLog(`<div class="section-divider"></div>
+        <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
+        <div class="final-output">
+          <details open>
+            <summary>Original LLM response (${originalWordCount} words)</summary>
+            <pre>${safeOriginal}</pre>
+          </details>
+          <details open>
+            <summary>Local HLSF AGI output (${localWordCount} words)</summary>
+            <pre>${safeLocal}</pre>
+          </details>
+          <details open>
+            <summary>LLM refined AGI output (${refinedWordCount} words)</summary>
+            <pre>${safeRefined}</pre>
+          </details>
+          <details>
+            <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
+            <pre>${JSON.stringify(Array.from(allMatrices.entries()).slice(0, 5), null, 2)}</pre>
+          </details>
+        </div>
+      `);
+
+      if (originalFromLive && originalResponse) {
+        lessonUpdates.originalResponse = originalResponse;
+      }
+      if (localOutput) {
+        lessonUpdates.localOutput = localOutput;
+      }
+      if (refinedFromLive && refinedOutput) {
+        lessonUpdates.refinedOutput = refinedOutput;
       }
 
       if (state.apiKey && Object.keys(lessonUpdates).length) {
@@ -9709,9 +9843,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
       return {
         tokens: chunkTokens,
-        reflection,
-        thoughtStream,
-        refinedResponse,
+        originalResponse,
+        localOutput,
+        refinedOutput,
         matrices: allMatrices,
         topTokens,
         keyRelationships: keyRels,
