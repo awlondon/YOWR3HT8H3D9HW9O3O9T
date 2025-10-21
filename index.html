@@ -706,6 +706,7 @@
       MAX_TOKENS_PER_PROMPT: 500,
       MAX_TOKENS_PER_RESPONSE: 1500,
       INPUT_WORD_LIMIT: 100,
+      DOCUMENT_WORD_LIMIT: 350,
       ORIGINAL_OUTPUT_WORD_LIMIT: 200,
       LOCAL_OUTPUT_WORD_LIMIT: 100,
       MAX_CONCURRENCY: 5,
@@ -9943,14 +9944,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const storedLesson = LessonStore.fetch(chunkTokens);
       const lessonUpdates = {};
 
-      const limitedChunkTokens = chunkTokens.slice(0, CONFIG.INPUT_WORD_LIMIT);
+      const documentWordLimit = Math.min(CONFIG.DOCUMENT_WORD_LIMIT || CONFIG.INPUT_WORD_LIMIT, CONFIG.MAX_TOKENS_PER_PROMPT);
+      const limitedChunkTokens = chunkTokens.slice(0, documentWordLimit);
       if (chunkTokens.length > limitedChunkTokens.length) {
-        logWarning(`${chunkLabel}: prompt truncated to ${CONFIG.INPUT_WORD_LIMIT} tokens for pipeline compliance.`);
+        logWarning(`${chunkLabel}: prompt truncated to ${documentWordLimit} tokens for pipeline compliance.`);
       }
 
-      const promptWordInfo = limitWords(limitedChunkTokens.join(' '), CONFIG.INPUT_WORD_LIMIT);
+      const promptWordInfo = limitWords(limitedChunkTokens.join(' '), documentWordLimit);
       if (promptWordInfo.trimmed && chunkTokens.length <= limitedChunkTokens.length) {
-        logWarning(`${chunkLabel}: prompt trimmed to ${CONFIG.INPUT_WORD_LIMIT} words for pipeline compliance.`);
+        logWarning(`${chunkLabel}: prompt trimmed to ${documentWordLimit} words for pipeline compliance.`);
       }
 
       const promptText = promptWordInfo.text;
