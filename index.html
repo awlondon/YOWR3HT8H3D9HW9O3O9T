@@ -5325,11 +5325,13 @@
     }
 
     function isTokenCached(token) {
+      const key = getCacheKey(token);
       try {
-        return localStorage.getItem(getCacheKey(token)) != null;
+        if (localStorage.getItem(key) != null) return true;
       } catch {
-        return false;
+        // ignore storage access errors and fall back to in-memory cache
       }
+      return memoryStorageFallback.has(key);
     }
 
     function updateTokenIndex(token) {
@@ -5363,9 +5365,11 @@
           ? payloadData.token
           : token;
         payloadData.token = recordToken;
+        const cacheKey = getCacheKey(recordToken);
         const payload = JSON.stringify(payloadData);
-        const ok = safeStorageSet(getCacheKey(recordToken), payload);
-        if (!ok) return;
+        const persisted = safeStorageSet(cacheKey, payload);
+        const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
+        if (!persisted && !fallbackStored) return;
         updateTokenIndex(recordToken);
         refreshDbReference(payloadData, { deferReload });
       } catch (err) {
