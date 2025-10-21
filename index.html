@@ -619,8 +619,8 @@
       <canvas id="hlsf-canvas"></canvas>
       <div class="hlsf-controls">
         <div class="hlsf-control-group">
-          <label for="hlsf-rotation-speed">Rotation speed <span id="hlsf-speed-val">0.00</span></label>
-          <input id="hlsf-rotation-speed" type="range" min="-2" max="2" step="0.01" value="0.30">
+          <label for="hlsf-rotation-speed">Emergent rotation speed <span id="hlsf-speed-val">0.00</span></label>
+          <input id="hlsf-rotation-speed" type="range" min="-5" max="5" step="0.01" value="0.30">
         </div>
         <div class="hlsf-control-group">
           <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.70</span></label>
@@ -680,9 +680,8 @@
           <em id="hlsf-affinity-summary" class="hlsf-mental-summary">Current mental state: Focused yet flexible attention.</em>
         </div>
         <div class="hlsf-control-group">
-          <label>Rotation modes</label>
+          <label>Emergent rotation</label>
           <div class="hlsf-button-row">
-            <button id="hlsf-toggle-rotation" class="btn btn-secondary">Start Global</button>
             <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergence</button>
           </div>
         </div>
@@ -2087,9 +2086,7 @@
           ? graph.seeds
           : [...graph.nodes.keys()].slice(0, 1);
       const pos = new Map();
-      const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
-        ? window.HLSF.state.globalRot
-        : 0;
+      const rotation = 0;
       const Rc = Math.min(width, height) * 0.35 * scale;
       const cx = Number.isFinite(centerX) ? centerX : width / 2;
       const cy = Number.isFinite(centerY) ? centerY : height / 2;
@@ -2125,7 +2122,7 @@
     }
 
     function clusterLevelLayout(graph, width, height, scale, centerX, centerY) {
-      const rot = window.HLSF.state?.globalRot || 0;
+      const rot = 0;
       const cx = Number.isFinite(centerX) ? centerX : width / 2;
       const cy = Number.isFinite(centerY) ? centerY : height / 2;
       let Lmax = 0;
@@ -2207,9 +2204,7 @@
       const Rmax = Math.min(width, height) * 0.42 * scale;
       const dr = Rmax / Math.max(1, L + 1);
       const pos = new Map();
-      const rotation = (window.HLSF.state && Number.isFinite(window.HLSF.state.globalRot))
-        ? window.HLSF.state.globalRot
-        : 0;
+      const rotation = 0;
 
       for (let layer = 0; layer < rings.length; layer++) {
         const ring = rings[layer];
@@ -3022,8 +3017,8 @@
           <canvas id="hlsf-canvas"></canvas>
           <div class="hlsf-controls">
             <div class="hlsf-control-group">
-              <label for="hlsf-rotation-speed">Rotation speed <span id="hlsf-speed-val">0.00</span></label>
-              <input id="hlsf-rotation-speed" type="range" min="-2" max="2" step="0.01" value="0.30">
+              <label for="hlsf-rotation-speed">Emergent rotation speed <span id="hlsf-speed-val">0.00</span></label>
+              <input id="hlsf-rotation-speed" type="range" min="-5" max="5" step="0.01" value="0.30">
             </div>
             <div class="hlsf-control-group">
               <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.70</span></label>
@@ -3112,9 +3107,8 @@
               </div>
             </div>
             <div class="hlsf-control-group">
-              <label>Rotation modes</label>
+              <label>Emergent rotation</label>
               <div class="hlsf-button-row">
-                <button id="hlsf-toggle-rotation" class="btn btn-secondary">Start Global</button>
                 <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergence</button>
               </div>
             </div>
@@ -3176,9 +3170,23 @@
         speedSlider.addEventListener('input', (e) => {
           const next = parseFloat(e.target.value);
           if (!Number.isFinite(next)) return;
-          window.HLSF.config.rotationOmega = next;
-          speedVal.textContent = next.toFixed(2);
-          debouncedLegacyRender();
+          const clamped = Math.max(-5, Math.min(5, next));
+          window.HLSF.config.rotationOmega = clamped;
+          window.HLSF.state = window.HLSF.state || {};
+          if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
+            window.HLSF.state.emergent = { on: false, speed: clamped };
+          } else {
+            window.HLSF.state.emergent.speed = clamped;
+          }
+          if (Math.abs(clamped - next) > 1e-6) {
+            speedSlider.value = clamped.toFixed(2);
+          }
+          speedVal.textContent = clamped.toFixed(2);
+          if (window.HLSF.state.emergent.on) {
+            requestRender();
+          } else {
+            debouncedLegacyRender();
+          }
         });
       }
 
@@ -3371,26 +3379,12 @@
         });
       }
 
-      const rotationBtn = wrapper.querySelector('#hlsf-toggle-rotation');
-      if (rotationBtn) {
-        rotationBtn.addEventListener('click', () => {
-          window.HLSF.config.rotationActive = !window.HLSF.config.rotationActive;
-          if (window.HLSF.config.rotationActive) {
-            window.HLSF.config.emergentActive = false;
-            window.HLSF.state.emergent.on = false;
-          }
-          syncHlsfControls(wrapper);
-          requestRender();
-        });
-      }
-
       const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
       if (emergentBtn) {
         emergentBtn.addEventListener('click', () => {
           const state = window.HLSF.state.emergent;
           state.on = !state.on;
           window.HLSF.config.emergentActive = state.on;
-          if (state.on) window.HLSF.config.rotationActive = false;
           syncHlsfControls(wrapper);
           requestRender();
         });
@@ -3490,10 +3484,22 @@
       const config = window.HLSF.config || {};
       const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
       const speedVal = wrapper.querySelector('#hlsf-speed-val');
-      const omega = Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0;
-      window.HLSF.config.rotationOmega = omega;
-      if (speedSlider) speedSlider.value = omega.toFixed(2);
-      if (speedVal) speedVal.textContent = omega.toFixed(2);
+      const emergentState = window.HLSF.state && typeof window.HLSF.state.emergent === 'object'
+        ? window.HLSF.state.emergent
+        : null;
+      const omega = Number.isFinite(emergentState?.speed)
+        ? emergentState.speed
+        : (Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0);
+      const clampedOmega = Math.max(-5, Math.min(5, omega));
+      window.HLSF.config.rotationOmega = clampedOmega;
+      if (emergentState) {
+        emergentState.speed = clampedOmega;
+      } else {
+        window.HLSF.state = window.HLSF.state || {};
+        window.HLSF.state.emergent = { on: false, speed: clampedOmega };
+      }
+      if (speedSlider) speedSlider.value = clampedOmega.toFixed(2);
+      if (speedVal) speedVal.textContent = clampedOmega.toFixed(2);
 
       const alphaSlider = wrapper.querySelector('#hlsf-alpha');
       const alphaVal = wrapper.querySelector('#hlsf-alpha-val');
@@ -3582,9 +3588,6 @@
       window.HLSF.config.edgeColorMode = colorMode;
       if (edgeColorSelect) edgeColorSelect.value = colorMode;
 
-      const rotationBtn = wrapper.querySelector('#hlsf-toggle-rotation');
-      if (rotationBtn) rotationBtn.textContent = config.rotationActive ? 'Stop Global' : 'Start Global';
-
       const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
       const emergentActive = window.HLSF.state?.emergent?.on === true;
       window.HLSF.config.emergentActive = emergentActive;
@@ -3618,7 +3621,6 @@
     const DEFAULT_BOOTSTRAP_DB = '';
     window.HLSF.config = Object.assign({
       bootstrapDbUrl: typeof existingConfig.bootstrapDbUrl === 'string' ? existingConfig.bootstrapDbUrl : DEFAULT_BOOTSTRAP_DB,
-      rotationActive: true,
       rotationOmega: 0.30,
       alpha: 0.10,
       scale: 1,
@@ -3677,11 +3679,10 @@
     }
     const prevState = window.HLSF.state || {};
     window.HLSF.state = Object.assign({}, prevState);
-    window.HLSF.state.globalRot = Number.isFinite(prevState.globalRot) ? prevState.globalRot : 0;
     const emergentState = prevState.emergent && typeof prevState.emergent === 'object'
       ? prevState.emergent
       : {};
-    window.HLSF.state.emergent = Object.assign({ on: false, speed: 0.25 }, emergentState);
+    window.HLSF.state.emergent = Object.assign({ on: false, speed: window.HLSF.config.rotationOmega || 0 }, emergentState);
     window.HLSF.state.emergentRot = Number.isFinite(prevState.emergentRot) ? prevState.emergentRot : 0;
     if (!(window.HLSF.state.patches instanceof Map)) window.HLSF.state.patches = new Map();
     window.HLSF.view = Object.assign({ x: 0, y: 0, scale: 1 }, window.HLSF.view || {});
@@ -3785,18 +3786,16 @@
     }
 
     function stepRotation(dt) {
-      const w = window.HLSF.config.rotationOmega || 0;
       const tau = 2 * Math.PI;
-      if (window.HLSF.config.rotationActive && w) {
-        window.HLSF.state.globalRot = (window.HLSF.state.globalRot + dt * w) % tau;
-      }
       rotate_patches(dt);
-      if (window.HLSF.state?.emergent?.on) {
-        const speed = Number.isFinite(window.HLSF.state.emergent.speed) ? window.HLSF.state.emergent.speed : 0;
-        if (speed) {
-          window.HLSF.state.emergentRot = (window.HLSF.state.emergentRot + dt * speed) % tau;
-        }
-      }
+      const emergent = window.HLSF.state?.emergent;
+      if (!emergent?.on) return;
+      const speed = Number.isFinite(emergent.speed)
+        ? emergent.speed
+        : (Number.isFinite(window.HLSF.config.rotationOmega) ? window.HLSF.config.rotationOmega : 0);
+      if (!speed) return;
+      emergent.speed = speed;
+      window.HLSF.state.emergentRot = (window.HLSF.state.emergentRot + dt * speed) % tau;
     }
 
     let TokenToGlyph = new Map();
@@ -6315,8 +6314,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         <canvas id="hlsf-canvas" width="1200" height="600"></canvas>
         <div class="hlsf-controls">
           <div class="hlsf-control-group">
-            <label>Rotation Speed</label>
-            <input type="range" id="hlsf-rotation-speed" min="0" max="5" step="0.01" value="0.30">
+            <label>Emergent Rotation Speed</label>
+            <input type="range" id="hlsf-rotation-speed" min="-5" max="5" step="0.01" value="0.30">
             <span id="hlsf-speed-val">0.30</span>
           </div>
 
@@ -6337,9 +6336,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           </div>
           
           <div class="hlsf-control-group">
-            <label>Rotation Modes</label>
+            <label>Emergent Rotation</label>
             <div class="hlsf-button-row">
-              <button id="hlsf-toggle-rotation" class="btn btn-primary">Start Global</button>
               <button id="hlsf-toggle-emergent" class="btn btn-success">Start Emergence</button>
             </div>
           </div>
@@ -6356,8 +6354,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,255,136,0.05); border-radius: 8px; font-size: 0.85rem;">
           <strong>Controls:</strong> Drag to pan • Scroll to zoom • Each polygon = token matrix •
           Fan vertices = adjacency types • Color = attention score<br>
-          <strong>Modes:</strong> Global rotation = all polygons rotate around center • 
-          Emergent rotation = each polygon rotates around its own center
+          <strong>Modes:</strong> Emergent rotation = each polygon and its cluster rotate around their own centers
+
         </div>
       `;
       
@@ -6386,9 +6384,23 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         speedSlider.addEventListener('input', (e) => {
           const next = parseFloat(e.target.value);
           if (!Number.isFinite(next)) return;
-          window.HLSF.config.rotationOmega = next;
-          speedVal.textContent = next.toFixed(2);
-          debouncedLegacyRender();
+          const clamped = Math.max(-5, Math.min(5, next));
+          window.HLSF.config.rotationOmega = clamped;
+          window.HLSF.state = window.HLSF.state || {};
+          if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
+            window.HLSF.state.emergent = { on: false, speed: clamped };
+          } else {
+            window.HLSF.state.emergent.speed = clamped;
+          }
+          if (Math.abs(clamped - next) > 1e-6) {
+            speedSlider.value = clamped.toFixed(2);
+          }
+          speedVal.textContent = clamped.toFixed(2);
+          if (window.HLSF.state.emergent.on) {
+            requestRender();
+          } else {
+            debouncedLegacyRender();
+          }
         });
       }
 
@@ -6471,27 +6483,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         });
       }
 
-      const rotationBtn = document.getElementById('hlsf-toggle-rotation');
-      rotationBtn.addEventListener('click', () => {
-        window.HLSF.config.rotationActive = !window.HLSF.config.rotationActive;
-        if (window.HLSF.config.rotationActive) {
-          window.HLSF.state.emergent.on = false;
-          window.HLSF.config.emergentActive = false;
-          document.getElementById('hlsf-toggle-emergent').textContent = 'Start Emergence';
-        }
-        rotationBtn.textContent = window.HLSF.config.rotationActive ? 'Stop Global' : 'Start Global';
-        requestRender();
-      });
-
       const emergentBtn = document.getElementById('hlsf-toggle-emergent');
       emergentBtn.addEventListener('click', () => {
         const state = window.HLSF.state.emergent;
         state.on = !state.on;
         window.HLSF.config.emergentActive = state.on;
-        if (state.on) {
-          window.HLSF.config.rotationActive = false;
-          document.getElementById('hlsf-toggle-rotation').textContent = 'Start Global';
-        }
         emergentBtn.textContent = state.on ? 'Stop Emergence' : 'Start Emergence';
         requestRender();
       });
@@ -6658,7 +6654,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         for (const node of window.HLSF.nodes) {
           let triangles = Array.isArray(node.triangles) ? node.triangles : [];
           let vertices = Array.isArray(node.vertices) ? node.vertices : [];
-          let centerPoint = Array.isArray(node.center) ? node.center : [0, 0];
           const nodeColor = Array.isArray(node.color) ? node.color : [0, 255, 136];
           const [r, g, b] = nodeColor;
           const tokenKey = typeof node.token === 'string' ? node.token.toLowerCase() : '';
@@ -6668,16 +6663,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             const angle = window.HLSF.state?.emergentRot ?? 0;
             triangles = rotateTrianglesAround(triangles, node.center, angle);
             vertices = rotatePointsAround(vertices, node.center, angle);
-          } else if (window.HLSF.config.rotationActive) {
-            const angle = window.HLSF.state?.globalRot ?? 0;
-            triangles = rotateTrianglesAround(triangles, [0, 0], angle);
-            vertices = rotatePointsAround(vertices, [0, 0], angle);
-            centerPoint = rotatePointsAround([node.center], [0, 0], angle)[0];
           }
 
-          const scalePivot = (window.HLSF.config.rotationActive && !window.HLSF.config.emergentActive)
-            ? centerPoint
-            : node.center;
+          const scalePivot = node.center;
           if (Math.abs(nodeScale - 1) > 1e-3) {
             triangles = scaleTrianglesAround(triangles, scalePivot, nodeScale);
             vertices = scalePointsAround(vertices, scalePivot, nodeScale);
@@ -6725,9 +6713,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           ctx.globalAlpha = 1.0;
 
           if (window.HLSF.config.showLabels) {
-            const centerForLabel = (window.HLSF.config.rotationActive && !window.HLSF.config.emergentActive)
-              ? centerPoint
-              : node.center;
+            const centerForLabel = node.center;
             const [sx, sy] = worldToScreen(centerForLabel[0], centerForLabel[1]);
             ctx.save();
             if (window.HLSF.config.showNodeGlow) {
@@ -6816,7 +6802,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         _legacyLast = timestamp;
         stepRotation(dt);
 
-        if (window.HLSF.config.rotationActive || window.HLSF.config.emergentActive) {
+        if (window.HLSF.config.emergentActive) {
           renderLegacyHLSF();
         }
       } catch (err) {
@@ -6833,7 +6819,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           window.HLSF.animationFrame = null;
         }
         if (window.HLSF && window.HLSF.config) {
-          window.HLSF.config.rotationActive = false;
           window.HLSF.config.emergentActive = false;
         }
         if (window.HLSF?.state?.emergent) {
@@ -8333,11 +8318,18 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
     function cmdSpin(arg) {
       const value = (arg || '').toLowerCase();
-      window.HLSF.config.rotationActive = /^(on|true|1)$/i.test(value) || (!value && true);
+      const enable = value ? /^(on|true|1)$/i.test(value) : true;
+      window.HLSF.state = window.HLSF.state || {};
+      if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
+        window.HLSF.state.emergent = { on: enable, speed: window.HLSF.config.rotationOmega || 0 };
+      } else {
+        window.HLSF.state.emergent.on = enable;
+      }
+      window.HLSF.config.emergentActive = enable;
       if (window.HLSF.currentGraph && !_anim) {
         animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
       }
-      logStatus(`Rotation: ${window.HLSF.config.rotationActive ? 'on' : 'off'}`);
+      logStatus(`Emergent rotation: ${enable ? 'on' : 'off'}`);
     }
 
     function cmdOmega(arg) {
@@ -8346,13 +8338,24 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         logError('Usage: /omega <rad/s>');
         return;
       }
-      window.HLSF.config.rotationOmega = w;
+      const clamped = Math.max(-5, Math.min(5, w));
+      window.HLSF.config.rotationOmega = clamped;
+      window.HLSF.state = window.HLSF.state || {};
+      if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
+        window.HLSF.state.emergent = { on: false, speed: clamped };
+      } else {
+        window.HLSF.state.emergent.speed = clamped;
+      }
       const slider = document.getElementById('hlsf-rotation-speed');
       const speedVal = document.getElementById('hlsf-speed-val');
-      if (slider) slider.value = w.toFixed(2);
-      if (speedVal) speedVal.textContent = w.toFixed(2);
-      debouncedLegacyRender();
-      logFinal(`Rotation omega = ${w.toFixed(2)} rad/s`);
+      if (slider) slider.value = clamped.toFixed(2);
+      if (speedVal) speedVal.textContent = clamped.toFixed(2);
+      if (window.HLSF.state.emergent.on) {
+        requestRender();
+      } else {
+        debouncedLegacyRender();
+      }
+      logFinal(`Emergent rotation ω = ${clamped.toFixed(2)} rad/s`);
     }
 
     function cmdAlpha(arg) {
