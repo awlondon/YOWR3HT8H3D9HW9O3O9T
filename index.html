@@ -3892,6 +3892,53 @@
     const API_KEY_STORAGE_KEY = 'HLSF_API_KEY';
     const DB_INDEX_KEY = 'HLSF_DB_INDEX';    // array of token strings
 
+    const memoryStorageFallback = new Map();
+    let storageQuotaWarningIssued = false;
+
+    function isQuotaExceededError(err) {
+      if (!err) return false;
+      return err.name === 'QuotaExceededError'
+        || err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+        || err.code === 22
+        || err.code === 1014;
+    }
+
+    function purgeTokenCache() {
+      let removed = 0;
+      try {
+        const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+        for (const key of keys) {
+          localStorage.removeItem(key);
+          removed++;
+        }
+      } catch (err) {
+        console.warn('Failed to purge token cache from persistent storage:', err);
+      }
+      for (const key of Array.from(memoryStorageFallback.keys())) {
+        if (key.startsWith(TOKEN_CACHE_PREFIX)) {
+          memoryStorageFallback.delete(key);
+          removed++;
+        }
+      }
+      return removed;
+    }
+
+    function purgeSpecificKey(key) {
+      let removed = false;
+      try {
+        if (localStorage.getItem(key) != null) {
+          localStorage.removeItem(key);
+          removed = true;
+        }
+      } catch (err) {
+        console.warn(`Failed to purge ${key} from persistent storage:`, err);
+      }
+      if (memoryStorageFallback.delete(key)) {
+        removed = true;
+      }
+      return removed;
+    }
+
     function parseMaybeNdjson(text) {
       try { return JSON.parse(text); } catch {}
       const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -3941,9 +3988,13 @@
         safeStorageSet(cacheKey, JSON.stringify(payload));
       }
       const out = Object.assign({}, db, { full_token_data: clean });
-      localStorage.setItem(DB_RAW_KEY, JSON.stringify(out));
-      const index = clean.map(r => r.token);
-      localStorage.setItem(DB_INDEX_KEY, JSON.stringify(index));
+      const rawPayload = JSON.stringify(out);
+      const indexPayload = JSON.stringify(clean.map(r => r.token));
+      const rawPersisted = safeStorageSet(DB_RAW_KEY, rawPayload);
+      const indexPersisted = safeStorageSet(DB_INDEX_KEY, indexPayload);
+      if (!rawPersisted || !indexPersisted) {
+        logWarning('Local storage quota reached. Database available for this session only — use /export to back up data.');
+      }
       window.HLSF.dbCache = out;
       state.liveGraphMode = false;
       markHlsfDataDirty();
@@ -3970,14 +4021,16 @@
 
       let db = window.HLSF.dbCache;
       if (!db || typeof db !== 'object') {
-        try {
-          const raw = localStorage.getItem(DB_RAW_KEY);
-          if (raw) {
-            db = JSON.parse(raw);
+        const stored = safeStorageGet(DB_RAW_KEY, null);
+        if (stored && typeof stored === 'object') {
+          db = stored;
+        } else if (typeof stored === 'string') {
+          try {
+            db = JSON.parse(stored);
+          } catch (err) {
+            console.warn('Failed to hydrate existing DB snapshot:', err);
+            db = null;
           }
-        } catch (err) {
-          console.warn('Failed to hydrate existing DB snapshot:', err);
-          db = null;
         }
       }
 
@@ -4017,20 +4070,28 @@
 
     function getDb() {
       if (window.HLSF.dbCache) return window.HLSF.dbCache;
-      let raw = null;
-      try {
-        raw = localStorage.getItem(DB_RAW_KEY);
-        if (!raw) {
-          const legacy = localStorage.getItem('hlsf_db_raw');
-          if (legacy) {
-            localStorage.setItem(DB_RAW_KEY, legacy);
-            localStorage.removeItem('hlsf_db_raw');
-            raw = legacy;
-          }
+      let stored = safeStorageGet(DB_RAW_KEY, null);
+      if (stored && typeof stored === 'object') {
+        window.HLSF.dbCache = stored;
+        return stored;
+      }
+
+      let raw = typeof stored === 'string' ? stored : null;
+      if (!raw) {
+        let legacy = null;
+        try {
+          legacy = localStorage.getItem('hlsf_db_raw');
+        } catch (err) {
+          console.warn('Failed to read legacy DB snapshot from storage:', err);
         }
-      } catch (err) {
-        console.warn('Failed to read DB from storage:', err);
-        raw = null;
+        if (!legacy && memoryStorageFallback.has('hlsf_db_raw')) {
+          legacy = memoryStorageFallback.get('hlsf_db_raw');
+        }
+        if (legacy) {
+          safeStorageSet(DB_RAW_KEY, legacy);
+          safeStorageRemove('hlsf_db_raw');
+          raw = legacy;
+        }
       }
       if (!raw) return null;
       try {
@@ -4277,47 +4338,104 @@
     }
 
     function safeStorageGet(key, defaultValue = null) {
+      let item = null;
       try {
-        const item = localStorage.getItem(key);
-        if (item == null) return defaultValue;
-        try {
-          return JSON.parse(item);
-        } catch {
-          return item;
-        }
+        item = localStorage.getItem(key);
       } catch (err) {
         console.warn(`Storage read failed for ${key}:`, err);
-        return defaultValue;
+      }
+
+      if (item == null && memoryStorageFallback.has(key)) {
+        item = memoryStorageFallback.get(key);
+      }
+
+      if (item == null) return defaultValue;
+
+      try {
+        return JSON.parse(item);
+      } catch {
+        return item;
       }
     }
 
     function safeStorageSet(key, value) {
-      try {
+      const attemptWrite = () => {
         localStorage.setItem(key, value);
+        memoryStorageFallback.delete(key);
         return true;
+      };
+
+      try {
+        return attemptWrite();
       } catch (err) {
-        console.warn(`Storage write failed for ${key}:`, err);
+        if (!isQuotaExceededError(err)) {
+          console.warn(`Storage write failed for ${key}:`, err);
+          return false;
+        }
+
+        const cleanupSteps = [];
+        cleanupSteps.push(() => purgeTokenCache());
+        if (key !== DB_INDEX_KEY) cleanupSteps.push(() => purgeSpecificKey(DB_INDEX_KEY));
+        if (key !== DB_RAW_KEY) cleanupSteps.push(() => purgeSpecificKey(DB_RAW_KEY));
+        cleanupSteps.push(() => purgeSpecificKey(key));
+
+        for (const step of cleanupSteps) {
+          try {
+            const removed = step();
+            if (!removed) continue;
+          } catch (cleanupErr) {
+            console.warn('Storage cleanup step failed:', cleanupErr);
+          }
+
+          try {
+            return attemptWrite();
+          } catch (retryErr) {
+            if (!isQuotaExceededError(retryErr)) {
+              console.warn(`Storage write failed for ${key} after cleanup:`, retryErr);
+              return false;
+            }
+          }
+        }
+
+        memoryStorageFallback.set(key, value);
+        if (!storageQuotaWarningIssued) {
+          logWarning('Browser storage quota exceeded. Falling back to in-memory storage for this session.');
+          storageQuotaWarningIssued = true;
+        }
+        console.warn(`Storage write failed for ${key}: using in-memory fallback`, err);
         return false;
       }
     }
 
     function safeStorageRemove(key) {
+      let removed = false;
       try {
         localStorage.removeItem(key);
-        return true;
+        removed = true;
       } catch (err) {
         console.warn(`Storage remove failed for ${key}:`, err);
-        return false;
       }
+      if (memoryStorageFallback.delete(key)) {
+        removed = true;
+      }
+      return removed;
     }
 
     function safeStorageKeys(prefix = '') {
+      let keys = [];
       try {
-        return Object.keys(localStorage).filter(k => k.startsWith(prefix));
+        keys = Object.keys(localStorage);
       } catch (err) {
         console.warn('Storage keys enumeration failed:', err);
-        return [];
       }
+
+      const combined = new Set();
+      keys.forEach(key => { if (key.startsWith(prefix)) combined.add(key); });
+      memoryStorageFallback.forEach((_, key) => {
+        if (key.startsWith(prefix)) combined.add(key);
+      });
+
+      return Array.from(combined);
     }
 
     const LessonStore = (() => {
@@ -9095,12 +9213,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
             keys.forEach(k => safeStorageRemove(k));
             safeStorageRemove(DB_INDEX_KEY);
-            let hadDbSnapshot = false;
-            try {
-              hadDbSnapshot = localStorage.getItem(DB_RAW_KEY) != null;
-            } catch (err) {
-              console.warn('Unable to inspect DB snapshot state:', err);
-            }
+            const hadDbSnapshot = safeStorageGet(DB_RAW_KEY, null) != null;
             safeStorageRemove(DB_RAW_KEY);
             markHlsfDataDirty();
             window.HLSF_GRAPH = null;
