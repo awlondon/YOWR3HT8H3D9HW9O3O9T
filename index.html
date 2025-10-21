@@ -4843,7 +4843,24 @@
     }
 
     function getCachedTokenCount() {
-      return safeStorageKeys(TOKEN_CACHE_PREFIX).length;
+      const cachedKeys = safeStorageKeys(TOKEN_CACHE_PREFIX).length;
+      if (cachedKeys > 0) return cachedKeys;
+
+      let index = safeStorageGet(DB_INDEX_KEY, []);
+      if (typeof index === 'string') {
+        try { index = JSON.parse(index); }
+        catch { index = []; }
+      }
+      if (Array.isArray(index) && index.length) {
+        return index.length;
+      }
+
+      const db = getDb();
+      if (db && Array.isArray(db.full_token_data)) {
+        return db.full_token_data.length;
+      }
+
+      return 0;
     }
 
     let pendingHlsfReloadTimer = null;
