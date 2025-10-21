@@ -8628,6 +8628,124 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }).join('\n');
     }
 
+    function analyzeGlobalDatabase(options = {}) {
+      const tokenLimit = Number.isFinite(options.tokenLimit) ? options.tokenLimit : 16;
+      const neighborLimit = Number.isFinite(options.neighborLimit) ? options.neighborLimit : 4;
+      const relationLimit = Number.isFinite(options.relationLimit) ? options.relationLimit : 8;
+
+      const highlights = [];
+      const relationStats = new Map();
+      let totalTokens = 0;
+      let totalEdges = 0;
+      let totalWeighted = 0;
+
+      for (const rec of iterTokenRecords()) {
+        if (!rec?.token) continue;
+        totalTokens += 1;
+
+        const neighborWeights = new Map();
+        let tokenScore = 0;
+        const relationships = rec.relationships && typeof rec.relationships === 'object'
+          ? rec.relationships
+          : {};
+
+        for (const rawType of Object.keys(relationships)) {
+          const edges = Array.isArray(relationships[rawType]) ? relationships[rawType] : [];
+          if (!edges.length) continue;
+
+          const normalizedType = normRelKey(rawType) || rawType;
+          const priority = getRelationshipPriority(normalizedType);
+          let typeWeight = 0;
+
+          for (const rel of edges) {
+            const weight = Number(rel?.weight) || 0;
+            const weighted = weight * priority;
+            tokenScore += weighted;
+            typeWeight += weighted;
+            totalWeighted += weighted;
+
+            if (rel?.token) {
+              const prev = neighborWeights.get(rel.token) || 0;
+              neighborWeights.set(rel.token, prev + weighted);
+            }
+          }
+
+          const stats = relationStats.get(normalizedType) || { count: 0, weight: 0 };
+          stats.count += edges.length;
+          stats.weight += typeWeight;
+          relationStats.set(normalizedType, stats);
+          totalEdges += edges.length;
+        }
+
+        const neighbors = Array.from(neighborWeights.entries())
+          .sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0))
+          .slice(0, neighborLimit)
+          .map(([token, score]) => `${token} (${(Number(score) || 0).toFixed(2)})`);
+
+        highlights.push({
+          token: rec.token,
+          score: tokenScore,
+          neighbors,
+        });
+      }
+
+      highlights.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+      const topHighlights = highlights.slice(0, Math.max(0, tokenLimit)).map((entry, idx) => ({
+        rank: idx + 1,
+        token: entry.token,
+        score: entry.score,
+        neighbors: entry.neighbors,
+      }));
+
+      const relationSummary = Array.from(relationStats.entries())
+        .map(([type, stats]) => ({
+          type,
+          count: stats.count,
+          weight: stats.weight,
+        }))
+        .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+        .slice(0, Math.max(0, relationLimit));
+
+      return {
+        tokenHighlights: topHighlights,
+        relationTypes: relationSummary,
+        totals: {
+          totalTokens,
+          totalEdges,
+          totalWeighted,
+        },
+      };
+    }
+
+    function formatTokenHighlightsForPrompt(highlights) {
+      if (!Array.isArray(highlights) || !highlights.length) {
+        return 'No token highlights available.';
+      }
+
+      return highlights.map(entry => {
+        const rank = String(entry.rank).padStart(2, '0');
+        const score = Number.isFinite(entry.score) ? entry.score.toFixed(3) : '0.000';
+        const neighbors = Array.isArray(entry.neighbors) && entry.neighbors.length
+          ? ` · neighbors: ${entry.neighbors.join(', ')}`
+          : '';
+        return `${rank}. ${entry.token} · weighted_attention=${score}${neighbors}`;
+      }).join('\n');
+    }
+
+    function formatRelationTypeSummaryForPrompt(entries) {
+      if (!Array.isArray(entries) || !entries.length) {
+        return 'No relationship data available.';
+      }
+
+      return entries.map((entry, idx) => {
+        const rank = String(idx + 1).padStart(2, '0');
+        const label = relDisplay(entry.type);
+        const count = Number.isFinite(entry.count) ? entry.count : 0;
+        const weight = Number.isFinite(entry.weight) ? entry.weight.toFixed(3) : '0.000';
+        return `${rank}. ${label} · edges=${count} · weighted_sum=${weight}`;
+      }).join('\n');
+    }
+
     function cmd_self() {
       const affinityCfg = window.HLSF?.config?.affinity || {};
       const threshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
@@ -8688,8 +8806,8 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const clusterInfo = collectActiveClusterInsights();
         const db = getDb();
         const dbStats = db?.database_stats || {};
-        const tokenPool = gatherSelfTokenPool(clusterInfo, dbStats);
         const manualTokens = parseStateTokens(args);
+        const globalAnalysis = analyzeGlobalDatabase({ tokenLimit: 18, neighborLimit: 4, relationLimit: 8 });
 
         const index = dbIndex();
         const indexLower = new Map();
@@ -8698,7 +8816,19 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           indexLower.set(String(key).toLowerCase(), record);
         }
 
-        const { tokens: focusTokens, missing } = selectFocusTokens(manualTokens, tokenPool, index, indexLower, 8);
+        const secondaryCandidates = [];
+        if (Array.isArray(globalAnalysis?.tokenHighlights)) {
+          for (const entry of globalAnalysis.tokenHighlights) {
+            if (entry?.token) secondaryCandidates.push(entry.token);
+          }
+        }
+        const { tokens: focusTokens, missing } = selectFocusTokens(
+          manualTokens,
+          secondaryCandidates,
+          index,
+          indexLower,
+          20,
+        );
         if (missing.length) {
           logWarning(`Tokens not found in database: ${missing.join(', ')}`);
         }
@@ -8709,11 +8839,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
 
         const adjacencyExcerpt = buildAdjacencyPromptSummary(focusTokens, index, indexLower, {
-          maxRelations: 4,
-          maxNeighbors: 4,
+          maxRelations: 5,
+          maxNeighbors: 6,
         });
+        const tokenHighlightSummary = formatTokenHighlightsForPrompt(globalAnalysis.tokenHighlights);
+        const relationTypeSummary = formatRelationTypeSummaryForPrompt(globalAnalysis.relationTypes);
         const clusterSummary = formatClusterSummaryForPrompt(clusterInfo, { limit: 10 });
-        const topConnections = collectTopConnections(10);
+        const topConnections = collectTopConnections(20);
         const topConnectionsSummary = formatTopConnectionsForPrompt(topConnections);
 
         const dbSummaryParts = [];
@@ -8725,28 +8857,46 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
         const dbSummary = dbSummaryParts.length ? dbSummaryParts.join(', ') : 'unavailable';
 
+        const computedTotals = globalAnalysis?.totals || {};
+        const computedSummaryParts = [];
+        if (Number.isFinite(computedTotals.totalTokens)) computedSummaryParts.push(`scanned_tokens=${computedTotals.totalTokens}`);
+        if (Number.isFinite(computedTotals.totalEdges)) computedSummaryParts.push(`connections=${computedTotals.totalEdges}`);
+        if (Number.isFinite(computedTotals.totalWeighted)) {
+          computedSummaryParts.push(`weighted_sum=${computedTotals.totalWeighted.toFixed(3)}`);
+        }
+        const computedSummary = computedSummaryParts.length ? computedSummaryParts.join(', ') : 'unavailable';
+
         const safeName = sanitize(mentalState.name || '');
         const safeDesc = sanitize(mentalState.desc || '').replace(/\n/g, '<br>');
         const safeMechanics = sanitize(mentalState.mechanics || '').replace(/\n/g, '<br>');
         const safeFocus = sanitize(focusTokens.join(', '));
         const safeConnections = sanitize(topConnectionsSummary || '');
+        const safeHighlights = sanitize(tokenHighlightSummary || '');
+        const safeRelationTypes = sanitize(relationTypeSummary || '');
         const contextPieces = [
           '<div class="section-divider"></div>',
           '<div class="section-title">🧭 Mental State Context</div>',
           `<div class="adjacency-insight"><strong>${safeName}</strong><br>${safeDesc}<br><em>${safeMechanics}</em><br>Threshold: ${threshold.toFixed(2)} · Iterations: ${iterations}</div>`,
           `<div class="adjacency-insight"><strong>Focus tokens:</strong> ${safeFocus}</div>`,
           `<div class="adjacency-insight">Database stats: ${sanitize(dbSummary)}</div>`,
+          `<div class="adjacency-insight">Computed scan: ${sanitize(computedSummary)}</div>`,
         ];
 
         if (manualTokens.length) {
           contextPieces.splice(3, 0, `<div class="adjacency-insight"><strong>Requested tokens:</strong> ${sanitize(manualTokens.join(', '))}</div>`);
         }
 
+        if (tokenHighlightSummary) {
+          contextPieces.push(`<details><summary>Global token highlights (${globalAnalysis.tokenHighlights.length || 0})</summary><pre>${safeHighlights}</pre></details>`);
+        }
+        if (relationTypeSummary) {
+          contextPieces.push(`<details><summary>Relationship type distribution</summary><pre>${safeRelationTypes}</pre></details>`);
+        }
         if (adjacencyExcerpt) {
           contextPieces.push(`<details><summary>Adjacency excerpt (${focusTokens.length} tokens)</summary><pre>${sanitize(adjacencyExcerpt)}</pre></details>`);
         }
         if (topConnectionsSummary) {
-          contextPieces.push(`<details><summary>Top connections (10)</summary><pre>${safeConnections}</pre></details>`);
+          contextPieces.push(`<details><summary>Top connections (20)</summary><pre>${safeConnections}</pre></details>`);
         }
         if (clusterSummary) {
           contextPieces.push(`<details><summary>Cluster summary (top 10)</summary><pre>${sanitize(clusterSummary)}</pre></details>`);
@@ -8756,7 +8906,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         const systemPrompt = 'You are the Higher-Level Semantic Framework cognition engine. You traverse HLSF adjacency matrices and follow instructions precisely.';
         const userPrompt = [
-          'HLSF mental state exploration',
+          'HLSF mental state synthesis – global database traversal',
           '',
           `Mental state: ${mentalState.name || 'Unknown'}`,
           `Threshold: ${threshold.toFixed(2)}`,
@@ -8764,34 +8914,42 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           `Description: ${mentalState.desc || 'N/A'}`,
           `Mechanics: ${mentalState.mechanics || 'N/A'}`,
           '',
-          `Database stats: ${dbSummary}`,
+          `Database stats (reported): ${dbSummary}`,
+          `Database scan (computed): ${computedSummary}`,
           '',
-          'Top ten weighted connections:',
+          'Token highlights from full database:',
+          tokenHighlightSummary,
+          '',
+          'Relationship type distribution:',
+          relationTypeSummary,
+          '',
+          'Top weighted connections:',
           topConnectionsSummary,
           '',
-          'Top ten clusters:',
+          'Top clusters:',
           clusterSummary || 'No active cluster data.',
           '',
-          'Adjacency excerpt (contextual focus):',
+          'Adjacency excerpt (contextual focus across highlights):',
           adjacencyExcerpt,
           '',
           'Instructions:',
-          '1. Examine the top ten weighted connections and the top ten clusters, interpreting their collective meaning through the provided mental state.',
-          '2. Weave these interpretations into a coherent reflection that highlights the most important insights and thoughts emerging from this state.',
-          '3. Frame the entire response through the lens of the mental state description, explicitly referencing it when drawing conclusions.',
-          '4. Present a single narrative section titled "REFLECTION" without bullet lists.',
+          '1. Internalize the entire cached database represented in the highlights, relationship distribution, clusters, and adjacency excerpt.',
+          '2. Synthesize the emergent meaning as a flowing stream of consciousness that remains coherent from sentence to sentence.',
+          '3. Anchor the narrative in the stated mental state, showing how the global data expresses or modifies that state.',
+          '4. Present a single narrative section titled "STREAM OF CONSCIOUSNESS" and avoid bullet lists or outlines.',
+          '5. Emphasize the most important insights discovered during synthesis, citing pivotal tokens, relationships, and clusters when relevant.',
         ].join('\n');
 
-        statusEl = logStatus('⏳ Synthesizing mental state narrative...');
+        statusEl = logStatus('⏳ Synthesizing global mental state stream...');
         const completion = await callOpenAI([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ], { temperature: 0.65, max_tokens: 900 });
 
-        if (statusEl) statusEl.innerHTML = '✅ Mental state narrative synthesized';
+        if (statusEl) statusEl.innerHTML = '✅ Global stream synthesized';
 
         const safeCompletion = sanitize(completion || '').replace(/\n{3,}/g, '\n\n');
-        addLog(`<div class="section-divider"></div><div class="section-title">🧠 Mental State Walkthrough</div><pre>${safeCompletion}</pre>`);
+        addLog(`<div class="section-divider"></div><div class="section-title">🧠 Stream of Consciousness</div><pre>${safeCompletion}</pre>`);
 
         if (completion) {
           addOutputTokens(tokenize(completion), { render: false });
