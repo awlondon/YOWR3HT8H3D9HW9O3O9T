@@ -4145,6 +4145,7 @@
       tokenOrder: [],
       liveGraph: { nodes: new Map(), links: [] },
       liveGraphMode: true,
+      documentCacheBaseline: 0,
     };
 
     state.hlsfReady = false;
@@ -8034,6 +8035,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         logError('Reader input unavailable');
         return;
       }
+      state.documentCacheBaseline = getCachedTokenCount();
       input.value = '';
       input.onchange = async (event) => {
         try {
@@ -9661,7 +9663,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     class DocumentReadEstimator {
-      constructor(chunks) {
+      constructor(chunks, options = {}) {
         this.chunks = Array.isArray(chunks) ? chunks : [];
         this.totalChunks = this.chunks.length;
         this.chunksProcessed = 0;
@@ -9681,6 +9683,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         this.totalAdjacencyMissDurationMs = 0;
         this.totalNonAdjacencyDurationMs = 0;
         this.totalUniqueTokensObserved = 0;
+        this.cachedTokenBaseline = Math.max(0, Number(options?.cachedTokenBaseline) || 0);
       }
 
       setStatusElement(element) {
@@ -9902,7 +9905,17 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (this.chunksProcessed === 0) {
           const preview = this.prepareChunk(0, this.chunks[0] || []);
           const chunkWord = this.totalChunks === 1 ? 'segment' : 'segments';
-          this.statusElement.innerHTML = `⏳ Document ETA ready • ${this.totalChunks} ${chunkWord}.<br><small>Segment 1 preview: ${preview.uniqueTokens} unique tokens (${preview.newBefore} new, ${preview.cachedBefore} cached).</small>`;
+          const baseline = this.cachedTokenBaseline;
+          const hasBaseline = baseline > 0;
+          const cachedSummary = preview.cachedBefore > 0
+            ? `${preview.cachedBefore} cached`
+            : hasBaseline
+              ? `${baseline.toLocaleString()} cached (warm cache)`
+              : '0 cached';
+          const baselineNote = hasBaseline && preview.cachedBefore === 0
+            ? ` Warm cache baseline detected: ${baseline.toLocaleString()} tokens.`
+            : '';
+          this.statusElement.innerHTML = `⏳ Document ETA ready • ${this.totalChunks} ${chunkWord}.<br><small>Segment 1 preview: ${preview.uniqueTokens} unique tokens (${preview.newBefore} new, ${cachedSummary}).${baselineNote}</small>`;
           return;
         }
 
@@ -10295,7 +10308,10 @@ Write a reflective synthesis of this passage in the voice of the cached database
           addLog(`ℹ️ ${oversizedSentences} sentence${oversizedSentences === 1 ? '' : 's'} exceeded ${chunkSize} characters and were split.`);
         }
 
-        estimator = new DocumentReadEstimator(chunks);
+        const cachedTokenBaseline = Number.isFinite(state.documentCacheBaseline)
+          ? state.documentCacheBaseline
+          : getCachedTokenCount();
+        estimator = new DocumentReadEstimator(chunks, { cachedTokenBaseline });
         const etaStatus = logStatus('⏳ Document ETA initializing…');
         estimator.setStatusElement(etaStatus);
 
