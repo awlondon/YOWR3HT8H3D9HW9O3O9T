@@ -1,0 +1,72 @@
+Figure 
+: Pope Gregory created our modern Gregorian calendar, with its system of leap years, to make the length of the calendar year match the length of the cycle of seasons. Not until 1752 did Protestant England switched to the new calendar. Some less educated citizens believed that the shortening of the month by eleven days would shorten their lives by the same interval. In this illustration by William Hogarth, the leaflet lying on the ground reads, “Give us our eleven days.”
+Units were not standardized until fairly recently in history, so when the physicist Isaac Newton gave the result of an experiment with a pendulum, he had to specify not just that the string was 37 7/8 inches long but that it was “37 7/8 London inches long.” The inch as defined in Yorkshire would have been different. Even after the British Empire standardized its units, it was still very inconvenient to do calculations involving money, volume, distance, time, or weight, because of all the odd conversion factors, like 16 ounces in a pound, and 5280 feet in a mile. Through the nineteenth century, schoolchildren squandered most of their mathematical education in preparing to do calculations such as making change when a customer in a shop offered a one-crown note for a book costing two pounds, thirteen shillings and tuppence. The dollar has always been decimal, and British money went decimal decades ago, but the United States is still saddled with the antiquated system of feet, inches, pounds, ounces and so on.
+
+france
+Figure 
+: Copy and Paste Caption here. (Copyright; author via source)
+Every country in the world besides the U.S. has adopted a system of units known in English as the “metric system.” This system is entirely decimal, thanks to the same eminently logical people who brought about the French Revolution. In deference to France, the system's official name is the Système International, or SI, meaning International System. (The phrase “SI system” is therefore redundant.)
+
+The wonderful thing about the SI is that people who live in countries more modern than ours do not need to memorize how many ounces there are in a pound, how many cups in a pint, how many feet in a mile, etc. The whole system works with a single, consistent set of prefixes (derived from Greek) that modify the basic units. Each prefix stands for a power of ten, and has an abbreviation that can be combined with the symbol for the unit. For instance, the meter is a unit of distance. The prefix kilo- stands for 103, so a kilometer, 1 km, is a thousand meters.
+
+The basic units of the metric system are the meter for distance, the second for time, and the gram for mass.
+
+The following are the most common metric prefixes. You should memorize them.
+
+prefix
+
+meaning
+
+example
+
+kilo-	k	103	60 kg	
+= a person’s mass
+
+centi-
+
+c
+
+10-2
+
+28 cm
+
+= height of a piece of paper
+
+milli-
+
+m
+
+10-3
+
+1 ms
+
+= time for one vibration of a guitar string playing the note D
+
+ 
+
+The prefix centi-, meaning 10-2, is only used in the centimeter; a hundredth of a gram would not be written as 1 cg but as 10 mg. The centi- prefix can be easily remembered because a cent is 10-2 dollars. The official SI abbreviation for seconds is “s” (not “sec”) and grams are “g” (not “gm”).
+
+The second
+The sun stood still and the moon halted until the nation had taken vengeance on its enemies... -- Joshua 10:12-14
+
+Absolute, true, and mathematical time, of itself, and from its own nature, flows equably without relation to anything external... -- Isaac Newton
+
+When I stated briefly above that the second was a unit of time, it may not have occurred to you that this was not really much of a definition. The two quotes above are meant to demonstrate how much room for confusion exists among people who seem to mean the same thing by a word such as “time.” The first quote has been interpreted by some biblical scholars as indicating an ancient belief that the motion of the sun across the sky was not just something that occurred with the passage of time but that the sun actually caused time to pass by its motion, so that freezing it in the sky would have some kind of a supernatural decelerating effect on everyone except the Hebrew soldiers. Many ancient cultures also conceived of time as cyclical, rather than proceeding along a straight line as in 1998, 1999, 2000, 2001,... The second quote, from a relatively modern physicist, may sound a lot more scientific, but most physicists today would consider it useless as a definition of time. Today, the physical sciences are based on operational definitions, which means definitions that spell out the actual steps (operations) required to measure something numerically.
+
+Now in an era when our toasters, pens, and coffee pots tell us the time, it is far from obvious to most people what is the fundamental operational definition of time. Until recently, the hour, minute, and second were defined operationally in terms of the time required for the earth to rotate about its axis. Unfortunately, the Earth's rotation is slowing down slightly, and by 1967 this was becoming an issue in scientific experiments requiring precise time measurements. The second was therefore redefined as the time required for a certain number of vibrations of the light waves emitted by a cesium atoms in a lamp constructed like a familiar neon sign but with the neon replaced by cesium. The new definition not only promises to stay constant indefinitely, but for scientists is a more convenient way of calibrating a clock than having to carry out astronomical measurements.
+
+self-check: What is a possible operational definition of how strong a person is? (answer in the back of the PDF version of the book)
+
+The meter
+The French originally defined the meter as 10-7 times the distance from the equator to the north pole, as measured through Paris (of course). Even if the definition was operational, the operation of traveling to the north pole and laying a surveying chain behind you was not one that most working scientists wanted to carry out. Fairly soon, a standard was created in the form of a metal bar with two scratches on it. This definition persisted until 1960, when the meter was redefined as the distance traveled by light in a vacuum over a period of (1/299792458) seconds.
+
+The kilogram
+The third base unit of the SI is the kilogram, a unit of mass. Mass is intended to be a measure of the amount of a substance, but that is not an operational definition. Bathroom scales work by measuring our planet's gravitational attraction for the object being weighed, but using that type of scale to define mass operationally would be undesirable because gravity varies in strength from place to place on the earth.
+
+There's a surprising amount of disagreement among physics textbooks about how mass should be defined, but here's how it's actually handled by the few working physicists who specialize in ultra-high-precision measurements. They maintain a physical object in Paris, which is the standard kilogram, a cylinder made of platinum-iridium alloy. Duplicates are checked against this mother of all kilograms by putting the original and the copy on the two opposite pans of a balance. Although this method of comparison depends on gravity, the problems associated with differences in gravity in different geographical locations are bypassed, because the two objects are being compared in the same place. The duplicates can then be removed from the Parisian kilogram shrine and transported elsewhere in the world.
+
+Combinations of metric units
+Just about anything you want to measure can be measured with some combination of meters, kilograms, and seconds. Speed can be measured in m/s, volume in m3, and density in kg/m3. Part of what makes the SI great is this basic simplicity. No more funny units like a cord of wood, a bolt of cloth, or a jigger of whiskey. No more liquid and dry measure. Just a simple, consistent set of units. The SI measures put together from meters, kilograms, and seconds make up the mks system. For example, the mks unit of speed is m/s, not km/hr.
+
+Discussion Question
+◊ Isaac Newton wrote, “... the natural days are truly unequal, though they are commonly considered as equal, and used for a measure of time... It may be that there is no such thing as an equable motion, whereby time may be accurately measured. All motions may be accelerated or retarded...” Newton was right. Even the modern definition of the second in terms of light emitted by cesium atoms is subject to variation. For instance, magnetic fields could cause the cesium atoms to emit light with a slightly different rate of vibration. What makes us think, though, that a pendulum clock is more accurate than a sundial, or that a cesium atom is a more accurate timekeeper than a pendulum clock? That is, how can one test experimentally how the accuracies of different time standards compare
