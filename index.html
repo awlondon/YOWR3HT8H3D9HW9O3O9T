@@ -8541,8 +8541,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return lines.join('\n');
     }
 
-    function formatClusterSummaryForPrompt(clusterInfo) {
+    function formatClusterSummaryForPrompt(clusterInfo, options = {}) {
       if (!clusterInfo) return 'No active cluster summary available.';
+      const limit = Number.isFinite(options.limit) ? options.limit : 5;
       const lines = [];
 
       if (Number.isFinite(clusterInfo.totalNodes)) {
@@ -8556,7 +8557,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
 
       if (Array.isArray(clusterInfo.summaries) && clusterInfo.summaries.length) {
-        clusterInfo.summaries.slice(0, 5).forEach(summary => {
+        clusterInfo.summaries.slice(0, limit).forEach(summary => {
           const tops = Array.isArray(summary.topTokens) && summary.topTokens.length
             ? summary.topTokens.slice(0, 4).join(', ')
             : '—';
@@ -8570,6 +8571,61 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
 
       return lines.length ? lines.join('\n') : 'No active cluster summary available.';
+    }
+
+    function collectTopConnections(limit = 10) {
+      const pri = RELATIONSHIP_PRIORITIES || {};
+      const capped = Math.max(0, Number.isFinite(limit) ? limit : 0);
+      if (!capped) return [];
+
+      const aggregated = new Map();
+      for (const rec of iterTokenRecords()) {
+        const source = rec?.token;
+        const rels = rec?.relationships;
+        if (!source || !rels) continue;
+
+        for (const rawKey of Object.keys(rels)) {
+          const type = normRelKey(rawKey);
+          if (!type) continue;
+          const priority = (pri[type] ?? pri.get?.(type)) ?? 1;
+          const edges = Array.isArray(rels[rawKey]) ? rels[rawKey] : [];
+          for (const rel of edges) {
+            const target = rel?.token;
+            if (!target) continue;
+            const baseWeight = Number(rel?.weight);
+            const weighted = Number.isFinite(baseWeight) ? baseWeight * priority : priority;
+            const ordered = source < target ? [source, target] : [target, source];
+            const key = `${ordered[0]}↔${ordered[1]}|${type}`;
+            const existing = aggregated.get(key);
+            if (!existing || weighted > existing.weight) {
+              aggregated.set(key, {
+                source: ordered[0],
+                target: ordered[1],
+                type,
+                weight: weighted,
+                baseWeight: Number.isFinite(baseWeight) ? baseWeight : null,
+              });
+            }
+          }
+        }
+      }
+
+      return Array.from(aggregated.values())
+        .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+        .slice(0, capped);
+    }
+
+    function formatTopConnectionsForPrompt(connections) {
+      if (!Array.isArray(connections) || !connections.length) {
+        return 'No connection data available.';
+      }
+
+      return connections.map((conn, idx) => {
+        const rank = String(idx + 1).padStart(2, '0');
+        const total = Number.isFinite(conn.weight) ? conn.weight.toFixed(3) : '—';
+        const raw = Number.isFinite(conn.baseWeight) ? conn.baseWeight.toFixed(3) : '—';
+        return `${rank}. ${conn.source} ↔ ${conn.target} [${relDisplay(conn.type)}] weight=${total} (raw=${raw})`;
+      }).join('\n');
     }
 
     function cmd_self() {
@@ -8656,7 +8712,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           maxRelations: 4,
           maxNeighbors: 4,
         });
-        const clusterSummary = formatClusterSummaryForPrompt(clusterInfo);
+        const clusterSummary = formatClusterSummaryForPrompt(clusterInfo, { limit: 10 });
+        const topConnections = collectTopConnections(10);
+        const topConnectionsSummary = formatTopConnectionsForPrompt(topConnections);
 
         const dbSummaryParts = [];
         if (Number.isFinite(dbStats.total_tokens)) dbSummaryParts.push(`tokens=${dbStats.total_tokens}`);
@@ -8671,6 +8729,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const safeDesc = sanitize(mentalState.desc || '').replace(/\n/g, '<br>');
         const safeMechanics = sanitize(mentalState.mechanics || '').replace(/\n/g, '<br>');
         const safeFocus = sanitize(focusTokens.join(', '));
+        const safeConnections = sanitize(topConnectionsSummary || '');
         const contextPieces = [
           '<div class="section-divider"></div>',
           '<div class="section-title">🧭 Mental State Context</div>',
@@ -8686,8 +8745,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         if (adjacencyExcerpt) {
           contextPieces.push(`<details><summary>Adjacency excerpt (${focusTokens.length} tokens)</summary><pre>${sanitize(adjacencyExcerpt)}</pre></details>`);
         }
+        if (topConnectionsSummary) {
+          contextPieces.push(`<details><summary>Top connections (10)</summary><pre>${safeConnections}</pre></details>`);
+        }
         if (clusterSummary) {
-          contextPieces.push(`<details><summary>Cluster summary</summary><pre>${sanitize(clusterSummary)}</pre></details>`);
+          contextPieces.push(`<details><summary>Cluster summary (top 10)</summary><pre>${sanitize(clusterSummary)}</pre></details>`);
         }
 
         addLog(contextPieces.join(''));
@@ -8704,16 +8766,20 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           '',
           `Database stats: ${dbSummary}`,
           '',
-          'Active cluster summary:',
+          'Top ten weighted connections:',
+          topConnectionsSummary,
+          '',
+          'Top ten clusters:',
           clusterSummary || 'No active cluster data.',
           '',
-          'Adjacency excerpt:',
+          'Adjacency excerpt (contextual focus):',
           adjacencyExcerpt,
           '',
           'Instructions:',
-          '1. Step through the adjacency matrices using this mental state, narrating a stream-of-consciousness of exactly 200 words.',
-          '2. After the stream, produce a structured analytical response of exactly 100 words summarizing adjacency-driven insights.',
-          '3. Separate the sections with the headings "STREAM (200 words)" and "STRUCTURED (100 words)", grounding observations in the provided tokens and relationships.',
+          '1. Examine the top ten weighted connections and the top ten clusters, interpreting their collective meaning through the provided mental state.',
+          '2. Weave these interpretations into a coherent reflection that highlights the most important insights and thoughts emerging from this state.',
+          '3. Frame the entire response through the lens of the mental state description, explicitly referencing it when drawing conclusions.',
+          '4. Present a single narrative section titled "REFLECTION" without bullet lists.',
         ].join('\n');
 
         statusEl = logStatus('⏳ Synthesizing mental state narrative...');
