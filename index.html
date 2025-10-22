@@ -627,8 +627,8 @@
           <input id="hlsf-alpha" type="range" min="0" max="0.99" step="0.01" value="0.70">
         </div>
         <div class="hlsf-control-group">
-          <label>Edge width <span id="edgew-val">0.02</span></label>
-          <input id="edgew" type="range" min="0.01" max="1.00" step="0.005" value="0.02">
+          <label>Edge width <span id="edgew-val">0.200</span></label>
+          <input id="edgew" type="range" min="0.01" max="1.00" step="0.005" value="0.200">
         </div>
         <div class="hlsf-control-group">
           <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
@@ -639,7 +639,7 @@
           <select id="hlsf-edge-color-mode">
             <option value="theme">Theme</option>
             <option value="weight">Weight</option>
-            <option value="relation">Relation</option>
+            <option value="relation" selected>Relation</option>
           </select>
         </div>
         <div class="hlsf-control-group">
@@ -654,7 +654,7 @@
           <label>Display options</label>
           <div class="hlsf-button-row">
             <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
-            <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
+            <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: Off</button>
             <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
             <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
           </div>
@@ -682,7 +682,7 @@
         <div class="hlsf-control-group">
           <label>Emergent rotation</label>
           <div class="hlsf-button-row">
-            <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergence</button>
+            <button id="hlsf-toggle-emergent" class="btn btn-secondary">Stop Emergence</button>
           </div>
         </div>
         <div class="hlsf-control-group">
@@ -3027,8 +3027,8 @@
               <input id="hlsf-alpha" type="range" min="0" max="0.99" step="0.01" value="0.70">
             </div>
             <div class="hlsf-control-group">
-              <label>Edge width <span id="edgew-val">0.02</span></label>
-              <input id="edgew" type="range" min="0.01" max="1.00" step="0.005" value="0.02">
+              <label>Edge width <span id="edgew-val">0.200</span></label>
+              <input id="edgew" type="range" min="0.01" max="1.00" step="0.005" value="0.200">
             </div>
             <div class="hlsf-control-group">
               <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
@@ -3039,7 +3039,7 @@
               <select id="hlsf-edge-color-mode">
                 <option value="theme">Theme</option>
                 <option value="weight">Weight</option>
-                <option value="relation">Relation</option>
+                <option value="relation" selected>Relation</option>
               </select>
             </div>
             <div class="hlsf-control-group">
@@ -3069,7 +3069,7 @@
               <label>Display options</label>
               <div class="hlsf-button-row">
                 <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
-                <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
+                <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: Off</button>
                 <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
                 <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
               </div>
@@ -3111,7 +3111,7 @@
             <div class="hlsf-control-group">
               <label>Emergent rotation</label>
               <div class="hlsf-button-row">
-                <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergence</button>
+                <button id="hlsf-toggle-emergent" class="btn btn-secondary">Stop Emergence</button>
               </div>
             </div>
             <div class="hlsf-control-group">
@@ -3176,7 +3176,7 @@
           window.HLSF.config.rotationOmega = clamped;
           window.HLSF.state = window.HLSF.state || {};
           if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
-            window.HLSF.state.emergent = { on: false, speed: clamped };
+            window.HLSF.state.emergent = { on: true, speed: clamped };
           } else {
             window.HLSF.state.emergent.speed = clamped;
           }
@@ -3498,7 +3498,7 @@
         emergentState.speed = clampedOmega;
       } else {
         window.HLSF.state = window.HLSF.state || {};
-        window.HLSF.state.emergent = { on: false, speed: clampedOmega };
+        window.HLSF.state.emergent = { on: true, speed: clampedOmega };
       }
       if (speedSlider) speedSlider.value = clampedOmega.toFixed(2);
       if (speedVal) speedVal.textContent = clampedOmega.toFixed(2);
@@ -3628,9 +3628,9 @@
       scale: 1,
       tx: 0,
       ty: 0,
-      emergentActive: false,
+      emergentActive: true,
       showEdges: true,
-      showLabels: true,
+      showLabels: false,
       fillFaces: false,
       whiteBg: false,
       showEnglish: true,
@@ -3643,9 +3643,9 @@
       metricScope: METRIC_SCOPE.RUN,
       relationTypeCap: MAX_REL_TYPES,
       edgesPerType: 3,
-      edgeWidth: 0.02,
+      edgeWidth: 0.2,
       nodeSize: 1,
-      edgeColorMode: 'theme',
+      edgeColorMode: 'relation',
       showNodeGlow: false,
       affinity: { threshold: 0.35, iterations: 8 },
     }, existingConfig);
@@ -3684,7 +3684,7 @@
     const emergentState = prevState.emergent && typeof prevState.emergent === 'object'
       ? prevState.emergent
       : {};
-    window.HLSF.state.emergent = Object.assign({ on: false, speed: window.HLSF.config.rotationOmega || 0 }, emergentState);
+    window.HLSF.state.emergent = Object.assign({ on: true, speed: window.HLSF.config.rotationOmega || 0 }, emergentState);
     window.HLSF.state.emergentRot = Number.isFinite(prevState.emergentRot) ? prevState.emergentRot : 0;
     if (!(window.HLSF.state.patches instanceof Map)) window.HLSF.state.patches = new Map();
     window.HLSF.view = Object.assign({ x: 0, y: 0, scale: 1 }, window.HLSF.view || {});
@@ -6453,7 +6453,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           window.HLSF.config.rotationOmega = clamped;
           window.HLSF.state = window.HLSF.state || {};
           if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
-            window.HLSF.state.emergent = { on: false, speed: clamped };
+            window.HLSF.state.emergent = { on: true, speed: clamped };
           } else {
             window.HLSF.state.emergent.speed = clamped;
           }
@@ -8409,7 +8409,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       window.HLSF.config.rotationOmega = clamped;
       window.HLSF.state = window.HLSF.state || {};
       if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
-        window.HLSF.state.emergent = { on: false, speed: clamped };
+        window.HLSF.state.emergent = { on: true, speed: clamped };
       } else {
         window.HLSF.state.emergent.speed = clamped;
       }
