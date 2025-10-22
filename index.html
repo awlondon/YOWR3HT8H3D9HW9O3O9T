@@ -8098,7 +8098,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
       const cachedSnapshot = getCachedTokenCount();
       if (Number.isFinite(cachedSnapshot)) {
-        state.documentCacheBaseline = Math.max(0, cachedSnapshot);
+        const existingBaseline = Number.isFinite(state.documentCacheBaseline)
+          ? Math.max(0, state.documentCacheBaseline)
+          : 0;
+        const snapshotValue = Math.max(0, cachedSnapshot);
+        state.documentCacheBaseline = Math.max(existingBaseline, snapshotValue);
         updateStats();
       }
       input.value = '';
@@ -10447,8 +10451,14 @@ Write a reflective synthesis of this passage in the voice of the cached database
           estimator?.markCancelled();
         }
         const finalSnapshot = getCachedTokenCount();
+        const existingBaseline = Number.isFinite(state.documentCacheBaseline)
+          ? Math.max(0, state.documentCacheBaseline)
+          : 0;
         if (Number.isFinite(finalSnapshot)) {
-          state.documentCacheBaseline = Math.max(0, finalSnapshot);
+          const snapshotValue = Math.max(0, finalSnapshot);
+          state.documentCacheBaseline = Math.max(existingBaseline, snapshotValue);
+        } else {
+          state.documentCacheBaseline = existingBaseline;
         }
         updateStats();
         exitProcessingState({ preserveInput: true });
@@ -10540,7 +10550,10 @@ Write a reflective synthesis of this passage in the voice of the cached database
     async function initialize() {
       let cachedCount = getCachedTokenCount();
       if (Number.isFinite(cachedCount)) {
-        state.documentCacheBaseline = Math.max(0, cachedCount);
+        const currentBaseline = Number.isFinite(state.documentCacheBaseline)
+          ? Math.max(0, state.documentCacheBaseline)
+          : 0;
+        state.documentCacheBaseline = Math.max(currentBaseline, Math.max(0, cachedCount));
       } else {
         cachedCount = 0;
         state.documentCacheBaseline = Math.max(0, Number.isFinite(state.documentCacheBaseline)
@@ -10571,7 +10584,10 @@ Write a reflective synthesis of this passage in the voice of the cached database
 
       cachedCount = getCachedTokenCount();
       if (Number.isFinite(cachedCount)) {
-        state.documentCacheBaseline = Math.max(0, cachedCount);
+        const currentBaseline = Number.isFinite(state.documentCacheBaseline)
+          ? Math.max(0, state.documentCacheBaseline)
+          : 0;
+        state.documentCacheBaseline = Math.max(currentBaseline, Math.max(0, cachedCount));
       } else {
         cachedCount = 0;
       }
