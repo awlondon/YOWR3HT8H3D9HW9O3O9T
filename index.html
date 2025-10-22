@@ -723,6 +723,7 @@
         prompt: 220,
         completion: 320,
       },
+      NETWORK_RETRY_BACKOFF_MS: 5000,
     };
 
     const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
@@ -4170,6 +4171,9 @@
       liveGraph: { nodes: new Map(), links: [] },
       liveGraphMode: true,
       documentCacheBaseline: 0,
+      networkOffline: false,
+      networkErrorNotified: false,
+      lastNetworkErrorTime: 0,
     };
 
     state.hlsfReady = false;
@@ -5306,13 +5310,32 @@
       };
     }
 
-    async function safeAsync(fn, errorMsg) {
+    async function safeAsync(fn, errorMsg, options = null) {
+      const config = (options && typeof options === 'object') ? options : {};
       try {
         return await fn();
       } catch (err) {
-        logError(`${errorMsg}: ${err.message}`);
+        const message = err?.message || 'Unknown error';
+        const isNetworkError = /network error/i.test(message) || message === 'Failed to fetch';
+
+        if (isNetworkError) {
+          state.networkOffline = true;
+          state.lastNetworkErrorTime = Date.now();
+          const shouldLogError = !config.dedupeNetworkError || !state.networkErrorNotified;
+          if (shouldLogError) {
+            logError(`${errorMsg}: ${message}`);
+            console.error(errorMsg, err);
+          }
+          if (!state.networkErrorNotified) {
+            logWarning('Network connection unavailable. Continuing in offline mode; live synthesis may be limited.');
+            state.networkErrorNotified = true;
+          }
+          return config.fallbackValue ?? null;
+        }
+
+        logError(`${errorMsg}: ${message}`);
         console.error(errorMsg, err);
-        return null;
+        return config.fallbackValue ?? null;
       }
     }
 
@@ -5587,6 +5610,12 @@
           state.sessionStats.totalCostUsd += callCost;
           updateStats();
 
+          if (state.networkOffline) {
+            state.networkOffline = false;
+            state.networkErrorNotified = false;
+            state.lastNetworkErrorTime = 0;
+          }
+
           return content;
         } catch (err) {
           if (err.name === 'AbortError') throw err;
@@ -5657,12 +5686,20 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         return { token, relationships: {}, error: 'invalid_prompt' };
       }
 
+      if (state.networkOffline && state.lastNetworkErrorTime) {
+        const elapsed = Date.now() - state.lastNetworkErrorTime;
+        if (elapsed < CONFIG.NETWORK_RETRY_BACKOFF_MS) {
+          return { token, relationships: {}, offline: true, error: 'network_offline' };
+        }
+      }
+
       const content = await safeAsync(
         () => callOpenAI([
           { role: 'system', content: 'You are an HLSF token adjacency analyzer.' },
           { role: 'user', content: safePrompt },
         ]),
-        `Adjacency fetch failed for ${token}`
+        `Adjacency fetch failed for ${token}`,
+        { dedupeNetworkError: true }
       );
 
       if (!content) {
