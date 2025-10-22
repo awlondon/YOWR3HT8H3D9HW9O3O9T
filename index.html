@@ -3921,6 +3921,10 @@
           removed++;
         }
       }
+
+      if (removed > 0 && typeof state !== 'undefined' && state && typeof state === 'object') {
+        state.documentCacheBaseline = 0;
+      }
       return removed;
     }
 
@@ -5347,10 +5351,22 @@
       const total = totalApiCalls + totalCacheHits;
       const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) + '%' : '—';
 
-      const baseline = Number.isFinite(state.documentCacheBaseline)
+      let baseline = Number.isFinite(state.documentCacheBaseline)
         ? Math.max(0, state.documentCacheBaseline)
         : 0;
-      const cachedCount = Math.max(getCachedTokenCount(), baseline);
+
+      const rawCount = getCachedTokenCount();
+      let cachedCount;
+
+      if (Number.isFinite(rawCount)) {
+        cachedCount = Math.max(0, rawCount);
+        if (cachedCount !== baseline) {
+          state.documentCacheBaseline = cachedCount;
+          baseline = cachedCount;
+        }
+      } else {
+        cachedCount = baseline;
+      }
 
       elements.cacheHitRate.textContent = hitRate;
       elements.cachedTokens.textContent = cachedCount;
@@ -5359,6 +5375,8 @@
       // Visual feedback for database growth
       if (cachedCount > 0) {
         elements.cachedTokens.style.color = cachedCount > 50 ? '#00ff88' : '#ffd54f';
+      } else {
+        elements.cachedTokens.style.removeProperty('color');
       }
     }
 
@@ -9319,6 +9337,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               window.HLSF.__centerInit = false;
             }
             Session.tokens.clear();
+            state.documentCacheBaseline = 0;
             updateStats();
             scheduleHlsfReload('reset', { immediate: true });
             const clearedMsg = hadDbSnapshot
