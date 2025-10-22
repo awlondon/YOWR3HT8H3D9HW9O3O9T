@@ -3970,26 +3970,49 @@
       return out;
     }
 
-    function loadDbObject(dbLike) {
+    function loadDbObject(dbLike, options = {}) {
       const db = coerceDb(dbLike);
       const raw = Array.from(db.full_token_data || []);
       const clean = raw.map(normalizeRecord).filter(Boolean);
       if (!clean.length) throw new Error('No valid token records');
-      // Reset existing cached tokens so the cache matches the imported database
-      const existingKeys = safeStorageKeys(TOKEN_CACHE_PREFIX);
-      for (const key of existingKeys) {
-        safeStorageRemove(key);
-      }
+
+      const opts = options || {};
+      const replace = opts.replace === true;
       const now = new Date().toISOString();
-      for (const record of clean) {
-        const payload = Object.assign({ cached_at: now }, record);
-        if (!payload.cached_at) payload.cached_at = now;
-        const cacheKey = getCacheKey(record.token);
-        safeStorageSet(cacheKey, JSON.stringify(payload));
+
+      const existingDb = replace ? { full_token_data: [] } : (getDb() || { full_token_data: [] });
+      const existingRecords = Array.isArray(existingDb.full_token_data)
+        ? existingDb.full_token_data.map(normalizeRecord).filter(Boolean)
+        : [];
+
+      const indexSeed = replace ? [] : safeStorageGet(DB_INDEX_KEY, []);
+      const indexSet = new Set(Array.isArray(indexSeed) ? indexSeed : []);
+      const mergedMap = new Map();
+
+      if (!replace) {
+        for (const record of existingRecords) {
+          if (!record?.token) continue;
+          if (!record.cached_at) record.cached_at = now;
+          mergedMap.set(record.token, Object.assign({}, record));
+          indexSet.add(record.token);
+        }
       }
-      const out = Object.assign({}, db, { full_token_data: clean });
+
+      for (const record of clean) {
+        if (!record?.token) continue;
+        const cacheKey = getCacheKey(record.token);
+        const previous = mergedMap.get(record.token) || null;
+        const merged = Object.assign({}, previous || {}, record);
+        if (!merged.cached_at) merged.cached_at = previous?.cached_at || now;
+        mergedMap.set(record.token, merged);
+        indexSet.add(record.token);
+        safeStorageSet(cacheKey, JSON.stringify(merged));
+      }
+
+      const mergedArray = Array.from(mergedMap.values());
+      const out = Object.assign({}, replace ? db : existingDb, db, { full_token_data: mergedArray });
       const rawPayload = JSON.stringify(out);
-      const indexPayload = JSON.stringify(clean.map(r => r.token));
+      const indexPayload = JSON.stringify(Array.from(indexSet));
       const rawPersisted = safeStorageSet(DB_RAW_KEY, rawPayload);
       const indexPersisted = safeStorageSet(DB_INDEX_KEY, indexPayload);
       if (!rawPersisted || !indexPersisted) {
@@ -7460,12 +7483,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const db = getDb();
         if (!db) throw new Error('Failed to hydrate database');
 
-        let totalTokens = 0;
-        try {
-          totalTokens = loadDbObject(data);
-        } catch (err) {
-          console.warn('Failed to persist raw DB snapshot:', err);
-        }
+        const totalTokens = Array.isArray(db.full_token_data)
+          ? db.full_token_data.length
+          : normalizedCount;
 
         const tokenData = data.full_token_data;
         let imported = 0;
