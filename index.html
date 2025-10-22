@@ -2465,6 +2465,8 @@
 
       ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
 
+      const hitAreas = new Map();
+
       if (cfg.showEdges !== false) {
         const batches = new Map();
         const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
@@ -2492,36 +2494,6 @@
             ctx.moveTo(from.x, from.y);
             ctx.lineTo(to.x, to.y);
             ctx.stroke();
-            if (cfg.showLabels !== false) {
-              const mx = (from.x + to.x) / 2;
-              const my = (from.y + to.y) / 2;
-              ctx.globalAlpha = baseAlpha();
-              const glyph = edgeLabel(edge.rtype);
-              if (glyph) {
-                ctx.fillStyle = theme.hint;
-                ctx.fillText(glyph, mx, my - 10);
-              }
-              const hiddenTokens = Array.isArray(edge.hiddenTokens) ? edge.hiddenTokens : [];
-              if (hiddenTokens.length) {
-                const preview = hiddenTokens.slice(0, 3);
-                let hiddenLabel = preview.join(', ');
-                const remaining = hiddenTokens.length - preview.length;
-                if (remaining > 0) hiddenLabel += ` +${remaining}`;
-                if (hiddenLabel) {
-                  const dx = to.x - from.x;
-                  const dy = to.y - from.y;
-                  const dist = Math.hypot(dx, dy) || 1;
-                  const offset = 16;
-                  const hx = to.x + (dx / dist) * offset;
-                  const hy = to.y + (dy / dist) * offset;
-                  ctx.globalAlpha = baseAlpha() * 0.75;
-                  ctx.fillStyle = cfg.whiteBg ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)';
-                  ctx.fillText(hiddenLabel, hx, hy);
-                  ctx.globalAlpha = baseAlpha();
-                }
-              }
-              ctx.fillStyle = edgeFocus ? '#00ffcc' : theme.fg;
-            }
           }
         }
         ctx.globalAlpha = 1.0;
@@ -2567,9 +2539,259 @@
           ctx.fillText(labelText, position.x, labelY);
           ctx.globalAlpha = 1.0;
         }
+
+        hitAreas.set(token, { x: position.x, y: position.y, radius });
       }
 
+      window.HLSF.rendering = window.HLSF.rendering || {};
+      window.HLSF.rendering.nodeHitAreas = hitAreas;
+      window.HLSF.rendering.nodePositions = rotatedPositions;
+
       ctx.restore();
+    }
+
+    function getNodeHitAreas() {
+      const map = window.HLSF?.rendering?.nodeHitAreas;
+      return map instanceof Map ? map : new Map();
+    }
+
+    function canvasPointToWorld(event) {
+      const canvas = window.HLSF?.canvas || document.getElementById('hlsf-canvas');
+      if (!canvas || !event) return null;
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const view = window.HLSF?.view || { x: 0, y: 0, scale: 1 };
+      const scale = Number.isFinite(view?.scale) && view.scale !== 0 ? view.scale : 1;
+      return {
+        x: (x - (Number.isFinite(view?.x) ? view.x : 0)) / scale,
+        y: (y - (Number.isFinite(view?.y) ? view.y : 0)) / scale,
+      };
+    }
+
+    function findTokenAtCanvasEvent(event) {
+      const world = canvasPointToWorld(event);
+      if (!world) return null;
+      let bestToken = null;
+      let bestDist = Infinity;
+      for (const [token, area] of getNodeHitAreas()) {
+        if (!token || !area) continue;
+        const radius = Number(area.radius) || 0;
+        const dx = world.x - (Number(area.x) || 0);
+        const dy = world.y - (Number(area.y) || 0);
+        const dist = Math.hypot(dx, dy);
+        const limit = radius > 0 ? radius : 8;
+        if (dist <= limit && dist < bestDist) {
+          bestDist = dist;
+          bestToken = token;
+        }
+      }
+      return bestToken;
+    }
+
+    async function resolveAdjacencyRecord(token) {
+      const raw = typeof token === 'string' ? token : '';
+      const lower = raw.toLowerCase();
+      if (!lower) return null;
+
+      const tryMaps = (maps) => {
+        for (const map of maps) {
+          if (!(map instanceof Map)) continue;
+          const direct = map.get(raw) || map.get(lower);
+          if (direct) return direct;
+        }
+        return null;
+      };
+
+      const preliminary = tryMaps([
+        window.HLSF?.lastCommand?.idx,
+        window.HLSF?.indexCache,
+        window.HLSF?.matrices,
+      ]);
+      if (preliminary) return preliminary;
+
+      const cached = getCachedRecordForToken(raw) || getCachedRecordForToken(lower);
+      if (cached) return cached;
+
+      try {
+        const idx = await loadOrGetIndex();
+        if (idx instanceof Map) {
+          const fromIdx = idx.get(raw) || idx.get(lower);
+          if (fromIdx) return fromIdx;
+        }
+      } catch (err) {
+        console.warn('Unable to load adjacency index for token:', raw, err);
+      }
+
+      return null;
+    }
+
+    async function gatherAdjacencyEntries(token) {
+      const record = await resolveAdjacencyRecord(token);
+      if (!record) return null;
+      const matrix = Array.isArray(record?.edges) ? record : buildMatrixForRecord(record);
+      if (!matrix || !Array.isArray(matrix.edges)) return null;
+
+      const aggregate = new Map();
+      for (const relation of matrix.edges) {
+        if (!relation) continue;
+        const relKey = relation.rtype || relation.rel || relation.type || '';
+        const rel = normRelKey(relKey) || relKey || '∼';
+        const items = Array.isArray(relation.items) ? relation.items : [];
+        for (const item of items) {
+          if (!item) continue;
+          const neighbor = item.token || item.id || item.to;
+          if (!neighbor) continue;
+          const neighborLower = neighbor.toLowerCase();
+          const weight = Number.isFinite(item.weight)
+            ? item.weight
+            : Number.isFinite(item.w)
+              ? item.w
+              : Number(relation.aggWeight) || 0;
+          const key = `${rel}|${neighborLower}`;
+          const existing = aggregate.get(key);
+          if (!existing || (Number.isFinite(weight) && weight > existing.weight)) {
+            aggregate.set(key, {
+              token: neighbor,
+              tokenLower: neighborLower,
+              rel,
+              weight: Number.isFinite(weight) ? weight : 0,
+              cached: isTokenCached(neighborLower),
+            });
+          }
+        }
+      }
+
+      const entries = Array.from(aggregate.values()).sort((a, b) => {
+        const aw = Number.isFinite(a.weight) ? a.weight : 0;
+        const bw = Number.isFinite(b.weight) ? b.weight : 0;
+        return bw - aw;
+      });
+
+      const uncached = entries.filter(entry => entry && entry.cached === false);
+      const focusSet = new Set();
+      focusSet.add(token.toLowerCase());
+      for (const entry of uncached) {
+        if (entry?.tokenLower) focusSet.add(entry.tokenLower);
+      }
+
+      return {
+        entries,
+        uncached,
+        focusTokens: Array.from(focusSet),
+      };
+    }
+
+    function buildAdjacencyLogHtml(token, uncachedEntries) {
+      const safeToken = sanitize(token);
+      if (!Array.isArray(uncachedEntries) || uncachedEntries.length === 0) {
+        return `<div class="adjacency-insight"><strong>${safeToken}</strong><br><em>All adjacent tokens are cached.</em></div>`;
+      }
+
+      const grouped = new Map();
+      for (const entry of uncachedEntries) {
+        if (!entry) continue;
+        const rel = entry.rel || '∼';
+        if (!grouped.has(rel)) grouped.set(rel, []);
+        grouped.get(rel).push(entry);
+      }
+
+      const lines = [];
+      for (const [rel, list] of grouped) {
+        if (!Array.isArray(list) || list.length === 0) continue;
+        list.sort((a, b) => {
+          const aw = Number.isFinite(a.weight) ? a.weight : 0;
+          const bw = Number.isFinite(b.weight) ? b.weight : 0;
+          return bw - aw;
+        });
+        const preview = list.slice(0, 6).map(item => {
+          const weightText = Number.isFinite(item.weight) && item.weight > 0
+            ? ` (${item.weight.toFixed(2)})`
+            : '';
+          return `${sanitize(item.token)}${weightText}`;
+        });
+        const remainder = list.length - preview.length;
+        const suffix = remainder > 0 ? ` +${remainder} more` : '';
+        const relLabel = sanitize(relDisplay(rel) || rel);
+        lines.push(`• ${relLabel}: ${preview.join(', ')}${suffix}`);
+      }
+
+      if (!lines.length) {
+        return `<div class="adjacency-insight"><strong>${safeToken}</strong><br><em>No uncached adjacencies found.</em></div>`;
+      }
+
+      return `<div class="adjacency-insight"><strong>${safeToken}</strong><br>${lines.join('<br>')}</div>`;
+    }
+
+    async function revealAdjacenciesForToken(token) {
+      if (!token) return;
+      const info = await gatherAdjacencyEntries(token);
+      if (!info || !Array.isArray(info.entries) || info.entries.length === 0) {
+        logWarning(`No adjacency data available for ${token}.`);
+        setDocumentFocusTokens([token.toLowerCase()]);
+        return;
+      }
+      setDocumentFocusTokens(info.focusTokens);
+      const html = buildAdjacencyLogHtml(token, info.uncached);
+      addLog(html);
+    }
+
+    async function cacheAdjacencyNeighbors(token) {
+      if (!token) return;
+      const info = await gatherAdjacencyEntries(token);
+      if (!info || !Array.isArray(info.entries) || info.entries.length === 0) {
+        logWarning(`No adjacency data available for ${token}.`);
+        setDocumentFocusTokens([token.toLowerCase()]);
+        return;
+      }
+
+      setDocumentFocusTokens(info.focusTokens);
+
+      if (!info.uncached.length) {
+        logOK(`All adjacent tokens are already cached for ${token}.`);
+        return;
+      }
+
+      const targets = Array.from(new Set(info.uncached.map(entry => entry.token).filter(Boolean)));
+      const focusSummary = targets.slice(0, 6).join(', ');
+      const status = logStatus(`Caching ${targets.length} adjacent token${targets.length === 1 ? '' : 's'} near ${token}…`);
+
+      try {
+        const context = `Manual adjacency expansion triggered by double-click on ${token}. Focus tokens: ${focusSummary}.`;
+        const label = `Manual cache ${token}`;
+        const results = await batchFetchAdjacencies(targets, context, label);
+        const { hits, misses, total } = summarizeAdjacencyResults(results);
+        let offline = 0;
+        let errors = 0;
+        if (results instanceof Map) {
+          for (const entry of results.values()) {
+            if (!entry) continue;
+            if (entry.offline) offline += 1;
+            if (entry.error && entry.error !== 'network_offline') errors += 1;
+          }
+        }
+
+        if (status) {
+          const parts = [];
+          parts.push(`${total} request${total === 1 ? '' : 's'}`);
+          if (misses > 0) parts.push(`${misses} new`);
+          if (hits > 0) parts.push(`${hits} cached`);
+          if (offline > 0) parts.push(`${offline} offline`);
+          if (errors > 0) parts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+          status.innerHTML = `✅ ${sanitize(token)}: ${parts.join(' • ')}`;
+        }
+
+        if (hasNewAdjacencyData(results)) {
+          notifyHlsfAdjacencyChange('manual-cache', { immediate: true });
+        } else if (offline > 0 && offline === (total || targets.length)) {
+          logWarning('Adjacency expansion deferred due to offline mode.');
+        }
+      } catch (err) {
+        if (status) {
+          status.innerHTML = `❌ ${sanitize(`Failed to cache adjacencies for ${token}: ${err?.message || err}`)}`;
+        }
+        logError(`Failed to cache adjacencies for ${token}: ${err?.message || err}`);
+      }
     }
 
     function computePatches(graph, pos) {
@@ -3443,11 +3665,14 @@
         let isDragging = false;
         let lastX = 0;
         let lastY = 0;
+        let movedDuringDrag = false;
+        let clickTimer = null;
 
         canvasEl.addEventListener('mousedown', (e) => {
           isDragging = true;
           lastX = e.clientX;
           lastY = e.clientY;
+          movedDuringDrag = false;
         });
 
         window.addEventListener('mouseup', () => {
@@ -3458,6 +3683,9 @@
           if (!isDragging) return;
           const dx = e.clientX - lastX;
           const dy = e.clientY - lastY;
+          if (!movedDuringDrag && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+            movedDuringDrag = true;
+          }
           window.HLSF.view.x += dx;
           window.HLSF.view.y += dy;
           syncViewToConfig();
@@ -3468,6 +3696,40 @@
 
         canvasEl.addEventListener('mouseleave', () => {
           isDragging = false;
+          movedDuringDrag = false;
+        });
+
+        canvasEl.addEventListener('click', (e) => {
+          if (movedDuringDrag) {
+            movedDuringDrag = false;
+            return;
+          }
+          const token = findTokenAtCanvasEvent(e);
+          if (!token) return;
+          if (clickTimer) clearTimeout(clickTimer);
+          clickTimer = setTimeout(() => {
+            clickTimer = null;
+            revealAdjacenciesForToken(token).catch(err => {
+              console.warn('Failed to reveal adjacencies:', err);
+            });
+          }, 200);
+        });
+
+        canvasEl.addEventListener('dblclick', (e) => {
+          if (clickTimer) {
+            clearTimeout(clickTimer);
+            clickTimer = null;
+          }
+          if (movedDuringDrag) {
+            movedDuringDrag = false;
+            return;
+          }
+          e.preventDefault();
+          const token = findTokenAtCanvasEvent(e);
+          if (!token) return;
+          cacheAdjacencyNeighbors(token).catch(err => {
+            console.warn('Failed to cache adjacency neighbors:', err);
+          });
         });
       }
 
