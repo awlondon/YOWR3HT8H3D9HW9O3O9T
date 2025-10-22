@@ -5324,7 +5324,10 @@
       const total = totalApiCalls + totalCacheHits;
       const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) + '%' : '—';
 
-      const cachedCount = getCachedTokenCount();
+      const baseline = Number.isFinite(state.documentCacheBaseline)
+        ? Math.max(0, state.documentCacheBaseline)
+        : 0;
+      const cachedCount = Math.max(getCachedTokenCount(), baseline);
 
       elements.cacheHitRate.textContent = hitRate;
       elements.cachedTokens.textContent = cachedCount;
@@ -8056,7 +8059,11 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         logError('Reader input unavailable');
         return;
       }
-      state.documentCacheBaseline = getCachedTokenCount();
+      const cachedSnapshot = getCachedTokenCount();
+      if (Number.isFinite(cachedSnapshot)) {
+        state.documentCacheBaseline = Math.max(0, cachedSnapshot);
+        updateStats();
+      }
       input.value = '';
       input.onchange = async (event) => {
         try {
@@ -10402,6 +10409,11 @@ Write a reflective synthesis of this passage in the voice of the cached database
         if (wasCancelled) {
           estimator?.markCancelled();
         }
+        const finalSnapshot = getCachedTokenCount();
+        if (Number.isFinite(finalSnapshot)) {
+          state.documentCacheBaseline = Math.max(0, finalSnapshot);
+        }
+        updateStats();
         exitProcessingState({ preserveInput: true });
       }
     }
@@ -10489,6 +10501,15 @@ Write a reflective synthesis of this passage in the voice of the cached database
     });
 
     async function initialize() {
+      let cachedCount = getCachedTokenCount();
+      if (Number.isFinite(cachedCount)) {
+        state.documentCacheBaseline = Math.max(0, cachedCount);
+      } else {
+        cachedCount = 0;
+        state.documentCacheBaseline = Math.max(0, Number.isFinite(state.documentCacheBaseline)
+          ? state.documentCacheBaseline
+          : 0);
+      }
       updateStats();
 
       const hlsfWrapper = document.getElementById('hlsf-canvas-container');
@@ -10511,7 +10532,13 @@ Write a reflective synthesis of this passage in the voice of the cached database
       const bootstrapped = await tryBootstrapDb();
       const dbAvailable = bootstrapped || !!getDb();
 
-      const cachedCount = getCachedTokenCount();
+      cachedCount = getCachedTokenCount();
+      if (Number.isFinite(cachedCount)) {
+        state.documentCacheBaseline = Math.max(0, cachedCount);
+      } else {
+        cachedCount = 0;
+      }
+      updateStats();
       
       addLog(`<strong>🧠 HLSF Cognition Engine v2.0</strong><br><br>
         This engine performs:<br>
