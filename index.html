@@ -713,6 +713,7 @@
       MAX_RETRY_ATTEMPTS: 3,
       RETRY_BASE_DELAY_MS: 500,
       DOCUMENT_CHUNK_SIZE: 1000,
+      CACHE_SEED_LIMIT: 8000,
       DEFAULT_MODEL: 'gpt-4o-mini',
       MODEL_PRICING: {
         default: { inputPerMillion: 0.15, outputPerMillion: 0.60 },
@@ -4301,7 +4302,7 @@
     }
 
     function refreshDbReference(recordLike, options = {}) {
-      const { deferReload = false } = options || {};
+      const { deferReload = false, skipVariantSync = false } = options || {};
       const normalized = normalizeRecord(recordLike);
       if (!normalized) return;
 
@@ -4336,12 +4337,23 @@
 
       const entries = db.full_token_data;
       const idx = entries.findIndex(rec => rec && rec.token === normalized.token);
+      let storedRecord = null;
       if (idx >= 0) {
         const existing = entries[idx] || {};
         entries[idx] = Object.assign({}, existing, normalized);
         if (!entries[idx].cached_at) entries[idx].cached_at = normalized.cached_at;
+        storedRecord = entries[idx];
       } else {
         entries.push(normalized);
+        storedRecord = normalized;
+      }
+
+      if (!skipVariantSync) {
+        try {
+          syncMorphologicalAdjacencies(storedRecord, { deferReload });
+        } catch (err) {
+          console.warn('Variant adjacency sync failed:', err);
+        }
       }
 
       window.HLSF.dbCache = db;
@@ -4356,6 +4368,95 @@
         notifyHlsfAdjacencyChange('cache-update');
       }
       updateHeaderCounts();
+    }
+
+    function deriveMorphologicalVariants(token) {
+      const base = (token == null ? '' : String(token)).toLowerCase();
+      if (!base) return [];
+
+      const stems = new Set([base]);
+      const addStem = (stem) => {
+        if (!stem) return;
+        const normalized = stem.toLowerCase();
+        if (normalized.length >= 2) stems.add(normalized);
+      };
+
+      if (base.endsWith('ing') && base.length > 4) {
+        addStem(base.slice(0, -3));
+        if (base.endsWith('ying')) addStem(base.slice(0, -3) + 'ie');
+      }
+      if (base.endsWith('ed') && base.length > 3) {
+        addStem(base.slice(0, -2));
+        if (base.endsWith('ied')) addStem(base.slice(0, -3) + 'y');
+      }
+      if (base.endsWith('ies') && base.length > 4) addStem(base.slice(0, -3) + 'y');
+      if (base.endsWith('es') && base.length > 4) addStem(base.slice(0, -2));
+      if (base.endsWith('s') && base.length > 3) addStem(base.slice(0, -1));
+      if (base.endsWith('er') && base.length > 4) addStem(base.slice(0, -2));
+      if (base.endsWith('est') && base.length > 5) addStem(base.slice(0, -3));
+      if (base.endsWith('ly') && base.length > 4) addStem(base.slice(0, -2));
+
+      const variants = new Set();
+      stems.forEach((stem) => {
+        if (!stem) return;
+        variants.add(stem);
+        if (stem.endsWith('y')) variants.add(stem.slice(0, -1) + 'ies');
+        variants.add(stem + 's');
+        variants.add(stem + 'es');
+        variants.add(stem + 'ed');
+        variants.add(stem + 'ing');
+        variants.add(stem + 'er');
+        variants.add(stem + 'est');
+        variants.add(stem + 'ly');
+      });
+
+      variants.delete(base);
+      return Array.from(variants).filter(v => v && v.length >= 2 && v !== base);
+    }
+
+    function syncMorphologicalAdjacencies(record, options = {}) {
+      if (!record || !record.token) return;
+      const token = (record.token || '').toLowerCase();
+      if (!token) return;
+
+      const maxVariants = 12;
+      const variants = deriveMorphologicalVariants(token).slice(0, maxVariants);
+      if (!variants.length) return;
+
+      const relationships = record.relationships && typeof record.relationships === 'object'
+        ? record.relationships
+        : {};
+      const variantRel = Array.isArray(relationships['≈']) ? relationships['≈'] : (relationships['≈'] = []);
+      const seen = new Set(variantRel.map(entry => (entry?.token || '').toLowerCase()).filter(Boolean));
+      let modified = false;
+
+      for (const variant of variants) {
+        if (!variant || variant === token) continue;
+        if (!seen.has(variant)) {
+          variantRel.push({ token: variant, weight: 0.64 });
+          seen.add(variant);
+          modified = true;
+        }
+
+        const counterpart = getCachedRecordForToken(variant) || { token: variant, relationships: {} };
+        const counterpartRels = counterpart.relationships && typeof counterpart.relationships === 'object'
+          ? counterpart.relationships
+          : {};
+        const counterpartVariants = Array.isArray(counterpartRels['≈'])
+          ? counterpartRels['≈']
+          : (counterpartRels['≈'] = []);
+        const counterpartSeen = new Set(counterpartVariants.map(entry => (entry?.token || '').toLowerCase()).filter(Boolean));
+        if (!counterpartSeen.has(token)) {
+          counterpartVariants.push({ token, weight: 0.64 });
+          counterpart.relationships = counterpartRels;
+          refreshDbReference(counterpart, { deferReload: true, skipVariantSync: true });
+        }
+      }
+
+      if (modified) {
+        if (variantRel.length > maxVariants) variantRel.length = maxVariants;
+        record.relationships = relationships;
+      }
     }
 
     function getDb() {
@@ -4763,11 +4864,15 @@
                   : typeof rest.refinedResponse === 'string'
                     ? rest.refinedResponse
                     : '';
+                const grammar = typeof rest.grammarOutput === 'string' && rest.grammarOutput.trim()
+                  ? rest.grammarOutput
+                  : '';
                 map.set(key, {
                   tokens: Array.isArray(rest.tokens) ? rest.tokens : [],
                   originalResponse: original,
                   localOutput: local,
                   refinedOutput: refined,
+                  grammarOutput: grammar,
                   updatedAt: Number.isFinite(rest.updatedAt) ? rest.updatedAt : Date.now(),
                 });
               }
@@ -4799,6 +4904,9 @@
             : typeof value?.refinedResponse === 'string'
               ? value.refinedResponse
               : '';
+          const grammar = typeof value?.grammarOutput === 'string' && value.grammarOutput.trim()
+            ? value.grammarOutput
+            : '';
           payload.push({
             key,
             tokens: Array.isArray(value?.tokens) ? value.tokens : [],
@@ -4808,6 +4916,7 @@
             reflection: original,
             thoughtStream: local,
             refinedResponse: refined,
+            grammarOutput: grammar,
             updatedAt: Number.isFinite(value?.updatedAt) ? value.updatedAt : Date.now(),
           });
         }
@@ -4862,6 +4971,10 @@
             lesson.refinedResponse,
             existingEntry.refinedOutput,
             existingEntry.refinedResponse
+          ),
+          grammarOutput: prefer(
+            lesson.grammarOutput,
+            existingEntry.grammarOutput
           ),
           updatedAt: Date.now(),
         };
@@ -5155,6 +5268,49 @@
       }
 
       return 0;
+    }
+
+    function listCachedTokens(limit = CONFIG.CACHE_SEED_LIMIT || 0) {
+      let index = safeStorageGet(DB_INDEX_KEY, []);
+      if (typeof index === 'string') {
+        try { index = JSON.parse(index); }
+        catch { index = []; }
+      }
+
+      const tokens = [];
+      if (Array.isArray(index) && index.length) {
+        tokens.push(...index);
+      }
+
+      if (!tokens.length) {
+        const db = getDb();
+        if (db && Array.isArray(db.full_token_data)) {
+          for (const record of db.full_token_data) {
+            if (record?.token) tokens.push(record.token);
+          }
+        }
+      }
+
+      if (!tokens.length) {
+        const cacheKeys = safeStorageKeys(TOKEN_CACHE_PREFIX);
+        for (const key of cacheKeys) {
+          const token = key.slice(TOKEN_CACHE_PREFIX.length);
+          if (token) tokens.push(token);
+        }
+      }
+
+      const seen = new Set();
+      const deduped = [];
+      const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : Infinity;
+      for (const token of tokens) {
+        const key = (token == null ? '' : String(token)).toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(token);
+        if (deduped.length >= cap) break;
+      }
+
+      return deduped;
     }
 
     let pendingHlsfReloadTimer = null;
@@ -9444,9 +9600,52 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const safeCompletion = sanitize(completion || '').replace(/\n{3,}/g, '\n\n');
         addLog(`<div class="section-divider"></div><div class="section-title">🧠 Stream of Consciousness</div><pre>${safeCompletion}</pre>`);
 
-        if (completion) {
-          addOutputTokens(tokenize(completion), { render: false });
+        let streamAdjacency = null;
+        const completionTokens = tokenize(completion || '');
+        if (completionTokens.length) {
+          addConversationTokens(completionTokens);
+          addOutputTokens(completionTokens, { render: false });
+          streamAdjacency = await batchFetchAdjacencies(completionTokens, completion, 'mental state stream adjacencies');
+          calculateAttention(streamAdjacency);
         }
+
+        let grammarStream = completion || '';
+        let grammarStatus = null;
+        if (grammarStream.trim()) {
+          grammarStatus = logStatus('⏳ Polishing stream for grammar...');
+          const polished = await editForCoherence('mental state stream', 'mental state', grammarStream);
+          if (!state.apiKey && grammarStatus) {
+            grammarStatus.innerHTML = '⚠️ Grammar refinement skipped (offline)';
+          } else if (grammarStatus) {
+            grammarStatus.innerHTML = '✅ Grammar refinement complete';
+          }
+          grammarStream = polished;
+          const grammarLimited = limitWords(grammarStream, CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT);
+          grammarStream = grammarLimited.text;
+          if (grammarLimited.trimmed) {
+            logWarning(`Mental state stream trimmed to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words after grammatical refinement.`);
+          }
+        }
+
+        const grammarTokens = tokenize(grammarStream || '');
+        let grammarAdjacency = null;
+        if (grammarTokens.length) {
+          addConversationTokens(grammarTokens);
+          addOutputTokens(grammarTokens, { render: false });
+          grammarAdjacency = await batchFetchAdjacencies(grammarTokens, grammarStream, 'mental state grammar adjacencies');
+          calculateAttention(grammarAdjacency);
+        }
+
+        if (grammarStream) {
+          addLog(`<div class="section-divider"></div><div class="section-title">✏️ Grammar-Polished Stream</div><pre>${sanitize(grammarStream)}</pre>`);
+        }
+
+        const streamReload = streamAdjacency ? hasNewAdjacencyData(streamAdjacency) : false;
+        const grammarReload = grammarAdjacency ? hasNewAdjacencyData(grammarAdjacency) : false;
+        if (streamReload || grammarReload) {
+          notifyHlsfAdjacencyChange('mental-state', { immediate: true });
+        }
+        rebuildLiveGraph();
 
         const elapsed = ((performance.now() - start) / 1000).toFixed(1);
         logOK(`Mental state response ready (${elapsed}s)`);
@@ -9526,6 +9725,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     registerCommand('/state', cmd_state);
     registerCommand('/import', cmd_import);
     registerCommand('/read', () => cmdRead());
+    registerCommand('/ingest', () => cmdRead());
     registerCommand('/loaddb', cmd_loaddb);
     window.COMMANDS = COMMANDS;
     // Router guard (prevents duplicate logs)
@@ -9545,7 +9745,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const arg = rest.join(' ').trim();
 
       if (command === '/import') { await cmdImport(); return true; }
-      if (command === '/read') { await cmdRead(); return true; }
+      if (command === '/read' || command === '/ingest') { await cmdRead(); return true; }
       if (command === '/loaddb') { await cmdLoadDb(arg); return true; }
       if (command === '/hlsf') { await runHlsfSafely(arg); return true; }
       if (command === '/scheme') { cmdScheme(arg || 'black'); return true; }
@@ -9649,7 +9849,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             /database or /db - View database metadata<br>
             /export - Export database metadata as JSON<br>
             /import - Import database from JSON file<br>
-            /read - Import and analyze a document in 1,000-character segments<br>
+            /read or /ingest - Import and analyze a document in 1,000-character segments<br>
             /loaddb &lt;url&gt; - Load database JSON from URL<br>
             /glyph &lt;token1 token2 ...&gt; - Show weighted glyph assignments<br>
             /ledger [show|export|import] - Manage private glyph ledger<br>
@@ -9782,10 +9982,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           batchFetchAdjacencies(responseTokens, initialResponse, 'output'),
         ]);
 
-        const shouldReloadHlsf = hasNewAdjacencyData(inputMatrices) || hasNewAdjacencyData(outputMatrices);
-        if (shouldReloadHlsf) {
-          notifyHlsfAdjacencyChange('prompt-adjacencies', { immediate: true });
-        }
+        let shouldReloadHlsf = hasNewAdjacencyData(inputMatrices) || hasNewAdjacencyData(outputMatrices);
 
         calculateAttention(inputMatrices);
         calculateAttention(outputMatrices);
@@ -9891,10 +10088,61 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           addOutputTokens(refinedTokens, { render: false });
         }
 
+        let refinedAdjacencies = null;
+        if (refinedTokens.length) {
+          refinedAdjacencies = await batchFetchAdjacencies(refinedTokens, refinedOutput, 'refined output adjacencies');
+          calculateAttention(refinedAdjacencies);
+          refinedAdjacencies.forEach((value, key) => allMatrices.set(key, value));
+          if (hasNewAdjacencyData(refinedAdjacencies)) shouldReloadHlsf = true;
+        }
+
         addLog(`<div class="section-divider"></div>
           <div class="section-title">🪞 LLM Refined AGI Output</div>
           <div class="thought-stream">${sanitize(refinedOutput)}</div>
         `);
+
+        let grammarOutput = refinedOutput;
+        let grammarWordCount = refinedWordCount;
+        let grammarStatus = null;
+        if (grammarOutput.trim()) {
+          grammarStatus = logStatus('⏳ Polishing refined output for grammar...');
+          const polished = await editForCoherence('HLSF refined output', 'prompt', grammarOutput);
+          if (!state.apiKey && grammarStatus) {
+            grammarStatus.innerHTML = '⚠️ Grammar refinement skipped (offline)';
+          } else if (grammarStatus) {
+            grammarStatus.innerHTML = '✅ Grammar refinement complete';
+          }
+          grammarOutput = polished;
+          const grammarLimited = limitWords(grammarOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+          grammarOutput = grammarLimited.text;
+          grammarWordCount = grammarLimited.wordCount;
+          if (grammarLimited.trimmed) {
+            logWarning(`Grammar-polished output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words to meet suite requirements.`);
+          }
+        }
+
+        const grammarTokens = tokenize(grammarOutput);
+        if (grammarTokens.length) {
+          addConversationTokens(grammarTokens);
+          addOutputTokens(grammarTokens, { render: false });
+        }
+
+        let grammarAdjacencies = null;
+        if (grammarTokens.length) {
+          grammarAdjacencies = await batchFetchAdjacencies(grammarTokens, grammarOutput, 'grammar refinement adjacencies');
+          calculateAttention(grammarAdjacencies);
+          grammarAdjacencies.forEach((value, key) => allMatrices.set(key, value));
+          if (hasNewAdjacencyData(grammarAdjacencies)) shouldReloadHlsf = true;
+        }
+
+        addLog(`<div class="section-divider"></div>
+          <div class="section-title">✏️ Grammar-Polished Output</div>
+          <div class="thought-stream">${sanitize(grammarOutput)}</div>
+        `);
+
+        if (shouldReloadHlsf) {
+          notifyHlsfAdjacencyChange('prompt-adjacencies', { immediate: true });
+        }
 
         rebuildLiveGraph();
 
@@ -9902,6 +10150,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const safeOriginal = sanitize(initialResponse);
         const safeLocal = sanitize(localOutput);
         const safeRefined = sanitize(refinedOutput);
+        const safeGrammar = sanitize(grammarOutput);
 
         addLog(`<div class="section-divider"></div>
           <div class="final-output">
@@ -9917,6 +10166,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             <details open>
               <summary>LLM refined AGI output (${refinedWordCount} words)</summary>
               <pre>${safeRefined}</pre>
+            </details>
+            <details open>
+              <summary>Grammar-polished output (${grammarWordCount} words)</summary>
+              <pre>${safeGrammar}</pre>
             </details>
             <details>
               <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
@@ -10034,6 +10287,27 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         this.totalNonAdjacencyDurationMs = 0;
         this.totalUniqueTokensObserved = 0;
         this.cachedTokenBaseline = Math.max(0, Number(options?.cachedTokenBaseline) || 0);
+
+        const seedTokens = Array.isArray(options?.seedTokens)
+          ? options.seedTokens
+          : listCachedTokens(CONFIG.CACHE_SEED_LIMIT || 0);
+        const defaultLimit = Number.isFinite(CONFIG.CACHE_SEED_LIMIT) && CONFIG.CACHE_SEED_LIMIT > 0
+          ? Math.floor(CONFIG.CACHE_SEED_LIMIT)
+          : seedTokens.length;
+        const seedLimit = Number.isFinite(options?.seedLimit) && options.seedLimit > 0
+          ? Math.floor(options.seedLimit)
+          : defaultLimit;
+        let seeded = 0;
+        for (const token of seedTokens || []) {
+          if (!token) continue;
+          const key = this.getTokenKey(token);
+          if (!key || this.currentSeenTokens.has(key)) continue;
+          this.currentSeenTokens.add(key);
+          this.initialSeenTokens.add(key);
+          this.cachePresence.set(key, true);
+          seeded++;
+          if (seedLimit && seeded >= seedLimit) break;
+        }
       }
 
       setStatusElement(element) {
@@ -10356,6 +10630,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
 
       const originalTokens = tokenize(originalResponse);
       if (originalTokens.length) {
+        addConversationTokens(originalTokens);
         addOutputTokens(originalTokens, { render: false });
       }
 
@@ -10417,6 +10692,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
 
       const localTokens = tokenize(localOutput);
       if (localTokens.length) {
+        addConversationTokens(localTokens);
         addOutputTokens(localTokens, { render: false });
       }
 
@@ -10489,13 +10765,56 @@ Write a reflective synthesis of this passage in the voice of the cached database
       const refinedWordCount = refinedLimited.wordCount;
 
       const refinedTokens = tokenize(refinedOutput);
+      let refinedData = { result: new Map(), duration: 0 };
       if (refinedTokens.length) {
+        addConversationTokens(refinedTokens);
         addOutputTokens(refinedTokens, { render: false });
+        refinedData = await measure(() => batchFetchAdjacencies(refinedTokens, refinedOutput, `${chunkLabel} refined output adjacencies`));
+        if (refinedData?.result instanceof Map) {
+          calculateAttention(refinedData.result);
+          refinedData.result.forEach((value, key) => allMatrices.set(key, value));
+        }
       }
+      const refinedAdjDuration = refinedData?.duration || 0;
+      const refinedAdjStats = summarizeAdjacencyResults(refinedData?.result || new Map());
+
+      let grammarOutput = refinedOutput;
+      let grammarWordCount = refinedWordCount;
+      let grammarTokens = [];
+      let grammarData = { result: new Map(), duration: 0 };
+      if (grammarOutput.trim()) {
+        const grammarStatus = logStatus(`⏳ ${chunkLabel}: grammar refinement`);
+        const polished = await editForCoherence('refined AGI output', chunkLabel, grammarOutput);
+        if (!state.apiKey && grammarStatus) {
+          grammarStatus.innerHTML = `⚠️ ${chunkLabel}: grammar refinement skipped`;
+        } else if (grammarStatus) {
+          grammarStatus.innerHTML = `✅ ${chunkLabel}: grammar refinement complete`;
+        }
+        grammarOutput = polished;
+        const grammarLimited = limitWords(grammarOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+        grammarOutput = grammarLimited.text;
+        grammarWordCount = grammarLimited.wordCount;
+        if (grammarLimited.trimmed) {
+          logWarning(`${chunkLabel}: grammar output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words for archival.`);
+        }
+        grammarTokens = tokenize(grammarOutput);
+        if (grammarTokens.length) {
+          addConversationTokens(grammarTokens);
+          addOutputTokens(grammarTokens, { render: false });
+          grammarData = await measure(() => batchFetchAdjacencies(grammarTokens, grammarOutput, `${chunkLabel} grammar adjacencies`));
+          if (grammarData?.result instanceof Map) {
+            calculateAttention(grammarData.result);
+            grammarData.result.forEach((value, key) => allMatrices.set(key, value));
+          }
+        }
+      }
+      const grammarAdjDuration = grammarData?.duration || 0;
+      const grammarAdjStats = summarizeAdjacencyResults(grammarData?.result || new Map());
 
       const safeOriginal = sanitize(originalResponse);
       const safeLocal = sanitize(localOutput);
       const safeRefined = sanitize(refinedOutput);
+      const safeGrammar = sanitize(grammarOutput);
 
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
@@ -10512,6 +10831,10 @@ Write a reflective synthesis of this passage in the voice of the cached database
             <summary>LLM refined AGI output (${refinedWordCount} words)</summary>
             <pre>${safeRefined}</pre>
           </details>
+          <details open>
+            <summary>Grammar-polished output (${grammarWordCount} words)</summary>
+            <pre>${safeGrammar}</pre>
+          </details>
           <details>
             <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
             <pre>${JSON.stringify(Array.from(allMatrices.entries()).slice(0, 5), null, 2)}</pre>
@@ -10527,6 +10850,9 @@ Write a reflective synthesis of this passage in the voice of the cached database
       }
       if (refinedFromLive && refinedOutput) {
         lessonUpdates.refinedOutput = refinedOutput;
+      }
+      if (grammarOutput) {
+        lessonUpdates.grammarOutput = grammarOutput;
       }
 
       if (state.apiKey && Object.keys(lessonUpdates).length) {
@@ -10559,10 +10885,10 @@ Write a reflective synthesis of this passage in the voice of the cached database
         newBefore = uniqueTokenCount;
       }
 
-      const adjacencyDurationMs = inputAdjDuration + outputAdjDuration;
-      const adjacencyHits = inputAdjStats.hits + outputAdjStats.hits;
-      const adjacencyMisses = inputAdjStats.misses + outputAdjStats.misses;
-      const adjacencyRequests = inputAdjStats.total + outputAdjStats.total;
+      const adjacencyDurationMs = inputAdjDuration + outputAdjDuration + refinedAdjDuration + grammarAdjDuration;
+      const adjacencyHits = inputAdjStats.hits + outputAdjStats.hits + refinedAdjStats.hits + grammarAdjStats.hits;
+      const adjacencyMisses = inputAdjStats.misses + outputAdjStats.misses + refinedAdjStats.misses + grammarAdjStats.misses;
+      const adjacencyRequests = inputAdjStats.total + outputAdjStats.total + refinedAdjStats.total + grammarAdjStats.total;
       const totalDurationMs = performance.now() - chunkStart;
       const adjacencyHitRate = adjacencyRequests > 0 ? adjacencyHits / adjacencyRequests : 0;
 
@@ -10571,6 +10897,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
         originalResponse,
         localOutput,
         refinedOutput,
+        grammarOutput,
         matrices: allMatrices,
         topTokens,
         keyRelationships: keyRels,
@@ -10617,8 +10944,29 @@ Write a reflective synthesis of this passage in the voice of the cached database
       }
 
       finalReflection = DbLexicon.rewriteText(finalReflection);
+
+      if (finalReflection.trim()) {
+        const grammarStatus = logStatus('⏳ Polishing reflection for grammar');
+        const polishedReflection = await editForCoherence('document reflection', 'document reflection', finalReflection);
+        if (!state.apiKey && grammarStatus) {
+          grammarStatus.innerHTML = '⚠️ Reflection grammar refinement skipped (offline)';
+        } else if (grammarStatus) {
+          grammarStatus.innerHTML = '✅ Reflection grammar refinement complete';
+        }
+        finalReflection = polishedReflection;
+      }
+
       finalReflection = DbLexicon.padToTokenCount(finalReflection, 1000);
-      addOutputTokens(tokenize(finalReflection), { render: false });
+      const reflectionTokens = tokenize(finalReflection);
+      if (reflectionTokens.length) {
+        addConversationTokens(reflectionTokens);
+        addOutputTokens(reflectionTokens, { render: false });
+        const reflectionAdjacency = await batchFetchAdjacencies(reflectionTokens, finalReflection, 'document reflection adjacencies');
+        calculateAttention(reflectionAdjacency);
+        if (hasNewAdjacencyData(reflectionAdjacency)) {
+          notifyHlsfAdjacencyChange('document-reflection', { immediate: true });
+        }
+      }
       addLog(`<div class="section-divider"></div><div class="section-title">🧾 Document Reflection</div><div class="thought-stream">${sanitize(finalReflection)}</div>`);
     }
 
@@ -10662,7 +11010,12 @@ Write a reflective synthesis of this passage in the voice of the cached database
         const cachedTokenBaseline = Number.isFinite(state.documentCacheBaseline)
           ? state.documentCacheBaseline
           : getCachedTokenCount();
-        estimator = new DocumentReadEstimator(chunks, { cachedTokenBaseline });
+        const cachedSeedTokens = listCachedTokens(CONFIG.CACHE_SEED_LIMIT || 0);
+        estimator = new DocumentReadEstimator(chunks, {
+          cachedTokenBaseline,
+          seedTokens: cachedSeedTokens,
+          seedLimit: CONFIG.CACHE_SEED_LIMIT,
+        });
         const etaStatus = logStatus('⏳ Document ETA initializing…');
         estimator.setStatusElement(etaStatus);
 
@@ -10882,7 +11235,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
         4. Response refinement based on insights<br>
         5. <strong>Symbolic glyph encryption</strong> (complex number encoding)<br>
         6. <strong>HLSF visualization</strong> (hierarchical semantic framework)<br><br>
-        <strong>Commands:</strong> /help, /hlsf, /read, /glyph, /encrypt, /decrypt<br>
+        <strong>Commands:</strong> /help, /hlsf, /read, /ingest, /glyph, /encrypt, /decrypt<br>
         ${cachedCount > 0 ? `<br>✅ Loaded with ${cachedCount} cached tokens` : ''}
         <br><small>⚠️ Note: Download HTML and run locally for API calls to work.</small>
       `);
