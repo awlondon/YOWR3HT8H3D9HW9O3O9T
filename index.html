@@ -4239,66 +4239,76 @@
     }
 
     function loadDbObject(dbLike, options = {}) {
-      const db = coerceDb(dbLike);
-      const raw = Array.from(db.full_token_data || []);
-      const clean = raw.map(normalizeRecord).filter(Boolean);
-      if (!clean.length) throw new Error('No valid token records');
+      CacheBatch.begin({ baseline: getDocumentCacheBaseline() });
+      try {
+        const db = coerceDb(dbLike);
+        const raw = Array.from(db.full_token_data || []);
+        const clean = raw.map(normalizeRecord).filter(Boolean);
+        if (!clean.length) throw new Error('No valid token records');
 
-      const opts = options || {};
-      const replace = opts.replace === true;
-      const now = new Date().toISOString();
+        const opts = options || {};
+        const replace = opts.replace === true;
+        const now = new Date().toISOString();
 
-      const existingDb = replace ? { full_token_data: [] } : (getDb() || { full_token_data: [] });
-      const existingRecords = Array.isArray(existingDb.full_token_data)
-        ? existingDb.full_token_data.map(normalizeRecord).filter(Boolean)
-        : [];
+        const existingDb = replace ? { full_token_data: [] } : (getDb() || { full_token_data: [] });
+        const existingRecords = Array.isArray(existingDb.full_token_data)
+          ? existingDb.full_token_data.map(normalizeRecord).filter(Boolean)
+          : [];
 
-      const indexSeed = replace ? [] : safeStorageGet(DB_INDEX_KEY, []);
-      const indexSet = new Set(Array.isArray(indexSeed) ? indexSeed : []);
-      const mergedMap = new Map();
+        const indexSeed = replace ? [] : safeStorageGet(DB_INDEX_KEY, []);
+        const indexSet = new Set(Array.isArray(indexSeed) ? indexSeed : []);
+        const mergedMap = new Map();
 
-      if (!replace) {
-        for (const record of existingRecords) {
+        if (!replace) {
+          for (const record of existingRecords) {
+            if (!record?.token) continue;
+            if (!record.cached_at) record.cached_at = now;
+            mergedMap.set(record.token, Object.assign({}, record));
+            indexSet.add(record.token);
+          }
+        }
+
+        for (const record of clean) {
           if (!record?.token) continue;
-          if (!record.cached_at) record.cached_at = now;
-          mergedMap.set(record.token, Object.assign({}, record));
+          const cacheKey = getCacheKey(record.token);
+          const wasCached = isTokenCached(record.token);
+          const previous = mergedMap.get(record.token) || null;
+          const merged = Object.assign({}, previous || {}, record);
+          if (!merged.cached_at) merged.cached_at = previous?.cached_at || now;
+          mergedMap.set(record.token, merged);
           indexSet.add(record.token);
+          const persisted = safeStorageSet(cacheKey, JSON.stringify(merged));
+          const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
+          if ((persisted || fallbackStored) && !wasCached) {
+            CacheBatch.record(record.token);
+          }
         }
-      }
 
-      for (const record of clean) {
-        if (!record?.token) continue;
-        const cacheKey = getCacheKey(record.token);
-        const previous = mergedMap.get(record.token) || null;
-        const merged = Object.assign({}, previous || {}, record);
-        if (!merged.cached_at) merged.cached_at = previous?.cached_at || now;
-        mergedMap.set(record.token, merged);
-        indexSet.add(record.token);
-        safeStorageSet(cacheKey, JSON.stringify(merged));
-      }
-
-      const mergedArray = Array.from(mergedMap.values());
-      const out = Object.assign({}, replace ? db : existingDb, db, { full_token_data: mergedArray });
-      const rawPayload = JSON.stringify(out);
-      const indexPayload = JSON.stringify(Array.from(indexSet));
-      const rawPersisted = safeStorageSet(DB_RAW_KEY, rawPayload);
-      const indexPersisted = safeStorageSet(DB_INDEX_KEY, indexPayload);
-      if (!rawPersisted || !indexPersisted) {
-        logWarning('Local storage quota reached. Database available for this session only — use /export to back up data.');
-      }
-      window.HLSF.dbCache = out;
-      state.liveGraphMode = false;
-      markHlsfDataDirty();
-      if (typeof buildHLSFMatrices === 'function') {
-        try {
-          buildHLSFMatrices(out);
-        } catch (err) {
-          console.warn('Failed to rebuild HLSF matrices:', err);
+        const mergedArray = Array.from(mergedMap.values());
+        const out = Object.assign({}, replace ? db : existingDb, db, { full_token_data: mergedArray });
+        const rawPayload = JSON.stringify(out);
+        const indexPayload = JSON.stringify(Array.from(indexSet));
+        const rawPersisted = safeStorageSet(DB_RAW_KEY, rawPayload);
+        const indexPersisted = safeStorageSet(DB_INDEX_KEY, indexPayload);
+        if (!rawPersisted || !indexPersisted) {
+          logWarning('Local storage quota reached. Database available for this session only — use /export to back up data.');
         }
+        window.HLSF.dbCache = out;
+        state.liveGraphMode = false;
+        markHlsfDataDirty();
+        if (typeof buildHLSFMatrices === 'function') {
+          try {
+            buildHLSFMatrices(out);
+          } catch (err) {
+            console.warn('Failed to rebuild HLSF matrices:', err);
+          }
+        }
+        updateHeaderCounts();
+        scheduleHlsfReload('load-db');
+        return clean.length;
+      } finally {
+        CacheBatch.end();
       }
-      updateHeaderCounts();
-      scheduleHlsfReload('load-db');
-      return clean.length;
     }
 
     function refreshDbReference(recordLike, options = {}) {
@@ -4542,6 +4552,7 @@
       networkOffline: false,
       networkErrorNotified: false,
       lastNetworkErrorTime: 0,
+      lastComputedCacheBase: 0,
     };
 
     state.hlsfReady = false;
@@ -5799,6 +5810,101 @@
     }
 
     // ============================================
+    // CACHE BATCH TRACKING
+    // ============================================
+    const CacheBatch = (() => {
+      const tracker = { depth: 0, baseline: 0, pendingTokens: new Set() };
+
+      const normalizeCount = (value) => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
+
+      function begin(options = {}) {
+        if (tracker.depth === 0) {
+          tracker.pendingTokens.clear();
+          const hints = [];
+          hints.push(normalizeCount(getDocumentCacheBaseline()));
+          hints.push(normalizeCount(state.lastComputedCacheBase || 0));
+          if (Number.isFinite(options.baseline)) hints.push(normalizeCount(options.baseline));
+          if (Number.isFinite(options.snapshot)) {
+            hints.push(normalizeCount(options.snapshot));
+          } else {
+            const raw = getCachedTokenCount();
+            if (Number.isFinite(raw)) hints.push(normalizeCount(raw));
+          }
+          const baselineValue = hints.length ? Math.max(...hints) : 0;
+          tracker.baseline = normalizeCount(baselineValue);
+        }
+        tracker.depth += 1;
+        updateCachedTokenDisplay(state.lastComputedCacheBase || 0);
+      }
+
+      function record(token) {
+        if (tracker.depth === 0) return;
+        const normalized = (token == null ? '' : String(token)).toLowerCase();
+        if (!normalized || tracker.pendingTokens.has(normalized)) return;
+        tracker.pendingTokens.add(normalized);
+        updateCachedTokenDisplay(state.lastComputedCacheBase || 0);
+      }
+
+      function end(options = {}) {
+        if (tracker.depth === 0) return;
+        tracker.depth -= 1;
+        if (tracker.depth === 0) {
+          const pending = tracker.pendingTokens.size;
+          if (options.commit !== false) {
+            const raw = getCachedTokenCount();
+            const rawCount = normalizeCount(raw);
+            const baseline = Math.max(tracker.baseline, normalizeCount(getDocumentCacheBaseline()));
+            const finalTotal = Math.max(rawCount, baseline + pending);
+            const existingBaseline = normalizeCount(getDocumentCacheBaseline());
+            setDocumentCacheBaseline(Math.max(existingBaseline, finalTotal));
+          }
+          tracker.baseline = 0;
+          tracker.pendingTokens.clear();
+          updateStats();
+        } else {
+          updateCachedTokenDisplay(state.lastComputedCacheBase || 0);
+        }
+      }
+
+      function cancel() {
+        tracker.depth = 0;
+        tracker.baseline = 0;
+        tracker.pendingTokens.clear();
+        updateStats();
+      }
+
+      function isActive() { return tracker.depth > 0; }
+      function getBaseline() { return tracker.baseline; }
+      function getPending() { return tracker.pendingTokens.size; }
+      function resolvedBase(baseCount) {
+        return isActive() ? tracker.baseline : normalizeCount(baseCount);
+      }
+      function total(baseCount) {
+        const base = resolvedBase(baseCount);
+        return isActive() ? base + getPending() : base;
+      }
+      function format(baseCount) {
+        const base = resolvedBase(baseCount);
+        if (!isActive()) return String(base);
+        return `${base} +${getPending()}`;
+      }
+
+      return { begin, end, cancel, record, isActive, getBaseline, getPending, resolvedBase, total, format };
+    })();
+
+    function updateCachedTokenDisplay(baseCount) {
+      const normalizedBase = Number.isFinite(baseCount) ? Math.max(0, Math.floor(baseCount)) : 0;
+      const displayValue = CacheBatch.format(normalizedBase);
+      elements.cachedTokens.textContent = displayValue;
+      const total = CacheBatch.total(normalizedBase);
+      if (total > 0) {
+        elements.cachedTokens.style.color = total > 50 ? '#00ff88' : '#ffd54f';
+      } else {
+        elements.cachedTokens.style.removeProperty('color');
+      }
+    }
+
+    // ============================================
     // STATS
     // ============================================
     function updateStats() {
@@ -5813,32 +5919,40 @@
       let cachedCount = baseline;
 
       if (Number.isFinite(rawCount)) {
-        const normalized = Math.max(0, rawCount);
+        const normalized = Math.max(0, Math.floor(rawCount));
         if (normalized > 0) {
-          cachedCount = normalized;
-          if (normalized !== baseline) {
-            baseline = setDocumentCacheBaseline(normalized);
-          } else if (manualReset) {
-            state.documentCacheBaselineManuallyCleared = false;
+          if (CacheBatch.isActive()) {
+            cachedCount = Math.max(normalized, baseline, CacheBatch.getBaseline());
+          } else {
+            cachedCount = normalized;
+            if (normalized !== baseline) {
+              baseline = setDocumentCacheBaseline(normalized);
+            } else if (manualReset) {
+              state.documentCacheBaselineManuallyCleared = false;
+            }
           }
-        } else if (manualReset) {
-          cachedCount = 0;
-          baseline = setDocumentCacheBaseline(0, { manual: true });
+        } else if (!CacheBatch.isActive()) {
+          if (manualReset) {
+            cachedCount = 0;
+            baseline = setDocumentCacheBaseline(0, { manual: true });
+          } else {
+            cachedCount = baseline;
+          }
+        } else {
+          cachedCount = Math.max(0, CacheBatch.getBaseline());
         }
+      } else if (CacheBatch.isActive()) {
+        cachedCount = Math.max(0, CacheBatch.getBaseline());
       } else if (manualReset && baseline === 0) {
         cachedCount = 0;
       }
 
-      elements.cacheHitRate.textContent = hitRate;
-      elements.cachedTokens.textContent = cachedCount;
-      elements.sessionCost.textContent = formatCurrency(totalCostUsd);
+      cachedCount = Math.max(0, Math.floor(Number.isFinite(cachedCount) ? cachedCount : 0));
+      state.lastComputedCacheBase = cachedCount;
 
-      // Visual feedback for database growth
-      if (cachedCount > 0) {
-        elements.cachedTokens.style.color = cachedCount > 50 ? '#00ff88' : '#ffd54f';
-      } else {
-        elements.cachedTokens.style.removeProperty('color');
-      }
+      elements.cacheHitRate.textContent = hitRate;
+      updateCachedTokenDisplay(state.lastComputedCacheBase);
+      elements.sessionCost.textContent = formatCurrency(totalCostUsd);
     }
 
     function updateHeaderCounts() {
@@ -5895,11 +6009,13 @@
           : token;
         payloadData.token = recordToken;
         const cacheKey = getCacheKey(recordToken);
+        const wasCached = isTokenCached(recordToken);
         const payload = JSON.stringify(payloadData);
         const persisted = safeStorageSet(cacheKey, payload);
         const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
         if (!persisted && !fallbackStored) return;
         updateTokenIndex(recordToken);
+        if (!wasCached) CacheBatch.record(recordToken);
         refreshDbReference(payloadData, { deferReload });
       } catch (err) {
         if (err.name === 'QuotaExceededError') {
@@ -6197,34 +6313,39 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     async function batchFetchAdjacencies(tokens, context, label) {
-      const results = new Map();
-      const unique = [...new Set(tokens)];
+      CacheBatch.begin();
+      try {
+        const results = new Map();
+        const unique = [...new Set(tokens)];
 
-      const progress = new ProgressTracker(unique.length, label);
+        const progress = new ProgressTracker(unique.length, label);
 
-      let processed = 0;
-      for (let i = 0; i < unique.length; i += CONFIG.MAX_CONCURRENCY) {
-        if (currentAbortController?.signal.aborted) {
-          progress.complete(`${label} cancelled (${processed}/${unique.length})`);
-          break;
+        let processed = 0;
+        for (let i = 0; i < unique.length; i += CONFIG.MAX_CONCURRENCY) {
+          if (currentAbortController?.signal.aborted) {
+            progress.complete(`${label} cancelled (${processed}/${unique.length})`);
+            break;
+          }
+
+          const batch = unique.slice(i, i + CONFIG.MAX_CONCURRENCY);
+          const settled = await Promise.allSettled(batch.map(t => fetchAdjacency(t, context)));
+
+          settled.forEach((result, idx) => {
+            if (result.status === 'fulfilled') {
+              results.set(batch[idx], result.value);
+            }
+          });
+
+          processed += batch.length;
+          progress.increment(batch.length);
         }
 
-        const batch = unique.slice(i, i + CONFIG.MAX_CONCURRENCY);
-        const settled = await Promise.allSettled(batch.map(t => fetchAdjacency(t, context)));
-        
-        settled.forEach((result, idx) => {
-          if (result.status === 'fulfilled') {
-            results.set(batch[idx], result.value);
-          }
-        });
-
-        processed += batch.length;
-        progress.increment(batch.length);
+        const hits = Array.from(results.values()).filter(r => r.cache_hit).length;
+        progress.complete(`${label}: ${hits} cached, ${results.size - hits} new`);
+        return results;
+      } finally {
+        CacheBatch.end();
       }
-
-      const hits = Array.from(results.values()).filter(r => r.cache_hit).length;
-      progress.complete(`${label}: ${hits} cached, ${results.size - hits} new`);
-      return results;
     }
 
     function summarizeAdjacencyResults(map) {
