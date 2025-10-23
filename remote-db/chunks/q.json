@@ -1,6 +1,6 @@
 {
   "prefix": "q",
-  "token_count": 9,
+  "token_count": 21,
   "tokens": [
     {
       "token": "qualitative",
@@ -401,6 +401,66 @@
       "cached_at": "2025-10-19T06:46:40.154Z"
     },
     {
+      "token": "question",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.321Z"
+    },
+    {
+      "token": "questioned",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.343Z"
+    },
+    {
+      "token": "questioner",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.363Z"
+    },
+    {
+      "token": "questiones",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.331Z"
+    },
+    {
+      "token": "questioning",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.352Z"
+    },
+    {
       "token": "questions",
       "relationships": {
         "≡": [
@@ -411,58 +471,204 @@
         ],
         "⊃": [
           {
-            "token": "philosophy of architecture",
+            "token": "scientific method",
             "weight": 0.85
           },
           {
-            "token": "aesthetic value",
-            "weight": 0.75
+            "token": "hypotheses",
+            "weight": 0.8
           }
         ],
         "⊂": [
           {
-            "token": "discourse on architecture",
-            "weight": 0.8
+            "token": "scientific inquiry",
+            "weight": 0.75
           }
         ],
         "≈": [
           {
-            "token": "issues",
+            "token": "curiosities",
             "weight": 0.7
+          },
+          {
+            "token": "questionss",
+            "weight": 0.64
+          },
+          {
+            "token": "questionses",
+            "weight": 0.64
+          },
+          {
+            "token": "questionsed",
+            "weight": 0.64
+          },
+          {
+            "token": "questionsing",
+            "weight": 0.64
+          },
+          {
+            "token": "questionser",
+            "weight": 0.64
+          },
+          {
+            "token": "questionsest",
+            "weight": 0.64
+          },
+          {
+            "token": "questionsly",
+            "weight": 0.64
+          },
+          {
+            "token": "question",
+            "weight": 0.64
+          },
+          {
+            "token": "questiones",
+            "weight": 0.64
+          },
+          {
+            "token": "questioned",
+            "weight": 0.64
+          },
+          {
+            "token": "questioning",
+            "weight": 0.64
           }
         ],
         "∈": [
           {
-            "token": "architectural theory",
+            "token": "scientific process",
             "weight": 0.9
+          }
+        ],
+        "⊤": [
+          {
+            "token": "cognitive processes",
+            "weight": 0.65
           }
         ],
         "⊛": [
           {
-            "token": "cultural significance",
+            "token": "experimentation",
             "weight": 0.78
+          }
+        ],
+        "⇌": [
+          {
+            "token": "answers",
+            "weight": 0.6
           }
         ],
         "∝": [
           {
-            "token": "design choices",
-            "weight": 0.65
+            "token": "problem-solving",
+            "weight": 0.72
           }
         ],
-        "⋆": [
+        "⇝": [
           {
-            "token": "symbolism",
+            "token": "knowledge acquisition",
             "weight": 0.68
           }
         ],
-        "⇄": [
+        "∗": [
           {
-            "token": "architectural practices",
-            "weight": 0.72
+            "token": "curiosity",
+            "weight": 0.67
+          }
+        ],
+        "⚡": [
+          {
+            "token": "critical thinking",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T18:44:30.626Z"
+      "cached_at": "2025-10-23T01:42:50.253Z"
+    },
+    {
+      "token": "questionsed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.272Z"
+    },
+    {
+      "token": "questionser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.292Z"
+    },
+    {
+      "token": "questionses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.263Z"
+    },
+    {
+      "token": "questionsest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.303Z"
+    },
+    {
+      "token": "questionsing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.282Z"
+    },
+    {
+      "token": "questionsly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.312Z"
+    },
+    {
+      "token": "questionss",
+      "relationships": {
+        "≈": [
+          {
+            "token": "questions",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:50.253Z"
     },
     {
       "token": "quietly",

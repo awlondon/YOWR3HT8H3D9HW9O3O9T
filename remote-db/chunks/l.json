@@ -1,6 +1,6 @@
 {
   "prefix": "l",
-  "token_count": 89,
+  "token_count": 111,
   "tokens": [
     {
       "token": "labor",
@@ -1855,145 +1855,156 @@
     {
       "token": "lead",
       "relationships": {
-        "≡": [],
-        "⊃": [],
-        "⊂": [],
-        "≈": [],
-        "∈": [],
-        "∋": [],
-        "⊤": [],
-        "⊥": [],
-        "⊏": [],
-        "⊐": [],
-        "↔": [],
-        "⇌": [],
-        "∥": [],
-        "∼": [],
-        "→": [],
-        "⇒": [],
-        "⇐": [],
-        "↠": [],
-        "↗": [],
-        "↘": [],
-        "⇝": [],
-        "⇂": [],
-        "≠": [],
-        "⊕": [],
-        "⊛": [
-          {
-            "token": "cognition",
-            "weight": 0.85
-          },
-          {
-            "token": "ideas",
-            "weight": 0.8
-          },
-          {
-            "token": "communication",
-            "weight": 0.75
-          }
-        ],
-        "∝": [
-          {
-            "token": "decision-making",
-            "weight": 0.7
-          },
-          {
-            "token": "creativity",
-            "weight": 0.65
-          }
-        ],
-        "∗": [
-          {
-            "token": "meaning",
-            "weight": 0.9
-          },
-          {
-            "token": "thought",
-            "weight": 0.88
-          }
-        ],
-        "≜": [],
-        "⋆": [],
-        "7→": [],
-        "⊢": [],
-        "⊣": [],
-        "↷": [],
-        "↶": [],
-        "◦": [],
-        "|=": [],
-        "▷◁": [
-          {
-            "token": "cognitive dynamics",
-            "weight": 0.8
-          }
-        ]
-      },
-      "cached_at": "2025-10-19T06:36:32.315Z"
-    },
-    {
-      "token": "leader",
-      "relationships": {
         "≡": [
           {
-            "token": "head of state",
+            "token": "guide",
             "weight": 0.95
-          },
-          {
-            "token": "head of government",
-            "weight": 0.95
-          }
-        ],
-        "⊂": [
-          {
-            "token": "executive branch",
-            "weight": 0.9
-          },
-          {
-            "token": "government",
-            "weight": 0.85
           }
         ],
         "⊃": [
           {
-            "token": "President",
-            "weight": 0.95
-          }
-        ],
-        "⊏": [
-          {
-            "token": "U.S. government",
+            "token": "learning process",
             "weight": 0.8
           }
         ],
-        "⊐": [
+        "⊂": [
           {
-            "token": "political system",
-            "weight": 0.75
-          }
-        ],
-        "⊛": [
-          {
-            "token": "authority",
-            "weight": 0.7
-          },
-          {
-            "token": "representation",
-            "weight": 0.65
+            "token": "students",
+            "weight": 0.85
           }
         ],
         "≈": [
           {
-            "token": "chief",
-            "weight": 0.6
+            "token": "direct",
+            "weight": 0.7
           },
           {
-            "token": "ruler",
-            "weight": 0.6
+            "token": "leads",
+            "weight": 0.64
+          },
+          {
+            "token": "leades",
+            "weight": 0.64
+          },
+          {
+            "token": "leaded",
+            "weight": 0.64
+          },
+          {
+            "token": "leading",
+            "weight": 0.64
+          },
+          {
+            "token": "leader",
+            "weight": 0.64
+          },
+          {
+            "token": "leadest",
+            "weight": 0.64
+          },
+          {
+            "token": "leadly",
+            "weight": 0.64
+          }
+        ],
+        "∈": [
+          {
+            "token": "educational methodologies",
+            "weight": 0.75
+          }
+        ],
+        "∋": [
+          {
+            "token": "inquiry-based learning",
+            "weight": 0.78
+          }
+        ],
+        "⊏": [
+          {
+            "token": "scientific inquiry",
+            "weight": 0.82
+          }
+        ],
+        "⊐": [
+          {
+            "token": "conceptual understanding",
+            "weight": 0.79
+          }
+        ],
+        "⇌": [
+          {
+            "token": "academic success",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "engagement",
+            "weight": 0.88
+          }
+        ],
+        "⊕": [
+          {
+            "token": "curiosity",
+            "weight": 0.72
+          }
+        ],
+        "⊛": [
+          {
+            "token": "critical thinking",
+            "weight": 0.77
+          }
+        ],
+        "∗": [
+          {
+            "token": "motivation",
+            "weight": 0.74
+          }
+        ],
+        "⋆": [
+          {
+            "token": "exploration",
+            "weight": 0.66
+          }
+        ],
+        "⇝": [
+          {
+            "token": "knowledge acquisition",
+            "weight": 0.81
+          }
+        ],
+        "↷": [
+          {
+            "token": "transformative learning",
+            "weight": 0.69
           }
         ]
       },
-      "cached_at": "2025-10-18T17:12:46.871Z"
+      "cached_at": "2025-10-23T16:50:16.822Z"
+    },
+    {
+      "token": "leaded",
+      "relationships": {
+        "≈": [
+          {
+            "token": "lead",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:16.843Z"
+    },
+    {
+      "token": "leader",
+      "relationships": {
+        "≈": [
+          {
+            "token": "lead",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:16.864Z"
     },
     {
       "token": "leaders",
@@ -2052,232 +2063,112 @@
       "cached_at": "2025-10-18T17:42:52.620Z"
     },
     {
-      "token": "leading",
+      "token": "leades",
       "relationships": {
-        "≡": [
-          {
-            "token": "axiomatic systems",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "mathematics",
-            "weight": 0.9
-          },
-          {
-            "token": "theorems",
-            "weight": 0.85
-          }
-        ],
-        "⊂": [
-          {
-            "token": "proof",
-            "weight": 0.8
-          }
-        ],
         "≈": [
           {
-            "token": "logical reasoning",
-            "weight": 0.75
-          }
-        ],
-        "∈": [
-          {
-            "token": "deductive reasoning",
-            "weight": 0.7
-          }
-        ],
-        "⊕": [
-          {
-            "token": "axioms",
-            "weight": 0.65
-          }
-        ],
-        "⊛": [
-          {
-            "token": "abstraction",
-            "weight": 0.6
-          }
-        ],
-        "→": [
-          {
-            "token": "mathematical framework",
-            "weight": 0.55
-          }
-        ],
-        "∝": [
-          {
-            "token": "branches of mathematics",
-            "weight": 0.5
+            "token": "lead",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T06:45:21.560Z"
+      "cached_at": "2025-10-23T16:50:16.833Z"
+    },
+    {
+      "token": "leadest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "lead",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:16.875Z"
+    },
+    {
+      "token": "leading",
+      "relationships": {
+        "≈": [
+          {
+            "token": "lead",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:16.854Z"
+    },
+    {
+      "token": "leadly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "lead",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:16.885Z"
     },
     {
       "token": "leads",
       "relationships": {
-        "⊃": [
-          {
-            "token": "mathematics",
-            "weight": 0.75
-          },
-          {
-            "token": "analysis",
-            "weight": 0.7
-          },
-          {
-            "token": "algebra",
-            "weight": 0.65
-          },
-          {
-            "token": "geometry",
-            "weight": 0.6
-          },
-          {
-            "token": "number theory",
-            "weight": 0.55
-          },
-          {
-            "token": "set theory",
-            "weight": 0.5
-          }
-        ],
-        "∈": [
-          {
-            "token": "area of mathematics",
-            "weight": 0.8
-          },
-          {
-            "token": "mathematical discipline",
-            "weight": 0.75
-          }
-        ],
         "≈": [
           {
-            "token": "mathematics",
-            "weight": 0.9
-          },
-          {
-            "token": "theoretical implications",
-            "weight": 0.65
-          }
-        ],
-        "⊛": [
-          {
-            "token": "applications",
-            "weight": 0.7
-          },
-          {
-            "token": "fields",
-            "weight": 0.6
-          }
-        ],
-        "⇌": [
-          {
-            "token": "new theories",
-            "weight": 0.55
-          },
-          {
-            "token": "methods",
-            "weight": 0.5
-          }
-        ],
-        "∼": [
-          {
-            "token": "statistics",
-            "weight": 0.6
-          },
-          {
-            "token": "combinatorics",
-            "weight": 0.55
-          }
-        ],
-        "⊐": [
-          {
-            "token": "mathematics",
-            "weight": 0.8
-          },
-          {
-            "token": "applied mathematics",
-            "weight": 0.5
+            "token": "lead",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T06:25:15.202Z"
+      "cached_at": "2025-10-23T16:50:16.822Z"
+    },
+    {
+      "token": "learn",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.255Z"
     },
     {
       "token": "learned",
       "relationships": {
-        "≡": [
-          {
-            "token": "acquired",
-            "weight": 0.95
-          },
-          {
-            "token": "understood",
-            "weight": 0.9
-          }
-        ],
-        "∈": [
-          {
-            "token": "knowledge",
-            "weight": 0.85
-          },
-          {
-            "token": "experience",
-            "weight": 0.8
-          }
-        ],
-        "⊕": [
-          {
-            "token": "insight",
-            "weight": 0.75
-          },
-          {
-            "token": "wisdom",
-            "weight": 0.7
-          }
-        ],
-        "⇌": [
-          {
-            "token": "unlearned",
-            "weight": 0.6
-          }
-        ],
-        "∝": [
-          {
-            "token": "cognition",
-            "weight": 0.65
-          }
-        ],
-        "⊏": [
-          {
-            "token": "learning process",
-            "weight": 0.55
-          }
-        ],
-        "⊐": [
-          {
-            "token": "educational experience",
-            "weight": 0.5
-          }
-        ],
-        "⊛": [
-          {
-            "token": "skill",
-            "weight": 0.45
-          }
-        ],
         "≈": [
           {
-            "token": "studied",
-            "weight": 0.4
+            "token": "learning",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T22:32:16.582Z"
+      "cached_at": "2025-10-23T16:46:21.283Z"
+    },
+    {
+      "token": "learner",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.293Z"
+    },
+    {
+      "token": "learnes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.274Z"
     },
     {
       "token": "learning",
@@ -2290,118 +2181,386 @@
         ],
         "⊃": [
           {
-            "token": "knowledge",
-            "weight": 0.85
-          },
-          {
-            "token": "skill development",
+            "token": "scientific inquiry",
             "weight": 0.8
           }
         ],
         "⊂": [
           {
-            "token": "training",
+            "token": "student engagement",
             "weight": 0.75
           }
         ],
         "≈": [
           {
             "token": "understanding",
-            "weight": 0.7
+            "weight": 0.85
           },
           {
-            "token": "cognition",
-            "weight": 0.65
+            "token": "learnings",
+            "weight": 0.64
+          },
+          {
+            "token": "learninges",
+            "weight": 0.64
+          },
+          {
+            "token": "learninged",
+            "weight": 0.64
+          },
+          {
+            "token": "learninging",
+            "weight": 0.64
+          },
+          {
+            "token": "learninger",
+            "weight": 0.64
+          },
+          {
+            "token": "learningest",
+            "weight": 0.64
+          },
+          {
+            "token": "learningly",
+            "weight": 0.64
+          },
+          {
+            "token": "learn",
+            "weight": 0.64
+          },
+          {
+            "token": "learns",
+            "weight": 0.64
+          },
+          {
+            "token": "learnes",
+            "weight": 0.64
+          },
+          {
+            "token": "learned",
+            "weight": 0.64
           }
         ],
         "∈": [
           {
-            "token": "machine learning",
-            "weight": 0.9
-          },
-          {
-            "token": "artificial intelligence",
-            "weight": 0.85
+            "token": "conceptual knowledge",
+            "weight": 0.7
           }
         ],
         "⊕": [
           {
-            "token": "experience",
-            "weight": 0.8
-          }
-        ],
-        "⊛": [
+            "token": "critical thinking",
+            "weight": 0.78
+          },
           {
-            "token": "insight",
-            "weight": 0.75
-          }
-        ],
-        "⇌": [
-          {
-            "token": "feedback",
-            "weight": 0.7
-          }
-        ],
-        "⇝": [
-          {
-            "token": "growth",
-            "weight": 0.75
-          }
-        ],
-        "↔": [
-          {
-            "token": "knowledge acquisition",
-            "weight": 0.65
-          }
-        ],
-        "∗": [
-          {
-            "token": "motivation",
-            "weight": 0.6
+            "token": "inquiry-based learning",
+            "weight": 0.82
           }
         ],
         "∝": [
           {
-            "token": "adaptation",
-            "weight": 0.55
+            "token": "knowledge acquisition",
+            "weight": 0.88
+          }
+        ],
+        "⇝": [
+          {
+            "token": "effort",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "curriculum development",
+            "weight": 0.65
+          }
+        ],
+        "↔": [
+          {
+            "token": "application of knowledge",
+            "weight": 0.72
+          }
+        ],
+        "∼": [
+          {
+            "token": "learning processes",
+            "weight": 0.76
+          }
+        ],
+        "⊣": [
+          {
+            "token": "educational philosophy",
+            "weight": 0.65
+          }
+        ],
+        "⊘": [
+          {
+            "token": "rote memorization",
+            "weight": 0.8
           }
         ]
       },
-      "cached_at": "2025-10-18T22:32:21.983Z"
+      "cached_at": "2025-10-23T16:46:21.192Z"
+    },
+    {
+      "token": "learninged",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.209Z"
+    },
+    {
+      "token": "learninger",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.227Z"
+    },
+    {
+      "token": "learninges",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.201Z"
+    },
+    {
+      "token": "learningest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.237Z"
+    },
+    {
+      "token": "learninging",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.218Z"
+    },
+    {
+      "token": "learningly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.246Z"
+    },
+    {
+      "token": "learnings",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.192Z"
+    },
+    {
+      "token": "learns",
+      "relationships": {
+        "≈": [
+          {
+            "token": "learning",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:21.264Z"
     },
     {
       "token": "least",
       "relationships": {
         "≈": [
           {
-            "token": "minimal",
+            "token": "minimum",
+            "weight": 0.85
+          },
+          {
+            "token": "threshold",
             "weight": 0.75
           },
           {
-            "token": "smallest",
+            "token": "leasts",
+            "weight": 0.64
+          },
+          {
+            "token": "leastes",
+            "weight": 0.64
+          },
+          {
+            "token": "leasted",
+            "weight": 0.64
+          },
+          {
+            "token": "leasting",
+            "weight": 0.64
+          },
+          {
+            "token": "leaster",
+            "weight": 0.64
+          },
+          {
+            "token": "leastest",
+            "weight": 0.64
+          },
+          {
+            "token": "leastly",
+            "weight": 0.64
+          }
+        ],
+        "⊕": [
+          {
+            "token": "most",
             "weight": 0.7
           }
         ],
-        "⊂": [
+        "∈": [
           {
-            "token": "minimum",
-            "weight": 0.8
+            "token": "score",
+            "weight": 0.65
           }
         ],
-        "∼": [
+        "⊤": [
           {
-            "token": "fewest",
-            "weight": 0.65
+            "token": "criteria",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "influence",
+            "weight": 0.55
           }
         ],
         "⊛": [
           {
-            "token": "lower limit",
-            "weight": 0.6
+            "token": "affinity",
+            "weight": 0.5
+          }
+        ],
+        "⇌": [
+          {
+            "token": "balance",
+            "weight": 0.45
           }
         ]
       },
-      "cached_at": "2025-10-18T18:39:21.489Z"
+      "cached_at": "2025-10-23T16:51:17.493Z"
+    },
+    {
+      "token": "leasted",
+      "relationships": {
+        "≈": [
+          {
+            "token": "least",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:17.514Z"
+    },
+    {
+      "token": "leaster",
+      "relationships": {
+        "≈": [
+          {
+            "token": "least",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:17.538Z"
+    },
+    {
+      "token": "leastes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "least",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:17.504Z"
+    },
+    {
+      "token": "leastest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "least",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:17.549Z"
+    },
+    {
+      "token": "leasting",
+      "relationships": {
+        "≈": [
+          {
+            "token": "least",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:17.526Z"
+    },
+    {
+      "token": "leastly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "least",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:17.560Z"
+    },
+    {
+      "token": "leasts",
+      "relationships": {
+        "≈": [
+          {
+            "token": "least",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:17.493Z"
     },
     {
       "token": "led",

@@ -1,6 +1,6 @@
 {
   "prefix": "g",
-  "token_count": 68,
+  "token_count": 87,
   "tokens": [
     {
       "token": "gain",
@@ -345,54 +345,160 @@
     {
       "token": "gene",
       "relationships": {
-        "⊂": [
+        "≈": [
           {
-            "token": "gene therapy",
+            "token": "desire",
             "weight": 0.85
           },
           {
-            "token": "cloning",
-            "weight": 0.7
+            "token": "genes",
+            "weight": 0.64
+          },
+          {
+            "token": "genees",
+            "weight": 0.64
+          },
+          {
+            "token": "geneed",
+            "weight": 0.64
+          },
+          {
+            "token": "geneing",
+            "weight": 0.64
+          },
+          {
+            "token": "geneer",
+            "weight": 0.64
+          },
+          {
+            "token": "geneest",
+            "weight": 0.64
+          },
+          {
+            "token": "genely",
+            "weight": 0.64
           }
         ],
         "⊕": [
           {
-            "token": "Human Genome Project",
-            "weight": 0.9
+            "token": "understanding",
+            "weight": 0.8
           }
         ],
         "⊛": [
           {
-            "token": "technological innovations",
-            "weight": 0.8
-          }
-        ],
-        "∈": [
-          {
-            "token": "biotechnology",
+            "token": "inquiry",
             "weight": 0.75
-          }
-        ],
-        "⇌": [
+          },
           {
-            "token": "scientific research",
-            "weight": 0.65
-          }
-        ],
-        "≈": [
-          {
-            "token": "DNA",
-            "weight": 0.6
+            "token": "engagement",
+            "weight": 0.7
           }
         ],
         "∝": [
           {
-            "token": "advances in technology",
+            "token": "knowledge acquisition",
+            "weight": 0.65
+          }
+        ],
+        "⊗": [
+          {
+            "token": "scientific concepts",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "effort",
             "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "applications",
+            "weight": 0.5
+          }
+        ],
+        "≠": [
+          {
+            "token": "superficial methods",
+            "weight": 0.45
           }
         ]
       },
-      "cached_at": "2025-10-18T18:27:28.059Z"
+      "cached_at": "2025-10-23T16:49:52.642Z"
+    },
+    {
+      "token": "geneed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "gene",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:52.662Z"
+    },
+    {
+      "token": "geneer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "gene",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:52.683Z"
+    },
+    {
+      "token": "genees",
+      "relationships": {
+        "≈": [
+          {
+            "token": "gene",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:52.653Z"
+    },
+    {
+      "token": "geneest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "gene",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:52.694Z"
+    },
+    {
+      "token": "geneing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "gene",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:52.673Z"
+    },
+    {
+      "token": "genely",
+      "relationships": {
+        "≈": [
+          {
+            "token": "gene",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:52.704Z"
     },
     {
       "token": "general",
@@ -701,48 +807,14 @@
     {
       "token": "genes",
       "relationships": {
-        "⊃": [
-          {
-            "token": "Human Genome Project",
-            "weight": 0.85
-          }
-        ],
-        "⊂": [
-          {
-            "token": "DNA",
-            "weight": 0.9
-          }
-        ],
-        "∈": [
-          {
-            "token": "genetic material",
-            "weight": 0.8
-          }
-        ],
-        "⊛": [
-          {
-            "token": "biotechnology",
-            "weight": 0.75
-          },
-          {
-            "token": "medical research",
-            "weight": 0.7
-          }
-        ],
         "≈": [
           {
-            "token": "genomics",
-            "weight": 0.6
-          }
-        ],
-        "⇌": [
-          {
-            "token": "traits",
-            "weight": 0.65
+            "token": "gene",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T18:28:18.608Z"
+      "cached_at": "2025-10-23T16:49:52.643Z"
     },
     {
       "token": "genetics",
@@ -1507,11 +1579,15 @@
       "relationships": {
         "≡": [
           {
-            "token": "acquire",
+            "token": "obtain",
             "weight": 0.95
+          },
+          {
+            "token": "acquire",
+            "weight": 0.9
           }
         ],
-        "⊃": [
+        "∈": [
           {
             "token": "result",
             "weight": 0.8
@@ -1519,54 +1595,160 @@
         ],
         "⊂": [
           {
-            "token": "information",
+            "token": "calculation",
             "weight": 0.7
           }
         ],
         "≈": [
           {
-            "token": "obtain",
-            "weight": 0.85
-          }
-        ],
-        "∈": [
-          {
-            "token": "action",
-            "weight": 0.75
-          }
-        ],
-        "⊕": [
-          {
-            "token": "understand",
+            "token": "receive",
             "weight": 0.65
+          },
+          {
+            "token": "gets",
+            "weight": 0.64
+          },
+          {
+            "token": "getes",
+            "weight": 0.64
+          },
+          {
+            "token": "geted",
+            "weight": 0.64
+          },
+          {
+            "token": "geting",
+            "weight": 0.64
+          },
+          {
+            "token": "geter",
+            "weight": 0.64
+          },
+          {
+            "token": "getest",
+            "weight": 0.64
+          },
+          {
+            "token": "getly",
+            "weight": 0.64
+          }
+        ],
+        "⇌": [
+          {
+            "token": "derive",
+            "weight": 0.6
           }
         ],
         "⊛": [
           {
-            "token": "receive",
-            "weight": 0.6
+            "token": "success",
+            "weight": 0.55
           }
         ],
         "∝": [
           {
-            "token": "gain",
-            "weight": 0.55
-          }
-        ],
-        "⇄": [
-          {
-            "token": "access",
+            "token": "effort",
             "weight": 0.5
           }
         ],
-        "⚡": [
+        "↠": [
           {
-            "token": "knowledge",
+            "token": "approach",
             "weight": 0.45
+          }
+        ],
+        "⊕": [
+          {
+            "token": "understanding",
+            "weight": 0.4
           }
         ]
       },
-      "cached_at": "2025-10-19T06:35:13.670Z"
+      "cached_at": "2025-10-23T16:47:55.159Z"
+    },
+    {
+      "token": "geted",
+      "relationships": {
+        "≈": [
+          {
+            "token": "get",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:55.178Z"
+    },
+    {
+      "token": "geter",
+      "relationships": {
+        "≈": [
+          {
+            "token": "get",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:55.199Z"
+    },
+    {
+      "token": "getes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "get",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:55.169Z"
+    },
+    {
+      "token": "getest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "get",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:55.209Z"
+    },
+    {
+      "token": "geting",
+      "relationships": {
+        "≈": [
+          {
+            "token": "get",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:55.188Z"
+    },
+    {
+      "token": "getly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "get",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:55.219Z"
+    },
+    {
+      "token": "gets",
+      "relationships": {
+        "≈": [
+          {
+            "token": "get",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:55.159Z"
     },
     {
       "token": "getting",
@@ -2727,68 +2909,88 @@
     {
       "token": "govern",
       "relationships": {
-        "≡": [
-          {
-            "token": "governance",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "government",
-            "weight": 0.9
-          }
-        ],
-        "⊂": [
-          {
-            "token": "self-governance",
-            "weight": 0.85
-          }
-        ],
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
         "≈": [
           {
-            "token": "administer",
-            "weight": 0.8
+            "token": "governs",
+            "weight": 0.64
+          },
+          {
+            "token": "governes",
+            "weight": 0.64
+          },
+          {
+            "token": "governed",
+            "weight": 0.64
+          },
+          {
+            "token": "governing",
+            "weight": 0.64
+          },
+          {
+            "token": "governer",
+            "weight": 0.64
+          },
+          {
+            "token": "governest",
+            "weight": 0.64
+          },
+          {
+            "token": "governly",
+            "weight": 0.64
           }
         ],
-        "∈": [
+        "∈": [],
+        "∋": [],
+        "⊤": [],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [
           {
-            "token": "democracy",
+            "token": "regulate",
             "weight": 0.75
-          }
-        ],
-        "⊤": [
+          },
           {
-            "token": "political system",
+            "token": "control",
             "weight": 0.7
           }
         ],
-        "⊛": [
+        "→": [
           {
-            "token": "leadership",
-            "weight": 0.65
-          }
-        ],
-        "∝": [
-          {
-            "token": "authority",
+            "token": "guide",
             "weight": 0.6
           }
         ],
-        "⇝": [
-          {
-            "token": "law creation",
-            "weight": 0.55
-          }
-        ],
-        "⊕": [
-          {
-            "token": "regulation",
-            "weight": 0.5
-          }
-        ]
+        "⇒": [],
+        "⇝": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [],
+        "∝": [],
+        "∗": [],
+        "≜": [],
+        "⋆": [],
+        "7→": [],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": []
       },
-      "cached_at": "2025-10-18T17:20:26.835Z"
+      "cached_at": "2025-10-23T16:49:07.159Z"
     },
     {
       "token": "governance",
@@ -2859,66 +3061,74 @@
     {
       "token": "governed",
       "relationships": {
-        "≡": [
-          {
-            "token": "consent",
-            "weight": 0.9
-          },
-          {
-            "token": "self-governance",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "government",
-            "weight": 0.85
-          }
-        ],
-        "⊂": [
-          {
-            "token": "the governed",
-            "weight": 0.8
-          }
-        ],
         "≈": [
           {
-            "token": "governance",
-            "weight": 0.75
-          }
-        ],
-        "∈": [
-          {
-            "token": "democracy",
-            "weight": 0.7
-          }
-        ],
-        "⦿": [
-          {
-            "token": "social contract",
-            "weight": 0.65
-          }
-        ],
-        "⊛": [
-          {
-            "token": "political ideas",
-            "weight": 0.6
-          }
-        ],
-        "⇌": [
-          {
-            "token": "ruler",
-            "weight": 0.55
-          }
-        ],
-        "⇝": [
-          {
-            "token": "established laws",
-            "weight": 0.5
+            "token": "govern",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T17:43:01.837Z"
+      "cached_at": "2025-10-23T16:49:07.180Z"
+    },
+    {
+      "token": "governer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "govern",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:07.203Z"
+    },
+    {
+      "token": "governes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "govern",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:07.170Z"
+    },
+    {
+      "token": "governest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "govern",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:07.213Z"
+    },
+    {
+      "token": "governing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "govern",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:07.191Z"
+    },
+    {
+      "token": "governly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "govern",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:07.222Z"
     },
     {
       "token": "government",
@@ -3077,6 +3287,18 @@
         ]
       },
       "cached_at": "2025-10-18T17:20:12.785Z"
+    },
+    {
+      "token": "governs",
+      "relationships": {
+        "≈": [
+          {
+            "token": "govern",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:07.160Z"
     },
     {
       "token": "granite",

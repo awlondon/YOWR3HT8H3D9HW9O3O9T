@@ -1,6 +1,6 @@
 {
   "prefix": "s",
-  "token_count": 213,
+  "token_count": 387,
   "tokens": [
     {
       "token": "s",
@@ -666,384 +666,876 @@
       "cached_at": "2025-10-18T17:24:27.316Z"
     },
     {
+      "token": "scienc",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:31.033Z"
+    },
+    {
       "token": "science",
       "relationships": {
         "≡": [
           {
-            "token": "mathematics",
+            "token": "scientific method",
             "weight": 0.95
           }
         ],
         "⊃": [
           {
-            "token": "number theory",
+            "token": "physics",
             "weight": 0.8
           },
           {
-            "token": "algebra",
+            "token": "chemistry",
             "weight": 0.8
           },
           {
-            "token": "geometry",
+            "token": "biology",
             "weight": 0.8
           },
           {
-            "token": "analysis",
+            "token": "earth science",
             "weight": 0.8
           },
           {
-            "token": "set theory",
+            "token": "social sciences",
             "weight": 0.8
           }
         ],
         "⊂": [
           {
-            "token": "physical sciences",
-            "weight": 0.75
-          }
-        ],
-        "∈": [
-          {
-            "token": "fields of study",
-            "weight": 0.7
-          }
-        ],
-        "⊛": [
-          {
-            "token": "empirical sciences",
-            "weight": 0.85
-          }
-        ],
-        "⇌": [
-          {
-            "token": "applied mathematics",
-            "weight": 0.6
-          }
-        ],
-        "∝": [
-          {
-            "token": "statistics",
-            "weight": 0.65
-          }
-        ],
-        "⇝": [
-          {
-            "token": "mathematical logic",
-            "weight": 0.55
-          }
-        ],
-        "↔": [
-          {
-            "token": "theoretical implications",
-            "weight": 0.5
-          }
-        ],
-        "⊕": [
-          {
-            "token": "engineering",
-            "weight": 0.7
-          }
-        ]
-      },
-      "cached_at": "2025-10-18T06:25:09.489Z"
-    },
-    {
-      "token": "sciences",
-      "relationships": {
-        "⊃": [
-          {
-            "token": "mathematics",
-            "weight": 0.9
-          },
-          {
-            "token": "empirical sciences",
-            "weight": 0.85
-          }
-        ],
-        "⊂": [
-          {
-            "token": "mathematics",
-            "weight": 0.9
-          },
-          {
-            "token": "number theory",
+            "token": "natural phenomena",
             "weight": 0.7
           },
           {
-            "token": "algebra",
+            "token": "hypotheses",
             "weight": 0.7
           },
           {
-            "token": "geometry",
+            "token": "experimentation",
             "weight": 0.7
           },
           {
-            "token": "analysis",
-            "weight": 0.7
-          },
-          {
-            "token": "set theory",
+            "token": "data analysis",
             "weight": 0.7
           }
         ],
         "≈": [
           {
-            "token": "natural sciences",
-            "weight": 0.6
+            "token": "scientific inquiry",
+            "weight": 0.75
           },
           {
-            "token": "formal sciences",
-            "weight": 0.6
+            "token": "research",
+            "weight": 0.75
+          },
+          {
+            "token": "sciences",
+            "weight": 0.64
+          },
+          {
+            "token": "sciencees",
+            "weight": 0.64
+          },
+          {
+            "token": "scienceed",
+            "weight": 0.64
+          },
+          {
+            "token": "scienceing",
+            "weight": 0.64
+          },
+          {
+            "token": "scienceer",
+            "weight": 0.64
+          },
+          {
+            "token": "scienceest",
+            "weight": 0.64
+          },
+          {
+            "token": "sciencely",
+            "weight": 0.64
           }
         ],
         "∈": [
           {
-            "token": "number theory",
-            "weight": 0.7
-          },
-          {
-            "token": "algebra",
-            "weight": 0.7
-          }
-        ],
-        "⊕": [
-          {
-            "token": "mathematics",
-            "weight": 0.8
-          },
-          {
-            "token": "empirical sciences",
-            "weight": 0.75
-          }
-        ],
-        "⊛": [
-          {
-            "token": "research",
-            "weight": 0.8
-          },
-          {
-            "token": "theories",
-            "weight": 0.7
-          }
-        ],
-        "∝": [
-          {
-            "token": "technology",
-            "weight": 0.65
-          }
-        ],
-        "⇌": [
-          {
-            "token": "empirical methods",
-            "weight": 0.55
-          }
-        ]
-      },
-      "cached_at": "2025-10-18T06:22:34.263Z"
-    },
-    {
-      "token": "scientific",
-      "relationships": {
-        "⊛": [
-          {
-            "token": "research",
-            "weight": 0.9
-          },
-          {
-            "token": "innovation",
+            "token": "empirical evidence",
             "weight": 0.85
-          },
-          {
-            "token": "technology",
-            "weight": 0.8
-          }
-        ],
-        "⊃": [
-          {
-            "token": "education",
-            "weight": 0.75
-          },
-          {
-            "token": "methodology",
-            "weight": 0.7
-          }
-        ],
-        "⊂": [
-          {
-            "token": "scientific research",
-            "weight": 0.95
-          },
-          {
-            "token": "scientific method",
-            "weight": 0.9
-          }
-        ],
-        "∈": [
-          {
-            "token": "academic discipline",
-            "weight": 0.8
           }
         ],
         "⊤": [
           {
             "token": "knowledge",
-            "weight": 0.85
+            "weight": 0.9
           },
           {
-            "token": "inquiry",
+            "token": "theory",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "innovation",
             "weight": 0.8
-          }
-        ],
-        "⊕": [
+          },
           {
-            "token": "empirical",
-            "weight": 0.7
-          }
-        ],
-        "↔": [
-          {
-            "token": "theoretical",
-            "weight": 0.6
+            "token": "technology",
+            "weight": 0.8
           }
         ],
         "⇌": [
           {
-            "token": "experimentation",
+            "token": "theory refinement",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "problem solving",
+            "weight": 0.75
+          }
+        ],
+        "⇐": [
+          {
+            "token": "hypothesis testing",
             "weight": 0.65
+          }
+        ],
+        "∗": [
+          {
+            "token": "curiosity",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "critical thinking",
+            "weight": 0.8
           }
         ]
       },
-      "cached_at": "2025-10-18T17:12:50.789Z"
+      "cached_at": "2025-10-23T01:41:41.199Z"
+    },
+    {
+      "token": "scienced",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:31.052Z"
+    },
+    {
+      "token": "scienceed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "science",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:41.219Z"
+    },
+    {
+      "token": "scienceer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "science",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:41.238Z"
+    },
+    {
+      "token": "sciencees",
+      "relationships": {
+        "≈": [
+          {
+            "token": "science",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:41.210Z"
+    },
+    {
+      "token": "scienceest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "science",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:41.248Z"
+    },
+    {
+      "token": "scienceing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "science",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:41.229Z"
+    },
+    {
+      "token": "sciencely",
+      "relationships": {
+        "≈": [
+          {
+            "token": "science",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:41.258Z"
+    },
+    {
+      "token": "sciencer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:31.071Z"
+    },
+    {
+      "token": "sciences",
+      "relationships": {
+        "≡": [
+          {
+            "token": "science",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "natural sciences",
+            "weight": 0.8
+          },
+          {
+            "token": "social sciences",
+            "weight": 0.75
+          },
+          {
+            "token": "physical sciences",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "natural sciences",
+            "weight": 0.8
+          },
+          {
+            "token": "social sciences",
+            "weight": 0.75
+          },
+          {
+            "token": "physical sciences",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "scientific discipline",
+            "weight": 0.6
+          },
+          {
+            "token": "sciencess",
+            "weight": 0.64
+          },
+          {
+            "token": "scienceses",
+            "weight": 0.64
+          },
+          {
+            "token": "sciencesed",
+            "weight": 0.64
+          },
+          {
+            "token": "sciencesing",
+            "weight": 0.64
+          },
+          {
+            "token": "scienceser",
+            "weight": 0.64
+          },
+          {
+            "token": "sciencesest",
+            "weight": 0.64
+          },
+          {
+            "token": "sciencesly",
+            "weight": 0.64
+          },
+          {
+            "token": "scienc",
+            "weight": 0.64
+          },
+          {
+            "token": "sciencs",
+            "weight": 0.64
+          },
+          {
+            "token": "scienced",
+            "weight": 0.64
+          },
+          {
+            "token": "sciencing",
+            "weight": 0.64
+          }
+        ],
+        "∈": [
+          {
+            "token": "physics",
+            "weight": 0.65
+          },
+          {
+            "token": "chemistry",
+            "weight": 0.65
+          },
+          {
+            "token": "biology",
+            "weight": 0.65
+          }
+        ],
+        "⊤": [
+          {
+            "token": "knowledge",
+            "weight": 0.9
+          },
+          {
+            "token": "methodology",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "research",
+            "weight": 0.8
+          },
+          {
+            "token": "experimentation",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "empirical evidence",
+            "weight": 0.7
+          }
+        ],
+        "⇌": [
+          {
+            "token": "scientific method",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "innovation",
+            "weight": 0.7
+          }
+        ],
+        "⇂": [
+          {
+            "token": "critical thinking",
+            "weight": 0.75
+          }
+        ],
+        "↔": [
+          {
+            "token": "theory",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:30.964Z"
+    },
+    {
+      "token": "sciencesed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:30.983Z"
+    },
+    {
+      "token": "scienceser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:31.003Z"
+    },
+    {
+      "token": "scienceses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:30.974Z"
+    },
+    {
+      "token": "sciencesest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:31.013Z"
+    },
+    {
+      "token": "sciencesing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:30.994Z"
+    },
+    {
+      "token": "sciencesly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:31.023Z"
+    },
+    {
+      "token": "sciencess",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:30.965Z"
+    },
+    {
+      "token": "sciencing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:31.061Z"
+    },
+    {
+      "token": "sciencs",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sciences",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:31.042Z"
+    },
+    {
+      "token": "scientific",
+      "relationships": {
+        "≡": [
+          {
+            "token": "empirical",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "science",
+            "weight": 0.9
+          }
+        ],
+        "⊂": [
+          {
+            "token": "methodology",
+            "weight": 0.85
+          }
+        ],
+        "≈": [
+          {
+            "token": "experimental",
+            "weight": 0.8
+          },
+          {
+            "token": "scientifics",
+            "weight": 0.64
+          },
+          {
+            "token": "scientifices",
+            "weight": 0.64
+          },
+          {
+            "token": "scientificed",
+            "weight": 0.64
+          },
+          {
+            "token": "scientificing",
+            "weight": 0.64
+          },
+          {
+            "token": "scientificer",
+            "weight": 0.64
+          },
+          {
+            "token": "scientificest",
+            "weight": 0.64
+          },
+          {
+            "token": "scientificly",
+            "weight": 0.64
+          }
+        ],
+        "⊤": [
+          {
+            "token": "knowledge",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "research",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "inquiry",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "theory",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "innovation",
+            "weight": 0.55
+          }
+        ],
+        "⇝": [
+          {
+            "token": "understanding",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:31.101Z"
+    },
+    {
+      "token": "scientificed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "scientific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:31.119Z"
+    },
+    {
+      "token": "scientificer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "scientific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:31.138Z"
+    },
+    {
+      "token": "scientifices",
+      "relationships": {
+        "≈": [
+          {
+            "token": "scientific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:31.110Z"
+    },
+    {
+      "token": "scientificest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "scientific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:31.147Z"
+    },
+    {
+      "token": "scientificing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "scientific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:31.129Z"
+    },
+    {
+      "token": "scientificly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "scientific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:31.157Z"
+    },
+    {
+      "token": "scientifics",
+      "relationships": {
+        "≈": [
+          {
+            "token": "scientific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:31.101Z"
     },
     {
       "token": "score",
       "relationships": {
         "≡": [
           {
-            "token": "rating",
+            "token": "evaluation",
             "weight": 0.95
           }
         ],
         "⊂": [
           {
-            "token": "metrics",
+            "token": "analysis",
             "weight": 0.8
+          },
+          {
+            "token": "metric",
+            "weight": 0.75
           }
         ],
-        "⊕": [
+        "⊐": [
           {
             "token": "performance",
-            "weight": 0.75
+            "weight": 0.85
+          },
+          {
+            "token": "criteria",
+            "weight": 0.7
           }
         ],
         "∝": [
           {
-            "token": "evaluation",
-            "weight": 0.7
-          }
-        ],
-        "∼": [
-          {
-            "token": "grade",
+            "token": "outcomes",
             "weight": 0.65
-          }
-        ],
-        "⊗": [
+          },
           {
-            "token": "assessment",
+            "token": "results",
             "weight": 0.6
           }
         ],
-        "⇄": [
+        "⊛": [
           {
             "token": "feedback",
             "weight": 0.55
           }
         ],
+        "⇌": [
+          {
+            "token": "assessment",
+            "weight": 0.5
+          }
+        ],
+        "≈": [
+          {
+            "token": "rating",
+            "weight": 0.45
+          },
+          {
+            "token": "scores",
+            "weight": 0.64
+          },
+          {
+            "token": "scorees",
+            "weight": 0.64
+          },
+          {
+            "token": "scoreed",
+            "weight": 0.64
+          },
+          {
+            "token": "scoreing",
+            "weight": 0.64
+          },
+          {
+            "token": "scoreer",
+            "weight": 0.64
+          },
+          {
+            "token": "scoreest",
+            "weight": 0.64
+          },
+          {
+            "token": "scorely",
+            "weight": 0.64
+          }
+        ],
         "⇝": [
           {
-            "token": "outcome",
-            "weight": 0.5
+            "token": "improvement",
+            "weight": 0.4
           }
         ]
       },
-      "cached_at": "2025-10-18T22:22:37.097Z"
+      "cached_at": "2025-10-23T16:51:02.699Z"
+    },
+    {
+      "token": "scoreed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "score",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:02.719Z"
+    },
+    {
+      "token": "scoreer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "score",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:02.740Z"
+    },
+    {
+      "token": "scorees",
+      "relationships": {
+        "≈": [
+          {
+            "token": "score",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:02.709Z"
+    },
+    {
+      "token": "scoreest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "score",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:02.751Z"
+    },
+    {
+      "token": "scoreing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "score",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:02.729Z"
+    },
+    {
+      "token": "scorely",
+      "relationships": {
+        "≈": [
+          {
+            "token": "score",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:02.761Z"
     },
     {
       "token": "scores",
       "relationships": {
         "≈": [
           {
-            "token": "ratings",
-            "weight": 0.85
-          },
-          {
-            "token": "points",
-            "weight": 0.8
-          }
-        ],
-        "∈": [
-          {
-            "token": "evaluation metrics",
-            "weight": 0.9
-          },
-          {
-            "token": "performance indicators",
-            "weight": 0.88
-          }
-        ],
-        "⊛": [
-          {
-            "token": "feedback",
-            "weight": 0.75
-          },
-          {
-            "token": "assessments",
-            "weight": 0.7
-          }
-        ],
-        "→": [
-          {
-            "token": "results",
-            "weight": 0.8
-          },
-          {
-            "token": "outcomes",
-            "weight": 0.78
-          }
-        ],
-        "⇌": [
-          {
-            "token": "grades",
-            "weight": 0.65
-          },
-          {
-            "token": "metrics",
-            "weight": 0.67
-          }
-        ],
-        "∝": [
-          {
-            "token": "accuracy",
-            "weight": 0.6
-          },
-          {
-            "token": "quality",
-            "weight": 0.62
-          }
-        ],
-        "⊕": [
-          {
-            "token": "analytics",
-            "weight": 0.55
-          },
-          {
-            "token": "measurements",
-            "weight": 0.57
+            "token": "score",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T22:31:35.870Z"
+      "cached_at": "2025-10-23T16:51:02.699Z"
     },
     {
       "token": "sea",
@@ -2292,174 +2784,244 @@
     {
       "token": "sensation",
       "relationships": {
-        "≡": [
-          {
-            "token": "feeling",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "experience",
-            "weight": 0.9
-          }
-        ],
-        "⊂": [
-          {
-            "token": "trance-like states",
-            "weight": 0.85
-          }
-        ],
         "≈": [
           {
-            "token": "perception",
-            "weight": 0.8
-          }
-        ],
-        "∈": [
-          {
-            "token": "altered states of consciousness",
-            "weight": 0.75
-          }
-        ],
-        "⊛": [
-          {
-            "token": "sound",
-            "weight": 0.88
-          },
-          {
-            "token": "vibration",
-            "weight": 0.82
-          }
-        ],
-        "∝": [
-          {
-            "token": "low-frequency sound",
-            "weight": 0.77
-          }
-        ],
-        "⇌": [
-          {
-            "token": "body",
-            "weight": 0.85
-          }
-        ],
-        "⇝": [
-          {
-            "token": "unity",
-            "weight": 0.8
-          }
-        ],
-        "⊕": [
-          {
-            "token": "interconnectedness",
-            "weight": 0.78
-          }
-        ],
-        "⇄": [
-          {
-            "token": "meditative practices",
-            "weight": 0.76
+            "token": "sensations",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-19T06:50:30.091Z"
+      "cached_at": "2025-10-23T16:48:17.720Z"
+    },
+    {
+      "token": "sensationed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.740Z"
+    },
+    {
+      "token": "sensationer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.760Z"
+    },
+    {
+      "token": "sensationes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.730Z"
+    },
+    {
+      "token": "sensationing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.750Z"
     },
     {
       "token": "sensations",
       "relationships": {
-        "≡": [
+        "≈": [
           {
-            "token": "experiences",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "physical sensations",
+            "token": "concepts",
             "weight": 0.85
           },
           {
-            "token": "altered states of consciousness",
+            "token": "formulas",
             "weight": 0.8
+          },
+          {
+            "token": "sensationss",
+            "weight": 0.64
+          },
+          {
+            "token": "sensationses",
+            "weight": 0.64
+          },
+          {
+            "token": "sensationsed",
+            "weight": 0.64
+          },
+          {
+            "token": "sensationsing",
+            "weight": 0.64
+          },
+          {
+            "token": "sensationser",
+            "weight": 0.64
+          },
+          {
+            "token": "sensationsest",
+            "weight": 0.64
+          },
+          {
+            "token": "sensationsly",
+            "weight": 0.64
+          },
+          {
+            "token": "sensation",
+            "weight": 0.64
+          },
+          {
+            "token": "sensationes",
+            "weight": 0.64
+          },
+          {
+            "token": "sensationed",
+            "weight": 0.64
           }
         ],
         "⊂": [
           {
-            "token": "body",
+            "token": "knowledge",
             "weight": 0.9
-          },
-          {
-            "token": "sound",
-            "weight": 0.75
-          }
-        ],
-        "≈": [
-          {
-            "token": "feelings",
-            "weight": 0.7
-          }
-        ],
-        "∈": [
-          {
-            "token": "trance-like states",
-            "weight": 0.65
           }
         ],
         "⊛": [
           {
-            "token": "low-frequency sound",
-            "weight": 0.9
-          },
-          {
-            "token": "meditative traditions",
-            "weight": 0.7
+            "token": "science",
+            "weight": 0.75
           }
         ],
         "∝": [
           {
-            "token": "physiological states",
-            "weight": 0.8
-          },
-          {
-            "token": "psychological states",
-            "weight": 0.75
+            "token": "experimentation",
+            "weight": 0.7
           }
         ],
-        "⇝": [
+        "⇌": [
           {
-            "token": "sound exposure",
-            "weight": 0.85
-          }
-        ],
-        "∗": [
-          {
-            "token": "unity",
-            "weight": 0.8
-          },
-          {
-            "token": "interconnectedness",
-            "weight": 0.75
+            "token": "understanding",
+            "weight": 0.65
           }
         ],
         "⋆": [
           {
-            "token": "breath",
-            "weight": 0.7
-          },
-          {
-            "token": "chanting",
-            "weight": 0.65
+            "token": "learning",
+            "weight": 0.6
           }
         ],
-        "⇄": [
+        "→": [
           {
-            "token": "vibrations",
-            "weight": 0.75
+            "token": "results",
+            "weight": 0.55
+          }
+        ],
+        "∥": [
+          {
+            "token": "experience",
+            "weight": 0.5
           }
         ]
       },
-      "cached_at": "2025-10-19T06:50:08.624Z"
+      "cached_at": "2025-10-23T16:48:17.648Z"
+    },
+    {
+      "token": "sensationsed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.667Z"
+    },
+    {
+      "token": "sensationser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.689Z"
+    },
+    {
+      "token": "sensationses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.657Z"
+    },
+    {
+      "token": "sensationsest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.699Z"
+    },
+    {
+      "token": "sensationsing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.677Z"
+    },
+    {
+      "token": "sensationsly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.710Z"
+    },
+    {
+      "token": "sensationss",
+      "relationships": {
+        "≈": [
+          {
+            "token": "sensations",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:17.648Z"
     },
     {
       "token": "sense",
@@ -4366,52 +4928,172 @@
             "weight": 0.95
           }
         ],
-        "⊂": [
+        "≈": [
           {
-            "token": "self-governance",
+            "token": "transition",
             "weight": 0.85
           },
           {
-            "token": "American Revolution",
+            "token": "move",
             "weight": 0.8
-          }
-        ],
-        "⊛": [
-          {
-            "token": "First Continental Congress",
-            "weight": 0.9
           },
           {
-            "token": "Continental Association",
-            "weight": 0.85
-          }
-        ],
-        "⇝": [
+            "token": "shifts",
+            "weight": 0.64
+          },
           {
-            "token": "collective resistance",
-            "weight": 0.8
-          }
-        ],
-        "∝": [
+            "token": "shiftes",
+            "weight": 0.64
+          },
           {
-            "token": "colonial unity",
-            "weight": 0.75
+            "token": "shifted",
+            "weight": 0.64
+          },
+          {
+            "token": "shifting",
+            "weight": 0.64
+          },
+          {
+            "token": "shifter",
+            "weight": 0.64
+          },
+          {
+            "token": "shiftest",
+            "weight": 0.64
+          },
+          {
+            "token": "shiftly",
+            "weight": 0.64
           }
         ],
         "⊕": [
           {
-            "token": "British control",
+            "token": "progress",
             "weight": 0.7
           }
         ],
-        "≈": [
+        "∝": [
           {
-            "token": "transition",
+            "token": "development",
             "weight": 0.65
+          }
+        ],
+        "⊣": [
+          {
+            "token": "transformation",
+            "weight": 0.6
+          }
+        ],
+        "⊛": [
+          {
+            "token": "adaptation",
+            "weight": 0.55
+          }
+        ],
+        "⇝": [
+          {
+            "token": "evolution",
+            "weight": 0.5
+          }
+        ],
+        "→": [
+          {
+            "token": "improvement",
+            "weight": 0.45
+          }
+        ],
+        "⊬": [
+          {
+            "token": "stagnation",
+            "weight": 0.4
           }
         ]
       },
-      "cached_at": "2025-10-18T17:47:56.155Z"
+      "cached_at": "2025-10-23T16:49:20.890Z"
+    },
+    {
+      "token": "shifted",
+      "relationships": {
+        "≈": [
+          {
+            "token": "shift",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:20.909Z"
+    },
+    {
+      "token": "shifter",
+      "relationships": {
+        "≈": [
+          {
+            "token": "shift",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:20.931Z"
+    },
+    {
+      "token": "shiftes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "shift",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:20.899Z"
+    },
+    {
+      "token": "shiftest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "shift",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:20.941Z"
+    },
+    {
+      "token": "shifting",
+      "relationships": {
+        "≈": [
+          {
+            "token": "shift",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:20.919Z"
+    },
+    {
+      "token": "shiftly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "shift",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:20.951Z"
+    },
+    {
+      "token": "shifts",
+      "relationships": {
+        "≈": [
+          {
+            "token": "shift",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:20.890Z"
     },
     {
       "token": "shortages",
@@ -5985,88 +6667,186 @@
     {
       "token": "social",
       "relationships": {
-        "≡": [
-          {
-            "token": "cultural",
-            "weight": 0.95
-          },
-          {
-            "token": "political",
-            "weight": 0.9
-          }
-        ],
         "⊃": [
           {
-            "token": "inequality",
-            "weight": 0.8
-          },
-          {
-            "token": "diversity",
-            "weight": 0.75
-          },
-          {
-            "token": "movement",
-            "weight": 0.7
+            "token": "social sciences",
+            "weight": 0.9
           }
         ],
         "⊂": [
           {
-            "token": "issues",
+            "token": "science",
             "weight": 0.85
-          },
-          {
-            "token": "landscape",
-            "weight": 0.6
           }
         ],
         "≈": [
           {
-            "token": "communal",
-            "weight": 0.5
+            "token": "societal",
+            "weight": 0.7
+          },
+          {
+            "token": "socials",
+            "weight": 0.64
+          },
+          {
+            "token": "sociales",
+            "weight": 0.64
+          },
+          {
+            "token": "socialed",
+            "weight": 0.64
+          },
+          {
+            "token": "socialing",
+            "weight": 0.64
+          },
+          {
+            "token": "socialer",
+            "weight": 0.64
+          },
+          {
+            "token": "socialest",
+            "weight": 0.64
+          },
+          {
+            "token": "socially",
+            "weight": 0.64
           }
         ],
         "∈": [
           {
-            "token": "society",
-            "weight": 0.9
+            "token": "human behavior",
+            "weight": 0.8
           }
         ],
-        "∋": [
+        "⊤": [
           {
-            "token": "groups",
-            "weight": 0.65
-          }
-        ],
-        "⊕": [
-          {
-            "token": "equality",
-            "weight": 0.7
+            "token": "field of study",
+            "weight": 0.75
           }
         ],
         "⊛": [
           {
-            "token": "movement",
-            "weight": 0.85
-          },
-          {
-            "token": "inequality",
-            "weight": 0.75
-          }
-        ],
-        "⇝": [
-          {
-            "token": "progress",
-            "weight": 0.8
+            "token": "community",
+            "weight": 0.65
           }
         ],
         "∝": [
           {
-            "token": "democracy",
-            "weight": 0.75
+            "token": "social interaction",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "cultural",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "humanities",
+            "weight": 0.5
+          }
+        ],
+        "⋆": [
+          {
+            "token": "social norms",
+            "weight": 0.45
+          }
+        ],
+        "⇄": [
+          {
+            "token": "demographics",
+            "weight": 0.4
           }
         ]
       },
-      "cached_at": "2025-10-18T17:11:32.641Z"
+      "cached_at": "2025-10-23T01:43:26.608Z"
+    },
+    {
+      "token": "socialed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "social",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:26.634Z"
+    },
+    {
+      "token": "socialer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "social",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:26.654Z"
+    },
+    {
+      "token": "sociales",
+      "relationships": {
+        "≈": [
+          {
+            "token": "social",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:26.621Z"
+    },
+    {
+      "token": "socialest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "social",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:26.664Z"
+    },
+    {
+      "token": "socialing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "social",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:26.644Z"
+    },
+    {
+      "token": "socially",
+      "relationships": {
+        "≈": [
+          {
+            "token": "social",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:26.674Z"
+    },
+    {
+      "token": "socials",
+      "relationships": {
+        "≈": [
+          {
+            "token": "social",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:26.609Z"
     },
     {
       "token": "societies",
@@ -6689,42 +7469,160 @@
       "relationships": {
         "⊂": [
           {
-            "token": "basic properties",
+            "token": "formulas",
+            "weight": 0.8
+          },
+          {
+            "token": "problems",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "knowledge",
             "weight": 0.75
-          }
-        ],
-        "⊕": [
-          {
-            "token": "abstract objects",
-            "weight": 0.6
-          }
-        ],
-        "∈": [
-          {
-            "token": "axioms",
-            "weight": 0.55
           }
         ],
         "⊛": [
           {
-            "token": "theorems",
+            "token": "students",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "concepts",
+            "weight": 0.65
+          }
+        ],
+        "⇄": [
+          {
+            "token": "calculations",
+            "weight": 0.55
+          }
+        ],
+        "∝": [
+          {
+            "token": "success",
             "weight": 0.5
           }
         ],
         "≈": [
           {
-            "token": "entities",
-            "weight": 0.4
-          }
-        ],
-        "⇌": [
+            "token": "somes",
+            "weight": 0.64
+          },
           {
-            "token": "results",
-            "weight": 0.35
+            "token": "somees",
+            "weight": 0.64
+          },
+          {
+            "token": "someed",
+            "weight": 0.64
+          },
+          {
+            "token": "someing",
+            "weight": 0.64
+          },
+          {
+            "token": "someer",
+            "weight": 0.64
+          },
+          {
+            "token": "someest",
+            "weight": 0.64
+          },
+          {
+            "token": "somely",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T06:42:59.269Z"
+      "cached_at": "2025-10-23T16:47:25.975Z"
+    },
+    {
+      "token": "someed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "some",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:25.993Z"
+    },
+    {
+      "token": "someer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "some",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:26.013Z"
+    },
+    {
+      "token": "somees",
+      "relationships": {
+        "≈": [
+          {
+            "token": "some",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:25.984Z"
+    },
+    {
+      "token": "someest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "some",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:26.023Z"
+    },
+    {
+      "token": "someing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "some",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:26.003Z"
+    },
+    {
+      "token": "somely",
+      "relationships": {
+        "≈": [
+          {
+            "token": "some",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:26.032Z"
+    },
+    {
+      "token": "somes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "some",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:25.975Z"
     },
     {
       "token": "something",
@@ -7965,72 +8863,176 @@
     {
       "token": "specific",
       "relationships": {
-        "≡": [
+        "≈": [
           {
             "token": "particular",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "parameters",
             "weight": 0.8
           },
           {
-            "token": "thresholds",
-            "weight": 0.75
+            "token": "definite",
+            "weight": 0.7
+          },
+          {
+            "token": "specifics",
+            "weight": 0.64
+          },
+          {
+            "token": "specifices",
+            "weight": 0.64
+          },
+          {
+            "token": "specificed",
+            "weight": 0.64
+          },
+          {
+            "token": "specificing",
+            "weight": 0.64
+          },
+          {
+            "token": "specificer",
+            "weight": 0.64
+          },
+          {
+            "token": "specificest",
+            "weight": 0.64
+          },
+          {
+            "token": "specificly",
+            "weight": 0.64
           }
         ],
         "⊂": [
           {
-            "token": "data analysis",
-            "weight": 0.85
-          }
-        ],
-        "≈": [
+            "token": "formulas",
+            "weight": 0.6
+          },
           {
-            "token": "precise",
-            "weight": 0.7
-          }
-        ],
-        "∈": [
-          {
-            "token": "algorithm",
-            "weight": 0.9
-          }
-        ],
-        "⊤": [
-          {
-            "token": "cognitive model",
-            "weight": 0.88
+            "token": "concepts",
+            "weight": 0.55
           }
         ],
         "⊛": [
           {
-            "token": "focus",
-            "weight": 0.76
+            "token": "understanding",
+            "weight": 0.65
+          },
+          {
+            "token": "knowledge",
+            "weight": 0.7
           }
         ],
         "∝": [
           {
-            "token": "analysis effectiveness",
+            "token": "contextual understanding",
+            "weight": 0.75
+          }
+        ],
+        "≠": [
+          {
+            "token": "general",
+            "weight": 0.5
+          },
+          {
+            "token": "superficial",
             "weight": 0.65
           }
         ],
-        "⇝": [
+        "⊕": [
           {
-            "token": "result stability",
-            "weight": 0.72
-          }
-        ],
-        "⇄": [
+            "token": "inquiry",
+            "weight": 0.8
+          },
           {
-            "token": "data points",
-            "weight": 0.78
+            "token": "engagement",
+            "weight": 0.75
           }
         ]
       },
-      "cached_at": "2025-10-18T22:22:18.857Z"
+      "cached_at": "2025-10-23T16:49:12.550Z"
+    },
+    {
+      "token": "specificed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "specific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:12.571Z"
+    },
+    {
+      "token": "specificer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "specific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:12.594Z"
+    },
+    {
+      "token": "specifices",
+      "relationships": {
+        "≈": [
+          {
+            "token": "specific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:12.560Z"
+    },
+    {
+      "token": "specificest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "specific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:12.605Z"
+    },
+    {
+      "token": "specificing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "specific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:12.582Z"
+    },
+    {
+      "token": "specificly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "specific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:12.615Z"
+    },
+    {
+      "token": "specifics",
+      "relationships": {
+        "≈": [
+          {
+            "token": "specific",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:12.550Z"
     },
     {
       "token": "spectrograms",
@@ -8925,110 +9927,39 @@
     {
       "token": "start",
       "relationships": {
-        "⊃": [
-          {
-            "token": "layering",
-            "weight": 0.8
-          },
-          {
-            "token": "glyphs",
-            "weight": 0.75
-          }
-        ],
-        "⊂": [
-          {
-            "token": "topology",
-            "weight": 0.85
-          }
-        ],
-        "≈": [
-          {
-            "token": "begin",
-            "weight": 0.7
-          }
-        ],
-        "∈": [
-          {
-            "token": "process",
-            "weight": 0.65
-          }
-        ],
-        "⊕": [
-          {
-            "token": "cognition",
-            "weight": 0.6
-          }
-        ],
-        "→": [
-          {
-            "token": "layering",
-            "weight": 0.7
-          }
-        ],
-        "⇝": [
-          {
-            "token": "cognitive weather systems",
-            "weight": 0.75
-          }
-        ]
-      },
-      "cached_at": "2025-10-19T06:35:07.693Z"
-    },
-    {
-      "token": "starting",
-      "relationships": {
-        "⊂": [
-          {
-            "token": "theory",
-            "weight": 0.75
-          }
-        ],
-        "⊕": [
-          {
-            "token": "axioms",
-            "weight": 0.65
-          }
-        ],
-        "⊛": [
-          {
-            "token": "properties",
-            "weight": 0.6
-          }
-        ],
-        "∈": [
-          {
-            "token": "abstract objects",
-            "weight": 0.55
-          }
-        ],
-        "≈": [
-          {
-            "token": "theorems",
-            "weight": 0.35
-          }
-        ],
-        "⇌": [
-          {
-            "token": "results",
-            "weight": 0.45
-          }
-        ],
-        "⇝": [
-          {
-            "token": "proof",
-            "weight": 0.4
-          }
-        ]
-      },
-      "cached_at": "2025-10-18T06:43:05.261Z"
-    },
-    {
-      "token": "starts",
-      "relationships": {
         "≡": [],
         "⊃": [],
         "⊂": [],
-        "≈": [],
+        "≈": [
+          {
+            "token": "starts",
+            "weight": 0.64
+          },
+          {
+            "token": "startes",
+            "weight": 0.64
+          },
+          {
+            "token": "started",
+            "weight": 0.64
+          },
+          {
+            "token": "starting",
+            "weight": 0.64
+          },
+          {
+            "token": "starter",
+            "weight": 0.64
+          },
+          {
+            "token": "startest",
+            "weight": 0.64
+          },
+          {
+            "token": "startly",
+            "weight": 0.64
+          }
+        ],
         "∈": [],
         "∋": [],
         "⊤": [],
@@ -9041,7 +9972,7 @@
         "∼": [],
         "→": [
           {
-            "token": "blur",
+            "token": "formulas",
             "weight": 0.75
           }
         ],
@@ -9051,7 +9982,12 @@
         "↗": [],
         "↘": [],
         "⇝": [],
-        "⇂": [],
+        "⇂": [
+          {
+            "token": "knowledge",
+            "weight": 0.7
+          }
+        ],
         "≠": [],
         "⊕": [],
         "⊛": [],
@@ -9068,141 +10004,281 @@
         "|=": [],
         "▷◁": []
       },
-      "cached_at": "2025-10-19T06:50:38.301Z"
+      "cached_at": "2025-10-23T16:48:09.982Z"
+    },
+    {
+      "token": "started",
+      "relationships": {
+        "≈": [
+          {
+            "token": "start",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:10.002Z"
+    },
+    {
+      "token": "starter",
+      "relationships": {
+        "≈": [
+          {
+            "token": "start",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:10.024Z"
+    },
+    {
+      "token": "startes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "start",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:09.992Z"
+    },
+    {
+      "token": "startest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "start",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:10.035Z"
+    },
+    {
+      "token": "starting",
+      "relationships": {
+        "≈": [
+          {
+            "token": "start",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:10.012Z"
+    },
+    {
+      "token": "startly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "start",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:10.045Z"
+    },
+    {
+      "token": "starts",
+      "relationships": {
+        "≈": [
+          {
+            "token": "start",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:48:09.983Z"
     },
     {
       "token": "state",
       "relationships": {
         "≡": [
           {
-            "token": "government",
+            "token": "condition",
             "weight": 0.95
-          },
-          {
-            "token": "political landscape",
-            "weight": 0.9
-          }
-        ],
-        "⊃": [
-          {
-            "token": "United States",
-            "weight": 0.99
-          },
-          {
-            "token": "Constitution",
-            "weight": 0.85
           }
         ],
         "⊂": [
           {
-            "token": "federal government",
-            "weight": 0.8
-          }
-        ],
-        "∈": [
+            "token": "medical practice",
+            "weight": 0.85
+          },
           {
-            "token": "democracy",
-            "weight": 0.88
+            "token": "scientific method",
+            "weight": 0.8
           }
         ],
         "⊕": [
           {
-            "token": "freedom",
-            "weight": 0.87
+            "token": "knowledge",
+            "weight": 0.7
           },
           {
-            "token": "opportunity",
-            "weight": 0.82
+            "token": "understanding",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "evidence",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "community",
+            "weight": 0.55
           }
         ],
         "⊛": [
           {
-            "token": "cultural diversity",
-            "weight": 0.75
-          }
-        ],
-        "∝": [
-          {
-            "token": "social inequality",
-            "weight": 0.73
-          }
-        ],
-        "⇝": [
-          {
-            "token": "political polarization",
-            "weight": 0.7
-          }
-        ],
-        "⇐": [
-          {
-            "token": "historical events",
-            "weight": 0.65
-          }
-        ],
-        "⇄": [
-          {
-            "token": "international affairs",
-            "weight": 0.6
-          }
-        ]
-      },
-      "cached_at": "2025-10-18T17:12:02.617Z"
-    },
-    {
-      "token": "states",
-      "relationships": {
-        "≡": [
-          {
-            "token": "United States",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "federal republic",
-            "weight": 0.85
+            "token": "form",
+            "weight": 0.5
           },
           {
-            "token": "Washington, D.C.",
-            "weight": 0.8
+            "token": "contract",
+            "weight": 0.5
           }
         ],
-        "⊂": [
+        "⇌": [
           {
-            "token": "federal capital district",
-            "weight": 0.75
+            "token": "patience",
+            "weight": 0.45
           }
         ],
-        "∈": [
+        "≈": [
           {
-            "token": "country",
-            "weight": 0.9
-          }
-        ],
-        "⊏": [
+            "token": "flexibility",
+            "weight": 0.4
+          },
           {
-            "token": "North America",
-            "weight": 0.7
+            "token": "states",
+            "weight": 0.64
+          },
+          {
+            "token": "statees",
+            "weight": 0.64
+          },
+          {
+            "token": "stateed",
+            "weight": 0.64
+          },
+          {
+            "token": "stateing",
+            "weight": 0.64
+          },
+          {
+            "token": "stateer",
+            "weight": 0.64
+          },
+          {
+            "token": "stateest",
+            "weight": 0.64
+          },
+          {
+            "token": "stately",
+            "weight": 0.64
           }
         ],
         "⊐": [
           {
-            "token": "USA",
-            "weight": 0.9
-          },
-          {
-            "token": "50 states",
-            "weight": 0.88
+            "token": "identity",
+            "weight": 0.35
           }
         ],
-        "∝": [
+        "⊏": [
           {
-            "token": "megadiverse country",
-            "weight": 0.65
+            "token": "iteration",
+            "weight": 0.3
           }
         ]
       },
-      "cached_at": "2025-10-18T17:10:24.677Z"
+      "cached_at": "2025-10-23T16:50:34.005Z"
+    },
+    {
+      "token": "stateed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "state",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:34.026Z"
+    },
+    {
+      "token": "stateer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "state",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:34.046Z"
+    },
+    {
+      "token": "statees",
+      "relationships": {
+        "≈": [
+          {
+            "token": "state",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:34.015Z"
+    },
+    {
+      "token": "stateest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "state",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:34.057Z"
+    },
+    {
+      "token": "stateing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "state",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:34.036Z"
+    },
+    {
+      "token": "stately",
+      "relationships": {
+        "≈": [
+          {
+            "token": "state",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:34.069Z"
+    },
+    {
+      "token": "states",
+      "relationships": {
+        "≈": [
+          {
+            "token": "state",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:34.005Z"
     },
     {
       "token": "states'",
@@ -9570,58 +10646,50 @@
     {
       "token": "step",
       "relationships": {
-        "⊂": [
+        "≈": [
           {
-            "token": "HLSF",
-            "weight": 0.85
-          },
-          {
-            "token": "temple",
-            "weight": 0.75
-          }
-        ],
-        "⊕": [
-          {
-            "token": "resonator",
-            "weight": 0.8
-          },
-          {
-            "token": "geometry",
-            "weight": 0.7
-          }
-        ],
-        "∝": [
-          {
-            "token": "standing waves",
-            "weight": 0.65
-          }
-        ],
-        "≜": [
-          {
-            "token": "energy lattice",
-            "weight": 0.9
-          }
-        ],
-        "⊛": [
-          {
-            "token": "sacred geometry",
-            "weight": 0.6
-          }
-        ],
-        "∼": [
-          {
-            "token": "phase node",
-            "weight": 0.55
-          }
-        ],
-        "→": [
-          {
-            "token": "corridor",
-            "weight": 0.5
+            "token": "steps",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-19T06:39:49.775Z"
+      "cached_at": "2025-10-23T01:42:41.075Z"
+    },
+    {
+      "token": "steped",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.095Z"
+    },
+    {
+      "token": "steper",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.114Z"
+    },
+    {
+      "token": "stepes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.085Z"
     },
     {
       "token": "stephen",
@@ -9684,6 +10752,212 @@
         ]
       },
       "cached_at": "2025-10-18T17:25:58.783Z"
+    },
+    {
+      "token": "steping",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.105Z"
+    },
+    {
+      "token": "steps",
+      "relationships": {
+        "≡": [
+          {
+            "token": "scientific method",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "scientific process",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "experimentation",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "phases",
+            "weight": 0.6
+          },
+          {
+            "token": "stepss",
+            "weight": 0.64
+          },
+          {
+            "token": "stepses",
+            "weight": 0.64
+          },
+          {
+            "token": "stepsed",
+            "weight": 0.64
+          },
+          {
+            "token": "stepsing",
+            "weight": 0.64
+          },
+          {
+            "token": "stepser",
+            "weight": 0.64
+          },
+          {
+            "token": "stepsest",
+            "weight": 0.64
+          },
+          {
+            "token": "stepsly",
+            "weight": 0.64
+          },
+          {
+            "token": "step",
+            "weight": 0.64
+          },
+          {
+            "token": "stepes",
+            "weight": 0.64
+          },
+          {
+            "token": "steped",
+            "weight": 0.64
+          },
+          {
+            "token": "steping",
+            "weight": 0.64
+          }
+        ],
+        "∈": [
+          {
+            "token": "methodology",
+            "weight": 0.75
+          }
+        ],
+        "⊏": [
+          {
+            "token": "research framework",
+            "weight": 0.65
+          }
+        ],
+        "⊐": [
+          {
+            "token": "theories",
+            "weight": 0.5
+          }
+        ],
+        "⇒": [
+          {
+            "token": "iteration",
+            "weight": 0.85
+          }
+        ],
+        "⇐": [
+          {
+            "token": "observation",
+            "weight": 0.6
+          }
+        ],
+        "⇄": [
+          {
+            "token": "analysis",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:40.995Z"
+    },
+    {
+      "token": "stepsed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.017Z"
+    },
+    {
+      "token": "stepser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.037Z"
+    },
+    {
+      "token": "stepses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.005Z"
+    },
+    {
+      "token": "stepsest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.050Z"
+    },
+    {
+      "token": "stepsing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.027Z"
+    },
+    {
+      "token": "stepsly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.064Z"
+    },
+    {
+      "token": "stepss",
+      "relationships": {
+        "≈": [
+          {
+            "token": "steps",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:40.995Z"
     },
     {
       "token": "stipulated",
@@ -10928,56 +12202,264 @@
       "cached_at": "2025-10-19T06:34:42.938Z"
     },
     {
+      "token": "student",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.296Z"
+    },
+    {
+      "token": "studented",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.315Z"
+    },
+    {
+      "token": "studenter",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.334Z"
+    },
+    {
+      "token": "studentes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.305Z"
+    },
+    {
+      "token": "studenting",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.324Z"
+    },
+    {
       "token": "students",
       "relationships": {
         "≈": [
           {
-            "token": "scholars",
+            "token": "learners",
             "weight": 0.85
+          },
+          {
+            "token": "studentss",
+            "weight": 0.64
+          },
+          {
+            "token": "studentses",
+            "weight": 0.64
+          },
+          {
+            "token": "studentsed",
+            "weight": 0.64
+          },
+          {
+            "token": "studentsing",
+            "weight": 0.64
+          },
+          {
+            "token": "studentser",
+            "weight": 0.64
+          },
+          {
+            "token": "studentsest",
+            "weight": 0.64
+          },
+          {
+            "token": "studentsly",
+            "weight": 0.64
+          },
+          {
+            "token": "student",
+            "weight": 0.64
+          },
+          {
+            "token": "studentes",
+            "weight": 0.64
+          },
+          {
+            "token": "studented",
+            "weight": 0.64
+          },
+          {
+            "token": "studenting",
+            "weight": 0.64
           }
         ],
         "⊂": [
           {
-            "token": "higher education",
-            "weight": 0.9
-          }
-        ],
-        "⊐": [
+            "token": "classroom",
+            "weight": 0.75
+          },
           {
-            "token": "universities",
-            "weight": 0.88
+            "token": "education",
+            "weight": 0.7
           }
         ],
         "⊛": [
           {
-            "token": "innovation",
-            "weight": 0.8
+            "token": "teachers",
+            "weight": 0.65
           },
           {
-            "token": "cultural diversity",
-            "weight": 0.75
+            "token": "curriculum",
+            "weight": 0.6
           }
         ],
         "∝": [
           {
-            "token": "economic competitiveness",
+            "token": "engagement",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "inquiry",
+            "weight": 0.9
+          },
+          {
+            "token": "understanding",
+            "weight": 0.85
+          }
+        ],
+        "⊘": [
+          {
+            "token": "superficial methods",
+            "weight": 0.75
+          }
+        ],
+        "⇝": [
+          {
+            "token": "knowledge acquisition",
             "weight": 0.7
           }
         ],
-        "⇄": [
+        "⊏": [
           {
-            "token": "education system",
-            "weight": 0.65
+            "token": "science",
+            "weight": 0.88
           }
         ],
-        "→": [
+        "⇌": [
           {
-            "token": "international scholars",
-            "weight": 0.6
+            "token": "formulas",
+            "weight": 0.65
           }
         ]
       },
-      "cached_at": "2025-10-18T17:24:26.642Z"
+      "cached_at": "2025-10-23T16:46:29.230Z"
+    },
+    {
+      "token": "studentsed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.248Z"
+    },
+    {
+      "token": "studentser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.267Z"
+    },
+    {
+      "token": "studentses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.239Z"
+    },
+    {
+      "token": "studentsest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.277Z"
+    },
+    {
+      "token": "studentsing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.258Z"
+    },
+    {
+      "token": "studentsly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.287Z"
+    },
+    {
+      "token": "studentss",
+      "relationships": {
+        "≈": [
+          {
+            "token": "students",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:29.230Z"
     },
     {
       "token": "studies",
@@ -11336,50 +12818,242 @@
     {
       "token": "subtraction",
       "relationships": {
-        "≡": [
-          {
-            "token": "addition",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "arithmetic",
-            "weight": 0.9
-          }
-        ],
-        "⊂": [
-          {
-            "token": "mathematics",
-            "weight": 0.85
-          }
-        ],
         "≈": [
           {
-            "token": "negative",
-            "weight": 0.6
+            "token": "melting formulas",
+            "weight": 0.75
+          },
+          {
+            "token": "understanding concepts",
+            "weight": 0.7
+          },
+          {
+            "token": "subtractions",
+            "weight": 0.64
+          },
+          {
+            "token": "subtractiones",
+            "weight": 0.64
+          },
+          {
+            "token": "subtractioned",
+            "weight": 0.64
+          },
+          {
+            "token": "subtractioning",
+            "weight": 0.64
+          },
+          {
+            "token": "subtractioner",
+            "weight": 0.64
+          },
+          {
+            "token": "subtractionest",
+            "weight": 0.64
+          },
+          {
+            "token": "subtractionly",
+            "weight": 0.64
           }
         ],
-        "∈": [
+        "⊗": [
           {
-            "token": "operation",
+            "token": "learning science",
             "weight": 0.8
           }
         ],
-        "⊛": [
+        "⊋": [
           {
-            "token": "mathematical operations",
-            "weight": 0.75
+            "token": "derived knowledge",
+            "weight": 0.6
           }
         ],
-        "⇌": [
+        "∝": [
           {
-            "token": "inverse operation",
-            "weight": 0.7
+            "token": "students approach",
+            "weight": 0.65
+          },
+          {
+            "token": "experiment inquiry",
+            "weight": 0.55
+          }
+        ],
+        "∼": [
+          {
+            "token": "formulas",
+            "weight": 0.5
+          }
+        ],
+        "⊕": [
+          {
+            "token": "success",
+            "weight": 0.45
+          }
+        ],
+        "⊥": [
+          {
+            "token": "science courts",
+            "weight": 0.4
+          }
+        ],
+        "⊢": [
+          {
+            "token": "equations",
+            "weight": 0.3
+          }
+        ],
+        "⊄": [
+          {
+            "token": "effort",
+            "weight": 0.25
           }
         ]
       },
-      "cached_at": "2025-10-18T06:44:20.443Z"
+      "cached_at": "2025-10-23T16:46:56.312Z"
+    },
+    {
+      "token": "subtractioned",
+      "relationships": {
+        "≈": [
+          {
+            "token": "subtraction",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:56.330Z"
+    },
+    {
+      "token": "subtractioner",
+      "relationships": {
+        "≈": [
+          {
+            "token": "subtraction",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:56.349Z"
+    },
+    {
+      "token": "subtractiones",
+      "relationships": {
+        "≈": [
+          {
+            "token": "subtraction",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:56.321Z"
+    },
+    {
+      "token": "subtractionest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "subtraction",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:56.358Z"
+    },
+    {
+      "token": "subtractioning",
+      "relationships": {
+        "≈": [
+          {
+            "token": "subtraction",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:56.340Z"
+    },
+    {
+      "token": "subtractionly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "subtraction",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:56.368Z"
+    },
+    {
+      "token": "subtractions",
+      "relationships": {
+        "≈": [
+          {
+            "token": "subtraction",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:56.312Z"
+    },
+    {
+      "token": "succes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.523Z"
+    },
+    {
+      "token": "succesed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.542Z"
+    },
+    {
+      "token": "succeser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.561Z"
+    },
+    {
+      "token": "succeses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.532Z"
+    },
+    {
+      "token": "succesing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.552Z"
     },
     {
       "token": "success",
@@ -11390,50 +13064,142 @@
             "weight": 0.95
           }
         ],
-        "⊕": [
+        "≈": [
           {
-            "token": "civic responsibility",
+            "token": "accomplishment",
             "weight": 0.85
           },
           {
-            "token": "political engagement",
+            "token": "triumph",
             "weight": 0.8
+          },
+          {
+            "token": "successs",
+            "weight": 0.64
+          },
+          {
+            "token": "successes",
+            "weight": 0.64
+          },
+          {
+            "token": "successed",
+            "weight": 0.64
+          },
+          {
+            "token": "successing",
+            "weight": 0.64
+          },
+          {
+            "token": "successer",
+            "weight": 0.64
+          },
+          {
+            "token": "successest",
+            "weight": 0.64
+          },
+          {
+            "token": "successly",
+            "weight": 0.64
+          },
+          {
+            "token": "succes",
+            "weight": 0.64
+          },
+          {
+            "token": "succeses",
+            "weight": 0.64
+          },
+          {
+            "token": "succesed",
+            "weight": 0.64
           }
         ],
-        "⊛": [
+        "⊕": [
           {
-            "token": "democratic principles",
+            "token": "effort",
             "weight": 0.9
           },
           {
-            "token": "moral integrity",
-            "weight": 0.75
+            "token": "understanding",
+            "weight": 0.88
           }
         ],
         "∝": [
           {
-            "token": "active participation",
-            "weight": 0.7
+            "token": "knowledge",
+            "weight": 0.75
           },
           {
-            "token": "individual rights",
-            "weight": 0.65
+            "token": "engagement",
+            "weight": 0.7
           }
         ],
-        "⇝": [
+        "⊗": [
           {
-            "token": "political freedom",
-            "weight": 0.8
+            "token": "inquiry",
+            "weight": 0.82
           }
         ],
-        "∼": [
+        "≠": [
           {
-            "token": "prosperity",
-            "weight": 0.6
+            "token": "failure",
+            "weight": 0.9
+          },
+          {
+            "token": "superficiality",
+            "weight": 0.88
           }
         ]
       },
-      "cached_at": "2025-10-18T17:49:57.771Z"
+      "cached_at": "2025-10-23T16:46:50.458Z"
+    },
+    {
+      "token": "successed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.476Z"
+    },
+    {
+      "token": "successer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.495Z"
+    },
+    {
+      "token": "successes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.467Z"
+    },
+    {
+      "token": "successest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.504Z"
     },
     {
       "token": "successful",
@@ -11480,6 +13246,18 @@
         ]
       },
       "cached_at": "2025-10-18T17:33:47.784Z"
+    },
+    {
+      "token": "successing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.485Z"
     },
     {
       "token": "succession",
@@ -11532,204 +13310,450 @@
       "cached_at": "2025-10-18T06:42:50.669Z"
     },
     {
-      "token": "such",
+      "token": "successly",
       "relationships": {
         "≈": [
           {
-            "token": "these",
-            "weight": 0.8
-          }
-        ],
-        "∈": [
-          {
-            "token": "areas",
-            "weight": 0.9
-          }
-        ],
-        "⊂": [
-          {
-            "token": "mathematics",
-            "weight": 0.85
-          }
-        ],
-        "⊛": [
-          {
-            "token": "applications",
-            "weight": 0.75
-          }
-        ],
-        "∝": [
-          {
-            "token": "fields",
-            "weight": 0.7
-          }
-        ],
-        "⊕": [
-          {
-            "token": "domains",
-            "weight": 0.65
-          }
-        ],
-        "⇄": [
-          {
-            "token": "theories",
-            "weight": 0.6
+            "token": "success",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T06:22:57.434Z"
+      "cached_at": "2025-10-23T16:46:50.514Z"
     },
     {
-      "token": "suggesting",
+      "token": "successs",
+      "relationships": {
+        "≈": [
+          {
+            "token": "success",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:50.458Z"
+    },
+    {
+      "token": "such",
       "relationships": {
         "≡": [
           {
-            "token": "indicating",
+            "token": "science",
             "weight": 0.95
           }
         ],
         "⊃": [
           {
-            "token": "methods",
-            "weight": 0.8
+            "token": "scientific method",
+            "weight": 0.85
           },
           {
-            "token": "process",
-            "weight": 0.75
+            "token": "knowledge",
+            "weight": 0.8
           }
         ],
         "⊂": [
           {
-            "token": "analysis",
-            "weight": 0.85
-          },
-          {
-            "token": "clustering",
-            "weight": 0.7
+            "token": "experimentation",
+            "weight": 0.75
           }
         ],
         "≈": [
           {
-            "token": "implying",
-            "weight": 0.9
+            "token": "empirical evidence",
+            "weight": 0.7
+          },
+          {
+            "token": "suchs",
+            "weight": 0.64
+          },
+          {
+            "token": "suches",
+            "weight": 0.64
+          },
+          {
+            "token": "suched",
+            "weight": 0.64
+          },
+          {
+            "token": "suching",
+            "weight": 0.64
+          },
+          {
+            "token": "sucher",
+            "weight": 0.64
+          },
+          {
+            "token": "suchest",
+            "weight": 0.64
+          },
+          {
+            "token": "suchly",
+            "weight": 0.64
           }
         ],
         "∈": [
           {
-            "token": "algorithm",
-            "weight": 0.78
+            "token": "fields of science",
+            "weight": 0.65
           }
         ],
         "⊕": [
           {
-            "token": "exploration",
-            "weight": 0.88
+            "token": "innovation",
+            "weight": 0.6
           }
         ],
         "⊛": [
           {
-            "token": "similarity",
-            "weight": 0.82
+            "token": "critical thinking",
+            "weight": 0.55
           }
         ],
-        "⇌": [
+        "⇔": [
           {
-            "token": "threshold",
-            "weight": 0.76
+            "token": "peer review",
+            "weight": 0.5
           }
         ],
-        "∗": [
+        "→": [
           {
-            "token": "creativity",
-            "weight": 0.79
+            "token": "understanding",
+            "weight": 0.45
           }
         ],
-        "⇝": [
+        "∼": [
           {
-            "token": "insights",
-            "weight": 0.74
-          }
-        ],
-        "⇄": [
-          {
-            "token": "data points",
-            "weight": 0.77
-          }
-        ],
-        "∝": [
-          {
-            "token": "relevance",
-            "weight": 0.73
+            "token": "natural phenomena",
+            "weight": 0.4
           }
         ]
       },
-      "cached_at": "2025-10-19T06:25:40.810Z"
+      "cached_at": "2025-10-23T01:42:41.412Z"
+    },
+    {
+      "token": "suched",
+      "relationships": {
+        "≈": [
+          {
+            "token": "such",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.439Z"
+    },
+    {
+      "token": "sucher",
+      "relationships": {
+        "≈": [
+          {
+            "token": "such",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.459Z"
+    },
+    {
+      "token": "suches",
+      "relationships": {
+        "≈": [
+          {
+            "token": "such",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.428Z"
+    },
+    {
+      "token": "suchest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "such",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.469Z"
+    },
+    {
+      "token": "suching",
+      "relationships": {
+        "≈": [
+          {
+            "token": "such",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.449Z"
+    },
+    {
+      "token": "suchly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "such",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.478Z"
+    },
+    {
+      "token": "suchs",
+      "relationships": {
+        "≈": [
+          {
+            "token": "such",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:41.412Z"
+    },
+    {
+      "token": "suggest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.518Z"
+    },
+    {
+      "token": "suggested",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.538Z"
+    },
+    {
+      "token": "suggester",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.559Z"
+    },
+    {
+      "token": "suggestes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.528Z"
+    },
+    {
+      "token": "suggesting",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.549Z"
     },
     {
       "token": "suggests",
       "relationships": {
         "≡": [
           {
-            "token": "implies",
+            "token": "indicates",
             "weight": 0.95
           }
         ],
-        "⊃": [
+        "⊕": [
           {
-            "token": "theory of beauty",
+            "token": "implies",
+            "weight": 0.85
+          },
+          {
+            "token": "proposes",
             "weight": 0.8
-          },
-          {
-            "token": "architectural principles",
-            "weight": 0.75
-          }
-        ],
-        "⊂": [
-          {
-            "token": "Vitruvius's principles",
-            "weight": 0.7
-          },
-          {
-            "token": "Alberti's ideas",
-            "weight": 0.65
           }
         ],
         "≈": [
           {
-            "token": "indicates",
-            "weight": 0.6
-          }
-        ],
-        "∈": [
-          {
-            "token": "philosophical approach",
-            "weight": 0.85
-          }
-        ],
-        "⊛": [
-          {
-            "token": "aesthetic appeal",
-            "weight": 0.9
+            "token": "hints",
+            "weight": 0.75
           },
           {
-            "token": "harmonious arrangement",
-            "weight": 0.88
-          }
-        ],
-        "⇌": [
-          {
-            "token": "intrinsic quality",
+            "token": "recommends",
             "weight": 0.7
+          },
+          {
+            "token": "suggestss",
+            "weight": 0.64
+          },
+          {
+            "token": "suggestses",
+            "weight": 0.64
+          },
+          {
+            "token": "suggestsed",
+            "weight": 0.64
+          },
+          {
+            "token": "suggestsing",
+            "weight": 0.64
+          },
+          {
+            "token": "suggestser",
+            "weight": 0.64
+          },
+          {
+            "token": "suggestsest",
+            "weight": 0.64
+          },
+          {
+            "token": "suggestsly",
+            "weight": 0.64
+          },
+          {
+            "token": "suggest",
+            "weight": 0.64
+          },
+          {
+            "token": "suggestes",
+            "weight": 0.64
+          },
+          {
+            "token": "suggested",
+            "weight": 0.64
           }
         ],
         "⇝": [
           {
-            "token": "architectural beauty",
-            "weight": 0.75
+            "token": "advocates for",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "correlates with",
+            "weight": 0.6
+          }
+        ],
+        "⊗": [
+          {
+            "token": "synthesizes",
+            "weight": 0.55
+          }
+        ],
+        "⊏": [
+          {
+            "token": "part of",
+            "weight": 0.5
           }
         ]
       },
-      "cached_at": "2025-10-18T20:55:41.351Z"
+      "cached_at": "2025-10-23T16:47:38.449Z"
+    },
+    {
+      "token": "suggestsed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.468Z"
+    },
+    {
+      "token": "suggestser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.488Z"
+    },
+    {
+      "token": "suggestses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.459Z"
+    },
+    {
+      "token": "suggestsest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.498Z"
+    },
+    {
+      "token": "suggestsing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.479Z"
+    },
+    {
+      "token": "suggestsly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.508Z"
+    },
+    {
+      "token": "suggestss",
+      "relationships": {
+        "≈": [
+          {
+            "token": "suggests",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:38.449Z"
     },
     {
       "token": "summarizing",
@@ -11970,46 +13994,244 @@
       "cached_at": "2025-10-18T21:05:22.312Z"
     },
     {
+      "token": "superficial",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.827Z"
+    },
+    {
+      "token": "superficialed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.859Z"
+    },
+    {
+      "token": "superficiales",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.846Z"
+    },
+    {
+      "token": "superficiallies",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.747Z"
+    },
+    {
       "token": "superficially",
       "relationships": {
-        "≡": [
+        "≠": [
           {
-            "token": "applied",
-            "weight": 0.95
+            "token": "deeply",
+            "weight": 0.85
+          }
+        ],
+        "⊗": [
+          {
+            "token": "inquiry",
+            "weight": 0.7
+          },
+          {
+            "token": "understanding",
+            "weight": 0.65
           }
         ],
         "≈": [
           {
             "token": "surface-level",
-            "weight": 0.8
-          }
-        ],
-        "≠": [
+            "weight": 0.75
+          },
           {
-            "token": "deeply",
-            "weight": 0.9
+            "token": "superficiallies",
+            "weight": 0.64
+          },
+          {
+            "token": "superficiallys",
+            "weight": 0.64
+          },
+          {
+            "token": "superficiallyes",
+            "weight": 0.64
+          },
+          {
+            "token": "superficiallyed",
+            "weight": 0.64
+          },
+          {
+            "token": "superficiallying",
+            "weight": 0.64
+          },
+          {
+            "token": "superficiallyer",
+            "weight": 0.64
+          },
+          {
+            "token": "superficiallyest",
+            "weight": 0.64
+          },
+          {
+            "token": "superficiallyly",
+            "weight": 0.64
+          },
+          {
+            "token": "superficial",
+            "weight": 0.64
+          },
+          {
+            "token": "superficials",
+            "weight": 0.64
+          },
+          {
+            "token": "superficiales",
+            "weight": 0.64
           }
         ],
         "⊕": [
           {
-            "token": "intrinsically",
-            "weight": 0.85
+            "token": "engagement",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "effort",
+            "weight": 0.55
+          }
+        ],
+        "⊥": [
+          {
+            "token": "knowledge",
+            "weight": 0.5
           }
         ],
         "∼": [
           {
-            "token": "superficial",
-            "weight": 0.7
-          }
-        ],
-        "⊛": [
-          {
-            "token": "aesthetics",
-            "weight": 0.75
+            "token": "methods",
+            "weight": 0.4
           }
         ]
       },
-      "cached_at": "2025-10-18T20:55:18.215Z"
+      "cached_at": "2025-10-23T16:50:00.746Z"
+    },
+    {
+      "token": "superficiallyed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.776Z"
+    },
+    {
+      "token": "superficiallyer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.796Z"
+    },
+    {
+      "token": "superficiallyes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.766Z"
+    },
+    {
+      "token": "superficiallyest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.807Z"
+    },
+    {
+      "token": "superficiallying",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.786Z"
+    },
+    {
+      "token": "superficiallyly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.817Z"
+    },
+    {
+      "token": "superficiallys",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.756Z"
+    },
+    {
+      "token": "superficials",
+      "relationships": {
+        "≈": [
+          {
+            "token": "superficially",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:00.837Z"
     },
     {
       "token": "supplied",
@@ -13176,90 +15398,268 @@
       "cached_at": "2025-10-18T22:31:28.248Z"
     },
     {
+      "token": "synthesi",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.254Z"
+    },
+    {
+      "token": "synthesied",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.274Z"
+    },
+    {
+      "token": "synthesier",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.297Z"
+    },
+    {
+      "token": "synthesies",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.264Z"
+    },
+    {
+      "token": "synthesiing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.284Z"
+    },
+    {
       "token": "synthesis",
       "relationships": {
         "≡": [
           {
             "token": "integration",
             "weight": 0.95
-          },
-          {
-            "token": "combination",
-            "weight": 0.9
           }
         ],
         "⊃": [
           {
-            "token": "emergent thought",
-            "weight": 0.85
+            "token": "knowledge acquisition",
+            "weight": 0.9
           },
           {
-            "token": "response refinement",
-            "weight": 0.8
+            "token": "scientific inquiry",
+            "weight": 0.85
           }
         ],
         "⊂": [
           {
-            "token": "attention score calculation",
-            "weight": 0.75
+            "token": "understanding",
+            "weight": 0.88
           }
         ],
         "≈": [
           {
-            "token": "collaboration",
-            "weight": 0.7
+            "token": "reflection",
+            "weight": 0.8
+          },
+          {
+            "token": "synthesiss",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesises",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesised",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesising",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesiser",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesisest",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesisly",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesi",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesies",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesied",
+            "weight": 0.64
+          },
+          {
+            "token": "synthesiing",
+            "weight": 0.64
           }
         ],
         "∈": [
           {
-            "token": "process",
-            "weight": 0.65
-          }
-        ],
-        "⊐": [
-          {
-            "token": "data analysis",
-            "weight": 0.6
+            "token": "educational process",
+            "weight": 0.75
           }
         ],
         "⊛": [
           {
-            "token": "innovation",
-            "weight": 0.55
-          }
-        ],
-        "⇌": [
-          {
-            "token": "feedback loop",
-            "weight": 0.5
-          }
-        ],
-        "⊕": [
-          {
-            "token": "creativity",
-            "weight": 0.45
-          }
-        ],
-        "⊗": [
-          {
-            "token": "knowledge synthesis",
-            "weight": 0.4
+            "token": "critical thinking",
+            "weight": 0.82
           }
         ],
         "∝": [
           {
-            "token": "development",
-            "weight": 0.35
+            "token": "engagement",
+            "weight": 0.78
           }
         ],
-        "↶": [
+        "⇝": [
           {
-            "token": "self-reference",
-            "weight": 0.3
+            "token": "learning outcomes",
+            "weight": 0.77
+          }
+        ],
+        "⊗": [
+          {
+            "token": "methodology",
+            "weight": 0.73
+          }
+        ],
+        "≠": [
+          {
+            "token": "superficial learning",
+            "weight": 0.83
+          }
+        ],
+        "⊕": [
+          {
+            "token": "inquiry-based learning",
+            "weight": 0.79
           }
         ]
       },
-      "cached_at": "2025-10-18T22:30:52.705Z"
+      "cached_at": "2025-10-23T16:49:53.183Z"
+    },
+    {
+      "token": "synthesised",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.202Z"
+    },
+    {
+      "token": "synthesiser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.223Z"
+    },
+    {
+      "token": "synthesises",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.193Z"
+    },
+    {
+      "token": "synthesisest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.233Z"
+    },
+    {
+      "token": "synthesising",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.213Z"
+    },
+    {
+      "token": "synthesisly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.244Z"
+    },
+    {
+      "token": "synthesiss",
+      "relationships": {
+        "≈": [
+          {
+            "token": "synthesis",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:53.183Z"
     },
     {
       "token": "synthesizing",
@@ -13412,6 +15812,188 @@
         ]
       },
       "cached_at": "2025-10-18T17:11:48.062Z"
+    },
+    {
+      "token": "systematic",
+      "relationships": {
+        "≡": [
+          {
+            "token": "methodical",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "scientific method",
+            "weight": 0.9
+          },
+          {
+            "token": "empirical evidence",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "science",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "organized",
+            "weight": 0.8
+          },
+          {
+            "token": "systematics",
+            "weight": 0.64
+          },
+          {
+            "token": "systematices",
+            "weight": 0.64
+          },
+          {
+            "token": "systematiced",
+            "weight": 0.64
+          },
+          {
+            "token": "systematicing",
+            "weight": 0.64
+          },
+          {
+            "token": "systematicer",
+            "weight": 0.64
+          },
+          {
+            "token": "systematicest",
+            "weight": 0.64
+          },
+          {
+            "token": "systematicly",
+            "weight": 0.64
+          }
+        ],
+        "∈": [
+          {
+            "token": "research",
+            "weight": 0.75
+          }
+        ],
+        "⊤": [
+          {
+            "token": "enterprise",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "knowledge",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "logical reasoning",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "scientific inquiry",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "problem solving",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:33.145Z"
+    },
+    {
+      "token": "systematiced",
+      "relationships": {
+        "≈": [
+          {
+            "token": "systematic",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:33.166Z"
+    },
+    {
+      "token": "systematicer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "systematic",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:33.185Z"
+    },
+    {
+      "token": "systematices",
+      "relationships": {
+        "≈": [
+          {
+            "token": "systematic",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:33.157Z"
+    },
+    {
+      "token": "systematicest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "systematic",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:33.195Z"
+    },
+    {
+      "token": "systematicing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "systematic",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:33.176Z"
+    },
+    {
+      "token": "systematicly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "systematic",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:33.205Z"
+    },
+    {
+      "token": "systematics",
+      "relationships": {
+        "≈": [
+          {
+            "token": "systematic",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:41:33.146Z"
     },
     {
       "token": "systems",

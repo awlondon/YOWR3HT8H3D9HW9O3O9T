@@ -1,15 +1,15 @@
 {
   "version": "2.0",
-  "generated_at": "2025-10-19T07:14:39.313Z",
-  "source": "HLSF_Database_2025-10-19.json",
-  "total_tokens": 2430,
-  "total_relationships": 24332,
+  "generated_at": "2025-10-23T16:55:13.687Z",
+  "source": "HLSF_Database_2025-10-23.json",
+  "total_tokens": 4427,
+  "total_relationships": 27695,
   "chunk_prefix_length": 1,
   "chunks": [
     {
       "prefix": "0",
       "href": "chunks/0.json",
-      "token_count": 2
+      "token_count": 9
     },
     {
       "prefix": "1",
@@ -24,7 +24,7 @@
     {
       "prefix": "3",
       "href": "chunks/3.json",
-      "token_count": 3
+      "token_count": 10
     },
     {
       "prefix": "4",
@@ -59,52 +59,52 @@
     {
       "prefix": "_",
       "href": "chunks/_.json",
-      "token_count": 1
+      "token_count": 8
     },
     {
       "prefix": "a",
       "href": "chunks/a.json",
-      "token_count": 208
+      "token_count": 419
     },
     {
       "prefix": "b",
       "href": "chunks/b.json",
-      "token_count": 81
+      "token_count": 173
     },
     {
       "prefix": "c",
       "href": "chunks/c.json",
-      "token_count": 259
+      "token_count": 433
     },
     {
       "prefix": "d",
       "href": "chunks/d.json",
-      "token_count": 126
+      "token_count": 191
     },
     {
       "prefix": "e",
       "href": "chunks/e.json",
-      "token_count": 150
+      "token_count": 354
     },
     {
       "prefix": "f",
       "href": "chunks/f.json",
-      "token_count": 103
+      "token_count": 229
     },
     {
       "prefix": "g",
       "href": "chunks/g.json",
-      "token_count": 68
+      "token_count": 87
     },
     {
       "prefix": "h",
       "href": "chunks/h.json",
-      "token_count": 69
+      "token_count": 91
     },
     {
       "prefix": "i",
       "href": "chunks/i.json",
-      "token_count": 147
+      "token_count": 253
     },
     {
       "prefix": "j",
@@ -114,72 +114,72 @@
     {
       "prefix": "k",
       "href": "chunks/k.json",
-      "token_count": 5
+      "token_count": 40
     },
     {
       "prefix": "l",
       "href": "chunks/l.json",
-      "token_count": 89
+      "token_count": 111
     },
     {
       "prefix": "m",
       "href": "chunks/m.json",
-      "token_count": 136
+      "token_count": 234
     },
     {
       "prefix": "n",
       "href": "chunks/n.json",
-      "token_count": 39
+      "token_count": 115
     },
     {
       "prefix": "o",
       "href": "chunks/o.json",
-      "token_count": 62
+      "token_count": 133
     },
     {
       "prefix": "p",
       "href": "chunks/p.json",
-      "token_count": 172
+      "token_count": 292
     },
     {
       "prefix": "q",
       "href": "chunks/q.json",
-      "token_count": 9
+      "token_count": 21
     },
     {
       "prefix": "r",
       "href": "chunks/r.json",
-      "token_count": 144
+      "token_count": 224
     },
     {
       "prefix": "s",
       "href": "chunks/s.json",
-      "token_count": 213
+      "token_count": 387
     },
     {
       "prefix": "t",
       "href": "chunks/t.json",
-      "token_count": 131
+      "token_count": 250
     },
     {
       "prefix": "u",
       "href": "chunks/u.json",
-      "token_count": 36
+      "token_count": 94
     },
     {
       "prefix": "v",
       "href": "chunks/v.json",
-      "token_count": 38
+      "token_count": 62
     },
     {
       "prefix": "w",
       "href": "chunks/w.json",
-      "token_count": 54
+      "token_count": 115
     },
     {
       "prefix": "y",
       "href": "chunks/y.json",
-      "token_count": 8
+      "token_count": 15
     },
     {
       "prefix": "φ",

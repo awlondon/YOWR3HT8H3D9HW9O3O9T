@@ -1,6 +1,6 @@
 {
   "prefix": "h",
-  "token_count": 69,
+  "token_count": 91,
   "tokens": [
     {
       "token": "habitat",
@@ -2519,242 +2519,260 @@
     {
       "token": "highlight",
       "relationships": {
-        "≡": [
+        "≈": [
           {
-            "token": "emphasize",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "economic performance",
-            "weight": 0.8
-          },
-          {
-            "token": "cultural diversity",
-            "weight": 0.8
-          }
-        ],
-        "⊂": [
-          {
-            "token": "United States",
-            "weight": 0.9
-          }
-        ],
-        "∈": [
-          {
-            "token": "attributes",
-            "weight": 0.7
-          }
-        ],
-        "⊛": [
-          {
-            "token": "significance",
-            "weight": 0.75
-          },
-          {
-            "token": "importance",
-            "weight": 0.75
-          }
-        ],
-        "∝": [
-          {
-            "token": "economic growth",
-            "weight": 0.65
-          },
-          {
-            "token": "global influence",
-            "weight": 0.65
-          }
-        ],
-        "⇝": [
-          {
-            "token": "factors",
-            "weight": 0.6
+            "token": "highlights",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T17:23:25.748Z"
+      "cached_at": "2025-10-23T16:46:34.765Z"
     },
     {
       "token": "highlighted",
       "relationships": {
-        "≡": [
+        "≈": [
           {
-            "token": "highlight",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "Human Genome Project",
-            "weight": 0.85
-          },
-          {
-            "token": "advancements in genetics",
-            "weight": 0.8
-          }
-        ],
-        "⊂": [
-          {
-            "token": "groundbreaking advancements",
-            "weight": 0.75
-          }
-        ],
-        "∈": [
-          {
-            "token": "medical research",
-            "weight": 0.7
-          }
-        ],
-        "⊛": [
-          {
-            "token": "scientific research",
-            "weight": 0.65
-          },
-          {
-            "token": "technology",
-            "weight": 0.6
-          }
-        ],
-        "⇝": [
-          {
-            "token": "future medical advancements",
-            "weight": 0.55
-          }
-        ],
-        "⇌": [
-          {
-            "token": "impact on industries",
-            "weight": 0.5
-          }
-        ],
-        "∝": [
-          {
-            "token": "technological changes",
-            "weight": 0.45
-          }
-        ],
-        "⇄": [
-          {
-            "token": "social changes",
-            "weight": 0.4
+            "token": "highlights",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T18:28:15.415Z"
+      "cached_at": "2025-10-23T16:46:34.784Z"
+    },
+    {
+      "token": "highlighter",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.804Z"
+    },
+    {
+      "token": "highlightes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.775Z"
     },
     {
       "token": "highlighting",
       "relationships": {
-        "⊛": [
-          {
-            "token": "Goseck Circle",
-            "weight": 0.85
-          },
-          {
-            "token": "Neolithic society",
-            "weight": 0.75
-          },
-          {
-            "token": "ceremonial structures",
-            "weight": 0.7
-          },
-          {
-            "token": "archaeological significance",
-            "weight": 0.65
-          }
-        ],
         "≈": [
           {
-            "token": "communal activities",
-            "weight": 0.6
-          },
-          {
-            "token": "belief systems",
-            "weight": 0.55
-          }
-        ],
-        "∝": [
-          {
-            "token": "agricultural cycles",
-            "weight": 0.5
-          },
-          {
-            "token": "seasonal changes",
-            "weight": 0.45
-          }
-        ],
-        "⊕": [
-          {
-            "token": "social dynamics",
-            "weight": 0.4
-          },
-          {
-            "token": "cultural dynamics",
-            "weight": 0.35
-          }
-        ],
-        "∈": [
-          {
-            "token": "prehistoric Europe",
-            "weight": 0.3
+            "token": "highlights",
+            "weight": 0.64
           }
         ]
       },
-      "cached_at": "2025-10-18T21:06:03.568Z"
+      "cached_at": "2025-10-23T16:46:34.794Z"
     },
     {
       "token": "highlights",
       "relationships": {
         "≡": [
           {
-            "token": "emerging identity",
+            "token": "emphasizes",
             "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "challenges",
+            "weight": 0.8
+          },
+          {
+            "token": "understanding",
+            "weight": 0.75
           }
         ],
         "⊂": [
           {
-            "token": "documented uses",
+            "token": "inquiry",
             "weight": 0.85
-          }
-        ],
-        "⊛": [
-          {
-            "token": "American Revolution",
-            "weight": 0.8
-          },
-          {
-            "token": "unified entity",
-            "weight": 0.75
-          }
-        ],
-        "∝": [
-          {
-            "token": "independence",
-            "weight": 0.7
           }
         ],
         "≈": [
           {
-            "token": "formal recognition",
-            "weight": 0.65
+            "token": "illuminates",
+            "weight": 0.7
+          },
+          {
+            "token": "highlightss",
+            "weight": 0.64
+          },
+          {
+            "token": "highlightses",
+            "weight": 0.64
+          },
+          {
+            "token": "highlightsed",
+            "weight": 0.64
+          },
+          {
+            "token": "highlightsing",
+            "weight": 0.64
+          },
+          {
+            "token": "highlightser",
+            "weight": 0.64
+          },
+          {
+            "token": "highlightsest",
+            "weight": 0.64
+          },
+          {
+            "token": "highlightsly",
+            "weight": 0.64
+          },
+          {
+            "token": "highlight",
+            "weight": 0.64
+          },
+          {
+            "token": "highlightes",
+            "weight": 0.64
+          },
+          {
+            "token": "highlighted",
+            "weight": 0.64
+          },
+          {
+            "token": "highlighting",
+            "weight": 0.64
+          }
+        ],
+        "∈": [
+          {
+            "token": "concepts",
+            "weight": 0.9
+          }
+        ],
+        "⊕": [
+          {
+            "token": "knowledge",
+            "weight": 0.88
           }
         ],
         "⇝": [
           {
-            "token": "new nation",
-            "weight": 0.6
+            "token": "engagement",
+            "weight": 0.82
           }
         ],
-        "∼": [
+        "∝": [
           {
-            "token": "unity among colonies",
-            "weight": 0.55
+            "token": "effort",
+            "weight": 0.79
+          }
+        ],
+        "⊛": [
+          {
+            "token": "learning process",
+            "weight": 0.77
+          }
+        ],
+        "≠": [
+          {
+            "token": "superficial methods",
+            "weight": 0.8
           }
         ]
       },
-      "cached_at": "2025-10-18T17:26:23.192Z"
+      "cached_at": "2025-10-23T16:46:34.699Z"
+    },
+    {
+      "token": "highlightsed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.717Z"
+    },
+    {
+      "token": "highlightser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.736Z"
+    },
+    {
+      "token": "highlightses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.708Z"
+    },
+    {
+      "token": "highlightsest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.745Z"
+    },
+    {
+      "token": "highlightsing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.726Z"
+    },
+    {
+      "token": "highlightsly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.755Z"
+    },
+    {
+      "token": "highlightss",
+      "relationships": {
+        "≈": [
+          {
+            "token": "highlights",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:46:34.699Z"
     },
     {
       "token": "highly",
@@ -4425,6 +4443,272 @@
         ]
       },
       "cached_at": "2025-10-18T22:31:23.686Z"
+    },
+    {
+      "token": "hypothes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.268Z"
+    },
+    {
+      "token": "hypothesed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.286Z"
+    },
+    {
+      "token": "hypotheser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.305Z"
+    },
+    {
+      "token": "hypotheses",
+      "relationships": {
+        "≡": [
+          {
+            "token": "hypothesis",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "scientific method",
+            "weight": 0.8
+          }
+        ],
+        "⊃": [
+          {
+            "token": "science",
+            "weight": 0.9
+          }
+        ],
+        "∈": [
+          {
+            "token": "scientific inquiry",
+            "weight": 0.75
+          }
+        ],
+        "⊏": [
+          {
+            "token": "experimentation",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "theory",
+            "weight": 0.85
+          }
+        ],
+        "∝": [
+          {
+            "token": "data analysis",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "conclusions",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "predictions",
+            "weight": 0.55
+          }
+        ],
+        "↔": [
+          {
+            "token": "empirical evidence",
+            "weight": 0.5
+          }
+        ],
+        "⊛": [
+          {
+            "token": "critical thinking",
+            "weight": 0.4
+          }
+        ],
+        "≈": [
+          {
+            "token": "hypothesess",
+            "weight": 0.64
+          },
+          {
+            "token": "hypotheseses",
+            "weight": 0.64
+          },
+          {
+            "token": "hypothesesed",
+            "weight": 0.64
+          },
+          {
+            "token": "hypothesesing",
+            "weight": 0.64
+          },
+          {
+            "token": "hypotheseser",
+            "weight": 0.64
+          },
+          {
+            "token": "hypothesesest",
+            "weight": 0.64
+          },
+          {
+            "token": "hypothesesly",
+            "weight": 0.64
+          },
+          {
+            "token": "hypothes",
+            "weight": 0.64
+          },
+          {
+            "token": "hypothess",
+            "weight": 0.64
+          },
+          {
+            "token": "hypothesed",
+            "weight": 0.64
+          },
+          {
+            "token": "hypothesing",
+            "weight": 0.64
+          },
+          {
+            "token": "hypotheser",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.200Z"
+    },
+    {
+      "token": "hypothesesed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.220Z"
+    },
+    {
+      "token": "hypotheseser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.239Z"
+    },
+    {
+      "token": "hypotheseses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.211Z"
+    },
+    {
+      "token": "hypothesesest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.249Z"
+    },
+    {
+      "token": "hypothesesing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.230Z"
+    },
+    {
+      "token": "hypothesesly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.258Z"
+    },
+    {
+      "token": "hypothesess",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.200Z"
+    },
+    {
+      "token": "hypothesing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.295Z"
+    },
+    {
+      "token": "hypothess",
+      "relationships": {
+        "≈": [
+          {
+            "token": "hypotheses",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:42:24.277Z"
     },
     {
       "token": "hz",
