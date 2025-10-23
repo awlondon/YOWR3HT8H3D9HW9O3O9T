@@ -4186,7 +4186,7 @@
       }
 
       if (removed > 0 && typeof state !== 'undefined' && state && typeof state === 'object') {
-        state.documentCacheBaseline = 0;
+        setDocumentCacheBaseline(0, { manual: true });
       }
       return removed;
     }
@@ -4538,6 +4538,7 @@
       liveGraph: { nodes: new Map(), links: [] },
       liveGraphMode: true,
       documentCacheBaseline: 0,
+      documentCacheBaselineManuallyCleared: false,
       networkOffline: false,
       networkErrorNotified: false,
       lastNetworkErrorTime: 0,
@@ -5249,6 +5250,37 @@
       return parts.join(' ');
     }
 
+    function getDocumentCacheBaseline() {
+      return Number.isFinite(state.documentCacheBaseline)
+        ? Math.max(0, state.documentCacheBaseline)
+        : 0;
+    }
+
+    function setDocumentCacheBaseline(value, options = {}) {
+      const manual = options?.manual === true;
+      const normalized = Number.isFinite(value) ? Math.max(0, value) : getDocumentCacheBaseline();
+
+      if (manual) {
+        state.documentCacheBaseline = normalized;
+        state.documentCacheBaselineManuallyCleared = normalized === 0;
+        return state.documentCacheBaseline;
+      }
+
+      if (normalized > 0) {
+        state.documentCacheBaseline = normalized;
+        state.documentCacheBaselineManuallyCleared = false;
+        return state.documentCacheBaseline;
+      }
+
+      const existing = getDocumentCacheBaseline();
+      if (state.documentCacheBaselineManuallyCleared || existing === 0) {
+        state.documentCacheBaseline = 0;
+        return 0;
+      }
+
+      return existing;
+    }
+
     function getCachedTokenCount() {
       const cachedKeys = safeStorageKeys(TOKEN_CACHE_PREFIX).length;
       if (cachedKeys > 0) return cachedKeys;
@@ -5265,6 +5297,11 @@
       const db = getDb();
       if (db && Array.isArray(db.full_token_data)) {
         return db.full_token_data.length;
+      }
+
+      const baseline = getDocumentCacheBaseline();
+      if (baseline > 0 && !state.documentCacheBaselineManuallyCleared) {
+        return baseline;
       }
 
       return 0;
@@ -5769,21 +5806,27 @@
       const total = totalApiCalls + totalCacheHits;
       const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) + '%' : '—';
 
-      let baseline = Number.isFinite(state.documentCacheBaseline)
-        ? Math.max(0, state.documentCacheBaseline)
-        : 0;
+      let baseline = getDocumentCacheBaseline();
+      const manualReset = state.documentCacheBaselineManuallyCleared === true;
 
       const rawCount = getCachedTokenCount();
-      let cachedCount;
+      let cachedCount = baseline;
 
       if (Number.isFinite(rawCount)) {
-        cachedCount = Math.max(0, rawCount);
-        if (cachedCount !== baseline) {
-          state.documentCacheBaseline = cachedCount;
-          baseline = cachedCount;
+        const normalized = Math.max(0, rawCount);
+        if (normalized > 0) {
+          cachedCount = normalized;
+          if (normalized !== baseline) {
+            baseline = setDocumentCacheBaseline(normalized);
+          } else if (manualReset) {
+            state.documentCacheBaselineManuallyCleared = false;
+          }
+        } else if (manualReset) {
+          cachedCount = 0;
+          baseline = setDocumentCacheBaseline(0, { manual: true });
         }
-      } else {
-        cachedCount = baseline;
+      } else if (manualReset && baseline === 0) {
+        cachedCount = 0;
       }
 
       elements.cacheHitRate.textContent = hitRate;
@@ -8534,11 +8577,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
       const cachedSnapshot = getCachedTokenCount();
       if (Number.isFinite(cachedSnapshot)) {
-        const existingBaseline = Number.isFinite(state.documentCacheBaseline)
-          ? Math.max(0, state.documentCacheBaseline)
-          : 0;
+        const existingBaseline = getDocumentCacheBaseline();
         const snapshotValue = Math.max(0, cachedSnapshot);
-        state.documentCacheBaseline = Math.max(existingBaseline, snapshotValue);
+        setDocumentCacheBaseline(Math.max(existingBaseline, snapshotValue));
         updateStats();
       }
       input.value = '';
@@ -9799,7 +9840,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               window.HLSF.__centerInit = false;
             }
             Session.tokens.clear();
-            state.documentCacheBaseline = 0;
+            setDocumentCacheBaseline(0, { manual: true });
             updateStats();
             scheduleHlsfReload('reset', { immediate: true });
             const clearedMsg = hadDbSnapshot
@@ -11085,14 +11126,12 @@ Write a reflective synthesis of this passage in the voice of the cached database
           estimator?.markCancelled();
         }
         const finalSnapshot = getCachedTokenCount();
-        const existingBaseline = Number.isFinite(state.documentCacheBaseline)
-          ? Math.max(0, state.documentCacheBaseline)
-          : 0;
+        const existingBaseline = getDocumentCacheBaseline();
         if (Number.isFinite(finalSnapshot)) {
           const snapshotValue = Math.max(0, finalSnapshot);
-          state.documentCacheBaseline = Math.max(existingBaseline, snapshotValue);
+          setDocumentCacheBaseline(Math.max(existingBaseline, snapshotValue));
         } else {
-          state.documentCacheBaseline = existingBaseline;
+          setDocumentCacheBaseline(existingBaseline);
         }
         updateStats();
         exitProcessingState({ preserveInput: true });
@@ -11184,15 +11223,11 @@ Write a reflective synthesis of this passage in the voice of the cached database
     async function initialize() {
       let cachedCount = getCachedTokenCount();
       if (Number.isFinite(cachedCount)) {
-        const currentBaseline = Number.isFinite(state.documentCacheBaseline)
-          ? Math.max(0, state.documentCacheBaseline)
-          : 0;
-        state.documentCacheBaseline = Math.max(currentBaseline, Math.max(0, cachedCount));
+        const currentBaseline = getDocumentCacheBaseline();
+        setDocumentCacheBaseline(Math.max(currentBaseline, Math.max(0, cachedCount)));
       } else {
         cachedCount = 0;
-        state.documentCacheBaseline = Math.max(0, Number.isFinite(state.documentCacheBaseline)
-          ? state.documentCacheBaseline
-          : 0);
+        setDocumentCacheBaseline(Math.max(0, getDocumentCacheBaseline()));
       }
       updateStats();
 
@@ -11218,10 +11253,8 @@ Write a reflective synthesis of this passage in the voice of the cached database
 
       cachedCount = getCachedTokenCount();
       if (Number.isFinite(cachedCount)) {
-        const currentBaseline = Number.isFinite(state.documentCacheBaseline)
-          ? Math.max(0, state.documentCacheBaseline)
-          : 0;
-        state.documentCacheBaseline = Math.max(currentBaseline, Math.max(0, cachedCount));
+        const currentBaseline = getDocumentCacheBaseline();
+        setDocumentCacheBaseline(Math.max(currentBaseline, Math.max(0, cachedCount)));
       } else {
         cachedCount = 0;
       }
