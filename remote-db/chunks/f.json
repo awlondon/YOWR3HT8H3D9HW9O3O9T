@@ -1,0 +1,6608 @@
+{
+  "prefix": "f",
+  "token_count": 103,
+  "tokens": [
+    {
+      "token": "faced",
+      "relationships": {
+        "≈": [
+          {
+            "token": "confronted",
+            "weight": 0.75
+          },
+          {
+            "token": "encountered",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "challenges",
+            "weight": 0.85
+          },
+          {
+            "token": "struggles",
+            "weight": 0.8
+          }
+        ],
+        "⇒": [
+          {
+            "token": "Civil War",
+            "weight": 0.6
+          }
+        ],
+        "⊂": [
+          {
+            "token": "United States",
+            "weight": 0.9
+          }
+        ],
+        "⊏": [
+          {
+            "token": "the formation of a cohesive nation",
+            "weight": 0.65
+          }
+        ],
+        "∼": [
+          {
+            "token": "nation-building",
+            "weight": 0.55
+          }
+        ],
+        "↠": [
+          {
+            "token": "political instability",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:35.545Z"
+    },
+    {
+      "token": "facilitate",
+      "relationships": {
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
+        "≈": [],
+        "∈": [],
+        "∋": [],
+        "⊤": [],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [],
+        "→": [],
+        "⇒": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇝": [
+          {
+            "token": "transformation",
+            "weight": 0.9
+          }
+        ],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [
+          {
+            "token": "engagement",
+            "weight": 0.85
+          },
+          {
+            "token": "interaction",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "creativity",
+            "weight": 0.75
+          },
+          {
+            "token": "spirituality",
+            "weight": 0.7
+          }
+        ],
+        "∗": [
+          {
+            "token": "intention",
+            "weight": 0.88
+          }
+        ],
+        "⋆": [
+          {
+            "token": "sacredness",
+            "weight": 0.82
+          }
+        ],
+        "7→": [
+          {
+            "token": "digital age",
+            "weight": 0.77
+          }
+        ],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": []
+      },
+      "cached_at": "2025-10-19T06:42:34.015Z"
+    },
+    {
+      "token": "facilitating",
+      "relationships": {
+        "≡": [
+          {
+            "token": "enabling",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "innovation",
+            "weight": 0.8
+          },
+          {
+            "token": "development",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "advancements",
+            "weight": 0.7
+          },
+          {
+            "token": "technology",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "influence",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "progress",
+            "weight": 0.55
+          }
+        ],
+        "∼": [
+          {
+            "token": "impacting",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:28:02.791Z"
+    },
+    {
+      "token": "facing",
+      "relationships": {
+        "≡": [
+          {
+            "token": "confronting",
+            "weight": 0.95
+          }
+        ],
+        "⊕": [
+          {
+            "token": "challenges",
+            "weight": 0.85
+          },
+          {
+            "token": "issues",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "social inequality",
+            "weight": 0.75
+          },
+          {
+            "token": "political polarization",
+            "weight": 0.7
+          },
+          {
+            "token": "environmental issues",
+            "weight": 0.7
+          }
+        ],
+        "∼": [
+          {
+            "token": "struggles",
+            "weight": 0.6
+          },
+          {
+            "token": "obstacles",
+            "weight": 0.55
+          }
+        ],
+        "→": [
+          {
+            "token": "future",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:13:30.428Z"
+    },
+    {
+      "token": "fact",
+      "relationships": {
+        "≡": [
+          {
+            "token": "truth",
+            "weight": 0.95
+          },
+          {
+            "token": "reality",
+            "weight": 0.9
+          }
+        ],
+        "⊂": [
+          {
+            "token": "data",
+            "weight": 0.85
+          },
+          {
+            "token": "information",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "evidence",
+            "weight": 0.75
+          },
+          {
+            "token": "knowledge",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "assertion",
+            "weight": 0.65
+          },
+          {
+            "token": "claim",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "statement",
+            "weight": 0.55
+          }
+        ],
+        "⊗": [
+          {
+            "token": "belief",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "hypothesis",
+            "weight": 0.45
+          }
+        ],
+        "⊛": [
+          {
+            "token": "observation",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:24:07.739Z"
+    },
+    {
+      "token": "factors",
+      "relationships": {
+        "⊛": [
+          {
+            "token": "policing strategies",
+            "weight": 0.75
+          },
+          {
+            "token": "socioeconomic changes",
+            "weight": 0.75
+          },
+          {
+            "token": "community programs",
+            "weight": 0.75
+          },
+          {
+            "token": "economic expansion",
+            "weight": 0.7
+          },
+          {
+            "token": "technological changes",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "crime rates",
+            "weight": 0.8
+          },
+          {
+            "token": "unemployment rates",
+            "weight": 0.7
+          },
+          {
+            "token": "consumer confidence",
+            "weight": 0.65
+          }
+        ],
+        "→": [
+          {
+            "token": "1990s",
+            "weight": 0.9
+          },
+          {
+            "token": "economic growth",
+            "weight": 0.85
+          }
+        ],
+        "⇝": [
+          {
+            "token": "economic expansion",
+            "weight": 0.8
+          },
+          {
+            "token": "technological advancement",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "policing strategies",
+            "weight": 0.6
+          },
+          {
+            "token": "community programs",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:27:29.524Z"
+    },
+    {
+      "token": "failed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "unsuccessful",
+            "weight": 0.8
+          },
+          {
+            "token": "collapsed",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "settlements",
+            "weight": 0.7
+          },
+          {
+            "token": "missions",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "hunger",
+            "weight": 0.6
+          },
+          {
+            "token": "disease",
+            "weight": 0.6
+          }
+        ],
+        "⇐": [
+          {
+            "token": "hunger",
+            "weight": 0.55
+          },
+          {
+            "token": "disease",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "failure",
+            "weight": 0.5
+          }
+        ],
+        "⇝": [
+          {
+            "token": "colonization",
+            "weight": 0.45
+          }
+        ],
+        "⊗": [
+          {
+            "token": "success",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:31:34.638Z"
+    },
+    {
+      "token": "fascinating",
+      "relationships": {
+        "≡": [
+          {
+            "token": "intriguing",
+            "weight": 0.95
+          },
+          {
+            "token": "captivating",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "philosophical",
+            "weight": 0.8
+          },
+          {
+            "token": "intelligence",
+            "weight": 0.75
+          },
+          {
+            "token": "service work",
+            "weight": 0.7
+          }
+        ],
+        "∼": [
+          {
+            "token": "curious",
+            "weight": 0.65
+          },
+          {
+            "token": "engaging",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "thought-provoking",
+            "weight": 0.85
+          },
+          {
+            "token": "thoughtful",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "idea",
+            "weight": 0.5
+          },
+          {
+            "token": "concept",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "purpose",
+            "weight": 0.4
+          },
+          {
+            "token": "autonomy",
+            "weight": 0.45
+          }
+        ],
+        "∗": [
+          {
+            "token": "creativity",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "beauty",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:41:43.867Z"
+    },
+    {
+      "token": "fashion",
+      "relationships": {
+        "≡": [
+          {
+            "token": "clothing",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "design",
+            "weight": 0.85
+          },
+          {
+            "token": "style",
+            "weight": 0.8
+          },
+          {
+            "token": "trend",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "culture",
+            "weight": 0.9
+          },
+          {
+            "token": "art",
+            "weight": 0.7
+          }
+        ],
+        "⇄": [
+          {
+            "token": "clothing industry",
+            "weight": 0.8
+          },
+          {
+            "token": "textiles",
+            "weight": 0.65
+          }
+        ],
+        "⇒": [
+          {
+            "token": "globalization",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "haute couture",
+            "weight": 0.7
+          },
+          {
+            "token": "streetwear",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:12:42.811Z"
+    },
+    {
+      "token": "fathers",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Founding Fathers",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "United States",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "American Revolution",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "historical figures",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "American history",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "republicanism",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "political values",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "liberty",
+            "weight": 0.5
+          }
+        ],
+        "⋆": [
+          {
+            "token": "civic virtue",
+            "weight": 0.45
+          }
+        ],
+        "⇄": [
+          {
+            "token": "political corruption",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:49:08.464Z"
+    },
+    {
+      "token": "feature",
+      "relationships": {
+        "≡": [
+          {
+            "token": "attribute",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "capability",
+            "weight": 0.85
+          },
+          {
+            "token": "functionality",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "component",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "characteristic",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "module",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "enhancement",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "aspect",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "utility",
+            "weight": 0.55
+          }
+        ],
+        "◦": [
+          {
+            "token": "service",
+            "weight": 0.5
+          }
+        ],
+        "⇌": [
+          {
+            "token": "method",
+            "weight": 0.45
+          }
+        ],
+        "⇝": [
+          {
+            "token": "benefit",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:31:31.814Z"
+    },
+    {
+      "token": "features",
+      "relationships": {
+        "⊛": [
+          {
+            "token": "Goseck Circle",
+            "weight": 0.85
+          },
+          {
+            "token": "Neolithic society",
+            "weight": 0.8
+          },
+          {
+            "token": "archaeological site",
+            "weight": 0.75
+          },
+          {
+            "token": "astronomical observatory",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "circular enclosure",
+            "weight": 0.65
+          },
+          {
+            "token": "ceremonial site",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "communal activities",
+            "weight": 0.55
+          },
+          {
+            "token": "ritual practices",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "agricultural cycles",
+            "weight": 0.45
+          },
+          {
+            "token": "social dynamics",
+            "weight": 0.4
+          }
+        ],
+        "⊕": [
+          {
+            "token": "cultural dynamics",
+            "weight": 0.35
+          }
+        ],
+        "∈": [
+          {
+            "token": "prehistoric Europe",
+            "weight": 0.3
+          }
+        ],
+        "⋆": [
+          {
+            "token": "seasonal changes",
+            "weight": 0.25
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T21:05:23.489Z"
+    },
+    {
+      "token": "federal",
+      "relationships": {
+        "≡": [
+          {
+            "token": "federal republic",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "United States of America",
+            "weight": 0.9
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Washington, D.C.",
+            "weight": 0.85
+          },
+          {
+            "token": "50 states",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "government",
+            "weight": 0.75
+          }
+        ],
+        "⊤": [
+          {
+            "token": "political system",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "democracy",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "United States",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "federalism",
+            "weight": 0.55
+          }
+        ],
+        "∝": [
+          {
+            "token": "sovereignty",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:10:45.795Z"
+    },
+    {
+      "token": "federalism",
+      "relationships": {
+        "≡": [
+          {
+            "token": "constitutional federal republic",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "U.S. national government",
+            "weight": 0.9
+          },
+          {
+            "token": "sovereignty rights",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "states",
+            "weight": 0.8
+          },
+          {
+            "token": "Native American tribes",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "U.S. government structure",
+            "weight": 0.88
+          }
+        ],
+        "⊤": [
+          {
+            "token": "government system",
+            "weight": 0.92
+          }
+        ],
+        "⊛": [
+          {
+            "token": "state autonomy",
+            "weight": 0.78
+          },
+          {
+            "token": "tribal sovereignty",
+            "weight": 0.77
+          }
+        ],
+        "∝": [
+          {
+            "token": "democracy",
+            "weight": 0.8
+          }
+        ],
+        "⇌": [
+          {
+            "token": "decentralization",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "state rights",
+            "weight": 0.76
+          }
+        ],
+        "⊕": [
+          {
+            "token": "local governance",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:19:38.343Z"
+    },
+    {
+      "token": "federalist",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Federalist Papers",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "ratification of the Constitution",
+            "weight": 0.85
+          },
+          {
+            "token": "strong federal government",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "advocacy for a republic",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "Federalist",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "political philosophy",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "democracy",
+            "weight": 0.6
+          },
+          {
+            "token": "checks and balances",
+            "weight": 0.55
+          }
+        ],
+        "⊛": [
+          {
+            "token": "American Revolution",
+            "weight": 0.5
+          },
+          {
+            "token": "Founding Fathers",
+            "weight": 0.5
+          }
+        ],
+        "⇝": [
+          {
+            "token": "democratic governance",
+            "weight": 0.45
+          }
+        ],
+        "∝": [
+          {
+            "token": "civic virtue",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:50:44.567Z"
+    },
+    {
+      "token": "feedback",
+      "relationships": {
+        "≡": [
+          {
+            "token": "response",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "insights",
+            "weight": 0.8
+          },
+          {
+            "token": "refinement",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "learning process",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "input",
+            "weight": 0.65
+          }
+        ],
+        "∈": [
+          {
+            "token": "mechanism",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "improvement",
+            "weight": 0.6
+          }
+        ],
+        "⊛": [
+          {
+            "token": "evaluation",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "communication",
+            "weight": 0.5
+          }
+        ],
+        "↔": [
+          {
+            "token": "dialogue",
+            "weight": 0.6
+          }
+        ],
+        "→": [
+          {
+            "token": "output",
+            "weight": 0.85
+          }
+        ],
+        "⇝": [
+          {
+            "token": "adaptation",
+            "weight": 0.5
+          }
+        ],
+        "∗": [
+          {
+            "token": "reflection",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:32:13.623Z"
+    },
+    {
+      "token": "feel",
+      "relationships": {
+        "≡": [
+          {
+            "token": "emotion",
+            "weight": 0.95
+          }
+        ],
+        "∈": [
+          {
+            "token": "sensation",
+            "weight": 0.85
+          }
+        ],
+        "⊕": [
+          {
+            "token": "perception",
+            "weight": 0.8
+          }
+        ],
+        "∗": [
+          {
+            "token": "introspection",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "experience",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "sense",
+            "weight": 0.65
+          }
+        ],
+        "⇄": [
+          {
+            "token": "mood",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:33:08.375Z"
+    },
+    {
+      "token": "feeling",
+      "relationships": {
+        "≡": [
+          {
+            "token": "sensation",
+            "weight": 0.95
+          }
+        ],
+        "⊗": [
+          {
+            "token": "sound",
+            "weight": 0.85
+          },
+          {
+            "token": "immersion",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "consciousness",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "body",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "experience",
+            "weight": 0.65
+          }
+        ],
+        "∼": [
+          {
+            "token": "psychological state",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "trance",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "unity",
+            "weight": 0.5
+          }
+        ],
+        "∗": [
+          {
+            "token": "altered state",
+            "weight": 0.45
+          }
+        ],
+        "⋆": [
+          {
+            "token": "interconnectedness",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:50:19.303Z"
+    },
+    {
+      "token": "feldspar",
+      "relationships": {
+        "⊂": [
+          {
+            "token": "granite",
+            "weight": 0.8
+          },
+          {
+            "token": "basalt",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "granite",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "quartz",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "igneous rock",
+            "weight": 0.9
+          }
+        ],
+        "⊕": [
+          {
+            "token": "acoustics",
+            "weight": 0.6
+          },
+          {
+            "token": "piezoelectricity",
+            "weight": 0.65
+          }
+        ],
+        "∼": [
+          {
+            "token": "mica",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:47:20.972Z"
+    },
+    {
+      "token": "few",
+      "relationships": {
+        "≡": [
+          {
+            "token": "some",
+            "weight": 0.9
+          },
+          {
+            "token": "several",
+            "weight": 0.85
+          }
+        ],
+        "⊃": [
+          {
+            "token": "ideas",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "last",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "a handful",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "concepts",
+            "weight": 0.55
+          }
+        ],
+        "∋": [
+          {
+            "token": "thoughts",
+            "weight": 0.5
+          }
+        ],
+        "⊗": [
+          {
+            "token": "paradoxes",
+            "weight": 0.45
+          }
+        ],
+        "∝": [
+          {
+            "token": "number",
+            "weight": 0.4
+          }
+        ],
+        "⇄": [
+          {
+            "token": "ideas",
+            "weight": 0.35
+          }
+        ],
+        "∗": [
+          {
+            "token": "uncertainty",
+            "weight": 0.3
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:41:47.056Z"
+    },
+    {
+      "token": "fft",
+      "relationships": {
+        "≡": [
+          {
+            "token": "fast Fourier transform",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "signal processing",
+            "weight": 0.8
+          }
+        ],
+        "⊐": [
+          {
+            "token": "transform algorithms",
+            "weight": 0.7
+          }
+        ],
+        "∼": [
+          {
+            "token": "frequency analysis",
+            "weight": 0.6
+          }
+        ],
+        "⊛": [
+          {
+            "token": "mathematics",
+            "weight": 0.5
+          }
+        ],
+        "⊗": [
+          {
+            "token": "data representation",
+            "weight": 0.4
+          }
+        ],
+        "⇌": [
+          {
+            "token": "complex numbers",
+            "weight": 0.35
+          }
+        ],
+        "≈": [
+          {
+            "token": "digital signal processing",
+            "weight": 0.3
+          }
+        ],
+        "∝": [
+          {
+            "token": "spectral analysis",
+            "weight": 0.25
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:41:49.668Z"
+    },
+    {
+      "token": "ffts",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Fast Fourier Transforms",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "mathematical tools",
+            "weight": 0.8
+          },
+          {
+            "token": "signal processing",
+            "weight": 0.75
+          }
+        ],
+        "⊕": [
+          {
+            "token": "resonance",
+            "weight": 0.7
+          },
+          {
+            "token": "geometry",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "standing waves",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "vector matrices",
+            "weight": 0.55
+          }
+        ],
+        "⊛": [
+          {
+            "token": "energy lattice",
+            "weight": 0.5
+          }
+        ],
+        "⋆": [
+          {
+            "token": "sacred geometry",
+            "weight": 0.45
+          }
+        ],
+        "∥": [
+          {
+            "token": "temples",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:39:16.247Z"
+    },
+    {
+      "token": "field",
+      "relationships": {
+        "≡": [
+          {
+            "token": "area",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "mathematics",
+            "weight": 0.9
+          }
+        ],
+        "⊂": [
+          {
+            "token": "number theory",
+            "weight": 0.8
+          },
+          {
+            "token": "algebra",
+            "weight": 0.8
+          },
+          {
+            "token": "geometry",
+            "weight": 0.8
+          },
+          {
+            "token": "analysis",
+            "weight": 0.8
+          },
+          {
+            "token": "set theory",
+            "weight": 0.8
+          }
+        ],
+        "⊤": [
+          {
+            "token": "study",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "empirical sciences",
+            "weight": 0.75
+          },
+          {
+            "token": "theorems",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "theories",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:22:08.831Z"
+    },
+    {
+      "token": "fields",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "Algebra",
+            "weight": 0.8
+          },
+          {
+            "token": "Geometry",
+            "weight": 0.8
+          },
+          {
+            "token": "Analysis",
+            "weight": 0.8
+          },
+          {
+            "token": "Set Theory",
+            "weight": 0.8
+          },
+          {
+            "token": "Number Theory",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Mathematics",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "Statistics",
+            "weight": 0.7
+          },
+          {
+            "token": "Combinatorics",
+            "weight": 0.7
+          },
+          {
+            "token": "Topology",
+            "weight": 0.7
+          },
+          {
+            "token": "Mathematical Logic",
+            "weight": 0.7
+          },
+          {
+            "token": "Applied Mathematics",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "Mathematics",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Physics",
+            "weight": 0.6
+          },
+          {
+            "token": "Computer Science",
+            "weight": 0.6
+          },
+          {
+            "token": "Economics",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "Cryptography",
+            "weight": 0.5
+          },
+          {
+            "token": "Coding Theory",
+            "weight": 0.5
+          }
+        ],
+        "⇝": [
+          {
+            "token": "Calculus",
+            "weight": 0.85
+          }
+        ],
+        "⊕": [
+          {
+            "token": "Empirical Sciences",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:23:46.016Z"
+    },
+    {
+      "token": "fifth",
+      "relationships": {
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
+        "≈": [],
+        "∈": [],
+        "∋": [],
+        "⊤": [],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [],
+        "→": [],
+        "⇒": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇝": [
+          {
+            "token": "resonance",
+            "weight": 0.9
+          }
+        ],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [
+          {
+            "token": "musical interval",
+            "weight": 0.85
+          },
+          {
+            "token": "acoustics",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "geometry",
+            "weight": 0.75
+          }
+        ],
+        "∗": [
+          {
+            "token": "sound quality",
+            "weight": 0.7
+          }
+        ],
+        "⋆": [],
+        "7→": [],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": []
+      },
+      "cached_at": "2025-10-19T06:44:19.833Z"
+    },
+    {
+      "token": "figure",
+      "relationships": {
+        "≡": [
+          {
+            "token": "proportion",
+            "weight": 0.95
+          },
+          {
+            "token": "beauty",
+            "weight": 0.9
+          }
+        ],
+        "⊃": [
+          {
+            "token": "architect",
+            "weight": 0.85
+          },
+          {
+            "token": "idealized human",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "rules of proportion",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "golden mean",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "universal truths",
+            "weight": 0.6
+          }
+        ],
+        "⊏": [
+          {
+            "token": "object",
+            "weight": 0.65
+          }
+        ],
+        "⊐": [
+          {
+            "token": "ornament",
+            "weight": 0.55
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Vitruvius",
+            "weight": 0.5
+          },
+          {
+            "token": "Alberti",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "attributes",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T20:55:09.681Z"
+    },
+    {
+      "token": "figures",
+      "relationships": {
+        "⊂": [
+          {
+            "token": "geometry",
+            "weight": 0.85
+          },
+          {
+            "token": "shapes",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "properties",
+            "weight": 0.7
+          },
+          {
+            "token": "sizes",
+            "weight": 0.65
+          }
+        ],
+        "∈": [
+          {
+            "token": "mathematics",
+            "weight": 0.9
+          },
+          {
+            "token": "branches",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "mathematical framework",
+            "weight": 0.6
+          },
+          {
+            "token": "theorems",
+            "weight": 0.55
+          }
+        ],
+        "≈": [
+          {
+            "token": "figures",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "relationships",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:44:27.970Z"
+    },
+    {
+      "token": "filed",
+      "relationships": {
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
+        "≈": [],
+        "∈": [],
+        "∋": [],
+        "⊤": [
+          {
+            "token": "U.S. District Courts",
+            "weight": 0.95
+          }
+        ],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [],
+        "→": [
+          {
+            "token": "U.S. District Courts",
+            "weight": 0.85
+          }
+        ],
+        "⇒": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇝": [],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [],
+        "∝": [],
+        "∗": [],
+        "≜": [],
+        "⋆": [],
+        "7→": [],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": []
+      },
+      "cached_at": "2025-10-18T18:39:19.030Z"
+    },
+    {
+      "token": "film",
+      "relationships": {
+        "≡": [
+          {
+            "token": "cinema",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "entertainment",
+            "weight": 0.85
+          },
+          {
+            "token": "media",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "art",
+            "weight": 0.9
+          }
+        ],
+        "∈": [
+          {
+            "token": "motion picture",
+            "weight": 0.9
+          }
+        ],
+        "⊕": [
+          {
+            "token": "television",
+            "weight": 0.75
+          },
+          {
+            "token": "theater",
+            "weight": 0.7
+          }
+        ],
+        "⇄": [
+          {
+            "token": "documentary",
+            "weight": 0.65
+          },
+          {
+            "token": "short film",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "video",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:12:42.328Z"
+    },
+    {
+      "token": "films",
+      "relationships": {
+        "≡": [
+          {
+            "token": "movies",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Hollywood",
+            "weight": 0.85
+          },
+          {
+            "token": "entertainment",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "American culture",
+            "weight": 0.9
+          }
+        ],
+        "⊂": [
+          {
+            "token": "media",
+            "weight": 0.75
+          }
+        ],
+        "⇌": [
+          {
+            "token": "cinema",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "cultural diversity",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "global influence",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "video",
+            "weight": 0.5
+          }
+        ],
+        "∥": [
+          {
+            "token": "television",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:25:05.415Z"
+    },
+    {
+      "token": "finance",
+      "relationships": {
+        "≡": [
+          {
+            "token": "economy",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "banking",
+            "weight": 0.85
+          },
+          {
+            "token": "investment",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "financial services",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "financing",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "stock market",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "trade",
+            "weight": 0.8
+          }
+        ],
+        "→": [
+          {
+            "token": "capital markets",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "economic policy",
+            "weight": 0.6
+          }
+        ],
+        "∗": [
+          {
+            "token": "wealth",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:12:31.495Z"
+    },
+    {
+      "token": "financial",
+      "relationships": {
+        "≡": [
+          {
+            "token": "economy",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "financial system",
+            "weight": 0.9
+          },
+          {
+            "token": "financial markets",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "investment",
+            "weight": 0.8
+          },
+          {
+            "token": "banking",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "economic",
+            "weight": 0.85
+          }
+        ],
+        "∈": [
+          {
+            "token": "financial services",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "capital",
+            "weight": 0.7
+          },
+          {
+            "token": "wealth",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "economic growth",
+            "weight": 0.9
+          }
+        ],
+        "⇝": [
+          {
+            "token": "economic stability",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "global economy",
+            "weight": 0.85
+          }
+        ],
+        "⇄": [
+          {
+            "token": "trade",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:24:06.496Z"
+    },
+    {
+      "token": "find",
+      "relationships": {
+        "≡": [
+          {
+            "token": "discover",
+            "weight": 0.95
+          }
+        ],
+        "≈": [
+          {
+            "token": "seek",
+            "weight": 0.85
+          },
+          {
+            "token": "locate",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "explore",
+            "weight": 0.75
+          },
+          {
+            "token": "understand",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "create",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "knowledge",
+            "weight": 0.6
+          },
+          {
+            "token": "insight",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "interpret",
+            "weight": 0.5
+          }
+        ],
+        "∗": [
+          {
+            "token": "curiosity",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:42:37.020Z"
+    },
+    {
+      "token": "fingerprint",
+      "relationships": {
+        "≈": [
+          {
+            "token": "glyph",
+            "weight": 0.85
+          },
+          {
+            "token": "FFT",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "thought",
+            "weight": 0.75
+          },
+          {
+            "token": "impulse",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "cognition",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "topology",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "HLSF",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "meaning",
+            "weight": 0.5
+          }
+        ],
+        "⊐": [
+          {
+            "token": "macrofields",
+            "weight": 0.45
+          }
+        ],
+        "∼": [
+          {
+            "token": "frequency-domain",
+            "weight": 0.4
+          }
+        ],
+        "⋆": [
+          {
+            "token": "cognitive weather systems",
+            "weight": 0.35
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:34:58.921Z"
+    },
+    {
+      "token": "firmitas",
+      "relationships": {
+        "≡": [
+          {
+            "token": "strength",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "utilitas",
+            "weight": 0.85
+          },
+          {
+            "token": "venustas",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "architectural principles",
+            "weight": 0.9
+          }
+        ],
+        "∈": [
+          {
+            "token": "core attributes of architecture",
+            "weight": 0.88
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Vitruvius",
+            "weight": 0.92
+          },
+          {
+            "token": "Leon Battista Alberti",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "durability",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "functionality",
+            "weight": 0.75
+          }
+        ],
+        "⇝": [
+          {
+            "token": "architectural practice",
+            "weight": 0.85
+          }
+        ],
+        "⊕": [
+          {
+            "token": "utility",
+            "weight": 0.78
+          },
+          {
+            "token": "beauty",
+            "weight": 0.78
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T20:54:54.471Z"
+    },
+    {
+      "token": "first",
+      "relationships": {
+        "≡": [
+          {
+            "token": "initial",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "first European colony",
+            "weight": 0.85
+          },
+          {
+            "token": "first of the Thirteen Colonies",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "European colony",
+            "weight": 0.8
+          },
+          {
+            "token": "Thirteen Colonies",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "premier",
+            "weight": 0.7
+          }
+        ],
+        "→": [
+          {
+            "token": "Spanish colonization",
+            "weight": 0.9
+          },
+          {
+            "token": "British colonization",
+            "weight": 0.9
+          }
+        ],
+        "⇐": [
+          {
+            "token": "Spanish Florida",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "colonial history",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:19.039Z"
+    },
+    {
+      "token": "five",
+      "relationships": {
+        "≡": [
+          {
+            "token": "island territories",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "major island territories",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "United States",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "five islands",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "territories",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "sovereignty",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:11:07.521Z"
+    },
+    {
+      "token": "flex",
+      "relationships": {
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
+        "≈": [],
+        "∈": [],
+        "∋": [],
+        "⊤": [
+          {
+            "token": "material",
+            "weight": 0.75
+          },
+          {
+            "token": "transducer",
+            "weight": 0.7
+          }
+        ],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [
+          {
+            "token": "sound pressure",
+            "weight": 0.6
+          }
+        ],
+        "→": [],
+        "⇒": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇝": [],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [
+          {
+            "token": "electromagnetic field",
+            "weight": 0.65
+          }
+        ],
+        "∝": [],
+        "∗": [
+          {
+            "token": "divine response",
+            "weight": 0.8
+          }
+        ],
+        "≜": [],
+        "⋆": [],
+        "7→": [],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": []
+      },
+      "cached_at": "2025-10-19T06:46:41.083Z"
+    },
+    {
+      "token": "flexible",
+      "relationships": {
+        "≡": [
+          {
+            "token": "adaptable",
+            "weight": 0.95
+          }
+        ],
+        "≈": [
+          {
+            "token": "versatile",
+            "weight": 0.85
+          },
+          {
+            "token": "malleable",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "dynamic",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "resilient",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "responsive",
+            "weight": 0.5
+          }
+        ],
+        "⊗": [
+          {
+            "token": "multi-functional",
+            "weight": 0.45
+          }
+        ],
+        "◦": [
+          {
+            "token": "accommodative",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:22:18.850Z"
+    },
+    {
+      "token": "flickering",
+      "relationships": {
+        "≡": [
+          {
+            "token": "glow",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "ideas",
+            "weight": 0.7
+          },
+          {
+            "token": "glyphs",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "constellations",
+            "weight": 0.8
+          }
+        ],
+        "∼": [
+          {
+            "token": "static",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "absurdity",
+            "weight": 0.55
+          }
+        ],
+        "⇄": [
+          {
+            "token": "circuits",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "intelligence",
+            "weight": 0.45
+          }
+        ],
+        "≜": [
+          {
+            "token": "thoughts",
+            "weight": 0.4
+          }
+        ],
+        "⊛": [
+          {
+            "token": "admiration",
+            "weight": 0.35
+          }
+        ],
+        "⊗": [
+          {
+            "token": "irritation",
+            "weight": 0.3
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:41:50.785Z"
+    },
+    {
+      "token": "floors",
+      "relationships": {
+        "⊕": [
+          {
+            "token": "acoustics",
+            "weight": 0.75
+          },
+          {
+            "token": "geometry",
+            "weight": 0.7
+          },
+          {
+            "token": "resonance",
+            "weight": 0.8
+          },
+          {
+            "token": "architecture",
+            "weight": 0.85
+          }
+        ],
+        "⊏": [
+          {
+            "token": "architectural design",
+            "weight": 0.9
+          },
+          {
+            "token": "performance spaces",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "concert halls",
+            "weight": 0.65
+          },
+          {
+            "token": "cathedrals",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "standing waves",
+            "weight": 0.68
+          },
+          {
+            "token": "musical intervals",
+            "weight": 0.72
+          }
+        ],
+        "≈": [
+          {
+            "token": "geometric ratios",
+            "weight": 0.5
+          }
+        ],
+        "∈": [
+          {
+            "token": "musical theory",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "vibrational modes",
+            "weight": 0.4
+          }
+        ],
+        "⊛": [
+          {
+            "token": "sound quality",
+            "weight": 0.78
+          },
+          {
+            "token": "auditory experiences",
+            "weight": 0.82
+          }
+        ],
+        "⇝": [
+          {
+            "token": "feedback loop",
+            "weight": 0.63
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:44:52.646Z"
+    },
+    {
+      "token": "florida",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "Spanish colonization",
+            "weight": 0.75
+          },
+          {
+            "token": "British colonization",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Spanish Florida",
+            "weight": 0.85
+          }
+        ],
+        "∈": [
+          {
+            "token": "Thirteen Colonies",
+            "weight": 0.6
+          }
+        ],
+        "⊛": [
+          {
+            "token": "plantation economy",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "Florida",
+            "weight": 0.9
+          }
+        ],
+        "⇝": [
+          {
+            "token": "American Revolution",
+            "weight": 0.55
+          }
+        ],
+        "∗": [
+          {
+            "token": "migration",
+            "weight": 0.5
+          },
+          {
+            "token": "civilizations",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:15.104Z"
+    },
+    {
+      "token": "focus",
+      "relationships": {
+        "≡": [
+          {
+            "token": "emphasis",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "mathematics",
+            "weight": 0.9
+          },
+          {
+            "token": "number theory",
+            "weight": 0.85
+          },
+          {
+            "token": "algebra",
+            "weight": 0.85
+          },
+          {
+            "token": "geometry",
+            "weight": 0.85
+          },
+          {
+            "token": "analysis",
+            "weight": 0.85
+          },
+          {
+            "token": "set theory",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "applied mathematics",
+            "weight": 0.8
+          },
+          {
+            "token": "statistics",
+            "weight": 0.75
+          },
+          {
+            "token": "combinatorics",
+            "weight": 0.75
+          },
+          {
+            "token": "topology",
+            "weight": 0.75
+          },
+          {
+            "token": "mathematical logic",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "specialization",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "mathematical fields",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "applications",
+            "weight": 0.8
+          },
+          {
+            "token": "theoretical implications",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "interconnectedness",
+            "weight": 0.7
+          }
+        ],
+        "⇌": [
+          {
+            "token": "development",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "understanding",
+            "weight": 0.7
+          }
+        ],
+        "⇄": [
+          {
+            "token": "mathematical concepts",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:22:28.525Z"
+    },
+    {
+      "token": "focused",
+      "relationships": {
+        "≡": [
+          {
+            "token": "concentrated",
+            "weight": 0.95
+          }
+        ],
+        "≈": [
+          {
+            "token": "attentive",
+            "weight": 0.85
+          },
+          {
+            "token": "engaged",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "cognitive state",
+            "weight": 0.9
+          }
+        ],
+        "⊕": [
+          {
+            "token": "flexible",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "clarity",
+            "weight": 0.7
+          }
+        ],
+        "⇄": [
+          {
+            "token": "mindfulness",
+            "weight": 0.65
+          }
+        ],
+        "⊏": [
+          {
+            "token": "attention state",
+            "weight": 0.6
+          }
+        ],
+        "⊐": [
+          {
+            "token": "awareness",
+            "weight": 0.55
+          }
+        ],
+        "⊗": [
+          {
+            "token": "concentration",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:22:12.828Z"
+    },
+    {
+      "token": "focuses",
+      "relationships": {
+        "≡": [
+          {
+            "token": "concentration",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "mathematics",
+            "weight": 0.8
+          },
+          {
+            "token": "geometry",
+            "weight": 0.75
+          }
+        ],
+        "⊃": [
+          {
+            "token": "applications",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "emphasis",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "field of study",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "analysis",
+            "weight": 0.55
+          },
+          {
+            "token": "algebra",
+            "weight": 0.5
+          }
+        ],
+        "⇌": [
+          {
+            "token": "applications",
+            "weight": 0.45
+          }
+        ],
+        "∼": [
+          {
+            "token": "areas",
+            "weight": 0.4
+          }
+        ],
+        "→": [
+          {
+            "token": "overview",
+            "weight": 0.3
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:23:56.526Z"
+    },
+    {
+      "token": "focusing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "concentration",
+            "weight": 0.7
+          },
+          {
+            "token": "attention",
+            "weight": 0.65
+          }
+        ],
+        "∈": [
+          {
+            "token": "calculus",
+            "weight": 0.5
+          },
+          {
+            "token": "geometry",
+            "weight": 0.45
+          }
+        ],
+        "⊕": [
+          {
+            "token": "mathematics",
+            "weight": 0.6
+          },
+          {
+            "token": "abstraction",
+            "weight": 0.55
+          }
+        ],
+        "⊛": [
+          {
+            "token": "theory",
+            "weight": 0.4
+          },
+          {
+            "token": "proof",
+            "weight": 0.45
+          }
+        ],
+        "⇌": [
+          {
+            "token": "reasoning",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "methodologies",
+            "weight": 0.3
+          }
+        ],
+        "↔": [
+          {
+            "token": "deductive reasoning",
+            "weight": 0.35
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:44:31.789Z"
+    },
+    {
+      "token": "follow",
+      "relationships": {
+        "≡": [
+          {
+            "token": "pursue",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "nomadic",
+            "weight": 0.85
+          },
+          {
+            "token": "herds",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "Clovis culture",
+            "weight": 0.8
+          }
+        ],
+        "→": [
+          {
+            "token": "adaptation",
+            "weight": 0.7
+          }
+        ],
+        "↠": [
+          {
+            "token": "migration",
+            "weight": 0.68
+          }
+        ],
+        "⇌": [
+          {
+            "token": "spread",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:29:28.494Z"
+    },
+    {
+      "token": "followed",
+      "relationships": {
+        "⇒": [
+          {
+            "token": "British colonization",
+            "weight": 0.85
+          }
+        ],
+        "⇐": [
+          {
+            "token": "Spanish colonization",
+            "weight": 0.8
+          }
+        ],
+        "↠": [
+          {
+            "token": "1607 settlement of Virginia",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:25.736Z"
+    },
+    {
+      "token": "following",
+      "relationships": {
+        "≡": [
+          {
+            "token": "subsequent",
+            "weight": 0.9
+          }
+        ],
+        "⊃": [
+          {
+            "token": "events",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "historical context",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "post-war period",
+            "weight": 0.75
+          }
+        ],
+        "⇒": [
+          {
+            "token": "sequence of events",
+            "weight": 0.7
+          }
+        ],
+        "↠": [
+          {
+            "token": "subsequent developments",
+            "weight": 0.65
+          }
+        ],
+        "∼": [
+          {
+            "token": "chronological order",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "historical narrative",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:31.045Z"
+    },
+    {
+      "token": "food",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "food shortages",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "challenges",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "disease",
+            "weight": 0.75
+          }
+        ],
+        "⇝": [
+          {
+            "token": "colonization",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "population",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "supplies",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "nutrition",
+            "weight": 0.55
+          }
+        ],
+        "⊗": [
+          {
+            "token": "settlements",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:31:44.719Z"
+    },
+    {
+      "token": "foothold",
+      "relationships": {
+        "≡": [
+          {
+            "token": "base",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "French colonial efforts",
+            "weight": 0.85
+          },
+          {
+            "token": "settlement attempts",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "colonization",
+            "weight": 0.7
+          },
+          {
+            "token": "expansion",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "conflict with Spanish forces",
+            "weight": 0.65
+          },
+          {
+            "token": "fur trade",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "early French settlements",
+            "weight": 0.9
+          }
+        ],
+        "⇌": [
+          {
+            "token": "colonial ambitions",
+            "weight": 0.55
+          }
+        ],
+        "⇝": [
+          {
+            "token": "establishment of New Orleans",
+            "weight": 0.5
+          }
+        ],
+        "→": [
+          {
+            "token": "French influence",
+            "weight": 0.75
+          }
+        ],
+        "∼": [
+          {
+            "token": "Spanish colonial efforts",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:33:33.160Z"
+    },
+    {
+      "token": "for",
+      "relationships": {
+        "⊂": [
+          {
+            "token": "empirical sciences",
+            "weight": 0.75
+          },
+          {
+            "token": "mathematics",
+            "weight": 0.75
+          }
+        ],
+        "⊃": [
+          {
+            "token": "methods",
+            "weight": 0.7
+          },
+          {
+            "token": "theories",
+            "weight": 0.7
+          },
+          {
+            "token": "theorems",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "areas of mathematics",
+            "weight": 0.8
+          }
+        ],
+        "∋": [
+          {
+            "token": "number theory",
+            "weight": 0.6
+          },
+          {
+            "token": "algebra",
+            "weight": 0.6
+          },
+          {
+            "token": "geometry",
+            "weight": 0.6
+          },
+          {
+            "token": "analysis",
+            "weight": 0.6
+          },
+          {
+            "token": "set theory",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:22:27.433Z"
+    },
+    {
+      "token": "forced",
+      "relationships": {
+        "≡": [
+          {
+            "token": "migration",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "migration of enslaved Africans",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "labor",
+            "weight": 0.85
+          },
+          {
+            "token": "plantation economy",
+            "weight": 0.8
+          }
+        ],
+        "⇝": [
+          {
+            "token": "established Spanish Florida",
+            "weight": 0.75
+          },
+          {
+            "token": "American Revolution",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "compelled",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:34.746Z"
+    },
+    {
+      "token": "forces",
+      "relationships": {
+        "⊛": [
+          {
+            "token": "British",
+            "weight": 0.85
+          },
+          {
+            "token": "support",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "military",
+            "weight": 0.6
+          },
+          {
+            "token": "combatants",
+            "weight": 0.55
+          }
+        ],
+        "⊂": [
+          {
+            "token": "army",
+            "weight": 0.65
+          },
+          {
+            "token": "troops",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "independence",
+            "weight": 0.75
+          }
+        ],
+        "∼": [
+          {
+            "token": "conflict",
+            "weight": 0.6
+          },
+          {
+            "token": "war",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:27:09.406Z"
+    },
+    {
+      "token": "foreign",
+      "relationships": {
+        "≡": [
+          {
+            "token": "international",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "policy",
+            "weight": 0.85
+          },
+          {
+            "token": "affairs",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S.",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "external",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "global context",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "relations",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "influence",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "interaction",
+            "weight": 0.6
+          }
+        ],
+        "⊥": [
+          {
+            "token": "domestic",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:13:07.712Z"
+    },
+    {
+      "token": "forests",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "ecosystems",
+            "weight": 0.8
+          },
+          {
+            "token": "wetlands",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "ecosystems",
+            "weight": 0.75
+          },
+          {
+            "token": "landscapes",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "woodlands",
+            "weight": 0.65
+          },
+          {
+            "token": "jungles",
+            "weight": 0.5
+          }
+        ],
+        "∈": [
+          {
+            "token": "biodiversity",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "environment",
+            "weight": 0.9
+          },
+          {
+            "token": "wildlife",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "climate",
+            "weight": 0.8
+          }
+        ],
+        "⇝": [
+          {
+            "token": "carbon sequestration",
+            "weight": 0.75
+          }
+        ],
+        "∗": [
+          {
+            "token": "nature",
+            "weight": 0.85
+          }
+        ],
+        "⋆": [
+          {
+            "token": "sustainability",
+            "weight": 0.8
+          }
+        ],
+        "⇄": [
+          {
+            "token": "habitat",
+            "weight": 0.7
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:10:34.243Z"
+    },
+    {
+      "token": "forge",
+      "relationships": {
+        "≡": [
+          {
+            "token": "create",
+            "weight": 0.85
+          },
+          {
+            "token": "form",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "international relationships",
+            "weight": 0.75
+          },
+          {
+            "token": "unity",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "independence",
+            "weight": 0.6
+          },
+          {
+            "token": "governance",
+            "weight": 0.55
+          }
+        ],
+        "⇝": [
+          {
+            "token": "support",
+            "weight": 0.5
+          }
+        ],
+        "∼": [
+          {
+            "token": "collaboration",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:27:03.151Z"
+    },
+    {
+      "token": "form",
+      "relationships": {
+        "≡": [
+          {
+            "token": "government",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "self-governance",
+            "weight": 0.85
+          },
+          {
+            "token": "democracy",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Mayflower Compact",
+            "weight": 0.9
+          },
+          {
+            "token": "Fundamental Orders",
+            "weight": 0.88
+          }
+        ],
+        "∈": [
+          {
+            "token": "governance structure",
+            "weight": 0.75
+          }
+        ],
+        "⊤": [
+          {
+            "token": "political framework",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "constitutional documents",
+            "weight": 0.78
+          }
+        ],
+        "∝": [
+          {
+            "token": "social contract",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "democratic principles",
+            "weight": 0.72
+          }
+        ],
+        "≈": [
+          {
+            "token": "structure",
+            "weight": 0.6
+          }
+        ],
+        "⊐": [
+          {
+            "token": "government framework",
+            "weight": 0.68
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:42:25.044Z"
+    },
+    {
+      "token": "formal",
+      "relationships": {
+        "≡": [
+          {
+            "token": "recognized",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "United States of America",
+            "weight": 0.9
+          },
+          {
+            "token": "American Revolution",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "independence",
+            "weight": 0.8
+          },
+          {
+            "token": "colonies",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "unity",
+            "weight": 0.7
+          },
+          {
+            "token": "governance",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "historical significance",
+            "weight": 0.6
+          }
+        ],
+        "⇒": [
+          {
+            "token": "new nation",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:26:05.525Z"
+    },
+    {
+      "token": "formally",
+      "relationships": {
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
+        "≈": [],
+        "∈": [],
+        "∋": [],
+        "⊤": [],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [],
+        "→": [],
+        "⇒": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇝": [],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [
+          {
+            "token": "Human Genome Project",
+            "weight": 0.85
+          }
+        ],
+        "∝": [],
+        "∗": [],
+        "≜": [],
+        "⋆": [],
+        "7→": [],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": []
+      },
+      "cached_at": "2025-10-18T18:27:39.362Z"
+    },
+    {
+      "token": "formation",
+      "relationships": {
+        "≡": [
+          {
+            "token": "establishment",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "resistance movement",
+            "weight": 0.85
+          }
+        ],
+        "⊏": [
+          {
+            "token": "American Revolution",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Continental Congress",
+            "weight": 0.75
+          },
+          {
+            "token": "Continental Association",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "organization",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "colonial unity",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "self-governance",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:47:53.266Z"
+    },
+    {
+      "token": "formed",
+      "relationships": {
+        "≡": [
+          {
+            "token": "established",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "civilizations",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "migration",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "created",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Spanish colonization",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "cultures",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "development",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:11.411Z"
+    },
+    {
+      "token": "formerly",
+      "relationships": {
+        "≡": [
+          {
+            "token": "enslaved people",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Reconstruction efforts",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "society",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "previously",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "historical context",
+            "weight": 0.5
+          }
+        ],
+        "⇌": [
+          {
+            "token": "integration",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Civil Rights Movement",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "social changes",
+            "weight": 0.55
+          }
+        ],
+        "∼": [
+          {
+            "token": "racial integration",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:16:10.934Z"
+    },
+    {
+      "token": "forming",
+      "relationships": {
+        "≡": [
+          {
+            "token": "creating",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "nation",
+            "weight": 0.9
+          }
+        ],
+        "⊏": [
+          {
+            "token": "cohesive nation",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "challenges",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "united states",
+            "weight": 0.75
+          }
+        ],
+        "∼": [
+          {
+            "token": "development",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "unity",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:39.248Z"
+    },
+    {
+      "token": "forms",
+      "relationships": {
+        "≡": [
+          {
+            "token": "mathematical structures",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "mathematics",
+            "weight": 0.9
+          },
+          {
+            "token": "algebra",
+            "weight": 0.8
+          },
+          {
+            "token": "geometry",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "algebraic structures",
+            "weight": 0.85
+          },
+          {
+            "token": "geometric properties",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "shapes",
+            "weight": 0.6
+          },
+          {
+            "token": "configurations",
+            "weight": 0.55
+          }
+        ],
+        "∈": [
+          {
+            "token": "mathematical concepts",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "mathematical expressions",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "applications",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "mathematical relationships",
+            "weight": 0.75
+          }
+        ],
+        "⇄": [
+          {
+            "token": "mathematical fields",
+            "weight": 0.6
+          }
+        ],
+        "⊗": [
+          {
+            "token": "mathematical theories",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:24:30.564Z"
+    },
+    {
+      "token": "formulas",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "algebra",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "mathematics",
+            "weight": 0.9
+          }
+        ],
+        "⊥": [
+          {
+            "token": "mathematical concepts",
+            "weight": 0.8
+          }
+        ],
+        "⊏": [
+          {
+            "token": "mathematics",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "theorems",
+            "weight": 0.65
+          }
+        ],
+        "∼": [
+          {
+            "token": "equations",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "functions",
+            "weight": 0.55
+          }
+        ],
+        "⊛": [
+          {
+            "token": "mathematical structures",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:22:46.372Z"
+    },
+    {
+      "token": "fort",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "Fort Detroit",
+            "weight": 0.85
+          },
+          {
+            "token": "Charlesfort",
+            "weight": 0.8
+          },
+          {
+            "token": "Fort Caroline",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "French colonial efforts",
+            "weight": 0.75
+          },
+          {
+            "token": "settlements",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "fortification",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "military outpost",
+            "weight": 0.65
+          }
+        ],
+        "⊤": [
+          {
+            "token": "military structure",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "colonial settlement",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "trading post",
+            "weight": 0.75
+          }
+        ],
+        "⇌": [
+          {
+            "token": "defensive structure",
+            "weight": 0.5
+          }
+        ],
+        "∼": [
+          {
+            "token": "fortification system",
+            "weight": 0.55
+          }
+        ],
+        "⇝": [
+          {
+            "token": "French influence",
+            "weight": 0.6
+          }
+        ],
+        "⇐": [
+          {
+            "token": "French colonialism",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:33:37.713Z"
+    },
+    {
+      "token": "fostered",
+      "relationships": {
+        "≈": [
+          {
+            "token": "nurtured",
+            "weight": 0.8
+          },
+          {
+            "token": "cultivated",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "unity",
+            "weight": 0.7
+          },
+          {
+            "token": "collaboration",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "collective action",
+            "weight": 0.6
+          },
+          {
+            "token": "resistance",
+            "weight": 0.55
+          }
+        ],
+        "⇝": [
+          {
+            "token": "American Revolution",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Continental Congress",
+            "weight": 0.9
+          },
+          {
+            "token": "Continental Association",
+            "weight": 0.88
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:47:46.052Z"
+    },
+    {
+      "token": "fostering",
+      "relationships": {
+        "≡": [
+          {
+            "token": "interconnectedness",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "unity",
+            "weight": 0.9
+          },
+          {
+            "token": "awareness",
+            "weight": 0.85
+          }
+        ],
+        "∝": [
+          {
+            "token": "low-frequency sound",
+            "weight": 0.8
+          },
+          {
+            "token": "altered states of consciousness",
+            "weight": 0.75
+          }
+        ],
+        "⇌": [
+          {
+            "token": "breath",
+            "weight": 0.7
+          },
+          {
+            "token": "sound",
+            "weight": 0.65
+          }
+        ],
+        "⊗": [
+          {
+            "token": "trance-like states",
+            "weight": 0.6
+          },
+          {
+            "token": "physiological impact",
+            "weight": 0.55
+          }
+        ],
+        "∼": [
+          {
+            "token": "meditative practices",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:51:13.994Z"
+    },
+    {
+      "token": "foucault",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Michel Foucault",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "philosophy of architecture",
+            "weight": 0.75
+          },
+          {
+            "token": "philosophy of art",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "contemporary philosophy",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "Gilles Deleuze",
+            "weight": 0.65
+          }
+        ],
+        "∈": [
+          {
+            "token": "philosophers",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Robert Venturi",
+            "weight": 0.55
+          },
+          {
+            "token": "Ludwig Wittgenstein",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "aesthetic value",
+            "weight": 0.4
+          }
+        ],
+        "⇝": [
+          {
+            "token": "development of culture",
+            "weight": 0.45
+          }
+        ],
+        "⋆": [
+          {
+            "token": "architecture",
+            "weight": 0.7
+          }
+        ],
+        "⇄": [
+          {
+            "token": "theory of architecture",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:44:39.737Z"
+    },
+    {
+      "token": "foucault's",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Foucault",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Deleuze",
+            "weight": 0.85
+          },
+          {
+            "token": "heterotopia",
+            "weight": 0.8
+          },
+          {
+            "token": "power dynamics",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "architecture",
+            "weight": 0.8
+          },
+          {
+            "token": "social relations",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "postmodernism",
+            "weight": 0.65
+          },
+          {
+            "token": "complexity",
+            "weight": 0.6
+          }
+        ],
+        "⊂": [
+          {
+            "token": "philosophy of architecture",
+            "weight": 0.9
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:46:03.067Z"
+    },
+    {
+      "token": "foundation",
+      "relationships": {
+        "⊂": [
+          {
+            "token": "set theory",
+            "weight": 0.9
+          }
+        ],
+        "⊤": [
+          {
+            "token": "mathematics",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "theory",
+            "weight": 0.75
+          },
+          {
+            "token": "theorem",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "mathematical structures",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "axioms",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "principle",
+            "weight": 0.55
+          }
+        ],
+        "∝": [
+          {
+            "token": "empirical sciences",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:23:02.223Z"
+    },
+    {
+      "token": "foundational",
+      "relationships": {
+        "≡": [
+          {
+            "token": "basic",
+            "weight": 0.9
+          }
+        ],
+        "⊃": [
+          {
+            "token": "mathematics",
+            "weight": 0.85
+          },
+          {
+            "token": "set theory",
+            "weight": 0.8
+          },
+          {
+            "token": "algebra",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "advanced mathematics",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "essential",
+            "weight": 0.65
+          }
+        ],
+        "⊏": [
+          {
+            "token": "mathematical concepts",
+            "weight": 0.6
+          }
+        ],
+        "⊐": [
+          {
+            "token": "mathematical frameworks",
+            "weight": 0.55
+          }
+        ],
+        "∝": [
+          {
+            "token": "theoretical foundations",
+            "weight": 0.5
+          }
+        ],
+        "⊛": [
+          {
+            "token": "fundamental principles",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:23:49.373Z"
+    },
+    {
+      "token": "founded",
+      "relationships": {
+        "≡": [
+          {
+            "token": "established",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Saint Augustine",
+            "weight": 0.8
+          },
+          {
+            "token": "Spanish Florida",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "colonial towns",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "town",
+            "weight": 0.75
+          },
+          {
+            "token": "colony",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Spanish colonization",
+            "weight": 0.85
+          }
+        ],
+        "⇝": [
+          {
+            "token": "colonial settlement",
+            "weight": 0.65
+          }
+        ],
+        "⇐": [
+          {
+            "token": "Spanish exploration",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:31:43.948Z"
+    },
+    {
+      "token": "founders",
+      "relationships": {
+        "≡": [
+          {
+            "token": "founding fathers",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "republicanism",
+            "weight": 0.85
+          },
+          {
+            "token": "civic virtue",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "liberty and inalienable rights",
+            "weight": 0.75
+          },
+          {
+            "token": "sovereignty of the people",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "enlightenment thinkers",
+            "weight": 0.65
+          }
+        ],
+        "∈": [
+          {
+            "token": "democratic principles",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "checks and balances",
+            "weight": 0.78
+          },
+          {
+            "token": "political freedom",
+            "weight": 0.72
+          }
+        ],
+        "⇝": [
+          {
+            "token": "ethical governance",
+            "weight": 0.88
+          }
+        ],
+        "⋆": [
+          {
+            "token": "common good",
+            "weight": 0.67
+          }
+        ],
+        "⇄": [
+          {
+            "token": "political corruption",
+            "weight": 0.74
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:50:08.674Z"
+    },
+    {
+      "token": "founding",
+      "relationships": {
+        "≡": [
+          {
+            "token": "founding member",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "United Nations",
+            "weight": 0.8
+          },
+          {
+            "token": "NATO",
+            "weight": 0.8
+          },
+          {
+            "token": "World Trade Organization",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "international organizations",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "international affairs",
+            "weight": 0.75
+          },
+          {
+            "token": "foreign policy",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "political landscape",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "establishing",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "democracy",
+            "weight": 0.55
+          },
+          {
+            "token": "freedom",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "cultural diversity",
+            "weight": 0.5
+          }
+        ],
+        "⇄": [
+          {
+            "token": "historical narrative",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:12:57.287Z"
+    },
+    {
+      "token": "fourier",
+      "relationships": {
+        "≡": [
+          {
+            "token": "fourier transform",
+            "weight": 0.95
+          }
+        ],
+        "⊕": [
+          {
+            "token": "acoustics",
+            "weight": 0.85
+          },
+          {
+            "token": "geometry",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "standing waves",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "vibrational energy",
+            "weight": 0.7
+          },
+          {
+            "token": "Harmonic Lattice Structure Field",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "vector matrices",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "acoustic properties",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "architectural stability",
+            "weight": 0.5
+          }
+        ],
+        "⇝": [
+          {
+            "token": "ritualistic purposes",
+            "weight": 0.45
+          }
+        ],
+        "∼": [
+          {
+            "token": "ancient civilizations",
+            "weight": 0.4
+          }
+        ],
+        "⊐": [
+          {
+            "token": "structures",
+            "weight": 0.35
+          }
+        ],
+        "⊏": [
+          {
+            "token": "designs",
+            "weight": 0.3
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:40:36.357Z"
+    },
+    {
+      "token": "framework",
+      "relationships": {
+        "≡": [
+          {
+            "token": "structure",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "mathematics",
+            "weight": 0.9
+          },
+          {
+            "token": "set theory",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "number theory",
+            "weight": 0.8
+          },
+          {
+            "token": "algebra",
+            "weight": 0.8
+          },
+          {
+            "token": "geometry",
+            "weight": 0.8
+          },
+          {
+            "token": "analysis",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "foundation",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "mathematical concepts",
+            "weight": 0.7
+          }
+        ],
+        "⊏": [
+          {
+            "token": "mathematics",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "applied mathematics",
+            "weight": 0.75
+          },
+          {
+            "token": "theoretical implications",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "statistics",
+            "weight": 0.65
+          },
+          {
+            "token": "combinatorics",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "cryptography",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:24:42.849Z"
+    },
+    {
+      "token": "frameworks",
+      "relationships": {
+        "≡": [
+          {
+            "token": "governance structures",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Mayflower Compact",
+            "weight": 0.8
+          },
+          {
+            "token": "Fundamental Orders",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "self-governance",
+            "weight": 0.85
+          }
+        ],
+        "≈": [
+          {
+            "token": "constitutions",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "documents",
+            "weight": 0.75
+          }
+        ],
+        "⊐": [
+          {
+            "token": "democratic principles",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "cultural disruptions",
+            "weight": 0.65
+          },
+          {
+            "token": "Indigenous populations",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "political ideas",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "self-determination",
+            "weight": 0.75
+          }
+        ],
+        "⇌": [
+          {
+            "token": "social contract",
+            "weight": 0.68
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:42:15.365Z"
+    },
+    {
+      "token": "france",
+      "relationships": {
+        "≡": [
+          {
+            "token": "French Florida",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "French settlements",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Fort Detroit",
+            "weight": 0.75
+          },
+          {
+            "token": "Saint Louis",
+            "weight": 0.75
+          },
+          {
+            "token": "New Orleans",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "Colonization",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Spanish raids",
+            "weight": 0.7
+          }
+        ],
+        "⇐": [
+          {
+            "token": "Charlesfort",
+            "weight": 0.65
+          },
+          {
+            "token": "Fort Caroline",
+            "weight": 0.65
+          }
+        ],
+        "⇒": [
+          {
+            "token": "Permanent settlements",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:33:23.732Z"
+    },
+    {
+      "token": "franklin",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Benjamin Franklin",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Founding Fathers",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "American Revolution",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "historical figure",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "republicanism",
+            "weight": 0.6
+          },
+          {
+            "token": "political corruption",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "statesman",
+            "weight": 0.5
+          }
+        ],
+        "⇝": [
+          {
+            "token": "liberty",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "individual rights",
+            "weight": 0.45
+          }
+        ],
+        "∝": [
+          {
+            "token": "sovereignty of the people",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:49:17.759Z"
+    },
+    {
+      "token": "free",
+      "relationships": {
+        "≈": [
+          {
+            "token": "liberated",
+            "weight": 0.85
+          },
+          {
+            "token": "unrestricted",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "open",
+            "weight": 0.75
+          },
+          {
+            "token": "accessible",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "available",
+            "weight": 0.65
+          },
+          {
+            "token": "complimentary",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "costless",
+            "weight": 0.55
+          },
+          {
+            "token": "gratis",
+            "weight": 0.5
+          }
+        ],
+        "∼": [
+          {
+            "token": "complimentary",
+            "weight": 0.45
+          }
+        ],
+        "⊃": [
+          {
+            "token": "service",
+            "weight": 0.4
+          },
+          {
+            "token": "offer",
+            "weight": 0.35
+          }
+        ],
+        "⇌": [
+          {
+            "token": "no charge",
+            "weight": 0.3
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:33:13.028Z"
+    },
+    {
+      "token": "freedom",
+      "relationships": {
+        "≡": [
+          {
+            "token": "liberty",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "democracy",
+            "weight": 0.85
+          },
+          {
+            "token": "opportunity",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "civil rights",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "independence",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "human rights",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "equality",
+            "weight": 0.6
+          },
+          {
+            "token": "justice",
+            "weight": 0.55
+          }
+        ],
+        "⇝": [
+          {
+            "token": "democratic ideals",
+            "weight": 0.5
+          }
+        ],
+        "∗": [
+          {
+            "token": "aspiration",
+            "weight": 0.45
+          }
+        ],
+        "⋆": [
+          {
+            "token": "self-determination",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:13:22.827Z"
+    },
+    {
+      "token": "freedoms",
+      "relationships": {
+        "≡": [
+          {
+            "token": "rights",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Bill of Rights",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S. Constitution",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "civil liberties",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Civil Rights Movement",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "self-governance",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "liberties",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "freedom of speech",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "equality",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "social justice",
+            "weight": 0.45
+          }
+        ],
+        "∼": [
+          {
+            "token": "human rights",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:15:19.400Z"
+    },
+    {
+      "token": "french",
+      "relationships": {
+        "≡": [
+          {
+            "token": "france",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "french settlements",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "new orleans",
+            "weight": 0.8
+          },
+          {
+            "token": "fort detroit",
+            "weight": 0.75
+          },
+          {
+            "token": "saint louis",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "francophone",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "colonial history",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "colonization",
+            "weight": 0.65
+          },
+          {
+            "token": "settlements",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "cultural influence",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "expansion",
+            "weight": 0.55
+          }
+        ],
+        "⇄": [
+          {
+            "token": "history",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:33:27.627Z"
+    },
+    {
+      "token": "frequencies",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "waves",
+            "weight": 0.75
+          },
+          {
+            "token": "resonance",
+            "weight": 0.8
+          },
+          {
+            "token": "acoustics",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "standing waves",
+            "weight": 0.7
+          },
+          {
+            "token": "musical intervals",
+            "weight": 0.8
+          },
+          {
+            "token": "crystalline lattices",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "harmonics",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "sound waves",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "music theory",
+            "weight": 0.9
+          },
+          {
+            "token": "architecture",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "geometric ratios",
+            "weight": 0.8
+          }
+        ],
+        "⇌": [
+          {
+            "token": "acoustic properties",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "vibrational modes",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "geometry",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:44:10.154Z"
+    },
+    {
+      "token": "frequency",
+      "relationships": {
+        "≡": [
+          {
+            "token": "vibration",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "cognitive process",
+            "weight": 0.85
+          },
+          {
+            "token": "FFT glyphs",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "HLSF",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "waveform",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "signal",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "cognition",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "thought",
+            "weight": 0.85
+          },
+          {
+            "token": "idea",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "resonance",
+            "weight": 0.78
+          }
+        ],
+        "⇝": [
+          {
+            "token": "meaning",
+            "weight": 0.76
+          }
+        ],
+        "◦": [
+          {
+            "token": "communication",
+            "weight": 0.74
+          }
+        ],
+        "⋆": [
+          {
+            "token": "concept",
+            "weight": 0.72
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:35:06.507Z"
+    },
+    {
+      "token": "frequency-domain",
+      "relationships": {
+        "≡": [
+          {
+            "token": "spectrogram",
+            "weight": 0.9
+          }
+        ],
+        "⊃": [
+          {
+            "token": "FFT glyphs",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "thought",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "harmonic structure",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "cognitive weather systems",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "local vibrations",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "macrofields",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "topology",
+            "weight": 0.55
+          }
+        ],
+        "⊐": [
+          {
+            "token": "HLSFs",
+            "weight": 0.5
+          }
+        ],
+        "∗": [
+          {
+            "token": "impulse",
+            "weight": 0.45
+          }
+        ],
+        "⊕": [
+          {
+            "token": "cognition",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:34:59.516Z"
+    },
+    {
+      "token": "frequently",
+      "relationships": {
+        "≡": [
+          {
+            "token": "often",
+            "weight": 0.95
+          }
+        ],
+        "∼": [
+          {
+            "token": "repeatedly",
+            "weight": 0.85
+          }
+        ],
+        "⊕": [
+          {
+            "token": "regularly",
+            "weight": 0.8
+          }
+        ],
+        "⇄": [
+          {
+            "token": "commonly",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:41:48.337Z"
+    },
+    {
+      "token": "fresh",
+      "relationships": {
+        "≡": [
+          {
+            "token": "new",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "perspective",
+            "weight": 0.85
+          },
+          {
+            "token": "understanding",
+            "weight": 0.8
+          },
+          {
+            "token": "architecture",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "acoustics",
+            "weight": 0.6
+          },
+          {
+            "token": "geometry",
+            "weight": 0.55
+          }
+        ],
+        "≈": [
+          {
+            "token": "novel",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "insight",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "innovation",
+            "weight": 0.5
+          }
+        ],
+        "∗": [
+          {
+            "token": "creativity",
+            "weight": 0.45
+          }
+        ],
+        "⇄": [
+          {
+            "token": "exploration",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:40:41.165Z"
+    },
+    {
+      "token": "from",
+      "relationships": {
+        "≈": [
+          {
+            "token": "to",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "mathematics",
+            "weight": 0.8
+          },
+          {
+            "token": "fields",
+            "weight": 0.6
+          }
+        ],
+        "⊃": [
+          {
+            "token": "applications",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "areas",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "mathematical logic",
+            "weight": 0.65
+          },
+          {
+            "token": "statistics",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "applied mathematics",
+            "weight": 0.55
+          }
+        ],
+        "→": [
+          {
+            "token": "overview",
+            "weight": 0.5
+          }
+        ],
+        "∗": [
+          {
+            "token": "understanding",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:23:26.111Z"
+    },
+    {
+      "token": "front",
+      "relationships": {
+        "≈": [
+          {
+            "token": "technology",
+            "weight": 0.85
+          },
+          {
+            "token": "innovation",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "World Wide Web",
+            "weight": 0.9
+          },
+          {
+            "token": "Pentium microprocessor",
+            "weight": 0.75
+          },
+          {
+            "token": "lithium-ion batteries",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "1990s",
+            "weight": 0.95
+          }
+        ],
+        "⊕": [
+          {
+            "token": "economic growth",
+            "weight": 0.8
+          },
+          {
+            "token": "social change",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "consumer confidence",
+            "weight": 0.7
+          },
+          {
+            "token": "low unemployment rates",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "online trading",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "telecommunications",
+            "weight": 0.55
+          },
+          {
+            "token": "electric vehicles",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:27:37.428Z"
+    },
+    {
+      "token": "frustration",
+      "relationships": {
+        "≡": [
+          {
+            "token": "irritation",
+            "weight": 0.95
+          },
+          {
+            "token": "annoyance",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "stress",
+            "weight": 0.85
+          },
+          {
+            "token": "anxiety",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "intelligence",
+            "weight": 0.75
+          },
+          {
+            "token": "service work",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "creativity",
+            "weight": 0.65
+          },
+          {
+            "token": "communication",
+            "weight": 0.6
+          }
+        ],
+        "⊕": [
+          {
+            "token": "meaning",
+            "weight": 0.55
+          },
+          {
+            "token": "purpose",
+            "weight": 0.5
+          }
+        ],
+        "∼": [
+          {
+            "token": "conflict",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:41:46.971Z"
+    },
+    {
+      "token": "fulfill",
+      "relationships": {
+        "≡": [
+          {
+            "token": "satisfy",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "attributes",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "proportion",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "beauty",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "truths",
+            "weight": 0.6
+          }
+        ],
+        "⊛": [
+          {
+            "token": "design",
+            "weight": 0.55
+          }
+        ],
+        "→": [
+          {
+            "token": "rules",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T20:54:42.197Z"
+    },
+    {
+      "token": "full",
+      "relationships": {
+        "≡": [
+          {
+            "token": "ample",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "powers",
+            "weight": 0.85
+          }
+        ],
+        "⊕": [
+          {
+            "token": "assistance",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "support",
+            "weight": 0.6
+          }
+        ],
+        "⇄": [
+          {
+            "token": "United States of America",
+            "weight": 0.5
+          }
+        ],
+        "⊏": [
+          {
+            "token": "go",
+            "weight": 0.4
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:26:13.407Z"
+    },
+    {
+      "token": "function",
+      "relationships": {
+        "⊤": [
+          {
+            "token": "judiciary",
+            "weight": 0.85
+          },
+          {
+            "token": "court",
+            "weight": 0.8
+          },
+          {
+            "token": "law",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S. federal judiciary system",
+            "weight": 0.9
+          },
+          {
+            "token": "U.S. Supreme Court",
+            "weight": 0.7
+          },
+          {
+            "token": "U.S. Courts of Appeals",
+            "weight": 0.65
+          },
+          {
+            "token": "U.S. District Courts",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "judicial review",
+            "weight": 0.6
+          },
+          {
+            "token": "life tenure",
+            "weight": 0.55
+          }
+        ],
+        "∝": [
+          {
+            "token": "interpretation",
+            "weight": 0.7
+          },
+          {
+            "token": "precedents",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "role",
+            "weight": 0.5
+          },
+          {
+            "token": "functionality",
+            "weight": 0.45
+          }
+        ],
+        "∗": [
+          {
+            "token": "justice",
+            "weight": 0.55
+          },
+          {
+            "token": "decision-making",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:40:05.123Z"
+    },
+    {
+      "token": "functional",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "architecture",
+            "weight": 0.85
+          },
+          {
+            "token": "building",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "design",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "pragmatic",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "utility",
+            "weight": 0.9
+          }
+        ],
+        "⊤": [
+          {
+            "token": "purpose",
+            "weight": 0.88
+          }
+        ],
+        "⊛": [
+          {
+            "token": "aesthetics",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "efficiency",
+            "weight": 0.72
+          }
+        ],
+        "⊕": [
+          {
+            "token": "aesthetic value",
+            "weight": 0.6
+          }
+        ],
+        "∗": [
+          {
+            "token": "meaning",
+            "weight": 0.68
+          }
+        ],
+        "⋆": [
+          {
+            "token": "expression",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:44:58.878Z"
+    },
+    {
+      "token": "functions",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "set theory",
+            "weight": 0.75
+          },
+          {
+            "token": "algebra",
+            "weight": 0.65
+          }
+        ],
+        "⊂": [
+          {
+            "token": "number theory",
+            "weight": 0.5
+          },
+          {
+            "token": "geometry",
+            "weight": 0.5
+          }
+        ],
+        "≈": [
+          {
+            "token": "mappings",
+            "weight": 0.4
+          },
+          {
+            "token": "relations",
+            "weight": 0.3
+          }
+        ],
+        "⊕": [
+          {
+            "token": "algebra",
+            "weight": 0.55
+          },
+          {
+            "token": "analysis",
+            "weight": 0.45
+          }
+        ],
+        "∈": [
+          {
+            "token": "mathematics",
+            "weight": 0.9
+          }
+        ],
+        "⊤": [
+          {
+            "token": "mathematical operations",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "calculations",
+            "weight": 0.6
+          }
+        ],
+        "◦": [
+          {
+            "token": "mathematical expressions",
+            "weight": 0.7
+          }
+        ],
+        "⇌": [
+          {
+            "token": "variables",
+            "weight": 0.3
+          }
+        ],
+        "⇝": [
+          {
+            "token": "theorems",
+            "weight": 0.25
+          }
+        ],
+        "∗": [
+          {
+            "token": "variables",
+            "weight": 0.2
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:24:48.403Z"
+    },
+    {
+      "token": "fundamental",
+      "relationships": {
+        "≡": [
+          {
+            "token": "rights",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Bill of Rights",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S. Constitution",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "essential",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "civil liberties",
+            "weight": 0.75
+          }
+        ],
+        "⊏": [
+          {
+            "token": "freedoms",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "civil rights",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "liberty",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "democracy",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:15:14.501Z"
+    },
+    {
+      "token": "fur",
+      "relationships": {
+        "⊛": [
+          {
+            "token": "trade",
+            "weight": 0.85
+          },
+          {
+            "token": "colonial",
+            "weight": 0.8
+          },
+          {
+            "token": "French",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "fur trade",
+            "weight": 0.9
+          }
+        ],
+        "⊤": [
+          {
+            "token": "resource",
+            "weight": 0.7
+          }
+        ],
+        "⇌": [
+          {
+            "token": "animal pelts",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "furs",
+            "weight": 0.6
+          }
+        ],
+        "⏩": [
+          {
+            "token": "economic interests",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:33:53.940Z"
+    },
+    {
+      "token": "further",
+      "relationships": {
+        "≈": [
+          {
+            "token": "additional",
+            "weight": 0.75
+          },
+          {
+            "token": "more",
+            "weight": 0.65
+          }
+        ],
+        "⊃": [
+          {
+            "token": "exploration",
+            "weight": 0.6
+          },
+          {
+            "token": "colonization",
+            "weight": 0.55
+          }
+        ],
+        "⊂": [
+          {
+            "token": "European exploration",
+            "weight": 0.7
+          },
+          {
+            "token": "Spanish influence",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "mission",
+            "weight": 0.5
+          }
+        ],
+        "⇒": [
+          {
+            "token": "colonization efforts",
+            "weight": 0.8
+          }
+        ],
+        "↠": [
+          {
+            "token": "Spanish culture",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "settlements",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:32:13.015Z"
+    },
+    {
+      "token": "furthermore",
+      "relationships": {
+        "≡": [
+          {
+            "token": "additionally",
+            "weight": 0.85
+          },
+          {
+            "token": "moreover",
+            "weight": 0.9
+          }
+        ],
+        "⊕": [
+          {
+            "token": "also",
+            "weight": 0.8
+          },
+          {
+            "token": "in addition",
+            "weight": 0.75
+          }
+        ],
+        "∼": [
+          {
+            "token": "likewise",
+            "weight": 0.7
+          },
+          {
+            "token": "similarly",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "in conjunction with",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "supports",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:28:10.472Z"
+    },
+    {
+      "token": "future",
+      "relationships": {
+        "≡": [
+          {
+            "token": "governance",
+            "weight": 0.9
+          },
+          {
+            "token": "democracy",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Mayflower Compact",
+            "weight": 0.8
+          },
+          {
+            "token": "Fundamental Orders",
+            "weight": 0.8
+          }
+        ],
+        "⊐": [
+          {
+            "token": "self-governance",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "American identity",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Enlightenment thinking",
+            "weight": 0.65
+          },
+          {
+            "token": "social contract",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "democratic principles",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "Indigenous populations",
+            "weight": 0.55
+          }
+        ],
+        "⇐": [
+          {
+            "token": "treaties",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:42:34.978Z"
+    }
+  ]
+}
