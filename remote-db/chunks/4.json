@@ -1,0 +1,332 @@
+{
+  "prefix": "4",
+  "token_count": 5,
+  "tokens": [
+    {
+      "token": "4",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "Analysis",
+            "weight": 0.85
+          },
+          {
+            "token": "Geometry",
+            "weight": 0.8
+          },
+          {
+            "token": "Algebra",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Mathematics",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "Calculus",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "Field",
+            "weight": 0.7
+          }
+        ],
+        "⊤": [
+          {
+            "token": "Mathematical Concept",
+            "weight": 0.8
+          }
+        ],
+        "⊏": [
+          {
+            "token": "Number Theory",
+            "weight": 0.7
+          },
+          {
+            "token": "Set Theory",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "Higher Mathematics",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "Cryptography",
+            "weight": 0.6
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Statistics",
+            "weight": 0.55
+          },
+          {
+            "token": "Applied Mathematics",
+            "weight": 0.5
+          }
+        ],
+        "∝": [
+          {
+            "token": "Physics",
+            "weight": 0.6
+          },
+          {
+            "token": "Computer Science",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:24:13.806Z"
+    },
+    {
+      "token": "40",
+      "relationships": {
+        "≡": [
+          {
+            "token": "40",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "1802",
+            "weight": 0.5
+          },
+          {
+            "token": "777",
+            "weight": 0.4
+          }
+        ],
+        "⊂": [
+          {
+            "token": "1805",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "0.35",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "Focused Attention",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "Clustering",
+            "weight": 0.5
+          }
+        ],
+        "∼": [
+          {
+            "token": "Attention State",
+            "weight": 0.45
+          }
+        ],
+        "⇒": [
+          {
+            "token": "Iterations",
+            "weight": 0.5
+          }
+        ],
+        "⇌": [
+          {
+            "token": "Cosine-Jaccard Affinity",
+            "weight": 0.65
+          }
+        ],
+        "⚡": [
+          {
+            "token": "Memory",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:22:43.241Z"
+    },
+    {
+      "token": "4700",
+      "relationships": {
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
+        "≈": [],
+        "∈": [],
+        "∋": [],
+        "⊤": [],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [],
+        "→": [],
+        "⇒": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇝": [],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [
+          {
+            "token": "Goseck Circle",
+            "weight": 0.85
+          },
+          {
+            "token": "Neolithic structure",
+            "weight": 0.75
+          }
+        ],
+        "∝": [],
+        "∗": [],
+        "≜": [],
+        "⋆": [],
+        "7→": [],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": []
+      },
+      "cached_at": "2025-10-18T21:05:02.860Z"
+    },
+    {
+      "token": "48",
+      "relationships": {
+        "≡": [
+          {
+            "token": "contiguous states",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "United States",
+            "weight": 0.9
+          }
+        ],
+        "⊃": [
+          {
+            "token": "United States of America",
+            "weight": 0.85
+          }
+        ],
+        "∈": [
+          {
+            "token": "50 states",
+            "weight": 0.8
+          }
+        ],
+        "⊏": [
+          {
+            "token": "USA",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "U.S.",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "federal republic",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "North America",
+            "weight": 0.6
+          }
+        ],
+        "↔": [
+          {
+            "token": "federal capital district",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "Washington, D.C.",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:10:50.774Z"
+    },
+    {
+      "token": "4900",
+      "relationships": {
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
+        "≈": [],
+        "∈": [],
+        "∋": [],
+        "⊤": [],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [],
+        "→": [],
+        "⇒": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇝": [],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [
+          {
+            "token": "Goseck Circle",
+            "weight": 0.9
+          },
+          {
+            "token": "Neolithic structure",
+            "weight": 0.85
+          }
+        ],
+        "∝": [],
+        "∗": [],
+        "≜": [],
+        "⋆": [],
+        "7→": [],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": []
+      },
+      "cached_at": "2025-10-18T21:04:55.337Z"
+    }
+  ]
+}

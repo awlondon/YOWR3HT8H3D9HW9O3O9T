@@ -3883,7 +3883,7 @@
     // Default cached database bundled with the repository. Keep this in sync with
     // the actual JSON artifact checked into version control so the visualizer can
     // bootstrap immediately without requiring a manual import.
-    const DEFAULT_BOOTSTRAP_DB = '';
+    const DEFAULT_BOOTSTRAP_DB = 'remote-db/metadata.json';
     window.HLSF.config = Object.assign({
       bootstrapDbUrl: typeof existingConfig.bootstrapDbUrl === 'string' ? existingConfig.bootstrapDbUrl : DEFAULT_BOOTSTRAP_DB,
       rotationOmega: 0.30,
@@ -4312,7 +4312,11 @@
     }
 
     function refreshDbReference(recordLike, options = {}) {
-      const { deferReload = false, skipVariantSync = false } = options || {};
+      const {
+        deferReload = false,
+        skipVariantSync = false,
+        persist = true,
+      } = options || {};
       const normalized = normalizeRecord(recordLike);
       if (!normalized) return;
 
@@ -4367,10 +4371,12 @@
       }
 
       window.HLSF.dbCache = db;
-      try {
-        safeStorageSet(DB_RAW_KEY, JSON.stringify(db));
-      } catch (err) {
-        console.warn('Failed to persist updated DB snapshot:', err);
+      if (persist) {
+        try {
+          safeStorageSet(DB_RAW_KEY, JSON.stringify(db));
+        } catch (err) {
+          console.warn('Failed to persist updated DB snapshot:', err);
+        }
       }
       if (deferReload) {
         markHlsfDataDirty();
@@ -6030,6 +6036,189 @@
       key: getCacheKey,
     };
 
+    const RemoteDbStore = (() => {
+      let metadata = null;
+      let metadataUrl = null;
+      let chunkPrefixLength = 1;
+      let chunkMap = new Map();
+      const chunkCache = new Map();
+      const tokenCache = new Map();
+      let tokenIndex = [];
+
+      const normalizeToken = (token) => (token == null ? '' : String(token)).toLowerCase();
+
+      const hasMetadata = () => metadata != null;
+
+      const fallbackPrefix = () => {
+        if (chunkMap.has('_')) return '_';
+        const iter = chunkMap.keys().next();
+        return iter.done ? '_' : iter.value;
+      };
+
+      const chunkKeyFor = (token) => {
+        const normalized = normalizeToken(token);
+        if (!normalized) return fallbackPrefix();
+        const primary = normalized.slice(0, chunkPrefixLength) || normalized.charAt(0);
+        if (primary && chunkMap.has(primary)) return primary;
+        const fallback = normalized.charAt(0);
+        if (fallback && chunkMap.has(fallback)) return fallback;
+        return fallbackPrefix();
+      };
+
+      const resolveChunkUrl = (info) => new URL(info.href, metadataUrl).href;
+
+      const loadTokenIndex = async (href) => {
+        tokenIndex = [];
+        if (!href) return;
+        try {
+          const url = new URL(href, metadataUrl).href;
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (data && Array.isArray(data.tokens)) {
+            tokenIndex = data.tokens.map(tok => String(tok));
+          }
+        } catch (err) {
+          console.warn('Failed to load remote DB token index:', err);
+          tokenIndex = [];
+        }
+      };
+
+      const ensureChunk = async (prefix) => {
+        const key = chunkMap.has(prefix) ? prefix : chunkKeyFor(prefix);
+        if (chunkCache.has(key)) return chunkCache.get(key);
+        const info = chunkMap.get(key);
+        if (!info) {
+          const empty = new Map();
+          chunkCache.set(key, empty);
+          return empty;
+        }
+        const url = resolveChunkUrl(info);
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = await res.json();
+        const entries = new Map();
+        const list = Array.isArray(payload?.tokens) ? payload.tokens : [];
+        for (const entry of list) {
+          const normalized = normalizeRecord(entry);
+          if (!normalized) continue;
+          const tokenKey = normalizeToken(normalized.token);
+          if (!tokenKey) continue;
+          entries.set(tokenKey, normalized);
+        }
+        chunkCache.set(key, entries);
+        return entries;
+      };
+
+      const ingestRecord = (record) => {
+        if (!record || !record.token) return false;
+        const cacheKey = getCacheKey(record.token);
+        const alreadyCached = isTokenCached(record.token);
+        if (!alreadyCached) {
+          memoryStorageFallback.set(cacheKey, JSON.stringify(record));
+          CacheBatch.record(record.token);
+        }
+        refreshDbReference(record, { deferReload: true, persist: false, skipVariantSync: true });
+        return !alreadyCached;
+      };
+
+      const preloadTokens = async (tokens) => {
+        if (!hasMetadata()) return { loaded: 0, hits: 0 };
+        const stats = { loaded: 0, hits: 0 };
+        const normalizedTokens = Array.from(new Set((tokens || []).map(normalizeToken).filter(Boolean)));
+        if (!normalizedTokens.length) return stats;
+
+        const pending = new Map();
+        for (const token of normalizedTokens) {
+          if (isTokenCached(token)) {
+            stats.hits++;
+            continue;
+          }
+          const cached = tokenCache.get(token);
+          if (cached) {
+            if (ingestRecord(cached)) stats.loaded++;
+            else stats.hits++;
+            continue;
+          }
+          const prefix = chunkKeyFor(token);
+          if (!pending.has(prefix)) pending.set(prefix, new Set());
+          pending.get(prefix).add(token);
+        }
+
+        for (const [prefix, set] of pending.entries()) {
+          let chunk;
+          try {
+            chunk = await ensureChunk(prefix);
+          } catch (err) {
+            console.warn(`Failed to hydrate remote DB chunk ${prefix}:`, err);
+            continue;
+          }
+          for (const token of set) {
+            const record = chunk.get(token);
+            if (!record) continue;
+            tokenCache.set(token, record);
+            if (ingestRecord(record)) stats.loaded++;
+            else stats.hits++;
+          }
+        }
+
+        if (stats.loaded > 0) updateHeaderCounts();
+        return stats;
+      };
+
+      const configure = async (url) => {
+        if (!url) throw new Error('Metadata URL required');
+        const resolved = new URL(url, location.href).href;
+        const res = await fetch(resolved, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data || typeof data !== 'object' || !Array.isArray(data.chunks)) {
+          throw new Error('Invalid metadata payload');
+        }
+
+        metadata = data;
+        metadataUrl = resolved;
+        chunkPrefixLength = Math.max(1, Number(data.chunk_prefix_length) || 1);
+        chunkMap = new Map();
+        for (const chunk of data.chunks) {
+          if (!chunk || typeof chunk !== 'object') continue;
+          const rawPrefix = chunk.prefix == null ? '' : String(chunk.prefix);
+          const prefixKey = normalizeToken(rawPrefix) || rawPrefix || '_';
+          if (!chunk.href) continue;
+          chunkMap.set(prefixKey, {
+            prefix: prefixKey,
+            href: chunk.href,
+            token_count: Number(chunk.token_count) || 0,
+          });
+        }
+        if (!chunkMap.size) {
+          chunkMap.set('_', { prefix: '_', href: 'chunks/_.json', token_count: 0 });
+        }
+
+        chunkCache.clear();
+        tokenCache.clear();
+        await loadTokenIndex(data.token_index_href);
+
+        window.HLSF.dbCache = { full_token_data: [] };
+        window.HLSF.dbMeta = metadata;
+        updateHeaderCounts();
+        return metadata;
+      };
+
+      const listTokens = () => Array.isArray(tokenIndex) ? [...tokenIndex] : [];
+
+      return {
+        configure,
+        isReady: hasMetadata,
+        preloadTokens,
+        listTokens,
+        metadata: () => metadata,
+        chunkForToken: chunkKeyFor,
+      };
+    })();
+
+    window.HLSF.remoteDb = RemoteDbStore;
+
     function getCachedRecordForToken(token) {
       if (!token) return null;
       try {
@@ -6316,7 +6505,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       CacheBatch.begin();
       try {
         const results = new Map();
-        const unique = [...new Set(tokens)];
+        const unique = Array.isArray(tokens) ? [...new Set(tokens)] : [];
+
+        if (window.HLSF?.remoteDb?.isReady?.()) {
+          try {
+            await window.HLSF.remoteDb.preloadTokens(unique);
+          } catch (err) {
+            console.warn('Remote DB preload failed:', err);
+          }
+        }
 
         const progress = new ProgressTracker(unique.length, label);
 
@@ -8232,6 +8429,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     async function tryBootstrapDb() {
+      if (window.HLSF?.remoteDb?.isReady?.()) return true;
       if (getDb()) return true;
 
       let href = null;
@@ -8245,10 +8443,14 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       if (!href) return false;
 
       try {
-        const text = await fetchBootstrapText(href);
-        if (!text) throw new Error('Empty response');
-        const n = loadDbObject(text);
-        logFinal(`DB loaded. Tokens: ${n}`);
+        const meta = await window.HLSF.remoteDb.configure(href);
+        window.HLSF.config.bootstrapDbUrl = href;
+        const tokenCount = Number.isFinite(meta?.total_tokens) ? meta.total_tokens : null;
+        const chunkCount = Array.isArray(meta?.chunks) ? meta.chunks.length : null;
+        const parts = [];
+        if (tokenCount != null) parts.push(`${tokenCount} tokens`);
+        if (chunkCount != null) parts.push(`${chunkCount} chunks`);
+        if (parts.length) logOK(`Remote DB ready: ${parts.join(', ')}`);
         return true;
       } catch (e) {
         const reason = e?.message || String(e) || 'Unknown error';
@@ -8263,6 +8465,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       (db?.full_token_data || []).forEach(record => {
         if (record?.token) idx.set(record.token, record);
       });
+      const remote = window.HLSF?.remoteDb;
+      if (remote && typeof remote.isReady === 'function' && remote.isReady() && typeof remote.listTokens === 'function') {
+        for (const token of remote.listTokens()) {
+          if (!token || idx.has(token)) continue;
+          idx.set(token, { token, relationships: {} });
+        }
+      }
       return idx;
     }
 
@@ -8723,12 +8932,15 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     async function cmdLoadDb(arg) {
       try {
         const href = (arg || '').trim() || window.HLSF.config.bootstrapDbUrl;
-        if (!href) throw new Error('Usage: /loaddb <url-or-path>');
-        const res = await fetch(href, { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
-        const n = loadDbObject(text);
-        logFinal(`DB loaded. Tokens: ${n}`);
+        if (!href) throw new Error('Usage: /loaddb <metadata-url>');
+        const meta = await window.HLSF.remoteDb.configure(href);
+        window.HLSF.config.bootstrapDbUrl = href;
+        const tokenCount = Number.isFinite(meta?.total_tokens) ? meta.total_tokens : null;
+        const chunkCount = Array.isArray(meta?.chunks) ? meta.chunks.length : null;
+        const parts = [];
+        if (tokenCount != null) parts.push(`${tokenCount} tokens`);
+        if (chunkCount != null) parts.push(`${chunkCount} chunks`);
+        logFinal(`Remote DB ready${parts.length ? `: ${parts.join(', ')}` : ''}.`);
       } catch (e) {
         logError(`load failed: ${String(e.message || e)}`);
       }

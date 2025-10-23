@@ -1,0 +1,70 @@
+{
+  "prefix": "_",
+  "token_count": 1,
+  "tokens": [
+    {
+      "token": "-",
+      "relationships": {
+        "≡": [
+          {
+            "token": "government",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "separation of powers",
+            "weight": 0.85
+          },
+          {
+            "token": "federalism",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "executive branch",
+            "weight": 0.75
+          },
+          {
+            "token": "legislative branch",
+            "weight": 0.75
+          },
+          {
+            "token": "judicial branch",
+            "weight": 0.75
+          }
+        ],
+        "⊕": [
+          {
+            "token": "checks and balances",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "U.S. Constitution",
+            "weight": 0.9
+          }
+        ],
+        "∝": [
+          {
+            "token": "state government",
+            "weight": 0.65
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Native American sovereignty",
+            "weight": 0.6
+          },
+          {
+            "token": "Native American reservations",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:19:38.234Z"
+    }
+  ]
+}

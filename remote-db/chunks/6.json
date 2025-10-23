@@ -1,0 +1,152 @@
+{
+  "prefix": "6",
+  "token_count": 2,
+  "tokens": [
+    {
+      "token": "6",
+      "relationships": {
+        "≡": [
+          {
+            "token": "United States",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Economic Competitiveness",
+            "weight": 0.8
+          },
+          {
+            "token": "Cultural Diversity",
+            "weight": 0.75
+          },
+          {
+            "token": "Global Influence",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Developed Nation",
+            "weight": 0.85
+          }
+        ],
+        "≈": [
+          {
+            "token": "Leading Economy",
+            "weight": 0.9
+          }
+        ],
+        "∈": [
+          {
+            "token": "OECD Countries",
+            "weight": 0.6
+          }
+        ],
+        "∋": [
+          {
+            "token": "Household Income",
+            "weight": 0.65
+          }
+        ],
+        "⊥": [
+          {
+            "token": "Wealth Inequality",
+            "weight": 0.88
+          }
+        ],
+        "⊏": [
+          {
+            "token": "Higher Education System",
+            "weight": 0.8
+          }
+        ],
+        "⊐": [
+          {
+            "token": "Cultural Output",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "Economic Strength",
+            "weight": 0.75
+          }
+        ],
+        "⊕": [
+          {
+            "token": "Innovation",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Media Influence",
+            "weight": 0.8
+          }
+        ],
+        "⇝": [
+          {
+            "token": "Global Economy",
+            "weight": 0.9
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:24:57.584Z"
+    },
+    {
+      "token": "60",
+      "relationships": {
+        "≡": [
+          {
+            "token": "60",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "40",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "80",
+            "weight": 0.6
+          }
+        ],
+        "∝": [
+          {
+            "token": "30",
+            "weight": 0.55
+          }
+        ],
+        "∼": [
+          {
+            "token": "70",
+            "weight": 0.5
+          }
+        ],
+        "↔": [
+          {
+            "token": "50",
+            "weight": 0.45
+          }
+        ],
+        "⊛": [
+          {
+            "token": "90",
+            "weight": 0.4
+          }
+        ],
+        "⇌": [
+          {
+            "token": "20",
+            "weight": 0.35
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:22:37.104Z"
+    }
+  ]
+}

@@ -1,0 +1,330 @@
+{
+  "prefix": "k",
+  "token_count": 5,
+  "tokens": [
+    {
+      "token": "keeps",
+      "relationships": {
+        "≡": [
+          {
+            "token": "maintains",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "cognitive state database",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "attention state",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "tokens",
+            "weight": 0.55
+          }
+        ],
+        "⇄": [
+          {
+            "token": "iterations",
+            "weight": 0.7
+          }
+        ],
+        "∼": [
+          {
+            "token": "tokens",
+            "weight": 0.5
+          }
+        ],
+        "⊛": [
+          {
+            "token": "communities",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:23:01.431Z"
+    },
+    {
+      "token": "key",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "Mathematics",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Number Theory",
+            "weight": 0.7
+          },
+          {
+            "token": "Algebra",
+            "weight": 0.7
+          },
+          {
+            "token": "Geometry",
+            "weight": 0.7
+          },
+          {
+            "token": "Analysis",
+            "weight": 0.7
+          },
+          {
+            "token": "Set Theory",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Statistics",
+            "weight": 0.6
+          },
+          {
+            "token": "Combinatorics",
+            "weight": 0.6
+          },
+          {
+            "token": "Topology",
+            "weight": 0.6
+          },
+          {
+            "token": "Mathematical Logic",
+            "weight": 0.6
+          },
+          {
+            "token": "Applied Mathematics",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "Cryptography",
+            "weight": 0.5
+          },
+          {
+            "token": "Coding Theory",
+            "weight": 0.5
+          },
+          {
+            "token": "Physical Sciences",
+            "weight": 0.5
+          },
+          {
+            "token": "Computer Science",
+            "weight": 0.5
+          },
+          {
+            "token": "Economics",
+            "weight": 0.5
+          }
+        ],
+        "≈": [
+          {
+            "token": "Mathematics",
+            "weight": 0.85
+          }
+        ],
+        "⊏": [
+          {
+            "token": "Foundational Framework",
+            "weight": 0.65
+          }
+        ],
+        "⊐": [
+          {
+            "token": "Advanced Topics",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "New Theories",
+            "weight": 0.55
+          }
+        ],
+        "∝": [
+          {
+            "token": "Interconnectedness",
+            "weight": 0.45
+          }
+        ],
+        "⇝": [
+          {
+            "token": "Applications",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:22:41.460Z"
+    },
+    {
+      "token": "king",
+      "relationships": {
+        "≡": [
+          {
+            "token": "King Philip's War",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Native Americans",
+            "weight": 0.85
+          },
+          {
+            "token": "colonial expansion",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "tensions",
+            "weight": 0.75
+          }
+        ],
+        "⇝": [
+          {
+            "token": "cultural disruptions",
+            "weight": 0.6
+          }
+        ],
+        "⇐": [
+          {
+            "token": "displacement",
+            "weight": 0.5
+          }
+        ],
+        "≠": [
+          {
+            "token": "European settlers",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:43:51.560Z"
+    },
+    {
+      "token": "knew",
+      "relationships": {
+        "≈": [
+          {
+            "token": "understood",
+            "weight": 0.8
+          },
+          {
+            "token": "recognized",
+            "weight": 0.75
+          }
+        ],
+        "⊕": [
+          {
+            "token": "knowledge",
+            "weight": 0.85
+          },
+          {
+            "token": "awareness",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "experience",
+            "weight": 0.65
+          },
+          {
+            "token": "insight",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "perceived",
+            "weight": 0.5
+          },
+          {
+            "token": "comprehended",
+            "weight": 0.55
+          }
+        ],
+        "⊛": [
+          {
+            "token": "wisdom",
+            "weight": 0.9
+          },
+          {
+            "token": "familiarity",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:39:19.931Z"
+    },
+    {
+      "token": "known",
+      "relationships": {
+        "≡": [
+          {
+            "token": "United States",
+            "weight": 0.95
+          },
+          {
+            "token": "USA",
+            "weight": 0.9
+          },
+          {
+            "token": "America",
+            "weight": 0.9
+          }
+        ],
+        "⊃": [
+          {
+            "token": "country",
+            "weight": 0.85
+          },
+          {
+            "token": "federal republic",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "North America",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "U.S.",
+            "weight": 0.8
+          }
+        ],
+        "⊏": [
+          {
+            "token": "federal capital district",
+            "weight": 0.7
+          }
+        ],
+        "⊐": [
+          {
+            "token": "50 states",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "megadiverse country",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:10:29.775Z"
+    }
+  ]
+}

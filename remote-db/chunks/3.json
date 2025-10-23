@@ -1,0 +1,279 @@
+{
+  "prefix": "3",
+  "token_count": 3,
+  "tokens": [
+    {
+      "token": "3",
+      "relationships": {
+        "≈": [
+          {
+            "token": "Mathematics",
+            "weight": 0.95
+          },
+          {
+            "token": "Number Theory",
+            "weight": 0.9
+          },
+          {
+            "token": "Algebra",
+            "weight": 0.9
+          },
+          {
+            "token": "Geometry",
+            "weight": 0.9
+          },
+          {
+            "token": "Analysis",
+            "weight": 0.9
+          },
+          {
+            "token": "Set Theory",
+            "weight": 0.9
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Mathematics",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Mathematics",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Statistics",
+            "weight": 0.8
+          },
+          {
+            "token": "Combinatorics",
+            "weight": 0.8
+          },
+          {
+            "token": "Topology",
+            "weight": 0.8
+          },
+          {
+            "token": "Mathematical Logic",
+            "weight": 0.8
+          },
+          {
+            "token": "Applied Mathematics",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "Number Theory",
+            "weight": 0.85
+          },
+          {
+            "token": "Algebra",
+            "weight": 0.85
+          },
+          {
+            "token": "Geometry",
+            "weight": 0.85
+          },
+          {
+            "token": "Analysis",
+            "weight": 0.85
+          },
+          {
+            "token": "Set Theory",
+            "weight": 0.85
+          }
+        ],
+        "⇌": [
+          {
+            "token": "Physical Sciences",
+            "weight": 0.75
+          },
+          {
+            "token": "Computer Science",
+            "weight": 0.75
+          },
+          {
+            "token": "Economics",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "Cryptography",
+            "weight": 0.7
+          },
+          {
+            "token": "Coding Theory",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "Architecture",
+            "weight": 0.75
+          },
+          {
+            "token": "Engineering",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:23:58.099Z"
+    },
+    {
+      "token": "326",
+      "relationships": {
+        "≡": [],
+        "⊃": [],
+        "⊂": [],
+        "≈": [],
+        "∈": [],
+        "∋": [],
+        "⊤": [],
+        "⊥": [],
+        "⊏": [],
+        "⊐": [],
+        "↔": [],
+        "⇌": [],
+        "∥": [],
+        "∼": [],
+        "→": [],
+        "⇒": [],
+        "⇐": [],
+        "↠": [],
+        "↗": [],
+        "↘": [],
+        "⇝": [],
+        "⇂": [],
+        "≠": [],
+        "⊕": [],
+        "⊛": [],
+        "∝": [],
+        "∗": [],
+        "≜": [],
+        "⋆": [],
+        "7→": [],
+        "⊢": [],
+        "⊣": [],
+        "↷": [],
+        "↶": [],
+        "◦": [],
+        "|=": [],
+        "▷◁": [],
+        "⇄": [],
+        "⊗": [],
+        "÷": [],
+        "⊘": [],
+        "×": [],
+        "¬": [],
+        "†": [],
+        "⊠": [],
+        "/∈": [],
+        "⊬": [],
+        "⊩": [],
+        "⊨": [],
+        "?": [],
+        "⚡": [],
+        "∧": [],
+        "↭": []
+      },
+      "cached_at": "2025-10-18T17:19:45.133Z"
+    },
+    {
+      "token": "35",
+      "relationships": {
+        "≡": [
+          {
+            "token": "focused attention",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "0.35 threshold",
+            "weight": 0.8
+          },
+          {
+            "token": "8 iterations",
+            "weight": 0.75
+          },
+          {
+            "token": "60/40 cosine–Jaccard affinity mix",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "attention state",
+            "weight": 0.85
+          }
+        ],
+        "≈": [
+          {
+            "token": "flexible attention",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "cognitive state",
+            "weight": 0.9
+          }
+        ],
+        "∋": [
+          {
+            "token": "cognitive state database",
+            "weight": 0.8
+          }
+        ],
+        "⊤": [
+          {
+            "token": "attention",
+            "weight": 0.95
+          }
+        ],
+        "⊛": [
+          {
+            "token": "clustering",
+            "weight": 0.85
+          }
+        ],
+        "∝": [
+          {
+            "token": "evidence",
+            "weight": 0.75
+          }
+        ],
+        "⇝": [
+          {
+            "token": "patience",
+            "weight": 0.7
+          }
+        ],
+        "⇄": [
+          {
+            "token": "well-formed communities",
+            "weight": 0.65
+          }
+        ],
+        "∼": [
+          {
+            "token": "neighbors",
+            "weight": 0.7
+          }
+        ],
+        "→": [
+          {
+            "token": "influence",
+            "weight": 0.8
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:22:06.806Z"
+    }
+  ]
+}

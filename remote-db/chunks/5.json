@@ -1,0 +1,168 @@
+{
+  "prefix": "5",
+  "token_count": 3,
+  "tokens": [
+    {
+      "token": "5",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "Analysis",
+            "weight": 0.85
+          },
+          {
+            "token": "Algebra",
+            "weight": 0.8
+          },
+          {
+            "token": "Geometry",
+            "weight": 0.75
+          },
+          {
+            "token": "Number Theory",
+            "weight": 0.7
+          },
+          {
+            "token": "Set Theory",
+            "weight": 0.65
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Mathematics",
+            "weight": 0.9
+          }
+        ],
+        "≈": [
+          {
+            "token": "Algebraic Structures",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "Mathematical Concepts",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "Statistics",
+            "weight": 0.5
+          },
+          {
+            "token": "Combinatorics",
+            "weight": 0.45
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Applied Mathematics",
+            "weight": 0.55
+          },
+          {
+            "token": "Mathematical Logic",
+            "weight": 0.4
+          }
+        ],
+        "∝": [
+          {
+            "token": "Physics",
+            "weight": 0.55
+          },
+          {
+            "token": "Computer Science",
+            "weight": 0.5
+          },
+          {
+            "token": "Economics",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T06:24:35.714Z"
+    },
+    {
+      "token": "50",
+      "relationships": {
+        "≡": [
+          {
+            "token": "states",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "United States",
+            "weight": 0.9
+          }
+        ],
+        "⊂": [
+          {
+            "token": "United States",
+            "weight": 0.9
+          }
+        ],
+        "∈": [
+          {
+            "token": "federal republic",
+            "weight": 0.85
+          }
+        ],
+        "⊏": [
+          {
+            "token": "federal capital district",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "federal system",
+            "weight": 0.7
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:10:43.961Z"
+    },
+    {
+      "token": "574",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "Native American tribes",
+            "weight": 0.9
+          },
+          {
+            "token": "Native American reservations",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S. national government",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "sovereignty rights",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "50 states",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "tribes",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:19:40.574Z"
+    }
+  ]
+}
