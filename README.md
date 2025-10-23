@@ -4,9 +4,10 @@ The HLSF Cognition Engine is a self-contained web workbench for analyzing langua
 
 ## Project Structure
 
-This repository contains a single-page application:
+This repository contains a single-page application and a bundled remote database snapshot:
 
 - `index.html` – The complete interface, styling, and JavaScript logic for the cognition engine, including the modal for API configuration, logging console, command handler, and processing routines. 【F:index.html†L435-L608】【F:index.html†L965-L1190】
+- `remote-db/` – Chunked HLSF adjacency data and metadata used for lazy, token-level hydration without exhausting browser storage. 【F:index.html†L6007-L6185】【F:index.html†L8427-L8460】
 
 ## Quick Start
 
@@ -16,6 +17,8 @@ This repository contains a single-page application:
 4. Watch the command log update as the engine gathers LLM output, fetches adjacency matrices, and renders analysis artifacts. Offline mode returns placeholder responses where live synthesis is unavailable. 【F:index.html†L984-L1150】
 
 > **Note:** The application communicates directly with the OpenAI Chat Completions API from the browser. Ensure you trust the execution environment before supplying credentials. 【F:index.html†L610-L707】
+
+> **Database hydration:** The bundled `remote-db/metadata.json` manifest keeps adjacency data external to browser storage; records are streamed in chunks only for tokens encountered in prompts and model output, preventing quota exhaustion. 【F:index.html†L6007-L6185】【F:index.html†L6314-L6364】
 
 ## Core Workflow
 
@@ -39,6 +42,7 @@ Use leading slashes to control the environment without leaving the keyboard. Com
 | `/clear` | Clear the command log. 【F:index.html†L573-L579】|
 | `/export` | Download a JSON bundle of the current session matrices and cached data. 【F:index.html†L573-L582】【F:index.html†L907-L944】|
 | `/reset` | Purge cached adjacency matrices from `localStorage`. 【F:index.html†L583-L586】|
+| `/loaddb <metadata-url>` | Register a remote chunked database manifest (for example `remote-db/metadata.json`) so tokens are streamed on demand rather than stored wholesale. 【F:index.html†L8932-L8950】【F:index.html†L6007-L6185】|
 | `/hlsf [-db]` | Render the Hierarchical-Level Semantic Framework; append `-db` to work from the fully imported or cached database snapshot. 【F:index.html†L987-L1014】【F:index.html†L6926-L7038】|
 | `/depth [1-5]` | Adjust recursion depth used for multi-pass processing. 【F:index.html†L587-L600】|
 
@@ -60,7 +64,7 @@ Exports are automatically triggered after every run and saved as `HLSF_Session_<
 ## Development Notes
 
 - All logic lives in vanilla HTML/CSS/JS, making it easy to host on static servers or run locally without a build step. 【F:index.html†L1-L432】【F:index.html†L467-L1216】
-- Browser storage (via `localStorage`) is used for memoizing adjacency matrices and session histories; clearing site data resets the tool. 【F:index.html†L653-L959】
+- Live adjacency matrices and session histories still rely on ephemeral storage, but long-term token data is streamed from the chunked `remote-db` manifest to keep browser quotas intact. Clearing site data resets only recent activity. 【F:index.html†L6007-L6185】【F:index.html†L653-L959】
 - Responsive design rules ensure usability on narrow screens by stacking the input area and adjusting header layout. 【F:index.html†L393-L411】
 
 ## License

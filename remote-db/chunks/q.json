@@ -1,0 +1,550 @@
+{
+  "prefix": "q",
+  "token_count": 9,
+  "tokens": [
+    {
+      "token": "qualitative",
+      "relationships": {
+        "≡": [
+          {
+            "token": "qualitative research",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "data analysis",
+            "weight": 0.8
+          },
+          {
+            "token": "abstraction",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "data science",
+            "weight": 0.85
+          }
+        ],
+        "≈": [
+          {
+            "token": "qualitative methods",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "research methodology",
+            "weight": 0.9
+          }
+        ],
+        "⊤": [
+          {
+            "token": "analysis",
+            "weight": 0.88
+          }
+        ],
+        "⊛": [
+          {
+            "token": "creativity",
+            "weight": 0.67
+          }
+        ],
+        "∝": [
+          {
+            "token": "subjective analysis",
+            "weight": 0.62
+          }
+        ],
+        "⇄": [
+          {
+            "token": "quantitative analysis",
+            "weight": 0.5
+          }
+        ],
+        "∗": [
+          {
+            "token": "interpretation",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:26:02.864Z"
+    },
+    {
+      "token": "qualities",
+      "relationships": {
+        "⊛": [
+          {
+            "token": "acoustics",
+            "weight": 0.85
+          },
+          {
+            "token": "geometry",
+            "weight": 0.8
+          },
+          {
+            "token": "resonance",
+            "weight": 0.9
+          },
+          {
+            "token": "vibrational energy",
+            "weight": 0.75
+          }
+        ],
+        "∝": [
+          {
+            "token": "architectural stability",
+            "weight": 0.7
+          },
+          {
+            "token": "intentionality",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "Harmonic Lattice Structure Field",
+            "weight": 0.6
+          }
+        ],
+        "⊏": [
+          {
+            "token": "ancient builders",
+            "weight": 0.95
+          },
+          {
+            "token": "structures",
+            "weight": 0.88
+          }
+        ],
+        "⊐": [
+          {
+            "token": "sound waves",
+            "weight": 0.8
+          },
+          {
+            "token": "physical properties",
+            "weight": 0.75
+          }
+        ],
+        "∗": [
+          {
+            "token": "spiritual experience",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "energy of the environment",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:40:50.550Z"
+    },
+    {
+      "token": "quality",
+      "relationships": {
+        "≡": [
+          {
+            "token": "beauty",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "architecture",
+            "weight": 0.85
+          },
+          {
+            "token": "aesthetics",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "proportion",
+            "weight": 0.75
+          }
+        ],
+        "≈": [
+          {
+            "token": "elegance",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "architectural principles",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "harmony",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "functionality",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "aesthetic appeal",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "human experience",
+            "weight": 0.6
+          }
+        ],
+        "↔": [
+          {
+            "token": "order",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T20:55:31.722Z"
+    },
+    {
+      "token": "quarter",
+      "relationships": {
+        "≈": [
+          {
+            "token": "25%",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "nominal global GDP",
+            "weight": 0.7
+          },
+          {
+            "token": "economic indicators",
+            "weight": 0.6
+          }
+        ],
+        "⊤": [
+          {
+            "token": "fraction",
+            "weight": 0.9
+          },
+          {
+            "token": "percentage",
+            "weight": 0.85
+          }
+        ],
+        "∝": [
+          {
+            "token": "economic growth",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "economic competitiveness",
+            "weight": 0.65
+          },
+          {
+            "token": "wealth inequality",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:23:14.837Z"
+    },
+    {
+      "token": "quartz",
+      "relationships": {
+        "≡": [
+          {
+            "token": "silicon dioxide",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "granite",
+            "weight": 0.8
+          },
+          {
+            "token": "ceramics",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "granite",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "crystal",
+            "weight": 0.65
+          }
+        ],
+        "∈": [
+          {
+            "token": "piezoelectric materials",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "acoustics",
+            "weight": 0.75
+          },
+          {
+            "token": "geology",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "mechanical stress",
+            "weight": 0.85
+          },
+          {
+            "token": "electric charge",
+            "weight": 0.8
+          }
+        ],
+        "⋆": [
+          {
+            "token": "spiritual significance",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "sound pressure",
+            "weight": 0.65
+          }
+        ],
+        "∗": [
+          {
+            "token": "divine presence",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:47:01.217Z"
+    },
+    {
+      "token": "quartz-rich",
+      "relationships": {
+        "⊕": [
+          {
+            "token": "piezoelectric",
+            "weight": 0.75
+          },
+          {
+            "token": "high-density",
+            "weight": 0.7
+          }
+        ],
+        "⊗": [
+          {
+            "token": "limestone",
+            "weight": 0.65
+          },
+          {
+            "token": "granite",
+            "weight": 0.65
+          },
+          {
+            "token": "basalt",
+            "weight": 0.65
+          }
+        ],
+        "⊤": [
+          {
+            "token": "material",
+            "weight": 0.85
+          }
+        ],
+        "≈": [
+          {
+            "token": "quartz",
+            "weight": 0.9
+          }
+        ],
+        "∝": [
+          {
+            "token": "electromagnetic field",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "transducer",
+            "weight": 0.55
+          }
+        ],
+        "⊏": [
+          {
+            "token": "temple",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-19T06:46:40.154Z"
+    },
+    {
+      "token": "questions",
+      "relationships": {
+        "≡": [
+          {
+            "token": "inquiries",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "philosophy of architecture",
+            "weight": 0.85
+          },
+          {
+            "token": "aesthetic value",
+            "weight": 0.75
+          }
+        ],
+        "⊂": [
+          {
+            "token": "discourse on architecture",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "issues",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "architectural theory",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "cultural significance",
+            "weight": 0.78
+          }
+        ],
+        "∝": [
+          {
+            "token": "design choices",
+            "weight": 0.65
+          }
+        ],
+        "⋆": [
+          {
+            "token": "symbolism",
+            "weight": 0.68
+          }
+        ],
+        "⇄": [
+          {
+            "token": "architectural practices",
+            "weight": 0.72
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:44:30.626Z"
+    },
+    {
+      "token": "quietly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "silently",
+            "weight": 0.85
+          },
+          {
+            "token": "calmly",
+            "weight": 0.75
+          }
+        ],
+        "∼": [
+          {
+            "token": "softly",
+            "weight": 0.7
+          },
+          {
+            "token": "subtly",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "peacefully",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "noisily",
+            "weight": 0.4
+          }
+        ],
+        "⊛": [
+          {
+            "token": "thoughtfully",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:41:44.700Z"
+    },
+    {
+      "token": "quite",
+      "relationships": {
+        "≈": [
+          {
+            "token": "fairly",
+            "weight": 0.75
+          },
+          {
+            "token": "rather",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "accurate",
+            "weight": 0.8
+          }
+        ],
+        "∼": [
+          {
+            "token": "very",
+            "weight": 0.65
+          },
+          {
+            "token": "extremely",
+            "weight": 0.6
+          }
+        ],
+        "⊛": [
+          {
+            "token": "summary",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:33:26.790Z"
+    }
+  ]
+}

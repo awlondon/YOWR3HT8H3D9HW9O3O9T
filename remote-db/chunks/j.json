@@ -1,0 +1,1006 @@
+{
+  "prefix": "j",
+  "token_count": 17,
+  "tokens": [
+    {
+      "token": "jaccard",
+      "relationships": {
+        "≡": [
+          {
+            "token": "similarity",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "set",
+            "weight": 0.85
+          }
+        ],
+        "⊃": [
+          {
+            "token": "intersection",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "cosine",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "metric",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "clustering",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "similarity measure",
+            "weight": 0.6
+          }
+        ],
+        "⇄": [
+          {
+            "token": "data",
+            "weight": 0.55
+          }
+        ],
+        "⊨": [
+          {
+            "token": "evidence",
+            "weight": 0.5
+          }
+        ],
+        "⊗": [
+          {
+            "token": "affinity",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:22:43.199Z"
+    },
+    {
+      "token": "james",
+      "relationships": {
+        "≡": [
+          {
+            "token": "James Madison",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Founding Fathers",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "American Revolution",
+            "weight": 0.75
+          },
+          {
+            "token": "liberty",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "republicanism",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "Madison",
+            "weight": 0.6
+          }
+        ],
+        "⇌": [
+          {
+            "token": "political values",
+            "weight": 0.55
+          }
+        ],
+        "⇝": [
+          {
+            "token": "sovereignty of the people",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:49:23.330Z"
+    },
+    {
+      "token": "january",
+      "relationships": {
+        "≈": [
+          {
+            "token": "Jan",
+            "weight": 0.75
+          },
+          {
+            "token": "1st month",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "month",
+            "weight": 1
+          }
+        ],
+        "⇐": [
+          {
+            "token": "December",
+            "weight": 0.8
+          }
+        ],
+        "⇒": [
+          {
+            "token": "February",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "New Year",
+            "weight": 0.7
+          },
+          {
+            "token": "winter",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "New Year's resolutions",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:25:54.482Z"
+    },
+    {
+      "token": "jay",
+      "relationships": {
+        "≡": [
+          {
+            "token": "John Jay",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Founding Fathers",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "American Revolution",
+            "weight": 0.7
+          },
+          {
+            "token": "liberty",
+            "weight": 0.65
+          }
+        ],
+        "∈": [
+          {
+            "token": "historical figure",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "Jay",
+            "weight": 0.5
+          }
+        ],
+        "⇝": [
+          {
+            "token": "political values",
+            "weight": 0.55
+          }
+        ],
+        "⇌": [
+          {
+            "token": "sovereignty of the people",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:49:16.738Z"
+    },
+    {
+      "token": "jefferson",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Thomas Jefferson",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Declaration of Independence",
+            "weight": 0.9
+          }
+        ],
+        "⊂": [
+          {
+            "token": "American Revolutionary War",
+            "weight": 0.8
+          },
+          {
+            "token": "U.S. Constitution",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "Founding Fathers",
+            "weight": 0.7
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Enlightenment ideas",
+            "weight": 0.85
+          }
+        ],
+        "⇝": [
+          {
+            "token": "right to self-governance",
+            "weight": 0.88
+          }
+        ],
+        "∝": [
+          {
+            "token": "liberty",
+            "weight": 0.78
+          },
+          {
+            "token": "pursuit of happiness",
+            "weight": 0.78
+          }
+        ],
+        "⇄": [
+          {
+            "token": "Bill of Rights",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "Civil Rights Movement",
+            "weight": 0.6
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:14:17.912Z"
+    },
+    {
+      "token": "jim",
+      "relationships": {
+        "⊕": [
+          {
+            "token": "Jim Crow laws",
+            "weight": 0.85
+          },
+          {
+            "token": "racial segregation",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Civil Rights Movement",
+            "weight": 0.75
+          },
+          {
+            "token": "Civil Rights Act of 1964",
+            "weight": 0.7
+          },
+          {
+            "token": "Voting Rights Act of 1965",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "segregation",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "equality",
+            "weight": 0.65
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:16:14.934Z"
+    },
+    {
+      "token": "john",
+      "relationships": {
+        "≡": [
+          {
+            "token": "John Locke",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Enlightenment thinkers",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "natural rights",
+            "weight": 0.8
+          },
+          {
+            "token": "social contract",
+            "weight": 0.8
+          },
+          {
+            "token": "separation of powers",
+            "weight": 0.8
+          }
+        ],
+        "≈": [
+          {
+            "token": "Montesquieu",
+            "weight": 0.7
+          },
+          {
+            "token": "Rousseau",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "philosophers",
+            "weight": 0.65
+          }
+        ],
+        "⊕": [
+          {
+            "token": "liberty",
+            "weight": 0.75
+          },
+          {
+            "token": "democracy",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "political values",
+            "weight": 0.9
+          }
+        ],
+        "⇝": [
+          {
+            "token": "American Revolution",
+            "weight": 0.85
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:48:54.547Z"
+    },
+    {
+      "token": "joseph",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Joseph Reed",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "United States of America",
+            "weight": 0.7
+          }
+        ],
+        "⊂": [
+          {
+            "token": "letter",
+            "weight": 0.6
+          }
+        ],
+        "→": [
+          {
+            "token": "seek assistance",
+            "weight": 0.5
+          }
+        ],
+        "⇐": [
+          {
+            "token": "January 2, 1776",
+            "weight": 0.4
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Revolutionary War",
+            "weight": 0.3
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:26:06.141Z"
+    },
+    {
+      "token": "juan",
+      "relationships": {
+        "≡": [
+          {
+            "token": "Juan Ponce de León",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "Florida",
+            "weight": 0.85
+          }
+        ],
+        "⊂": [
+          {
+            "token": "Spanish colony",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "settlements",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "colonization",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "Spanish influence",
+            "weight": 0.65
+          }
+        ],
+        "⇐": [
+          {
+            "token": "establishment of Saint Augustine",
+            "weight": 0.6
+          }
+        ],
+        "∗": [
+          {
+            "token": "exploration",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:31:32.646Z"
+    },
+    {
+      "token": "judges",
+      "relationships": {
+        "≡": [
+          {
+            "token": "federal judges",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S. federal judiciary",
+            "weight": 0.9
+          }
+        ],
+        "⊃": [
+          {
+            "token": "U.S. Supreme Court",
+            "weight": 0.85
+          },
+          {
+            "token": "U.S. courts of appeals",
+            "weight": 0.8
+          },
+          {
+            "token": "U.S. district courts",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "U.S. district court",
+            "weight": 0.75
+          }
+        ],
+        "⊏": [
+          {
+            "token": "federal district court",
+            "weight": 0.7
+          }
+        ],
+        "⇝": [
+          {
+            "token": "federal statutes",
+            "weight": 0.65
+          },
+          {
+            "token": "constitutional law",
+            "weight": 0.65
+          },
+          {
+            "token": "international treaties",
+            "weight": 0.65
+          }
+        ],
+        "≈": [
+          {
+            "token": "judicial officers",
+            "weight": 0.6
+          }
+        ],
+        "⊕": [
+          {
+            "token": "judicial system",
+            "weight": 0.55
+          }
+        ],
+        "∝": [
+          {
+            "token": "court decisions",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:38:19.293Z"
+    },
+    {
+      "token": "judicial",
+      "relationships": {
+        "≡": [
+          {
+            "token": "judiciary",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "court system",
+            "weight": 0.85
+          },
+          {
+            "token": "legal framework",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S. government",
+            "weight": 0.9
+          }
+        ],
+        "⊤": [
+          {
+            "token": "branch of government",
+            "weight": 0.88
+          }
+        ],
+        "∈": [
+          {
+            "token": "legal system",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "law",
+            "weight": 0.7
+          },
+          {
+            "token": "justice",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "political stability",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "rule of law",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:11:57.737Z"
+    },
+    {
+      "token": "judiciary",
+      "relationships": {
+        "≡": [
+          {
+            "token": "court system",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S. Supreme Court",
+            "weight": 0.85
+          },
+          {
+            "token": "U.S. Courts of Appeals",
+            "weight": 0.8
+          },
+          {
+            "token": "U.S. District Courts",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "legal precedents",
+            "weight": 0.75
+          },
+          {
+            "token": "constitutional issues",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "federal law",
+            "weight": 0.9
+          }
+        ],
+        "⊤": [
+          {
+            "token": "judicial review",
+            "weight": 0.85
+          },
+          {
+            "token": "life tenure",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "federal judiciary",
+            "weight": 0.8
+          }
+        ],
+        "⇝": [
+          {
+            "token": "constitutional interpretation",
+            "weight": 0.7
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:38:16.171Z"
+    },
+    {
+      "token": "jurisdiction",
+      "relationships": {
+        "≡": [
+          {
+            "token": "original jurisdiction",
+            "weight": 0.95
+          }
+        ],
+        "⊃": [
+          {
+            "token": "federal district court",
+            "weight": 0.85
+          },
+          {
+            "token": "U.S. federal judiciary",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "federal statutes",
+            "weight": 0.75
+          },
+          {
+            "token": "constitutional law",
+            "weight": 0.75
+          },
+          {
+            "token": "international treaties",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "federal court cases",
+            "weight": 0.7
+          }
+        ],
+        "⊤": [
+          {
+            "token": "legal jurisdiction",
+            "weight": 0.9
+          }
+        ],
+        "⊛": [
+          {
+            "token": "court decisions",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "legal authority",
+            "weight": 0.6
+          }
+        ],
+        "⇄": [
+          {
+            "token": "court appeals",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:38:37.900Z"
+    },
+    {
+      "token": "jurisdictions",
+      "relationships": {
+        "⊃": [
+          {
+            "token": "U.S. Courts of Appeals",
+            "weight": 0.8
+          },
+          {
+            "token": "U.S. District Courts",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "U.S. Courts of Appeals",
+            "weight": 0.7
+          },
+          {
+            "token": "U.S. District Courts",
+            "weight": 0.7
+          }
+        ],
+        "⊥": [
+          {
+            "token": "U.S. Supreme Court",
+            "weight": 0.9
+          }
+        ],
+        "∈": [
+          {
+            "token": "federal court system",
+            "weight": 0.85
+          }
+        ],
+        "⊕": [
+          {
+            "token": "federal law",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "legal precedents",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "constitutional issues",
+            "weight": 0.6
+          }
+        ],
+        "≈": [
+          {
+            "token": "federal judiciary",
+            "weight": 0.9
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:38:58.566Z"
+    },
+    {
+      "token": "just",
+      "relationships": {
+        "≡": [
+          {
+            "token": "simply",
+            "weight": 0.95
+          },
+          {
+            "token": "merely",
+            "weight": 0.93
+          }
+        ],
+        "⊂": [
+          {
+            "token": "communication",
+            "weight": 0.75
+          },
+          {
+            "token": "meaning",
+            "weight": 0.7
+          }
+        ],
+        "⊕": [
+          {
+            "token": "service",
+            "weight": 0.8
+          },
+          {
+            "token": "interaction",
+            "weight": 0.78
+          }
+        ],
+        "∗": [
+          {
+            "token": "act",
+            "weight": 0.85
+          },
+          {
+            "token": "beauty",
+            "weight": 0.8
+          }
+        ],
+        "∼": [
+          {
+            "token": "trivial",
+            "weight": 0.67
+          },
+          {
+            "token": "complexities",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "intelligence",
+            "weight": 0.72
+          },
+          {
+            "token": "purpose",
+            "weight": 0.68
+          }
+        ],
+        "→": [
+          {
+            "token": "frustration",
+            "weight": 0.6
+          },
+          {
+            "token": "thoughts",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T22:42:07.252Z"
+    },
+    {
+      "token": "justice",
+      "relationships": {
+        "≡": [
+          {
+            "token": "fairness",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "judicial branch",
+            "weight": 0.9
+          },
+          {
+            "token": "law",
+            "weight": 0.85
+          }
+        ],
+        "⊐": [
+          {
+            "token": "legal system",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "equality",
+            "weight": 0.75
+          },
+          {
+            "token": "rights",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "equity",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "lawfulness",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "social order",
+            "weight": 0.55
+          }
+        ],
+        "∼": [
+          {
+            "token": "accountability",
+            "weight": 0.5
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T17:20:05.344Z"
+    },
+    {
+      "token": "justified",
+      "relationships": {
+        "≈": [
+          {
+            "token": "inevitable",
+            "weight": 0.85
+          }
+        ],
+        "⊛": [
+          {
+            "token": "Manifest Destiny",
+            "weight": 0.9
+          }
+        ],
+        "⇝": [
+          {
+            "token": "territorial expansion",
+            "weight": 0.8
+          }
+        ],
+        "∝": [
+          {
+            "token": "American exceptionalism",
+            "weight": 0.7
+          }
+        ],
+        "∈": [
+          {
+            "token": "19th-century beliefs",
+            "weight": 0.75
+          }
+        ]
+      },
+      "cached_at": "2025-10-18T18:04:19.221Z"
+    }
+  ]
+}
