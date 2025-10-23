@@ -1,72 +1,100 @@
 {
   "prefix": "0",
-  "token_count": 2,
+  "token_count": 9,
   "tokens": [
     {
       "token": "0",
       "relationships": {
         "≡": [
           {
-            "token": "0.35",
+            "token": "knowledge",
             "weight": 0.95
           }
         ],
         "⊂": [
           {
-            "token": "1805",
-            "weight": 0.85
-          }
-        ],
-        "⊕": [
-          {
-            "token": "focused attention",
-            "weight": 0.75
-          }
-        ],
-        "∼": [
-          {
-            "token": "clustering",
-            "weight": 0.7
-          }
-        ],
-        "⇌": [
-          {
-            "token": "80/20 cosine–Jaccard",
-            "weight": 0.65
-          }
-        ],
-        "→": [
-          {
-            "token": "iterations",
-            "weight": 0.6
+            "token": "communities",
+            "weight": 0.8
           }
         ],
         "⊐": [
           {
-            "token": "cognitive state database",
-            "weight": 0.5
+            "token": "scientific method",
+            "weight": 0.75
           }
         ],
         "⊛": [
           {
-            "token": "communities",
-            "weight": 0.45
+            "token": "students",
+            "weight": 0.7
+          },
+          {
+            "token": "formulas",
+            "weight": 0.7
+          }
+        ],
+        "≈": [
+          {
+            "token": "understanding",
+            "weight": 0.65
+          },
+          {
+            "token": "learning",
+            "weight": 0.65
+          },
+          {
+            "token": "0s",
+            "weight": 0.64
+          },
+          {
+            "token": "0es",
+            "weight": 0.64
+          },
+          {
+            "token": "0ed",
+            "weight": 0.64
+          },
+          {
+            "token": "0ing",
+            "weight": 0.64
+          },
+          {
+            "token": "0er",
+            "weight": 0.64
+          },
+          {
+            "token": "0est",
+            "weight": 0.64
+          },
+          {
+            "token": "0ly",
+            "weight": 0.64
           }
         ],
         "∝": [
           {
+            "token": "evidence",
+            "weight": 0.6
+          },
+          {
             "token": "patience",
-            "weight": 0.4
+            "weight": 0.6
           }
         ],
-        "⚡": [
+        "⊕": [
           {
-            "token": "memory",
-            "weight": 0.3
+            "token": "identity",
+            "weight": 0.55
+          }
+        ],
+        "∼": [
+          {
+            "token": "affinity",
+            "weight": 0.5
           }
         ]
       },
-      "cached_at": "2025-10-18T22:22:00.810Z"
+      "cached_at": "2025-10-23T16:51:20.008Z"
     },
     {
       "token": "000",
@@ -110,6 +138,90 @@
         "▷◁": []
       },
       "cached_at": "2025-10-18T17:14:07.950Z"
+    },
+    {
+      "token": "0ed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "0",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:20.028Z"
+    },
+    {
+      "token": "0er",
+      "relationships": {
+        "≈": [
+          {
+            "token": "0",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:20.050Z"
+    },
+    {
+      "token": "0es",
+      "relationships": {
+        "≈": [
+          {
+            "token": "0",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:20.018Z"
+    },
+    {
+      "token": "0est",
+      "relationships": {
+        "≈": [
+          {
+            "token": "0",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:20.060Z"
+    },
+    {
+      "token": "0ing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "0",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:20.039Z"
+    },
+    {
+      "token": "0ly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "0",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:20.071Z"
+    },
+    {
+      "token": "0s",
+      "relationships": {
+        "≈": [
+          {
+            "token": "0",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:51:20.008Z"
     }
   ]
 }

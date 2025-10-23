@@ -1,6 +1,6 @@
 {
   "prefix": "y",
-  "token_count": 8,
+  "token_count": 15,
   "tokens": [
     {
       "token": "year",
@@ -133,42 +133,160 @@
     {
       "token": "yet",
       "relationships": {
-        "≡": [
-          {
-            "token": "but",
-            "weight": 0.95
-          }
-        ],
         "≈": [
           {
-            "token": "however",
-            "weight": 0.85
+            "token": "but",
+            "weight": 0.8
           },
           {
-            "token": "nevertheless",
-            "weight": 0.8
-          }
-        ],
-        "⊕": [
+            "token": "however",
+            "weight": 0.75
+          },
           {
-            "token": "and",
-            "weight": 0.7
+            "token": "yets",
+            "weight": 0.64
+          },
+          {
+            "token": "yetes",
+            "weight": 0.64
+          },
+          {
+            "token": "yeted",
+            "weight": 0.64
+          },
+          {
+            "token": "yeting",
+            "weight": 0.64
+          },
+          {
+            "token": "yeter",
+            "weight": 0.64
+          },
+          {
+            "token": "yetest",
+            "weight": 0.64
+          },
+          {
+            "token": "yetly",
+            "weight": 0.64
           }
         ],
         "∼": [
           {
             "token": "still",
+            "weight": 0.7
+          },
+          {
+            "token": "nevertheless",
             "weight": 0.65
           }
         ],
-        "→": [
+        "⊗": [
           {
-            "token": "then",
+            "token": "flexible",
             "weight": 0.6
+          },
+          {
+            "token": "focused",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "patience",
+            "weight": 0.5
+          },
+          {
+            "token": "balance",
+            "weight": 0.45
           }
         ]
       },
-      "cached_at": "2025-10-18T22:22:12.806Z"
+      "cached_at": "2025-10-23T16:50:24.977Z"
+    },
+    {
+      "token": "yeted",
+      "relationships": {
+        "≈": [
+          {
+            "token": "yet",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:24.998Z"
+    },
+    {
+      "token": "yeter",
+      "relationships": {
+        "≈": [
+          {
+            "token": "yet",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:25.019Z"
+    },
+    {
+      "token": "yetes",
+      "relationships": {
+        "≈": [
+          {
+            "token": "yet",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:24.988Z"
+    },
+    {
+      "token": "yetest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "yet",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:25.029Z"
+    },
+    {
+      "token": "yeting",
+      "relationships": {
+        "≈": [
+          {
+            "token": "yet",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:25.008Z"
+    },
+    {
+      "token": "yetly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "yet",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:25.040Z"
+    },
+    {
+      "token": "yets",
+      "relationships": {
+        "≈": [
+          {
+            "token": "yet",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:50:24.977Z"
     },
     {
       "token": "you",

@@ -1,6 +1,6 @@
 {
   "prefix": "v",
-  "token_count": 38,
+  "token_count": 62,
   "tokens": [
     {
       "token": "v",
@@ -119,6 +119,18 @@
         ]
       },
       "cached_at": "2025-10-18T17:34:09.359Z"
+    },
+    {
+      "token": "valu",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.138Z"
     },
     {
       "token": "valuable",
@@ -255,76 +267,252 @@
       "cached_at": "2025-10-18T18:44:25.983Z"
     },
     {
+      "token": "valued",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.159Z"
+    },
+    {
+      "token": "valuer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.181Z"
+    },
+    {
       "token": "values",
       "relationships": {
         "≡": [
           {
-            "token": "principles",
+            "token": "knowledge acquisition",
             "weight": 0.95
           }
         ],
         "⊃": [
           {
-            "token": "liberty",
+            "token": "scientific inquiry",
             "weight": 0.85
-          },
-          {
-            "token": "sovereignty",
-            "weight": 0.8
-          },
-          {
-            "token": "republicanism",
-            "weight": 0.8
-          },
-          {
-            "token": "civic virtue",
-            "weight": 0.75
-          },
-          {
-            "token": "political corruption",
-            "weight": 0.7
           }
         ],
         "⊂": [
           {
-            "token": "American Revolution",
-            "weight": 0.9
+            "token": "learning process",
+            "weight": 0.8
           }
         ],
         "≈": [
           {
-            "token": "ethical governance",
-            "weight": 0.7
+            "token": "inquiry",
+            "weight": 0.75
+          },
+          {
+            "token": "valuess",
+            "weight": 0.64
+          },
+          {
+            "token": "valueses",
+            "weight": 0.64
+          },
+          {
+            "token": "valuesed",
+            "weight": 0.64
+          },
+          {
+            "token": "valuesing",
+            "weight": 0.64
+          },
+          {
+            "token": "valueser",
+            "weight": 0.64
+          },
+          {
+            "token": "valuesest",
+            "weight": 0.64
+          },
+          {
+            "token": "valuesly",
+            "weight": 0.64
+          },
+          {
+            "token": "valu",
+            "weight": 0.64
+          },
+          {
+            "token": "valus",
+            "weight": 0.64
+          },
+          {
+            "token": "valued",
+            "weight": 0.64
+          },
+          {
+            "token": "valuing",
+            "weight": 0.64
           }
         ],
         "∈": [
           {
-            "token": "democracy",
-            "weight": 0.85
+            "token": "effort",
+            "weight": 0.7
           }
         ],
         "⊛": [
           {
-            "token": "Enlightenment thinkers",
-            "weight": 0.8
-          },
-          {
-            "token": "Declaration of Independence",
-            "weight": 0.75
-          },
-          {
-            "token": "Constitution",
-            "weight": 0.75
+            "token": "conceptual understanding",
+            "weight": 0.65
           }
         ],
-        "⇝": [
+        "∝": [
           {
-            "token": "democratic movements",
-            "weight": 0.9
+            "token": "engagement",
+            "weight": 0.6
+          }
+        ],
+        "∨": [
+          {
+            "token": "application",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "exploration",
+            "weight": 0.5
+          }
+        ],
+        "⇌": [
+          {
+            "token": "superficial methods",
+            "weight": 0.45
+          }
+        ],
+        "≠": [
+          {
+            "token": "manipulating formulas",
+            "weight": 0.4
           }
         ]
       },
-      "cached_at": "2025-10-18T17:48:46.111Z"
+      "cached_at": "2025-10-23T16:49:45.067Z"
+    },
+    {
+      "token": "valuesed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.087Z"
+    },
+    {
+      "token": "valueser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.107Z"
+    },
+    {
+      "token": "valueses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.077Z"
+    },
+    {
+      "token": "valuesest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.117Z"
+    },
+    {
+      "token": "valuesing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.097Z"
+    },
+    {
+      "token": "valuesly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.128Z"
+    },
+    {
+      "token": "valuess",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.067Z"
+    },
+    {
+      "token": "valuing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.169Z"
+    },
+    {
+      "token": "valus",
+      "relationships": {
+        "≈": [
+          {
+            "token": "values",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:49:45.148Z"
     },
     {
       "token": "variety",
@@ -393,6 +581,66 @@
       "cached_at": "2025-10-18T17:10:24.383Z"
     },
     {
+      "token": "variou",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.722Z"
+    },
+    {
+      "token": "varioued",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.741Z"
+    },
+    {
+      "token": "variouer",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.761Z"
+    },
+    {
+      "token": "varioues",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.731Z"
+    },
+    {
+      "token": "variouing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.751Z"
+    },
+    {
       "token": "various",
       "relationships": {
         "⊃": [
@@ -401,52 +649,174 @@
             "weight": 0.85
           },
           {
-            "token": "areas",
+            "token": "scientific disciplines",
             "weight": 0.8
           }
         ],
         "⊂": [
           {
-            "token": "mathematics",
+            "token": "science",
             "weight": 0.9
           }
         ],
         "∈": [
           {
-            "token": "applications",
+            "token": "subfields",
             "weight": 0.75
           }
         ],
         "⊛": [
           {
-            "token": "domains",
+            "token": "research areas",
             "weight": 0.7
           },
           {
-            "token": "areas",
+            "token": "branches",
             "weight": 0.65
-          }
-        ],
-        "⇌": [
-          {
-            "token": "theories",
-            "weight": 0.6
           }
         ],
         "≈": [
           {
-            "token": "concepts",
-            "weight": 0.55
+            "token": "different",
+            "weight": 0.8
+          },
+          {
+            "token": "variouss",
+            "weight": 0.64
+          },
+          {
+            "token": "variouses",
+            "weight": 0.64
+          },
+          {
+            "token": "varioused",
+            "weight": 0.64
+          },
+          {
+            "token": "variousing",
+            "weight": 0.64
+          },
+          {
+            "token": "variouser",
+            "weight": 0.64
+          },
+          {
+            "token": "variousest",
+            "weight": 0.64
+          },
+          {
+            "token": "variously",
+            "weight": 0.64
+          },
+          {
+            "token": "variou",
+            "weight": 0.64
+          },
+          {
+            "token": "varioues",
+            "weight": 0.64
+          },
+          {
+            "token": "varioued",
+            "weight": 0.64
+          },
+          {
+            "token": "variouing",
+            "weight": 0.64
           }
         ],
-        "∝": [
+        "⊕": [
           {
-            "token": "mathematical techniques",
-            "weight": 0.5
+            "token": "disciplines",
+            "weight": 0.6
           }
         ]
       },
-      "cached_at": "2025-10-18T06:25:03.186Z"
+      "cached_at": "2025-10-23T01:43:09.651Z"
+    },
+    {
+      "token": "varioused",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.671Z"
+    },
+    {
+      "token": "variouser",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.692Z"
+    },
+    {
+      "token": "variouses",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.661Z"
+    },
+    {
+      "token": "variousest",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.702Z"
+    },
+    {
+      "token": "variousing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.681Z"
+    },
+    {
+      "token": "variously",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.712Z"
+    },
+    {
+      "token": "variouss",
+      "relationships": {
+        "≈": [
+          {
+            "token": "various",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T01:43:09.651Z"
     },
     {
       "token": "varying",

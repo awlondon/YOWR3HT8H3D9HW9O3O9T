@@ -1,70 +1,176 @@
 {
   "prefix": "_",
-  "token_count": 1,
+  "token_count": 8,
   "tokens": [
     {
       "token": "-",
       "relationships": {
-        "≡": [
+        "≈": [
           {
-            "token": "government",
-            "weight": 0.95
-          }
-        ],
-        "⊃": [
-          {
-            "token": "separation of powers",
-            "weight": 0.85
+            "token": "challenges",
+            "weight": 0.75
           },
           {
-            "token": "federalism",
+            "token": "knowledge",
+            "weight": 0.7
+          },
+          {
+            "token": "-s",
+            "weight": 0.64
+          },
+          {
+            "token": "-es",
+            "weight": 0.64
+          },
+          {
+            "token": "-ed",
+            "weight": 0.64
+          },
+          {
+            "token": "-ing",
+            "weight": 0.64
+          },
+          {
+            "token": "-er",
+            "weight": 0.64
+          },
+          {
+            "token": "-est",
+            "weight": 0.64
+          },
+          {
+            "token": "-ly",
+            "weight": 0.64
+          }
+        ],
+        "∼": [
+          {
+            "token": "derived",
             "weight": 0.8
-          }
-        ],
-        "⊂": [
-          {
-            "token": "executive branch",
-            "weight": 0.75
           },
           {
-            "token": "legislative branch",
-            "weight": 0.75
-          },
-          {
-            "token": "judicial branch",
-            "weight": 0.75
+            "token": "science",
+            "weight": 0.65
           }
         ],
         "⊕": [
           {
-            "token": "checks and balances",
-            "weight": 0.7
-          }
-        ],
-        "∈": [
+            "token": "formulas",
+            "weight": 0.6
+          },
           {
-            "token": "U.S. Constitution",
-            "weight": 0.9
-          }
-        ],
-        "∝": [
-          {
-            "token": "state government",
-            "weight": 0.65
+            "token": "concepts",
+            "weight": 0.5
           }
         ],
         "⊛": [
           {
-            "token": "Native American sovereignty",
-            "weight": 0.6
+            "token": "students",
+            "weight": 0.55
           },
           {
-            "token": "Native American reservations",
-            "weight": 0.6
+            "token": "learning",
+            "weight": 0.45
+          }
+        ],
+        "⇌": [
+          {
+            "token": "experiment",
+            "weight": 0.4
+          }
+        ],
+        "⊂": [
+          {
+            "token": "effort",
+            "weight": 0.35
           }
         ]
       },
-      "cached_at": "2025-10-18T17:19:38.234Z"
+      "cached_at": "2025-10-23T16:47:00.892Z"
+    },
+    {
+      "token": "-ed",
+      "relationships": {
+        "≈": [
+          {
+            "token": "-",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:00.911Z"
+    },
+    {
+      "token": "-er",
+      "relationships": {
+        "≈": [
+          {
+            "token": "-",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:00.930Z"
+    },
+    {
+      "token": "-es",
+      "relationships": {
+        "≈": [
+          {
+            "token": "-",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:00.902Z"
+    },
+    {
+      "token": "-est",
+      "relationships": {
+        "≈": [
+          {
+            "token": "-",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:00.940Z"
+    },
+    {
+      "token": "-ing",
+      "relationships": {
+        "≈": [
+          {
+            "token": "-",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:00.921Z"
+    },
+    {
+      "token": "-ly",
+      "relationships": {
+        "≈": [
+          {
+            "token": "-",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:00.949Z"
+    },
+    {
+      "token": "-s",
+      "relationships": {
+        "≈": [
+          {
+            "token": "-",
+            "weight": 0.64
+          }
+        ]
+      },
+      "cached_at": "2025-10-23T16:47:00.893Z"
     }
   ]
 }
