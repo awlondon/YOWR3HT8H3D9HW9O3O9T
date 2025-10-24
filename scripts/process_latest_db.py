@@ -8,6 +8,53 @@ DB_PATH = REPO_ROOT / DB_FILENAME
 OUTPUT_DIR = REPO_ROOT / "remote-db"
 CHUNKS_DIR = OUTPUT_DIR / "chunks"
 
+SYMBOL_BUCKET = "symbols"
+SYMBOL_LIST = [
+    "!",
+    "¡",
+    "?",
+    "¿",
+    ".",
+    "…",
+    ",",
+    ":",
+    ";",
+    "—",
+    "-",
+    "–",
+    "(",
+    ")",
+    "[",
+    "]",
+    "{",
+    "}",
+    '"',
+    "“",
+    "”",
+    "‘",
+    "’",
+    "'",
+    "+",
+    "−",
+    "×",
+    "*",
+    "÷",
+    "/",
+    "\\",
+    "=",
+    "%",
+    "^",
+    "&",
+    "@",
+    "#",
+    "$",
+    "_",
+    "<",
+    ">",
+    "~",
+    "|",
+]
+
 if not DB_PATH.exists():
     raise FileNotFoundError(f"Database file not found: {DB_PATH}")
 
@@ -57,8 +104,22 @@ for prefix in sorted(grouped_tokens.keys()):
         "token_count": len(tokens),
     })
 
+symbol_entries = [{"token": token, "kind": "sym"} for token in SYMBOL_LIST]
+symbol_chunk_path = CHUNKS_DIR / f"{SYMBOL_BUCKET}.json"
+symbol_chunk_data = {
+    "prefix": SYMBOL_BUCKET,
+    "token_count": len(symbol_entries),
+    "tokens": symbol_entries,
+}
+symbol_chunk_path.write_text(json.dumps(symbol_chunk_data, ensure_ascii=False, indent=2))
+chunk_entries.append({
+    "prefix": SYMBOL_BUCKET,
+    "href": f"chunks/{symbol_chunk_path.name}",
+    "token_count": len(symbol_entries),
+})
+
 metadata = {
-    "version": data.get("readme", {}).get("version"),
+    "version": data.get("readme", {}).get("version") or "2.1",
     "generated_at": data.get("export_timestamp"),
     "source": DB_FILENAME,
     "total_tokens": data.get("database_stats", {}).get("total_tokens"),
