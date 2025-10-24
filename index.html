@@ -4323,7 +4323,6 @@
     function refreshDbReference(recordLike, options = {}) {
       const {
         deferReload = false,
-        skipVariantSync = false,
         persist = true,
       } = options || {};
       const normalized = normalizeRecord(recordLike);
@@ -4371,14 +4370,6 @@
         storedRecord = normalized;
       }
 
-      if (!skipVariantSync) {
-        try {
-          syncMorphologicalAdjacencies(storedRecord, { deferReload });
-        } catch (err) {
-          console.warn('Variant adjacency sync failed:', err);
-        }
-      }
-
       window.HLSF.dbCache = db;
       if (persist) {
         try {
@@ -4401,95 +4392,6 @@
         notifyHlsfAdjacencyChange('cache-update');
       }
       updateHeaderCounts();
-    }
-
-    function deriveMorphologicalVariants(token) {
-      const base = (token == null ? '' : String(token)).toLowerCase();
-      if (!base) return [];
-
-      const stems = new Set([base]);
-      const addStem = (stem) => {
-        if (!stem) return;
-        const normalized = stem.toLowerCase();
-        if (normalized.length >= 2) stems.add(normalized);
-      };
-
-      if (base.endsWith('ing') && base.length > 4) {
-        addStem(base.slice(0, -3));
-        if (base.endsWith('ying')) addStem(base.slice(0, -3) + 'ie');
-      }
-      if (base.endsWith('ed') && base.length > 3) {
-        addStem(base.slice(0, -2));
-        if (base.endsWith('ied')) addStem(base.slice(0, -3) + 'y');
-      }
-      if (base.endsWith('ies') && base.length > 4) addStem(base.slice(0, -3) + 'y');
-      if (base.endsWith('es') && base.length > 4) addStem(base.slice(0, -2));
-      if (base.endsWith('s') && base.length > 3) addStem(base.slice(0, -1));
-      if (base.endsWith('er') && base.length > 4) addStem(base.slice(0, -2));
-      if (base.endsWith('est') && base.length > 5) addStem(base.slice(0, -3));
-      if (base.endsWith('ly') && base.length > 4) addStem(base.slice(0, -2));
-
-      const variants = new Set();
-      stems.forEach((stem) => {
-        if (!stem) return;
-        variants.add(stem);
-        if (stem.endsWith('y')) variants.add(stem.slice(0, -1) + 'ies');
-        variants.add(stem + 's');
-        variants.add(stem + 'es');
-        variants.add(stem + 'ed');
-        variants.add(stem + 'ing');
-        variants.add(stem + 'er');
-        variants.add(stem + 'est');
-        variants.add(stem + 'ly');
-      });
-
-      variants.delete(base);
-      return Array.from(variants).filter(v => v && v.length >= 2 && v !== base);
-    }
-
-    function syncMorphologicalAdjacencies(record, options = {}) {
-      if (!record || !record.token) return;
-      const token = (record.token || '').toLowerCase();
-      if (!token) return;
-
-      const maxVariants = 12;
-      const variants = deriveMorphologicalVariants(token).slice(0, maxVariants);
-      if (!variants.length) return;
-
-      const relationships = record.relationships && typeof record.relationships === 'object'
-        ? record.relationships
-        : {};
-      const variantRel = Array.isArray(relationships['≈']) ? relationships['≈'] : (relationships['≈'] = []);
-      const seen = new Set(variantRel.map(entry => (entry?.token || '').toLowerCase()).filter(Boolean));
-      let modified = false;
-
-      for (const variant of variants) {
-        if (!variant || variant === token) continue;
-        if (!seen.has(variant)) {
-          variantRel.push({ token: variant, weight: 0.64 });
-          seen.add(variant);
-          modified = true;
-        }
-
-        const counterpart = getCachedRecordForToken(variant) || { token: variant, relationships: {} };
-        const counterpartRels = counterpart.relationships && typeof counterpart.relationships === 'object'
-          ? counterpart.relationships
-          : {};
-        const counterpartVariants = Array.isArray(counterpartRels['≈'])
-          ? counterpartRels['≈']
-          : (counterpartRels['≈'] = []);
-        const counterpartSeen = new Set(counterpartVariants.map(entry => (entry?.token || '').toLowerCase()).filter(Boolean));
-        if (!counterpartSeen.has(token)) {
-          counterpartVariants.push({ token, weight: 0.64 });
-          counterpart.relationships = counterpartRels;
-          refreshDbReference(counterpart, { deferReload: true, skipVariantSync: true });
-        }
-      }
-
-      if (modified) {
-        if (variantRel.length > maxVariants) variantRel.length = maxVariants;
-        record.relationships = relationships;
-      }
     }
 
     function getDb() {
@@ -6373,7 +6275,7 @@
           memoryStorageFallback.set(cacheKey, JSON.stringify(record));
           CacheBatch.record(record.token);
         }
-        refreshDbReference(record, { deferReload: true, persist: false, skipVariantSync: true });
+        refreshDbReference(record, { deferReload: true, persist: false });
         return !alreadyCached;
       };
 
@@ -7169,7 +7071,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       const affinityIterations = Number.isFinite(opts.iterations) && opts.iterations > 0
         ? Math.floor(opts.iterations)
         : undefined;
-      const mentalState = opts.mentalState || {};
       const topTokens = Array.isArray(opts.topTokens) && opts.topTokens.length
         ? opts.topTokens
         : summarizeAttention(matrices);
@@ -7187,24 +7088,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       });
 
       const sentences = [];
-      const contextBits = [];
-      if (mentalState.name) contextBits.push(`Mental state ${mentalState.name} guides traversal`);
-      if (mentalState.desc) contextBits.push(mentalState.desc.trim());
-      if (affinityThreshold !== undefined && affinityIterations !== undefined) {
-        const iterLabel = `iteration${affinityIterations === 1 ? '' : 's'}`;
-        contextBits.push(`Threshold ${affinityThreshold.toFixed(2)} across ${affinityIterations} ${iterLabel} frames selection`);
-      }
-      if (mentalState.mechanics) {
-        const mechanics = mentalState.mechanics.trim();
-        if (mechanics) contextBits.push(mechanics);
-      }
-      if (contextBits.length) {
-        sentences.push(`${contextBits.join('. ')}.`);
-      }
 
       const formatSequence = (sequence) => {
         if (!sequence || !Array.isArray(sequence.steps) || sequence.steps.length === 0) {
-          return sequence?.start ? `${sequence.start} remains a primary anchor for the walk.` : '';
+          return sequence?.start ? `No qualifying neighbors followed from ${sequence.start}.` : '';
         }
 
         const clauses = sequence.steps.map((step, index) => {
@@ -7230,17 +7117,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         }
       }
 
-      if (!walkResult.sequences.length && focusTokens.length) {
-        sentences.push(`Focus tokens: ${focusTokens.join(', ')}.`);
-      }
-
-      if (keyRelationships.length) {
-        sentences.push(`Key relationships: ${keyRelationships.slice(0, 6).join('; ')}.`);
-      }
-
       const visitedTokens = walkResult.tokens.length ? walkResult.tokens : focusTokens;
       if (visitedTokens.length) {
-        sentences.push(`Tokens surfaced during traversal: ${visitedTokens.slice(0, 8).join(', ')}.`);
+        sentences.push(`Traversal touched: ${visitedTokens.slice(0, 8).join(', ')}.`);
+      }
+
+      if (!sentences.length) {
+        sentences.push('Adjacency walk did not yield any qualifying tokens.');
       }
 
       const rawOutput = sentences.join(' ').replace(/\s+/g, ' ').trim();
