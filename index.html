@@ -4362,7 +4362,42 @@
         storedRecord = normalized;
       }
 
-      if (!skipVariantSync) {
+      let variantMetadata = VariantSyncGate.getMetadata(storedRecord.token);
+      if (variantMetadata) {
+        const directives = storedRecord.variant_directives && typeof storedRecord.variant_directives === 'object'
+          ? Object.assign({}, storedRecord.variant_directives)
+          : {};
+        const grammarDirective = Object.assign({}, directives.grammar || {});
+        grammarDirective.enabled = true;
+        if (variantMetadata.context) grammarDirective.context = variantMetadata.context;
+        if (Array.isArray(variantMetadata.instructions)) {
+          grammarDirective.instructions = variantMetadata.instructions.slice(0, 12);
+        } else if (!Array.isArray(grammarDirective.instructions)) {
+          grammarDirective.instructions = [];
+        }
+        grammarDirective.updated_at = variantMetadata.updated_at || new Date().toISOString();
+        directives.grammar = grammarDirective;
+        storedRecord.variant_directives = directives;
+      }
+
+      if (!variantMetadata && storedRecord.variant_directives && typeof storedRecord.variant_directives === 'object') {
+        const grammar = storedRecord.variant_directives.grammar;
+        if (grammar && typeof grammar === 'object') {
+          variantMetadata = {
+            context: typeof grammar.context === 'string' && grammar.context.trim() ? grammar.context.trim() : null,
+            instructions: Array.isArray(grammar.instructions) ? grammar.instructions.slice(0, 12) : [],
+            updated_at: grammar.updated_at || grammar.timestamp || null,
+          };
+          VariantSyncGate.setMetadata(storedRecord.token, variantMetadata);
+        }
+      }
+
+      const allowVariants = recordAllowsVariant(storedRecord) || !!variantMetadata;
+      if (allowVariants) {
+        VariantSyncGate.allow(storedRecord.token, variantMetadata);
+      }
+
+      if (allowVariants && !skipVariantSync) {
         try {
           syncMorphologicalAdjacencies(storedRecord, { deferReload });
         } catch (err) {
@@ -4430,8 +4465,107 @@
       return Array.from(variants).filter(v => v && v.length >= 2 && v !== base);
     }
 
+    function recordAllowsVariant(record) {
+      if (!record || typeof record !== 'object') return false;
+      if (record.grammar_variant === true || record.variant_gate === true || record.enable_variants === true) {
+        return true;
+      }
+      const directives = record.variant_directives;
+      if (directives && typeof directives === 'object') {
+        if (directives.enabled === true) return true;
+        const grammar = directives.grammar;
+        if (grammar && typeof grammar === 'object') {
+          if (grammar.enabled === true || grammar.allow === true || grammar.active === true) return true;
+        }
+      }
+      return false;
+    }
+
+    const VariantSyncGate = (() => {
+      const allowed = new Set();
+      const metadata = new Map();
+
+      const normalize = (token) => (token == null ? '' : String(token)).trim().toLowerCase();
+
+      const formatPayload = (payload) => {
+        const info = payload && typeof payload === 'object' ? payload : {};
+        const context = typeof info.context === 'string' && info.context.trim() ? info.context.trim() : null;
+        const updated = typeof info.updated_at === 'string' && info.updated_at ? info.updated_at : null;
+        const instructions = [];
+        if (Array.isArray(info.instructions)) {
+          for (const entry of info.instructions.slice(0, 12)) {
+            if (entry == null) continue;
+            const text = String(entry).trim();
+            if (text) instructions.push(text);
+          }
+        } else if (typeof info.instructions === 'string') {
+          const text = info.instructions.trim();
+          if (text) instructions.push(text);
+        }
+        return { context, instructions, updated_at: updated };
+      };
+
+      const ensureFromRecord = (token) => {
+        const key = normalize(token);
+        if (!key || allowed.has(key)) return;
+        const record = getCachedRecordForToken ? getCachedRecordForToken(key) : null;
+        if (!recordAllowsVariant(record)) return;
+        allowed.add(key);
+        const directives = record && typeof record === 'object' ? record.variant_directives : null;
+        const grammar = directives && typeof directives === 'object' ? directives.grammar : null;
+        if (grammar && typeof grammar === 'object') {
+          metadata.set(key, formatPayload({
+            context: grammar.context,
+            instructions: grammar.instructions,
+            updated_at: grammar.updated_at || grammar.timestamp,
+          }));
+        }
+      };
+
+      return {
+        allow(token, payload = null) {
+          const key = normalize(token);
+          if (!key) return;
+          allowed.add(key);
+          if (payload) metadata.set(key, formatPayload(payload));
+        },
+        allowMany(tokens, payload = null) {
+          if (!Array.isArray(tokens)) return;
+          for (const token of tokens) {
+            this.allow(token, payload);
+          }
+        },
+        has(token) {
+          const key = normalize(token);
+          if (!key) return false;
+          if (allowed.has(key)) return true;
+          ensureFromRecord(key);
+          return allowed.has(key);
+        },
+        getMetadata(token) {
+          const key = normalize(token);
+          if (!key) return null;
+          if (!metadata.has(key)) ensureFromRecord(key);
+          return metadata.get(key) || null;
+        },
+        setMetadata(token, payload = null) {
+          const key = normalize(token);
+          if (!key) return;
+          if (payload) metadata.set(key, formatPayload(payload));
+        },
+        clear() {
+          allowed.clear();
+          metadata.clear();
+        },
+        entries() { return Array.from(allowed); },
+      };
+    })();
+
+    window.CognitionEngine.variantSync = VariantSyncGate;
+
     function syncMorphologicalAdjacencies(record, options = {}) {
       if (!record || !record.token) return;
+      if (!recordAllowsVariant(record)) return;
       const token = (record.token || '').toLowerCase();
       if (!token) return;
 
@@ -4592,6 +4726,94 @@
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    function recordVariantInstructions(contextLabel, variantResult) {
+      const result = variantResult && typeof variantResult === 'object' ? variantResult : {};
+      const seedSources = [];
+      if (Array.isArray(result.variantSeeds)) seedSources.push(...result.variantSeeds);
+      if (Array.isArray(result.variant_seeds)) seedSources.push(...result.variant_seeds);
+      if (typeof result.variantSeeds === 'string') seedSources.push(result.variantSeeds);
+      if (typeof result.variant_seeds === 'string') seedSources.push(result.variant_seeds);
+
+      const normalizedSeeds = [];
+      const seenSeeds = new Set();
+      for (const raw of seedSources) {
+        let token = raw;
+        if (token && typeof token === 'object' && typeof token.token === 'string') {
+          token = token.token;
+        }
+        if (token == null) continue;
+        const trimmed = String(token).trim();
+        if (!trimmed) continue;
+        const lower = trimmed.toLowerCase();
+        if (seenSeeds.has(lower)) continue;
+        seenSeeds.add(lower);
+        normalizedSeeds.push(trimmed);
+      }
+
+      const instructionSources = [];
+      if (Array.isArray(result.variantInstructions)) instructionSources.push(...result.variantInstructions);
+      if (Array.isArray(result.variant_instructions)) instructionSources.push(...result.variant_instructions);
+      if (typeof result.variantInstructions === 'string') instructionSources.push(result.variantInstructions);
+      if (typeof result.variant_instructions === 'string') instructionSources.push(result.variant_instructions);
+
+      const instructions = [];
+      const seenInstructions = new Set();
+      for (const entry of instructionSources) {
+        if (entry == null) continue;
+        const text = String(entry).trim();
+        if (!text) continue;
+        if (seenInstructions.has(text)) continue;
+        seenInstructions.add(text);
+        instructions.push(text);
+        if (instructions.length >= 8) break;
+      }
+
+      const context = typeof contextLabel === 'string' && contextLabel.trim()
+        ? contextLabel.trim()
+        : 'Grammar refinement';
+
+      if (normalizedSeeds.length) {
+        const payload = { context, instructions, updated_at: new Date().toISOString() };
+        VariantSyncGate.allowMany(normalizedSeeds, payload);
+
+        for (const token of normalizedSeeds) {
+          const cached = getCachedRecordForToken(token);
+          if (!cached || typeof cached !== 'object') continue;
+          const directives = cached.variant_directives && typeof cached.variant_directives === 'object'
+            ? Object.assign({}, cached.variant_directives)
+            : {};
+          const grammar = Object.assign({}, directives.grammar || {});
+          grammar.enabled = true;
+          grammar.context = context;
+          grammar.instructions = instructions.slice(0, 12);
+          grammar.updated_at = payload.updated_at;
+          directives.grammar = grammar;
+          const updated = Object.assign({}, cached, {
+            relationships: cached.relationships || {},
+            cached_at: cached.cached_at || null,
+            variant_directives: directives,
+          });
+          refreshDbReference(updated, { deferReload: true });
+        }
+      }
+
+      if (!normalizedSeeds.length && !instructions.length) return;
+
+      const lines = [];
+      if (normalizedSeeds.length) {
+        const rendered = normalizedSeeds
+          .slice(0, 16)
+          .map(token => `<span class="token-highlight">${sanitize(token)}</span>`)
+          .join(', ');
+        lines.push(`<strong>Tokens:</strong> ${rendered}`);
+      }
+      if (instructions.length) {
+        const renderedNotes = instructions.map(note => sanitize(note)).join('<br>');
+        lines.push(`<strong>Instructions:</strong> ${renderedNotes}`);
+      }
+      appendLog(`🧭 ${sanitize(context)} variant directive<br>${lines.join('<br>')}`);
     }
 
     const ExternalLoaders = (() => {
@@ -6441,6 +6663,118 @@
       }
     }
 
+    const realWordValidationCache = new Map();
+
+    async function validateTokenIsRealWord(token) {
+      const normalized = (token == null ? '' : String(token)).trim();
+      if (!normalized) return false;
+
+      const cacheKey = normalized.toLowerCase();
+      const cached = realWordValidationCache.get(cacheKey);
+      if (cached !== undefined) {
+        if (cached && typeof cached.then === 'function') return cached;
+        return cached;
+      }
+
+      if (!state.apiKey) {
+        realWordValidationCache.set(cacheKey, true);
+        return true;
+      }
+
+      const validationPromise = (async () => {
+        const prompt = `Token: "${normalized}"
+Determine whether this token is a valid standalone English word (proper nouns count as real words).
+Respond strictly with JSON: {"token": "${normalized}", "is_real_word": true | false}.`;
+
+        const content = await safeAsync(
+          () => callOpenAI([
+            { role: 'system', content: 'You are a linguistic validator that answers with strict JSON.' },
+            { role: 'user', content: prompt },
+          ], { temperature: 0, max_tokens: 40 }),
+          `Real word validation failed for ${normalized}`,
+          { fallbackValue: null }
+        );
+
+        if (!content) return true;
+
+        try {
+          const jsonStart = content.indexOf('{');
+          const jsonEnd = content.lastIndexOf('}');
+          if (jsonStart === -1 || jsonEnd === -1) return true;
+          const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
+          if (parsed && typeof parsed === 'object') {
+            if (typeof parsed.is_real_word === 'boolean') return parsed.is_real_word;
+            if (typeof parsed.real_word === 'boolean') return parsed.real_word;
+          }
+        } catch (err) {
+          console.warn('Failed to parse real word validation result for', normalized, err);
+        }
+
+        return true;
+      })();
+
+      realWordValidationCache.set(cacheKey, validationPromise);
+
+      let result;
+      try {
+        result = await validationPromise;
+      } catch {
+        realWordValidationCache.delete(cacheKey);
+        return true;
+      }
+
+      const finalResult = result === false ? false : true;
+      realWordValidationCache.set(cacheKey, finalResult);
+      return finalResult;
+    }
+
+    async function filterVariantRelationships(entry) {
+      if (!entry || typeof entry !== 'object') return { entry, removed: 0 };
+
+      const relationships = entry.relationships;
+      if (!relationships || typeof relationships !== 'object') return { entry, removed: 0 };
+
+      const variantKeys = Object.keys(relationships).filter(key => {
+        if (!key) return false;
+        if (key === '≈') return true;
+        return key.toLowerCase().includes('variant');
+      });
+
+      if (!variantKeys.length) return { entry, removed: 0 };
+
+      let removed = 0;
+
+      if (!recordAllowsVariant(entry)) {
+        for (const key of variantKeys) {
+          const edges = Array.isArray(relationships[key]) ? relationships[key] : [];
+          removed += edges.length;
+          relationships[key] = [];
+        }
+        return { entry, removed };
+      }
+
+      for (const key of variantKeys) {
+        const edges = Array.isArray(relationships[key]) ? relationships[key] : null;
+        if (!edges || edges.length === 0) continue;
+
+        const evaluations = await Promise.all(edges.map(async (edge) => {
+          const candidate = (edge && typeof edge.token === 'string') ? edge.token.trim() : '';
+          if (!candidate) return { edge, keep: false };
+          const isReal = await validateTokenIsRealWord(candidate);
+          return { edge, keep: isReal !== false };
+        }));
+
+        const filtered = evaluations
+          .filter(item => item.keep && item.edge)
+          .map(item => item.edge);
+
+        removed += edges.length - filtered.length;
+        relationships[key] = filtered;
+      }
+
+      return { entry, removed };
+    }
+
     async function fetchAdjacency(token, context) {
       if (currentAbortController?.signal.aborted) {
         throw new Error('AbortError');
@@ -6448,7 +6782,11 @@
 
       const cached = getFromCache(token);
       if (cached) {
-        return { ...cached, cache_hit: true };
+        const { entry: filteredCached, removed } = await filterVariantRelationships(cached);
+        if (removed > 0) {
+          saveToCache(token, filteredCached, { deferReload: true });
+        }
+        return { ...filteredCached, cache_hit: true };
       }
 
       if (!state.apiKey) return { token, relationships: {}, offline: true };
@@ -6494,8 +6832,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const jsonStart = content.indexOf('{');
         const jsonEnd = content.lastIndexOf('}');
         const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
-        saveToCache(token, parsed, { deferReload: true });
-        return { ...parsed, cache_hit: false };
+        const { entry: filtered } = await filterVariantRelationships(parsed);
+        saveToCache(token, filtered, { deferReload: true });
+        return { ...filtered, cache_hit: false };
       } catch {
         return { token, relationships: {}, error: 'Parse failed' };
       }
@@ -9987,18 +10326,19 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         let grammarStatus = null;
         if (grammarStream.trim()) {
           grammarStatus = logStatus('⏳ Polishing stream for grammar...');
-          const polished = await editForCoherence('mental state stream', 'mental state', grammarStream);
+          const grammarEdit = await editForCoherence('mental state stream', 'mental state', grammarStream);
           if (!state.apiKey && grammarStatus) {
             grammarStatus.innerHTML = '⚠️ Grammar refinement skipped (offline)';
           } else if (grammarStatus) {
             grammarStatus.innerHTML = '✅ Grammar refinement complete';
           }
-          grammarStream = polished;
+          grammarStream = grammarEdit?.text ?? grammarStream;
           const grammarLimited = limitWords(grammarStream, CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT);
           grammarStream = grammarLimited.text;
           if (grammarLimited.trimmed) {
             logWarning(`Mental state stream trimmed to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words after grammatical refinement.`);
           }
+          recordVariantInstructions('Mental state grammar refinement', grammarEdit);
         }
 
         const grammarTokens = tokenize(grammarStream || '');
@@ -10173,6 +10513,7 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               window.HLSF.__centerInit = false;
             }
             Session.tokens.clear();
+            VariantSyncGate.clear();
             setDocumentCacheBaseline(0, { manual: true });
             updateStats();
             scheduleHlsfReload('reset', { immediate: true });
@@ -10480,19 +10821,20 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         let grammarStatus = null;
         if (grammarOutput.trim()) {
           grammarStatus = logStatus('⏳ Polishing refined output for grammar...');
-          const polished = await editForCoherence('HLSF refined output', 'prompt', grammarOutput);
+          const grammarEdit = await editForCoherence('HLSF refined output', 'prompt', grammarOutput);
           if (!state.apiKey && grammarStatus) {
             grammarStatus.innerHTML = '⚠️ Grammar refinement skipped (offline)';
           } else if (grammarStatus) {
             grammarStatus.innerHTML = '✅ Grammar refinement complete';
           }
-          grammarOutput = polished;
+          grammarOutput = grammarEdit?.text ?? grammarOutput;
           const grammarLimited = limitWords(grammarOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
           grammarOutput = grammarLimited.text;
           grammarWordCount = grammarLimited.wordCount;
           if (grammarLimited.trimmed) {
             logWarning(`Grammar-polished output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words to meet suite requirements.`);
           }
+          recordVariantInstructions('Prompt grammar refinement', grammarEdit);
         }
 
         const grammarTokens = tokenize(grammarOutput);
@@ -10625,18 +10967,138 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     }
 
     async function editForCoherence(kind, chunkLabel, text) {
-      if (!state.apiKey || !text || !text.trim()) return text;
+      const baseText = typeof text === 'string' ? text : '';
+      const fallback = { text: baseText, variantSeeds: [], variantInstructions: [] };
+      if (!state.apiKey || !baseText.trim()) return fallback;
+
+      const instructions = [
+        `Polish the following ${kind} so it reads smoothly while keeping terminology consistent with the cached lexicon. Do not add new ideas.`,
+        '',
+        'Return your answer as JSON with this exact schema:',
+        '{',
+        '  "polished_text": "<revised text>",',
+        '  "variant_seeds": ["token1", "token2"],',
+        '  "variant_instructions": ["<short guidance>"]',
+        '}',
+        '',
+        'Rules:',
+        '• polished_text must contain the full revised passage.',
+        '• variant_seeds should list only real-word tokens from the polished text that require morphological adjacency mapping (e.g., tense or plurality shifts).',
+        '• Use an empty array for variant_seeds when no tokens need morphological expansion.',
+        '• variant_instructions may include up to 5 brief notes explaining why tokens were flagged; use an empty array if none are required.',
+        '• Do not add commentary outside the JSON object and avoid trailing text.',
+        '',
+        baseText,
+      ].join('\n');
+
       const messages = [
         { role: 'system', content: 'You are an editorial assistant who improves coherence and clarity while preserving intent and vocabulary.' },
-        { role: 'user', content: `Polish the following ${kind} so it reads smoothly while keeping terminology consistent with the cached lexicon. Do not add new ideas.\n\n${text}` },
+        { role: 'user', content: instructions },
       ];
-      const tokenCount = tokenize(text).length;
+      const tokenCount = tokenize(baseText).length;
       const maxTokens = Math.min(420, Math.max(120, estimateCompletionTokens(tokenCount)));
       const polished = await safeAsync(
         () => callOpenAI(messages, { temperature: 0.2, max_tokens: maxTokens }),
         `${chunkLabel} ${kind} edit failed`
       );
-      return polished?.trim() || text;
+      const raw = typeof polished === 'string' ? polished.trim() : '';
+      if (!raw) return fallback;
+
+      const stripFence = (value) => {
+        if (!value) return '';
+        if (/^```/m.test(value) && /```\s*$/.test(value)) {
+          return value.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+        }
+        return value;
+      };
+
+      const cleaned = stripFence(raw);
+      let parsed = null;
+      const jsonStart = cleaned.indexOf('{');
+      const jsonEnd = cleaned.lastIndexOf('}');
+      if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+        const jsonSlice = cleaned.slice(jsonStart, jsonEnd + 1);
+        try { parsed = JSON.parse(jsonSlice); } catch {}
+      }
+
+      const collectTokens = (...values) => {
+        const list = [];
+        const seen = new Set();
+        for (const value of values) {
+          if (Array.isArray(value)) {
+            for (const entry of value) {
+              if (entry == null) continue;
+              let token = entry;
+              if (token && typeof token === 'object' && typeof token.token === 'string') {
+                token = token.token;
+              }
+              const trimmed = typeof token === 'string' ? token.trim() : String(token || '').trim();
+              if (!trimmed) continue;
+              const lower = trimmed.toLowerCase();
+              if (seen.has(lower)) continue;
+              seen.add(lower);
+              list.push(trimmed);
+              if (list.length >= 24) break;
+            }
+          } else if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (!trimmed) continue;
+            const lower = trimmed.toLowerCase();
+            if (seen.has(lower)) continue;
+            seen.add(lower);
+            list.push(trimmed);
+            if (list.length >= 24) break;
+          }
+          if (list.length >= 24) break;
+        }
+        return list;
+      };
+
+      const collectInstructions = (...values) => {
+        const list = [];
+        const seen = new Set();
+        for (const value of values) {
+          if (Array.isArray(value)) {
+            for (const entry of value) {
+              if (entry == null) continue;
+              const textValue = String(entry).trim();
+              if (!textValue) continue;
+              if (seen.has(textValue)) continue;
+              seen.add(textValue);
+              list.push(textValue);
+              if (list.length >= 8) break;
+            }
+          } else if (typeof value === 'string') {
+            const textValue = value.trim();
+            if (!textValue) continue;
+            if (seen.has(textValue)) continue;
+            seen.add(textValue);
+            list.push(textValue);
+            if (list.length >= 8) break;
+          }
+          if (list.length >= 8) break;
+        }
+        return list;
+      };
+
+      if (parsed && typeof parsed === 'object') {
+        const polishedText = [parsed.polished_text, parsed.polishedText, parsed.text, parsed.output]
+          .map(value => (typeof value === 'string' ? value.trim() : ''))
+          .find(value => value);
+        const variantSeeds = collectTokens(parsed.variant_seeds, parsed.variantSeeds);
+        const variantInstructions = collectInstructions(parsed.variant_instructions, parsed.variantInstructions);
+        return {
+          text: polishedText || baseText,
+          variantSeeds,
+          variantInstructions,
+        };
+      }
+
+      return {
+        text: cleaned || baseText,
+        variantSeeds: [],
+        variantInstructions: [],
+      };
     }
 
     class DocumentReadEstimator {
@@ -11158,19 +11620,20 @@ Write a reflective synthesis of this passage in the voice of the cached database
       let grammarData = { result: new Map(), duration: 0 };
       if (grammarOutput.trim()) {
         const grammarStatus = logStatus(`⏳ ${chunkLabel}: grammar refinement`);
-        const polished = await editForCoherence('refined AGI output', chunkLabel, grammarOutput);
+        const grammarEdit = await editForCoherence('refined AGI output', chunkLabel, grammarOutput);
         if (!state.apiKey && grammarStatus) {
           grammarStatus.innerHTML = `⚠️ ${chunkLabel}: grammar refinement skipped`;
         } else if (grammarStatus) {
           grammarStatus.innerHTML = `✅ ${chunkLabel}: grammar refinement complete`;
         }
-        grammarOutput = polished;
+        grammarOutput = grammarEdit?.text ?? grammarOutput;
         const grammarLimited = limitWords(grammarOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
         grammarOutput = grammarLimited.text;
         grammarWordCount = grammarLimited.wordCount;
         if (grammarLimited.trimmed) {
           logWarning(`${chunkLabel}: grammar output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words for archival.`);
         }
+        recordVariantInstructions(`${chunkLabel} grammar refinement`, grammarEdit);
         grammarTokens = tokenize(grammarOutput);
         if (grammarTokens.length) {
           addConversationTokens(grammarTokens);
@@ -11321,13 +11784,14 @@ Write a reflective synthesis of this passage in the voice of the cached database
 
       if (finalReflection.trim()) {
         const grammarStatus = logStatus('⏳ Polishing reflection for grammar');
-        const polishedReflection = await editForCoherence('document reflection', 'document reflection', finalReflection);
+        const grammarEdit = await editForCoherence('document reflection', 'document reflection', finalReflection);
         if (!state.apiKey && grammarStatus) {
           grammarStatus.innerHTML = '⚠️ Reflection grammar refinement skipped (offline)';
         } else if (grammarStatus) {
           grammarStatus.innerHTML = '✅ Reflection grammar refinement complete';
         }
-        finalReflection = polishedReflection;
+        finalReflection = grammarEdit?.text ?? finalReflection;
+        recordVariantInstructions('Document reflection grammar refinement', grammarEdit);
       }
 
       finalReflection = DbLexicon.padToTokenCount(finalReflection, 1000);
