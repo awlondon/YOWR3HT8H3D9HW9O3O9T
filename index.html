@@ -6797,6 +6797,116 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       return steps;
     }
 
+    function buildRecursiveAdjacencyWalk(matrices, options = {}) {
+      const result = { sequences: [], steps: [], tokens: [] };
+      if (!(matrices instanceof Map) || matrices.size === 0) return result;
+
+      const opts = options || {};
+      const threshold = Number.isFinite(opts.threshold) ? opts.threshold : null;
+      const iterations = Number.isFinite(opts.iterations) && opts.iterations > 0
+        ? Math.floor(opts.iterations)
+        : 4;
+      const maxSteps = Number.isFinite(opts.maxSteps) && opts.maxSteps > 0
+        ? Math.floor(opts.maxSteps)
+        : iterations * 4;
+
+      const startTokens = Array.isArray(opts.startTokens) && opts.startTokens.length
+        ? opts.startTokens
+        : summarizeAttention(matrices).map(item => item.token).filter(Boolean);
+
+      const seenStarts = new Set();
+      const tokenMap = new Map();
+
+      const getEntry = (token) => {
+        if (!token) return null;
+        return matrices.get(token) || matrices.get(token.toLowerCase()) || null;
+      };
+
+      const recordToken = (token) => {
+        if (!token) return;
+        const key = token.toLowerCase();
+        if (!tokenMap.has(key)) tokenMap.set(key, token);
+      };
+
+      const gatherCandidates = (entry, fallback) => {
+        if (!entry) return [];
+        const rels = entry.relationships || {};
+        const list = [];
+        for (const [rel, edges] of Object.entries(rels)) {
+          if (!Array.isArray(edges)) continue;
+          for (const edge of edges) {
+            if (!edge || !edge.token) continue;
+            list.push({
+              from: entry.token || fallback,
+              to: edge.token,
+              relation: rel,
+              weight: Number(edge.weight) || 0,
+            });
+          }
+        }
+        list.sort((a, b) => b.weight - a.weight);
+        return list;
+      };
+
+      const maxStartCount = Math.max(1, Math.min(startTokens.length, opts.seedLimit || 3));
+      for (const token of startTokens.slice(0, maxStartCount)) {
+        if (!token) continue;
+        const startKey = token.toLowerCase();
+        if (seenStarts.has(startKey)) continue;
+        seenStarts.add(startKey);
+
+        const sequenceSteps = [];
+        const visitedTokens = new Set([startKey]);
+        recordToken(token);
+
+        const traverse = (currentToken, depthRemaining) => {
+          if (depthRemaining <= 0 || sequenceSteps.length >= maxSteps || result.steps.length >= maxSteps) return;
+
+          const entry = getEntry(currentToken);
+          const candidates = gatherCandidates(entry, currentToken);
+          if (!candidates.length) return;
+
+          let advanced = false;
+          for (const candidate of candidates) {
+            if (threshold !== null && candidate.weight < threshold) continue;
+            const targetKey = candidate.to.toLowerCase();
+            if (visitedTokens.has(targetKey)) continue;
+            visitedTokens.add(targetKey);
+            recordToken(candidate.from);
+            recordToken(candidate.to);
+            sequenceSteps.push(candidate);
+            result.steps.push(candidate);
+            advanced = true;
+            traverse(candidate.to, depthRemaining - 1);
+            break;
+          }
+
+          if (!advanced && candidates.length) {
+            const fallback = candidates[0];
+            const targetKey = fallback.to.toLowerCase();
+            if (!visitedTokens.has(targetKey)) {
+              visitedTokens.add(targetKey);
+              recordToken(fallback.from);
+              recordToken(fallback.to);
+              sequenceSteps.push(fallback);
+              result.steps.push(fallback);
+              traverse(fallback.to, depthRemaining - 1);
+            }
+          }
+        };
+
+        traverse(token, iterations);
+        if (sequenceSteps.length || getEntry(token)) {
+          result.sequences.push({ start: token, steps: sequenceSteps.slice() });
+        }
+
+        if (result.steps.length >= maxSteps) break;
+      }
+
+      result.tokens = Array.from(tokenMap.values());
+      return result;
+    }
+
     function generateLocalHlsfOutput(matrices, options = {}) {
       const opts = options || {};
       const wordLimit = Number.isFinite(opts.wordLimit) && opts.wordLimit > 0
@@ -6804,7 +6914,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         : CONFIG.LOCAL_OUTPUT_WORD_LIMIT;
 
       const affinityThreshold = Number.isFinite(opts.threshold) ? opts.threshold : undefined;
-      const affinityIterations = Number.isFinite(opts.iterations) ? opts.iterations : undefined;
+      const affinityIterations = Number.isFinite(opts.iterations) && opts.iterations > 0
+        ? Math.floor(opts.iterations)
+        : undefined;
       const mentalState = opts.mentalState || {};
       const topTokens = Array.isArray(opts.topTokens) && opts.topTokens.length
         ? opts.topTokens
@@ -6813,44 +6925,73 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         ? opts.keyRelationships
         : extractKeyRelationships(matrices);
 
-      const walk = gatherAdjacencyWalk(matrices, { maxSteps: opts.maxSteps || 16 });
-      const fragments = [];
+      const focusTokens = topTokens.map(t => t.token).filter(Boolean).slice(0, 6);
+      const walkResult = buildRecursiveAdjacencyWalk(matrices, {
+        threshold: affinityThreshold,
+        iterations: affinityIterations,
+        maxSteps: opts.maxSteps || Math.max(8, Math.min(24, Math.floor(wordLimit / 3) || 12)),
+        startTokens: focusTokens,
+        seedLimit: opts.seedLimit,
+      });
 
-      if (mentalState.name) {
-        fragments.push(`Mental state ${mentalState.name.toLowerCase()} guides traversal.`);
-      }
-      if (mentalState.desc) {
-        fragments.push(mentalState.desc.trim());
-      }
+      const sentences = [];
+      const contextBits = [];
+      if (mentalState.name) contextBits.push(`Mental state ${mentalState.name} guides traversal`);
+      if (mentalState.desc) contextBits.push(mentalState.desc.trim());
       if (affinityThreshold !== undefined && affinityIterations !== undefined) {
-        fragments.push(`Threshold ${affinityThreshold.toFixed(2)} after ${affinityIterations} iteration${affinityIterations === 1 ? '' : 's'} frames the loop.`);
+        const iterLabel = `iteration${affinityIterations === 1 ? '' : 's'}`;
+        contextBits.push(`Threshold ${affinityThreshold.toFixed(2)} across ${affinityIterations} ${iterLabel} frames selection`);
       }
       if (mentalState.mechanics) {
         const mechanics = mentalState.mechanics.trim();
-        if (mechanics) fragments.push(mechanics);
+        if (mechanics) contextBits.push(mechanics);
+      }
+      if (contextBits.length) {
+        sentences.push(`${contextBits.join('. ')}.`);
       }
 
-      const focusTokens = topTokens.map(t => t.token).filter(Boolean).slice(0, 6);
-      if (focusTokens.length) {
-        fragments.push(`Focus tokens: ${focusTokens.join(', ')}.`);
+      const formatSequence = (sequence) => {
+        if (!sequence || !Array.isArray(sequence.steps) || sequence.steps.length === 0) {
+          return sequence?.start ? `${sequence.start} remains a primary anchor for the walk.` : '';
+        }
+
+        const clauses = sequence.steps.map((step, index) => {
+          const relationLabel = relDisplay(step.relation || '∼');
+          const weight = Number.isFinite(step.weight) ? ` (${step.weight.toFixed(2)})` : '';
+          const clause = `${step.from} ${relationLabel} ${step.to}${weight}`;
+          if (index === 0) {
+            return clause.charAt(0).toUpperCase() + clause.slice(1);
+          }
+          return clause;
+        });
+
+        if (clauses.length === 1) {
+          return `${clauses[0]}.`;
+        }
+        return `${clauses[0]}, then ${clauses.slice(1).join(', then ')}.`;
+      };
+
+      if (walkResult.sequences.length) {
+        for (const sequence of walkResult.sequences) {
+          const formatted = formatSequence(sequence);
+          if (formatted) sentences.push(formatted);
+        }
+      }
+
+      if (!walkResult.sequences.length && focusTokens.length) {
+        sentences.push(`Focus tokens: ${focusTokens.join(', ')}.`);
       }
 
       if (keyRelationships.length) {
-        fragments.push(`Key relationships: ${keyRelationships.slice(0, 6).join('; ')}.`);
+        sentences.push(`Key relationships: ${keyRelationships.slice(0, 6).join('; ')}.`);
       }
 
-      if (walk.length) {
-        const walkFragments = walk.map(step => {
-          const relation = relDisplay(step.relation || '∼');
-          const weight = Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00';
-          return `${step.from} ${relation} ${step.to} [${weight}]`;
-        });
-        fragments.push(`Adjacency walk: ${walkFragments.join(' | ')}.`);
-      } else {
-        fragments.push('Adjacency walk unavailable; relying on token summaries.');
+      const visitedTokens = walkResult.tokens.length ? walkResult.tokens : focusTokens;
+      if (visitedTokens.length) {
+        sentences.push(`Tokens surfaced during traversal: ${visitedTokens.slice(0, 8).join(', ')}.`);
       }
 
-      const rawOutput = fragments.join(' ').replace(/\s+/g, ' ').trim();
+      const rawOutput = sentences.join(' ').replace(/\s+/g, ' ').trim();
       const limited = limitWords(rawOutput, wordLimit);
 
       return {
@@ -6858,9 +6999,10 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         wordCount: limited.wordCount,
         totalWords: limited.totalWords,
         trimmed: limited.trimmed,
-        walk,
+        walk: walkResult.steps,
         focusTokens,
         keyRelationships,
+        visitedTokens,
       };
     }
 
@@ -10500,15 +10642,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           localOutput = 'Adjacency walk could not assemble a local output with the available data.';
         }
         if (localOutputData.trimmed) {
-          logWarning(`Local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words before refinement.`);
+          logWarning(`Local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
         }
         let localWordCount = localOutputData.wordCount || countWords(localOutput);
-
-        const localTokens = tokenize(localOutput);
-        if (localTokens.length) {
-          addConversationTokens(localTokens);
-          addOutputTokens(localTokens, { render: false });
-        }
 
         const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
           ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
@@ -10520,106 +10656,16 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           `Threshold ${affinityThreshold.toFixed(2)} · Iterations ${affinityIterations}`,
         ].filter(Boolean).join('<br>');
 
+        const visitedSummary = Array.isArray(localOutputData.visitedTokens) && localOutputData.visitedTokens.length
+          ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
+          : '';
+
         addLog(`<div class="section-divider"></div>
           <div class="section-title">🤖 Local HLSF AGI Output</div>
           <div class="thought-stream">${sanitize(localOutput)}</div>
           <div class="adjacency-insight">${mentalSummary}</div>
+          ${visitedSummary}
           ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
-        `);
-
-        let refinedOutput = localOutput;
-        let refinedWordCount = localWordCount;
-        if (state.apiKey && localOutput.trim()) {
-          const refineStatus = logStatus('⏳ Refining local HLSF output...');
-          const refineMessages = [
-            { role: 'system', content: `You rewrite adjacency-based notes into a coherent paragraph of at most ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words. Preserve the mentioned tokens and relationships.` },
-            { role: 'user', content: [
-              `Mental state: ${mentalState.name || 'Unknown'}`,
-              mentalState.desc ? `Description: ${mentalState.desc}` : null,
-              `Focus tokens: ${localOutputData.focusTokens.join(', ') || 'none'}`,
-              `Key relationships: ${localOutputData.keyRelationships.join('; ') || 'none'}`,
-              '',
-              'Raw local output:',
-              localOutput,
-            ].filter(Boolean).join('\n') },
-          ];
-
-          const refinedDraft = await safeAsync(
-            () => callOpenAI(refineMessages, { temperature: 0.2, max_tokens: 420 }),
-            'Local refinement failed'
-          );
-
-          if (refinedDraft) {
-            const refinedLimited = limitWords(refinedDraft, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
-            refinedOutput = refinedLimited.text;
-            refinedWordCount = refinedLimited.wordCount;
-            if (refinedLimited.trimmed) {
-              logWarning(`Refined output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words to meet suite requirements.`);
-            }
-            if (refineStatus) refineStatus.innerHTML = '✅ Local output refined';
-          } else if (refineStatus) {
-            refineStatus.innerHTML = '⚠️ Local refinement skipped';
-          }
-        } else if (!state.apiKey) {
-          logWarning('Refinement skipped (offline mode)');
-        }
-
-        const refinedTokens = tokenize(refinedOutput);
-        if (refinedTokens.length) {
-          addConversationTokens(refinedTokens);
-          addOutputTokens(refinedTokens, { render: false });
-        }
-
-        let refinedAdjacencies = null;
-        if (refinedTokens.length) {
-          refinedAdjacencies = await batchFetchAdjacencies(refinedTokens, refinedOutput, 'refined output adjacencies');
-          calculateAttention(refinedAdjacencies);
-          refinedAdjacencies.forEach((value, key) => allMatrices.set(key, value));
-          if (hasNewAdjacencyData(refinedAdjacencies)) shouldReloadHlsf = true;
-        }
-
-        addLog(`<div class="section-divider"></div>
-          <div class="section-title">🪞 LLM Refined AGI Output</div>
-          <div class="thought-stream">${sanitize(refinedOutput)}</div>
-        `);
-
-        let grammarOutput = refinedOutput;
-        let grammarWordCount = refinedWordCount;
-        let grammarStatus = null;
-        if (grammarOutput.trim()) {
-          grammarStatus = logStatus('⏳ Polishing refined output for grammar...');
-          const polished = await editForCoherence('HLSF refined output', 'prompt', grammarOutput);
-          if (!state.apiKey && grammarStatus) {
-            grammarStatus.innerHTML = '⚠️ Grammar refinement skipped (offline)';
-          } else if (grammarStatus) {
-            grammarStatus.innerHTML = '✅ Grammar refinement complete';
-          }
-          grammarOutput = polished;
-          const grammarLimited = limitWords(grammarOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
-          grammarOutput = grammarLimited.text;
-          grammarWordCount = grammarLimited.wordCount;
-          if (grammarLimited.trimmed) {
-            logWarning(`Grammar-polished output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words to meet suite requirements.`);
-          }
-        }
-
-        const grammarTokens = tokenize(grammarOutput);
-        if (grammarTokens.length) {
-          addConversationTokens(grammarTokens);
-          addOutputTokens(grammarTokens, { render: false });
-        }
-
-        let grammarAdjacencies = null;
-        if (grammarTokens.length) {
-          grammarAdjacencies = await batchFetchAdjacencies(grammarTokens, grammarOutput, 'grammar refinement adjacencies');
-          calculateAttention(grammarAdjacencies);
-          grammarAdjacencies.forEach((value, key) => allMatrices.set(key, value));
-          if (hasNewAdjacencyData(grammarAdjacencies)) shouldReloadHlsf = true;
-        }
-
-        addLog(`<div class="section-divider"></div>
-          <div class="section-title">✏️ Grammar-Polished Output</div>
-          <div class="thought-stream">${sanitize(grammarOutput)}</div>
         `);
 
         if (shouldReloadHlsf) {
@@ -10631,8 +10677,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const time = ((performance.now() - startTime) / 1000).toFixed(1);
         const safeOriginal = sanitize(initialResponse);
         const safeLocal = sanitize(localOutput);
-        const safeRefined = sanitize(refinedOutput);
-        const safeGrammar = sanitize(grammarOutput);
 
         addLog(`<div class="section-divider"></div>
           <div class="final-output">
@@ -10644,14 +10688,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
             <details open>
               <summary>Local HLSF AGI output (${localWordCount} words)</summary>
               <pre>${safeLocal}</pre>
-            </details>
-            <details open>
-              <summary>LLM refined AGI output (${refinedWordCount} words)</summary>
-              <pre>${safeRefined}</pre>
-            </details>
-            <details open>
-              <summary>Grammar-polished output (${grammarWordCount} words)</summary>
-              <pre>${safeGrammar}</pre>
             </details>
             <details>
               <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
@@ -11162,7 +11198,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
 
       let localOutput = localOutputData.text || 'Adjacency walk could not assemble a local output with the available data.';
       if (localOutputData.trimmed) {
-        logWarning(`${chunkLabel}: local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words before refinement.`);
+        logWarning(`${chunkLabel}: local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
       }
       localOutput = DbLexicon.rewriteText(localOutput);
       const localLimited = limitWords(localOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
@@ -11171,12 +11207,6 @@ Write a reflective synthesis of this passage in the voice of the cached database
       }
       localOutput = localLimited.text;
       const localWordCount = localLimited.wordCount;
-
-      const localTokens = tokenize(localOutput);
-      if (localTokens.length) {
-        addConversationTokens(localTokens);
-        addOutputTokens(localTokens, { render: false });
-      }
 
       const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
         ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
@@ -11188,115 +11218,20 @@ Write a reflective synthesis of this passage in the voice of the cached database
         `Threshold ${affinityThreshold.toFixed(2)} · Iterations ${affinityIterations}`,
       ].filter(Boolean).join('<br>');
 
+      const visitedSummary = Array.isArray(localOutputData.visitedTokens) && localOutputData.visitedTokens.length
+        ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
+        : '';
+
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🤖 Local HLSF AGI Output</div>
         <div class="thought-stream">${sanitize(localOutput)}</div>
         <div class="adjacency-insight">${mentalSummary}</div>
+        ${visitedSummary}
         ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
       `);
 
-      let refinedOutput = storedLesson?.refinedOutput || '';
-      let refinedFromLive = false;
-      const refineStatus = logStatus(`⏳ ${chunkLabel}: refining local output`);
-
-      if (state.apiKey && localOutput.trim()) {
-        const refineMessages = [
-          { role: 'system', content: `You rewrite adjacency-based notes into a coherent paragraph of at most ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words. Preserve the mentioned tokens and relationships.` },
-          { role: 'user', content: [
-            `Segment: ${chunkLabel}`,
-            `Mental state: ${mentalState.name || 'Unknown'}`,
-            mentalState.desc ? `Description: ${mentalState.desc}` : null,
-            `Focus tokens: ${localOutputData.focusTokens.join(', ') || 'none'}`,
-            `Key relationships: ${localOutputData.keyRelationships.join('; ') || 'none'}`,
-            '',
-            'Raw local output:',
-            localOutput,
-          ].filter(Boolean).join('\n') },
-        ];
-
-        const refinedDraft = await safeAsync(
-          () => callOpenAI(refineMessages, { temperature: 0.2, max_tokens: 420 }),
-          `${chunkLabel} refined AGI output failed`
-        );
-
-        if (refinedDraft) {
-          refinedOutput = refinedDraft.trim();
-          const refinedLimited = limitWords(refinedOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
-          refinedOutput = refinedLimited.text;
-          if (refinedLimited.trimmed) {
-            logWarning(`${chunkLabel}: refined output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words to meet suite requirements.`);
-          }
-          refinedFromLive = true;
-          refineStatus.innerHTML = `✅ ${chunkLabel}: refined output ready`;
-        } else {
-          refineStatus.innerHTML = `⚠️ ${chunkLabel}: refinement empty`;
-        }
-      } else if (refinedOutput) {
-        refineStatus.innerHTML = `✅ ${chunkLabel}: cached refined output`;
-      } else {
-        refinedOutput = localOutput;
-        refineStatus.innerHTML = `⚠️ ${chunkLabel}: refinement unavailable`;
-      }
-
-      refinedOutput = DbLexicon.rewriteText(refinedOutput);
-      const refinedLimited = limitWords(refinedOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
-      if (refinedLimited.trimmed) {
-        logWarning(`${chunkLabel}: refined output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words for archival.`);
-      }
-      refinedOutput = refinedLimited.text;
-      const refinedWordCount = refinedLimited.wordCount;
-
-      const refinedTokens = tokenize(refinedOutput);
-      let refinedData = { result: new Map(), duration: 0 };
-      if (refinedTokens.length) {
-        addConversationTokens(refinedTokens);
-        addOutputTokens(refinedTokens, { render: false });
-        refinedData = await measure(() => batchFetchAdjacencies(refinedTokens, refinedOutput, `${chunkLabel} refined output adjacencies`));
-        if (refinedData?.result instanceof Map) {
-          calculateAttention(refinedData.result);
-          refinedData.result.forEach((value, key) => allMatrices.set(key, value));
-        }
-      }
-      const refinedAdjDuration = refinedData?.duration || 0;
-      const refinedAdjStats = summarizeAdjacencyResults(refinedData?.result || new Map());
-
-      let grammarOutput = refinedOutput;
-      let grammarWordCount = refinedWordCount;
-      let grammarTokens = [];
-      let grammarData = { result: new Map(), duration: 0 };
-      if (grammarOutput.trim()) {
-        const grammarStatus = logStatus(`⏳ ${chunkLabel}: grammar refinement`);
-        const polished = await editForCoherence('refined AGI output', chunkLabel, grammarOutput);
-        if (!state.apiKey && grammarStatus) {
-          grammarStatus.innerHTML = `⚠️ ${chunkLabel}: grammar refinement skipped`;
-        } else if (grammarStatus) {
-          grammarStatus.innerHTML = `✅ ${chunkLabel}: grammar refinement complete`;
-        }
-        grammarOutput = polished;
-        const grammarLimited = limitWords(grammarOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
-        grammarOutput = grammarLimited.text;
-        grammarWordCount = grammarLimited.wordCount;
-        if (grammarLimited.trimmed) {
-          logWarning(`${chunkLabel}: grammar output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words for archival.`);
-        }
-        grammarTokens = tokenize(grammarOutput);
-        if (grammarTokens.length) {
-          addConversationTokens(grammarTokens);
-          addOutputTokens(grammarTokens, { render: false });
-          grammarData = await measure(() => batchFetchAdjacencies(grammarTokens, grammarOutput, `${chunkLabel} grammar adjacencies`));
-          if (grammarData?.result instanceof Map) {
-            calculateAttention(grammarData.result);
-            grammarData.result.forEach((value, key) => allMatrices.set(key, value));
-          }
-        }
-      }
-      const grammarAdjDuration = grammarData?.duration || 0;
-      const grammarAdjStats = summarizeAdjacencyResults(grammarData?.result || new Map());
-
       const safeOriginal = sanitize(originalResponse);
       const safeLocal = sanitize(localOutput);
-      const safeRefined = sanitize(refinedOutput);
-      const safeGrammar = sanitize(grammarOutput);
 
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
@@ -11308,14 +11243,6 @@ Write a reflective synthesis of this passage in the voice of the cached database
           <details open>
             <summary>Local HLSF AGI output (${localWordCount} words)</summary>
             <pre>${safeLocal}</pre>
-          </details>
-          <details open>
-            <summary>LLM refined AGI output (${refinedWordCount} words)</summary>
-            <pre>${safeRefined}</pre>
-          </details>
-          <details open>
-            <summary>Grammar-polished output (${grammarWordCount} words)</summary>
-            <pre>${safeGrammar}</pre>
           </details>
           <details>
             <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
@@ -11329,12 +11256,6 @@ Write a reflective synthesis of this passage in the voice of the cached database
       }
       if (localOutput) {
         lessonUpdates.localOutput = localOutput;
-      }
-      if (refinedFromLive && refinedOutput) {
-        lessonUpdates.refinedOutput = refinedOutput;
-      }
-      if (grammarOutput) {
-        lessonUpdates.grammarOutput = grammarOutput;
       }
 
       if (state.apiKey && Object.keys(lessonUpdates).length) {
@@ -11367,10 +11288,10 @@ Write a reflective synthesis of this passage in the voice of the cached database
         newBefore = uniqueTokenCount;
       }
 
-      const adjacencyDurationMs = inputAdjDuration + outputAdjDuration + refinedAdjDuration + grammarAdjDuration;
-      const adjacencyHits = inputAdjStats.hits + outputAdjStats.hits + refinedAdjStats.hits + grammarAdjStats.hits;
-      const adjacencyMisses = inputAdjStats.misses + outputAdjStats.misses + refinedAdjStats.misses + grammarAdjStats.misses;
-      const adjacencyRequests = inputAdjStats.total + outputAdjStats.total + refinedAdjStats.total + grammarAdjStats.total;
+      const adjacencyDurationMs = inputAdjDuration + outputAdjDuration;
+      const adjacencyHits = inputAdjStats.hits + outputAdjStats.hits;
+      const adjacencyMisses = inputAdjStats.misses + outputAdjStats.misses;
+      const adjacencyRequests = inputAdjStats.total + outputAdjStats.total;
       const totalDurationMs = performance.now() - chunkStart;
       const adjacencyHitRate = adjacencyRequests > 0 ? adjacencyHits / adjacencyRequests : 0;
 
@@ -11378,8 +11299,6 @@ Write a reflective synthesis of this passage in the voice of the cached database
         tokens: chunkTokens,
         originalResponse,
         localOutput,
-        refinedOutput,
-        grammarOutput,
         matrices: allMatrices,
         topTokens,
         keyRelationships: keyRels,
