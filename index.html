@@ -196,6 +196,15 @@
       line-height: 1.6;
     }
 
+    .local-response {
+      background: rgba(0, 255, 136, 0.1);
+      border: 1px solid rgba(0, 255, 136, 0.25);
+      border-radius: 8px;
+      padding: 1rem;
+      font-weight: bold;
+      line-height: 1.4;
+    }
+
     .adjacency-insight {
       background: rgba(255, 213, 79, 0.05);
       border: 1px solid rgba(255, 213, 79, 0.2);
@@ -7118,26 +7127,77 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
       }
 
       const visitedTokens = walkResult.tokens.length ? walkResult.tokens : focusTokens;
-      if (visitedTokens.length) {
-        sentences.push(`Traversal touched: ${visitedTokens.slice(0, 8).join(', ')}.`);
+      const orderedThoughtTokens = (() => {
+        const seen = new Set();
+        const ordered = [];
+        const pushToken = (token) => {
+          if (!token) return;
+          const key = token.toLowerCase();
+          if (seen.has(key)) return;
+          seen.add(key);
+          ordered.push(token);
+        };
+        (visitedTokens || []).forEach(pushToken);
+        focusTokens.forEach(pushToken);
+        return ordered;
+      })();
+
+      if (orderedThoughtTokens.length) {
+        sentences.push(`Traversal touched: ${orderedThoughtTokens.slice(0, 8).join(', ')}.`);
       }
 
       if (!sentences.length) {
         sentences.push('Adjacency walk did not yield any qualifying tokens.');
       }
 
-      const rawOutput = sentences.join(' ').replace(/\s+/g, ' ').trim();
-      const limited = limitWords(rawOutput, wordLimit);
+      const thoughtTextRaw = orderedThoughtTokens.join(', ').trim();
+      const narrativeText = sentences.join(' ').replace(/\s+/g, ' ').trim();
+      const baseThought = thoughtTextRaw || narrativeText;
+      const thoughtLimited = limitWords(baseThought, wordLimit);
+
+      const longestSequence = walkResult.sequences.reduce((max, sequence) => {
+        if (!sequence || !Array.isArray(sequence.steps)) return max;
+        const depth = sequence.steps.length + 1;
+        return depth > max ? depth : max;
+      }, 0);
+      const responseTokenLimit = Number.isFinite(opts.responseTokenLimit) && opts.responseTokenLimit > 0
+        ? Math.floor(opts.responseTokenLimit)
+        : 4;
+      const responseTokenCount = Math.max(
+        1,
+        Math.min(
+          orderedThoughtTokens.length || 1,
+          Math.min(responseTokenLimit, longestSequence || 1),
+        ),
+      );
+      const chosenTokens = orderedThoughtTokens.slice(0, responseTokenCount);
+      const responseTextRaw = chosenTokens.join(' ').trim();
+      const responseWordLimit = Math.max(
+        responseTokenCount,
+        Math.min(wordLimit, Number.isFinite(opts.responseWordLimit) && opts.responseWordLimit > 0
+          ? Math.floor(opts.responseWordLimit)
+          : 12),
+      );
+      const responseLimited = limitWords(responseTextRaw || baseThought, responseWordLimit);
 
       return {
-        text: limited.text,
-        wordCount: limited.wordCount,
-        totalWords: limited.totalWords,
-        trimmed: limited.trimmed,
+        text: thoughtLimited.text,
+        wordCount: thoughtLimited.wordCount,
+        totalWords: thoughtLimited.totalWords,
+        trimmed: thoughtLimited.trimmed,
+        thoughtText: thoughtLimited.text,
+        thoughtWordCount: thoughtLimited.wordCount,
+        thoughtTrimmed: thoughtLimited.trimmed,
+        thoughtTokens: orderedThoughtTokens,
+        responseText: responseLimited.text,
+        responseWordCount: responseLimited.wordCount,
+        responseTrimmed: responseLimited.trimmed,
+        responseTokens: chosenTokens,
+        narrative: narrativeText,
         walk: walkResult.steps,
         focusTokens,
         keyRelationships,
-        visitedTokens,
+        visitedTokens: orderedThoughtTokens,
       };
     }
 
@@ -10804,14 +10864,31 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           keyRelationships: keyRels,
         });
 
-        let localOutput = localOutputData.text;
-        if (!localOutput) {
-          localOutput = 'Adjacency walk could not assemble a local output with the available data.';
+        let localThought = localOutputData.thoughtText || localOutputData.text || '';
+        if (!localThought) {
+          localThought = 'Adjacency walk could not assemble a local output with the available data.';
         }
-        if (localOutputData.trimmed) {
+        if (localOutputData.thoughtTrimmed || localOutputData.trimmed) {
+          logWarning(`Local thought stream truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+        }
+        const thoughtLimited = limitWords(localThought, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+        if (thoughtLimited.trimmed && !(localOutputData.thoughtTrimmed || localOutputData.trimmed)) {
+          logWarning(`Local thought stream trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+        }
+        localThought = thoughtLimited.text;
+        const localThoughtWordCount = localOutputData.thoughtWordCount || thoughtLimited.wordCount || countWords(localThought);
+
+        let localOutput = localOutputData.responseText || localThought;
+        if (localOutputData.responseTrimmed) {
           logWarning(`Local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
         }
-        let localWordCount = localOutputData.wordCount || countWords(localOutput);
+        localOutput = DbLexicon.rewriteText(localOutput);
+        const localLimited = limitWords(localOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+        if (localLimited.trimmed && !localOutputData.responseTrimmed) {
+          logWarning(`Local output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+        }
+        localOutput = localLimited.text;
+        const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
 
         const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
           ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
@@ -10827,9 +10904,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
           ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
           : '';
 
+        const safeThought = sanitize(localThought);
+        const safeResponse = sanitize(localOutput);
+
         addLog(`<div class="section-divider"></div>
           <div class="section-title">🤖 Local HLSF AGI Output</div>
-          <div class="thought-stream">${sanitize(localOutput)}</div>
+          <div class="thought-stream"><strong>Thought stream:</strong> ${safeThought}</div>
+          <div class="local-response"><strong>Actual output:</strong> ${safeResponse}</div>
           <div class="adjacency-insight">${mentalSummary}</div>
           ${visitedSummary}
           ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
@@ -10843,7 +10924,6 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
 
         const time = ((performance.now() - startTime) / 1000).toFixed(1);
         const safeOriginal = sanitize(initialResponse);
-        const safeLocal = sanitize(localOutput);
 
         addLog(`<div class="section-divider"></div>
           <div class="final-output">
@@ -10853,8 +10933,12 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
               <pre>${safeOriginal}</pre>
             </details>
             <details open>
-              <summary>Local HLSF AGI output (${localWordCount} words)</summary>
-              <pre>${safeLocal}</pre>
+              <summary>Local HLSF AGI thought stream (${localThoughtWordCount} words)</summary>
+              <pre>${safeThought}</pre>
+            </details>
+            <details open>
+              <summary>Local HLSF AGI chosen response (${localWordCount} words)</summary>
+              <pre>${safeResponse}</pre>
             </details>
             <details>
               <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
@@ -11363,17 +11447,28 @@ Write a reflective synthesis of this passage in the voice of the cached database
         keyRelationships: keyRels,
       });
 
-      let localOutput = localOutputData.text || 'Adjacency walk could not assemble a local output with the available data.';
-      if (localOutputData.trimmed) {
+      let localThought = localOutputData.thoughtText || localOutputData.text || 'Adjacency walk could not assemble a local output with the available data.';
+      if (localOutputData.thoughtTrimmed || localOutputData.trimmed) {
+        logWarning(`${chunkLabel}: local thought stream truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+      }
+      const thoughtLimited = limitWords(localThought, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+      if (thoughtLimited.trimmed && !(localOutputData.thoughtTrimmed || localOutputData.trimmed)) {
+        logWarning(`${chunkLabel}: local thought stream trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+      }
+      localThought = thoughtLimited.text;
+      const localThoughtWordCount = localOutputData.thoughtWordCount || thoughtLimited.wordCount || countWords(localThought);
+
+      let localOutput = localOutputData.responseText || localThought;
+      if (localOutputData.responseTrimmed) {
         logWarning(`${chunkLabel}: local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
       }
       localOutput = DbLexicon.rewriteText(localOutput);
       const localLimited = limitWords(localOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
-      if (localLimited.trimmed) {
+      if (localLimited.trimmed && !localOutputData.responseTrimmed) {
         logWarning(`${chunkLabel}: local output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words for archival.`);
       }
       localOutput = localLimited.text;
-      const localWordCount = localLimited.wordCount;
+      const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
 
       const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
         ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
@@ -11389,16 +11484,19 @@ Write a reflective synthesis of this passage in the voice of the cached database
         ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
         : '';
 
+      const safeThought = sanitize(localThought);
+      const safeResponse = sanitize(localOutput);
+
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🤖 Local HLSF AGI Output</div>
-        <div class="thought-stream">${sanitize(localOutput)}</div>
+        <div class="thought-stream"><strong>Thought stream:</strong> ${safeThought}</div>
+        <div class="local-response"><strong>Actual output:</strong> ${safeResponse}</div>
         <div class="adjacency-insight">${mentalSummary}</div>
         ${visitedSummary}
         ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
       `);
 
       const safeOriginal = sanitize(originalResponse);
-      const safeLocal = sanitize(localOutput);
 
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
@@ -11408,8 +11506,12 @@ Write a reflective synthesis of this passage in the voice of the cached database
             <pre>${safeOriginal}</pre>
           </details>
           <details open>
-            <summary>Local HLSF AGI output (${localWordCount} words)</summary>
-            <pre>${safeLocal}</pre>
+            <summary>Local HLSF AGI thought stream (${localThoughtWordCount} words)</summary>
+            <pre>${safeThought}</pre>
+          </details>
+          <details open>
+            <summary>Local HLSF AGI chosen response (${localWordCount} words)</summary>
+            <pre>${safeResponse}</pre>
           </details>
           <details>
             <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
@@ -11423,6 +11525,9 @@ Write a reflective synthesis of this passage in the voice of the cached database
       }
       if (localOutput) {
         lessonUpdates.localOutput = localOutput;
+      }
+      if (localThought) {
+        lessonUpdates.thoughtStream = localThought;
       }
 
       if (state.apiKey && Object.keys(lessonUpdates).length) {
@@ -11466,6 +11571,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
         tokens: chunkTokens,
         originalResponse,
         localOutput,
+        thoughtStream: localThought,
         matrices: allMatrices,
         topTokens,
         keyRelationships: keyRels,
