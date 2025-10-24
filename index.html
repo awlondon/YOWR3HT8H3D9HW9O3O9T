@@ -151,6 +151,15 @@
   </div>
 
   
+  <script>
+    const SETTINGS = {
+      tokenizeSymbols: true,
+      symbolWeightScale: 0.35,
+      symbolEmitMode: "paired",
+      includeSymbolInSummaries: false,
+    };
+    window.SETTINGS = Object.assign({}, SETTINGS, window.SETTINGS || {});
+  </script>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

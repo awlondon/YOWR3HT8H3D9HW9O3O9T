@@ -1,4 +1,8 @@
 // @ts-nocheck
+import { SETTINGS } from './settings';
+import { runPipeline } from './engine/pipeline';
+import { tokenizeWithSymbols } from './tokens/tokenize';
+import { buildSessionExport } from './export/session';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -2546,8 +2550,8 @@ function ensureHLSFCanvas() {
           <input id="hlsf-rotation-speed" type="range" min="-5" max="5" step="0.01" value="0.30">
         </div>
         <div class="hlsf-control-group">
-          <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.70</span></label>
-          <input id="hlsf-alpha" type="range" min="0" max="0.99" step="0.01" value="0.70">
+          <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.99</span></label>
+          <input id="hlsf-alpha" type="range" min="0" max="0.99" step="0.01" value="0.99">
         </div>
         <div class="hlsf-control-group">
           <label>Edge width <span id="edgew-val">0.200</span></label>
@@ -2592,7 +2596,7 @@ function ensureHLSFCanvas() {
           <label>Display options</label>
           <div class="hlsf-button-row">
             <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
-            <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: Off</button>
+            <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
             <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
             <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
           </div>
@@ -3187,13 +3191,13 @@ const DEFAULT_BOOTSTRAP_DB = 'remote-db/metadata.json';
 window.HLSF.config = Object.assign({
   bootstrapDbUrl: typeof existingConfig.bootstrapDbUrl === 'string' ? existingConfig.bootstrapDbUrl : DEFAULT_BOOTSTRAP_DB,
   rotationOmega: 0.30,
-  alpha: 0.10,
+  alpha: 0.99,
   scale: 1,
   tx: 0,
   ty: 0,
   emergentActive: true,
   showEdges: true,
-  showLabels: false,
+  showLabels: true,
   fillFaces: false,
   whiteBg: false,
   showEnglish: true,
@@ -3278,11 +3282,11 @@ const clampAlpha = (value) => {
 };
 window.HLSF.config.alpha = (() => {
   const initial = clampAlpha(window.HLSF.config.alpha);
-  return Number.isFinite(initial) ? initial : 0.1;
+  return Number.isFinite(initial) ? initial : 0.99;
 })();
 const baseAlpha = () => {
   const resolved = clampAlpha(window.HLSF.config.alpha);
-  return Number.isFinite(resolved) ? resolved : 0.1;
+  return Number.isFinite(resolved) ? resolved : 0.99;
 };
 
 function hideVisualizer() {
@@ -3394,6 +3398,8 @@ window.CognitionEngine = window.CognitionEngine || {
   api: {},
   processing: {},
 };
+window.CognitionEngine.export = window.CognitionEngine.export || {};
+window.CognitionEngine.export.session = buildSessionExport;
 
 window.GlyphSystem = window.GlyphSystem || {
   ledger: null,
@@ -3778,10 +3784,19 @@ const state = {
   networkErrorNotified: false,
   lastNetworkErrorTime: 0,
   lastComputedCacheBase: 0,
+  symbolMetrics: {
+    history: [],
+    last: null,
+    lastRunGraph: null,
+    topNodes: [],
+    lastTokens: [],
+    lastPipeline: null,
+  },
 };
 
 state.hlsfReady = false;
 window.CognitionEngine.state = state;
+syncSettings();
 
 let currentAbortController = null;
 
@@ -4243,10 +4258,103 @@ function isValidApiKey(key) {
 
 function tokenize(text) {
   if (!text) return [];
-  return text.trim()
-    .split(/[^\p{L}\p{N}\-']+/u)
-    .filter(Boolean)
-    .map(t => t.toLowerCase());
+  const normalized = String(text);
+
+  if (!SETTINGS.tokenizeSymbols) {
+    return normalized.trim()
+      .split(/[^\p{L}\p{N}\-']+/u)
+      .filter(Boolean)
+      .map(t => t.toLowerCase());
+  }
+
+  const tokens = tokenizeWithSymbols(normalized);
+  const seen = new Set();
+  const words = [];
+  for (const token of tokens) {
+    if (!token || token.kind !== 'word') continue;
+    const lower = token.t.toLowerCase();
+    if (!lower || seen.has(lower)) continue;
+    seen.add(lower);
+    words.push(lower);
+  }
+
+  if (words.length === 0) {
+    return normalized.trim()
+      .split(/[^\p{L}\p{N}\-']+/u)
+      .filter(Boolean)
+      .map(t => t.toLowerCase());
+  }
+
+  return words;
+}
+
+function recordSymbolMetrics(label, pipelineResult, baseTokenCount = 0) {
+  if (!SETTINGS.tokenizeSymbols || !pipelineResult) return;
+  const bucket = state.symbolMetrics;
+  if (!bucket) return;
+  const entry = {
+    label,
+    timestamp: Date.now(),
+    baseTokenCount,
+    ...pipelineResult.metrics,
+    deltaTokens: pipelineResult.metrics.tokenCount - baseTokenCount,
+    topTokens: pipelineResult.top.map(node => node.token).filter(Boolean),
+  };
+  bucket.last = entry;
+  bucket.lastRunGraph = pipelineResult.graph;
+  bucket.topNodes = pipelineResult.top;
+  bucket.history.push(entry);
+  if (bucket.history.length > 20) bucket.history.shift();
+}
+
+function collectSymbolAwareTokens(text, baseTokens = [], label = 'default') {
+  const baseList = Array.isArray(baseTokens) ? baseTokens : [];
+  if (!SETTINGS.tokenizeSymbols) return baseList;
+
+  const pipelineResult = runPipeline(text || '', SETTINGS);
+  const map = new Map();
+
+  for (const token of baseList) {
+    if (!token) continue;
+    const normalized = String(token).toLowerCase();
+    if (!normalized || map.has(`word:${normalized}`)) continue;
+    map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
+  }
+
+  for (const token of pipelineResult.tokens) {
+    if (!token) continue;
+    if (token.kind === 'word') {
+      const normalized = token.t.toLowerCase();
+      if (!normalized || map.has(`word:${normalized}`)) continue;
+      map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
+    } else if (token.kind === 'sym') {
+      const key = `sym:${token.t}`;
+      if (map.has(key)) continue;
+      map.set(key, {
+        token: token.t,
+        kind: 'sym',
+        cat: token.cat || null,
+        index: token.i,
+        span: token.n,
+      });
+    }
+  }
+
+  const combined = Array.from(map.values());
+  recordSymbolMetrics(label, pipelineResult, baseList.length);
+  if (state.symbolMetrics) {
+    state.symbolMetrics.lastTokens = combined;
+    state.symbolMetrics.lastPipeline = pipelineResult;
+  }
+  return combined;
+}
+
+function syncSettings() {
+  if (typeof window === 'undefined') return;
+  window.SETTINGS = Object.assign(window.SETTINGS || {}, SETTINGS);
+  if (window.CognitionEngine?.settings) {
+    Object.assign(window.CognitionEngine.settings, SETTINGS);
+  }
 }
 
 function countWords(text) {
@@ -5998,10 +6106,17 @@ async function filterVariantRelationships(entry) {
   return { entry, removed };
 }
 
-async function fetchAdjacency(token, context) {
+async function fetchAdjacency(entry, context) {
   if (currentAbortController?.signal.aborted) {
     throw new Error('AbortError');
   }
+
+  const baseToken = typeof entry === 'string' ? entry : entry?.token;
+  const token = String(baseToken || '').trim();
+  if (!token) return { token: '', relationships: {}, error: 'invalid_token' };
+
+  const kind = typeof entry === 'object' && entry && entry.kind ? entry.kind : 'word';
+  const cat = typeof entry === 'object' && entry ? entry.cat || null : null;
 
   const cached = getFromCache(token);
   if (cached) {
@@ -6009,12 +6124,26 @@ async function fetchAdjacency(token, context) {
     if (removed > 0) {
       saveToCache(token, filteredCached, { deferReload: true });
     }
-    return { ...filteredCached, cache_hit: true };
+    return { ...filteredCached, cache_hit: true, kind };
   }
 
   if (!state.apiKey) return { token, relationships: {}, offline: true };
 
+  if (kind === 'sym') {
+    return {
+      token,
+      relationships: {},
+      cache_hit: true,
+      offline: true,
+      kind,
+      symbol: { cat },
+    };
+  }
+
+  const roleLine = kind === 'sym' ? 'Role: "symbol"' : 'Role: "word"';
+  const categoryLine = cat ? `\nCategory: "${cat}"` : '';
   const prompt = `Token: "${token}"
+${roleLine}${categoryLine}
 Context: "${context}"
 
 For this token, identify the most relevant adjacent tokens across relationship types. For each that applies, provide related tokens with weights 0.01-1.00.
@@ -6057,41 +6186,78 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
     const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
     const { entry: filtered } = await filterVariantRelationships(parsed);
     saveToCache(token, filtered, { deferReload: true });
-    return { ...filtered, cache_hit: false };
+    return { ...filtered, cache_hit: false, kind };
   } catch {
     return { token, relationships: {}, error: 'Parse failed' };
   }
+}
+
+function normalizeAdjacencyInputs(tokens) {
+  const list = Array.isArray(tokens) ? tokens : [];
+  const unique = new Map();
+  for (const entry of list) {
+    if (entry == null) continue;
+    if (typeof entry === 'object') {
+      const token = entry.token ? String(entry.token).trim() : '';
+      if (!token) continue;
+      const kind = entry.kind || 'word';
+      const key = `${kind}:${token}`;
+      if (!unique.has(key)) unique.set(key, { token, kind, cat: entry.cat || null });
+    } else {
+      const token = String(entry).trim();
+      if (!token) continue;
+      const key = `word:${token.toLowerCase()}`;
+      if (!unique.has(key)) unique.set(key, { token: token.toLowerCase(), kind: 'word' });
+    }
+  }
+  return Array.from(unique.values());
 }
 
 async function batchFetchAdjacencies(tokens, context, label) {
   CacheBatch.begin();
   try {
     const results = new Map();
-    const unique = Array.isArray(tokens) ? [...new Set(tokens)] : [];
+    const normalized = normalizeAdjacencyInputs(tokens);
+
+    const remoteTargets = [];
+    for (const entry of normalized) {
+      if (entry.kind === 'sym') {
+        results.set(entry.token, {
+          token: entry.token,
+          relationships: {},
+          kind: entry.kind,
+          offline: true,
+          cache_hit: true,
+          symbol: { cat: entry.cat || null },
+        });
+      } else {
+        remoteTargets.push(entry);
+      }
+    }
 
     if (window.HLSF?.remoteDb?.isReady?.()) {
       try {
-        await window.HLSF.remoteDb.preloadTokens(unique);
+        await window.HLSF.remoteDb.preloadTokens(remoteTargets.map(entry => entry.token));
       } catch (err) {
         console.warn('Remote DB preload failed:', err);
       }
     }
 
-    const progress = new ProgressTracker(unique.length, label);
+    const progress = new ProgressTracker(remoteTargets.length, label);
 
     let processed = 0;
-    for (let i = 0; i < unique.length; i += CONFIG.MAX_CONCURRENCY) {
+    for (let i = 0; i < remoteTargets.length; i += CONFIG.MAX_CONCURRENCY) {
       if (currentAbortController?.signal.aborted) {
-        progress.complete(`${label} cancelled (${processed}/${unique.length})`);
+        progress.complete(`${label} cancelled (${processed}/${remoteTargets.length})`);
         break;
       }
 
-      const batch = unique.slice(i, i + CONFIG.MAX_CONCURRENCY);
-      const settled = await Promise.allSettled(batch.map(t => fetchAdjacency(t, context)));
+      const batch = remoteTargets.slice(i, i + CONFIG.MAX_CONCURRENCY);
+      const settled = await Promise.allSettled(batch.map(entry => fetchAdjacency(entry, context)));
 
       settled.forEach((result, idx) => {
         if (result.status === 'fulfilled') {
-          results.set(batch[idx], result.value);
+          results.set(batch[idx].token, result.value);
         }
       });
 
@@ -6919,8 +7085,8 @@ function initHLSFCanvas() {
 
       <div class="hlsf-control-group">
         <label>Alpha Transparency</label>
-        <input type="range" id="hlsf-alpha" min="0" max="0.99" step="0.01" value="0.10">
-        <span id="hlsf-alpha-val">0.10</span>
+        <input type="range" id="hlsf-alpha" min="0" max="0.99" step="0.01" value="0.99">
+        <span id="hlsf-alpha-val">0.99</span>
       </div>
 
       <div class="hlsf-control-group">
@@ -9739,7 +9905,8 @@ async function cmd_state(args = []) {
     if (completionTokens.length) {
       addConversationTokens(completionTokens);
       addOutputTokens(completionTokens, { render: false });
-      streamAdjacency = await batchFetchAdjacencies(completionTokens, completion, 'mental state stream adjacencies');
+      const streamAdjTokens = collectSymbolAwareTokens(completion, completionTokens, 'mental-state-stream');
+      streamAdjacency = await batchFetchAdjacencies(streamAdjTokens, completion, 'mental state stream adjacencies');
       calculateAttention(streamAdjacency);
     }
 
@@ -9766,7 +9933,8 @@ async function cmd_state(args = []) {
     if (grammarTokens.length) {
       addConversationTokens(grammarTokens);
       addOutputTokens(grammarTokens, { render: false });
-      grammarAdjacency = await batchFetchAdjacencies(grammarTokens, grammarStream, 'mental state grammar adjacencies');
+      const grammarAdjTokens = collectSymbolAwareTokens(grammarStream, grammarTokens, 'mental-state-grammar');
+      grammarAdjacency = await batchFetchAdjacencies(grammarAdjTokens, grammarStream, 'mental state grammar adjacencies');
       calculateAttention(grammarAdjacency);
     }
 
@@ -9869,6 +10037,67 @@ if (!COMMANDS.__hlsf_bound) {
 }
 registerCommand('/visualize', cmd_hlsf);
 
+function symbolMetricsSummary() {
+  const bucket = state.symbolMetrics;
+  if (!bucket || !bucket.last) {
+    return 'No symbol metrics recorded yet.';
+  }
+  const last = bucket.last;
+  const density = (last.symbolDensity * 100).toFixed(1);
+  const topPreview = Array.isArray(bucket.topNodes) && bucket.topNodes.length
+    ? bucket.topNodes.slice(0, 3).map(node => node.token).filter(Boolean).join(', ')
+    : 'none';
+  const time = new Date(last.timestamp).toLocaleTimeString();
+  return `Last run ${time}: words=${last.wordCount}, symbols=${last.symbolCount} (${density}% density), edges=${last.edgeCount} (${last.symbolEdgeCount} symbol edges), Δtokens=${last.deltaTokens}. Top nodes: ${topPreview}.`;
+}
+
+function cmdSymbols(args = []) {
+  const [subcommand, value] = args;
+  const action = (subcommand || '').toLowerCase();
+
+  if (!action || action === 'status') {
+    const summary = symbolMetricsSummary();
+    addLog(`<div class="adjacency-insight"><strong>Symbol settings</strong><br>${sanitize(summary)}</div>`);
+    return;
+  }
+
+  if (action === 'on') {
+    SETTINGS.tokenizeSymbols = true;
+    syncSettings();
+    addLog('✅ Symbol tokenization enabled.');
+  } else if (action === 'off') {
+    SETTINGS.tokenizeSymbols = false;
+    syncSettings();
+    addLog('✅ Symbol tokenization disabled.');
+  } else if (action === 'mode') {
+    const mode = (value || '').toLowerCase();
+    if (mode === 'paired' || mode === 'standalone' || mode === 'both') {
+      SETTINGS.symbolEmitMode = mode;
+      syncSettings();
+      addLog(`✅ Symbol emit mode set to ${sanitize(mode)}.`);
+    } else {
+      logError('Symbol emit mode must be one of: paired, standalone, both.');
+      return;
+    }
+  } else if (action === 'weight') {
+    const weight = Number.parseFloat(value);
+    if (Number.isFinite(weight) && weight >= 0 && weight <= 1) {
+      SETTINGS.symbolWeightScale = weight;
+      syncSettings();
+      addLog(`✅ Symbol weight scale set to ${weight.toFixed(2)}.`);
+    } else {
+      logError('Symbol weight must be between 0 and 1.');
+      return;
+    }
+  } else {
+    logError(`Unknown /symbols action: ${sanitize(action)}`);
+    return;
+  }
+
+  const summary = symbolMetricsSummary();
+  addLog(`<div class="adjacency-insight"><strong>Symbol metrics</strong><br>${sanitize(summary)}</div>`);
+}
+
 async function dispatchCommand(input) {
   const trimmed = (input || '').trim();
   if (!trimmed) return false;
@@ -9886,6 +10115,7 @@ async function dispatchCommand(input) {
   if (command === '/spin') { cmdSpin(arg || 'on'); return true; }
   if (command === '/omega') { cmdOmega(arg); return true; }
   if (command === '/alpha') { cmdAlpha(arg); return true; }
+  if (command === '/symbols') { cmdSymbols(rest); return true; }
 
   return false;
 }
@@ -10001,6 +10231,7 @@ async function handleCommand(cmd) {
         /state [tokens...] - Mental state walkthrough with 200-word stream and 100-word structure<br>
         /self - Stream the current HLSF self-reflection<br>
         /hlsf or /visualize - Visualize database as Hierarchical-Level Semantic Framework — builds from anchors<br>
+        /symbols [on|off|mode|weight] - Inspect or tweak symbol tokenization settings<br>
         /help - Show commands`);
       break;
     default:
@@ -10119,9 +10350,11 @@ async function processPrompt(prompt) {
     const responseTokens = tokenize(initialResponse);
     addConversationTokens(responseTokens);
     addOutputTokens(responseTokens, { render: false });
+    const inputAdjTokens = collectSymbolAwareTokens(normalizedPrompt, tokens, 'prompt-input');
+    const outputAdjTokens = collectSymbolAwareTokens(initialResponse, responseTokens, 'initial-output');
     const [inputMatrices, outputMatrices] = await Promise.all([
-      batchFetchAdjacencies(tokens, normalizedPrompt, 'input'),
-      batchFetchAdjacencies(responseTokens, initialResponse, 'output'),
+      batchFetchAdjacencies(inputAdjTokens, normalizedPrompt, 'input'),
+      batchFetchAdjacencies(outputAdjTokens, initialResponse, 'output'),
     ]);
 
     let shouldReloadHlsf = hasNewAdjacencyData(inputMatrices) || hasNewAdjacencyData(outputMatrices);
@@ -10700,9 +10933,11 @@ Write a reflective synthesis of this passage in the voice of the cached database
     return { result, duration: performance.now() - startTime };
   };
 
+  const promptAdjTokens = collectSymbolAwareTokens(promptText, promptTokens, `${chunkLabel}-prompt`);
+  const originalAdjTokens = collectSymbolAwareTokens(originalResponse, originalTokens, `${chunkLabel}-original`);
   const [inputData, outputData] = await Promise.all([
-    measure(() => batchFetchAdjacencies(promptTokens, promptText, `${chunkLabel} prompt adjacencies`)),
-    measure(() => batchFetchAdjacencies(originalTokens, originalResponse, `${chunkLabel} original response adjacencies`)),
+    measure(() => batchFetchAdjacencies(promptAdjTokens, promptText, `${chunkLabel} prompt adjacencies`)),
+    measure(() => batchFetchAdjacencies(originalAdjTokens, originalResponse, `${chunkLabel} original response adjacencies`)),
   ]);
 
   const inputMatrices = inputData.result;
@@ -10926,7 +11161,8 @@ async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, foc
   if (reflectionTokens.length) {
     addConversationTokens(reflectionTokens);
     addOutputTokens(reflectionTokens, { render: false });
-    const reflectionAdjacency = await batchFetchAdjacencies(reflectionTokens, finalReflection, 'document reflection adjacencies');
+    const reflectionAdjTokens = collectSymbolAwareTokens(finalReflection, reflectionTokens, 'document-reflection');
+    const reflectionAdjacency = await batchFetchAdjacencies(reflectionAdjTokens, finalReflection, 'document reflection adjacencies');
     calculateAttention(reflectionAdjacency);
     if (hasNewAdjacencyData(reflectionAdjacency)) {
       notifyHlsfAdjacencyChange('document-reflection', { immediate: true });

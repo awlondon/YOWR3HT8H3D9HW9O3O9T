@@ -1,10 +1,16 @@
 {
-  "version": "2.0",
+  "version": "2.1",
   "generated_at": null,
   "source": null,
   "total_tokens": 0,
   "total_relationships": 0,
   "chunk_prefix_length": 1,
-  "chunks": [],
+  "chunks": [
+    {
+      "prefix": "symbols",
+      "href": "chunks/symbols.json",
+      "token_count": 43
+    }
+  ],
   "token_index_href": "token-index.json"
 }
