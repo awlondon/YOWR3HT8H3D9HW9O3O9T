@@ -1,72 +1,56 @@
 # HLSF Cognition Engine
 
-The HLSF Cognition Engine is a self-contained web workbench for analyzing language prompts through recursive token adjacency mapping. It pairs a console-style UI with automated OpenAI-powered pipelines that derive conceptual graphs, extract thematic insights, and rewrite responses based on emergent relationships. 【F:index.html†L1-L116】【F:index.html†L965-L1118】
+The HLSF Cognition Engine is a browser-based workbench for analyzing language prompts through recursive token adjacency mapping. It pairs a console-style UI with automated OpenAI-powered pipelines that derive conceptual graphs, extract thematic insights, and rewrite responses based on emergent relationships.
 
 ## Project Structure
 
-This repository contains a single-page application and a bundled remote database snapshot:
-
-- `index.html` – The complete interface, styling, and JavaScript logic for the cognition engine, including the modal for API configuration, logging console, command handler, and processing routines. 【F:index.html†L435-L608】【F:index.html†L965-L1190】
-- `remote-db/` – Chunked HLSF adjacency data and metadata used for lazy, token-level hydration without exhausting browser storage. 【F:index.html†L6007-L6185】【F:index.html†L8427-L8460】
+- `index.html` – Static HTML shell that loads the bundled application from Vite.
+- `src/` – TypeScript sources used to build the interface and runtime logic.
+  - `main.ts` bootstraps the application and applies global styling.
+  - `app.ts` contains the cognition engine runtime migrated from the original inline script.
+  - `styles.css` defines the UI theme and layout.
+- `remote-db/` – Chunked HLSF adjacency data and metadata used for on-demand hydration.
+- `scripts/` – Python utilities for processing the exported database snapshots.
+- `docs/` – Architecture notes and other reference material.
 
 ## Quick Start
 
-1. Open `index.html` in any modern desktop browser. The layout adapts to smaller screens, but the experience is optimized for wider viewports. 【F:index.html†L35-L411】
-2. When prompted, enter an OpenAI API key (`sk-...`) to enable live calls. Selecting **Continue offline** dismisses the modal and restricts the app to cached or offline behaviors. Keys are stored only in memory. 【F:index.html†L435-L567】
-3. Type a natural-language prompt or a `/command` into the input bar and press **Send** (or hit Enter). 【F:index.html†L448-L608】【F:index.html†L1193-L1209】
-4. Watch the command log update as the engine gathers LLM output, fetches adjacency matrices, and renders analysis artifacts. Offline mode returns placeholder responses where live synthesis is unavailable. 【F:index.html†L984-L1150】
+1. Install dependencies and start the Vite dev server:
+   ```bash
+   npm install
+   npm run dev
+   ```
+   Open `http://localhost:5173` to interact with the engine in development mode.
 
-> **Note:** The application communicates directly with the OpenAI Chat Completions API from the browser. Ensure you trust the execution environment before supplying credentials. 【F:index.html†L610-L707】
+2. For a production build that can be hosted statically:
+   ```bash
+   npm run build
+   ```
+   The output is written to `dist/`. Serve the directory with any static file server.
 
-> **Database hydration:** The bundled `remote-db/metadata.json` manifest keeps adjacency data external to browser storage; records are streamed in chunks only for tokens encountered in prompts and model output, preventing quota exhaustion. 【F:index.html†L6007-L6185】【F:index.html†L6314-L6364】
+3. Alternatively, open `index.html` directly in a modern browser to run the pre-built bundle without the dev server.
 
-## Core Workflow
+When prompted, enter an OpenAI API key (`sk-...`) to enable live calls. Selecting **Continue offline** dismisses the modal and restricts the app to cached or offline behaviors. Keys are stored only in memory.
 
-For each submitted prompt, the engine performs the following stages:
-
-1. **Token validation** – Splits the prompt, enforces a 500-token ceiling, and annotates input/output token counts in the log. 【F:index.html†L3465-L3470】【F:index.html†L6214-L6245】
-2. **Primary response generation** – Sends the prompt to OpenAI (when authorized) or emits an offline placeholder if no key is present. 【F:index.html†L986-L997】
-3. **Adjacency acquisition** – Requests token adjacency matrices for both prompt and response tokens, with concurrency control, caching, and offline fallbacks. 【F:index.html†L671-L761】【F:index.html†L1002-L1016】
-4. **Attention analytics** – Calculates attention scores, densities, hubs, and bridge tokens, then summarizes high-salience nodes in the log. 【F:index.html†L764-L832】【F:index.html†L1017-L1028】
-5. **Insight synthesis** – Optionally asks the LLM to narrate conceptual insights and emergent thought streams derived from adjacency data. 【F:index.html†L1029-L1070】
-6. **Response revision** – Generates a refined answer aligned with analyzed relationships and presents a collapsible report containing the original output, thought stream, and token matrices. 【F:index.html†L1071-L1117】
-7. **Persistence & export** – Stores session summaries (up to 50) in `localStorage`, bundles cached adjacency data, and triggers a JSON download for archival. 【F:index.html†L907-L959】【F:index.html†L1151-L1177】
-
-## Commands
-
-Use leading slashes to control the environment without leaving the keyboard. Commands are case-insensitive.
+## Development Scripts
 
 | Command | Description |
 | --- | --- |
-| `/help` | Show the available commands. 【F:index.html†L548-L606】|
-| `/clear` | Clear the command log. 【F:index.html†L573-L579】|
-| `/export` | Download a JSON bundle of the current session matrices and cached data. 【F:index.html†L573-L582】【F:index.html†L907-L944】|
-| `/reset` | Purge cached adjacency matrices from `localStorage`. 【F:index.html†L583-L586】|
-| `/loaddb <metadata-url>` | Register a remote chunked database manifest (for example `remote-db/metadata.json`) so tokens are streamed on demand rather than stored wholesale. 【F:index.html†L8932-L8950】【F:index.html†L6007-L6185】|
-| `/hlsf [-db]` | Render the Hierarchical-Level Semantic Framework; append `-db` to work from the fully imported or cached database snapshot. 【F:index.html†L987-L1014】【F:index.html†L6926-L7038】|
-| `/depth [1-5]` | Adjust recursion depth used for multi-pass processing. 【F:index.html†L587-L600】|
+| `npm run dev` | Start the Vite development server with hot module replacement. |
+| `npm run build` | Produce an optimized production bundle. |
+| `npm run preview` | Preview the production build locally. |
+| `npm run lint` | Run ESLint across the TypeScript sources. |
+| `npm run format` | Format TypeScript, CSS, JSON, and Markdown files with Prettier. |
 
-## Data Artifacts
+## Remote Database Workflow
 
-Each processed prompt produces a structured JSON export that contains:
+Run `python scripts/process_latest_db.py` to generate the chunked adjacency dataset from the latest export. Artifacts are written to `remote-db/` and include `metadata.json`, per-prefix chunks, and a sorted token index.
 
-- Session metadata (timestamps, original and revised responses, emergent thoughts). 【F:index.html†L926-L944】
-- Serialized adjacency matrices used during analysis. 【F:index.html†L907-L944】【F:index.html†L1134-L1149】
-- Derived metrics such as recursion depth, token counts, and stored matrix totals. 【F:index.html†L907-L1174】
+## Documentation
 
-Exports are automatically triggered after every run and saved as `HLSF_Session_<timestamp>.json` in the browser’s download directory. 【F:index.html†L907-L919】【F:index.html†L1151-L1177】
-
-## Offline Behavior
-
-- Without an API key, the app skips live LLM calls and marks the log with offline warnings while still permitting manual exploration of cached matrices. 【F:index.html†L995-L997】【F:index.html†L1049-L1070】
-- Adjacency fetches fall back to cached results or an offline stub per token when the network layer is disabled. 【F:index.html†L715-L751】
-
-## Development Notes
-
-- All logic lives in vanilla HTML/CSS/JS, making it easy to host on static servers or run locally without a build step. 【F:index.html†L1-L432】【F:index.html†L467-L1216】
-- Live adjacency matrices and session histories still rely on ephemeral storage, but long-term token data is streamed from the chunked `remote-db` manifest to keep browser quotas intact. Clearing site data resets only recent activity. 【F:index.html†L6007-L6185】【F:index.html†L653-L959】
-- Responsive design rules ensure usability on narrow screens by stacking the input area and adjusting header layout. 【F:index.html†L393-L411】
+- [Architecture overview](docs/ARCHITECTURE.md)
+- [Contributing guidelines](CONTRIBUTING.md)
 
 ## License
 
-This project currently ships without an explicit license. Add one before distributing publicly.
+This project is licensed under the [MIT License](LICENSE).
