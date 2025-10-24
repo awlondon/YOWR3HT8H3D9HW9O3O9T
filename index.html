@@ -6441,6 +6441,109 @@
       }
     }
 
+    const realWordValidationCache = new Map();
+
+    async function validateTokenIsRealWord(token) {
+      const normalized = (token == null ? '' : String(token)).trim();
+      if (!normalized) return false;
+
+      const cacheKey = normalized.toLowerCase();
+      const cached = realWordValidationCache.get(cacheKey);
+      if (cached !== undefined) {
+        if (cached && typeof cached.then === 'function') return cached;
+        return cached;
+      }
+
+      if (!state.apiKey) {
+        realWordValidationCache.set(cacheKey, true);
+        return true;
+      }
+
+      const validationPromise = (async () => {
+        const prompt = `Token: "${normalized}"
+Determine whether this token is a valid standalone English word (proper nouns count as real words).
+Respond strictly with JSON: {"token": "${normalized}", "is_real_word": true | false}.`;
+
+        const content = await safeAsync(
+          () => callOpenAI([
+            { role: 'system', content: 'You are a linguistic validator that answers with strict JSON.' },
+            { role: 'user', content: prompt },
+          ], { temperature: 0, max_tokens: 40 }),
+          `Real word validation failed for ${normalized}`,
+          { fallbackValue: null }
+        );
+
+        if (!content) return true;
+
+        try {
+          const jsonStart = content.indexOf('{');
+          const jsonEnd = content.lastIndexOf('}');
+          if (jsonStart === -1 || jsonEnd === -1) return true;
+          const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
+          if (parsed && typeof parsed === 'object') {
+            if (typeof parsed.is_real_word === 'boolean') return parsed.is_real_word;
+            if (typeof parsed.real_word === 'boolean') return parsed.real_word;
+          }
+        } catch (err) {
+          console.warn('Failed to parse real word validation result for', normalized, err);
+        }
+
+        return true;
+      })();
+
+      realWordValidationCache.set(cacheKey, validationPromise);
+
+      let result;
+      try {
+        result = await validationPromise;
+      } catch {
+        realWordValidationCache.delete(cacheKey);
+        return true;
+      }
+
+      const finalResult = result === false ? false : true;
+      realWordValidationCache.set(cacheKey, finalResult);
+      return finalResult;
+    }
+
+    async function filterVariantRelationships(entry) {
+      if (!entry || typeof entry !== 'object') return { entry, removed: 0 };
+
+      const relationships = entry.relationships;
+      if (!relationships || typeof relationships !== 'object') return { entry, removed: 0 };
+
+      const variantKeys = Object.keys(relationships).filter(key => {
+        if (!key) return false;
+        if (key === '≈') return true;
+        return key.toLowerCase().includes('variant');
+      });
+
+      if (!variantKeys.length) return { entry, removed: 0 };
+
+      let removed = 0;
+
+      for (const key of variantKeys) {
+        const edges = Array.isArray(relationships[key]) ? relationships[key] : null;
+        if (!edges || edges.length === 0) continue;
+
+        const evaluations = await Promise.all(edges.map(async (edge) => {
+          const candidate = (edge && typeof edge.token === 'string') ? edge.token.trim() : '';
+          if (!candidate) return { edge, keep: false };
+          const isReal = await validateTokenIsRealWord(candidate);
+          return { edge, keep: isReal !== false };
+        }));
+
+        const filtered = evaluations
+          .filter(item => item.keep && item.edge)
+          .map(item => item.edge);
+
+        removed += edges.length - filtered.length;
+        relationships[key] = filtered;
+      }
+
+      return { entry, removed };
+    }
+
     async function fetchAdjacency(token, context) {
       if (currentAbortController?.signal.aborted) {
         throw new Error('AbortError');
@@ -6448,7 +6551,11 @@
 
       const cached = getFromCache(token);
       if (cached) {
-        return { ...cached, cache_hit: true };
+        const { entry: filteredCached, removed } = await filterVariantRelationships(cached);
+        if (removed > 0) {
+          saveToCache(token, filteredCached, { deferReload: true });
+        }
+        return { ...filteredCached, cache_hit: true };
       }
 
       if (!state.apiKey) return { token, relationships: {}, offline: true };
@@ -6494,8 +6601,9 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
         const jsonStart = content.indexOf('{');
         const jsonEnd = content.lastIndexOf('}');
         const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
-        saveToCache(token, parsed, { deferReload: true });
-        return { ...parsed, cache_hit: false };
+        const { entry: filtered } = await filterVariantRelationships(parsed);
+        saveToCache(token, filtered, { deferReload: true });
+        return { ...filtered, cache_hit: false };
       } catch {
         return { token, relationships: {}, error: 'Parse failed' };
       }
