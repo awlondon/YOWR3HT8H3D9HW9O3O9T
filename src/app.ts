@@ -2546,8 +2546,8 @@ function ensureHLSFCanvas() {
           <input id="hlsf-rotation-speed" type="range" min="-5" max="5" step="0.01" value="0.30">
         </div>
         <div class="hlsf-control-group">
-          <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.70</span></label>
-          <input id="hlsf-alpha" type="range" min="0" max="0.99" step="0.01" value="0.70">
+          <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.99</span></label>
+          <input id="hlsf-alpha" type="range" min="0" max="0.99" step="0.01" value="0.99">
         </div>
         <div class="hlsf-control-group">
           <label>Edge width <span id="edgew-val">0.200</span></label>
@@ -2592,7 +2592,7 @@ function ensureHLSFCanvas() {
           <label>Display options</label>
           <div class="hlsf-button-row">
             <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
-            <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: Off</button>
+            <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
             <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
             <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
           </div>
@@ -3187,13 +3187,13 @@ const DEFAULT_BOOTSTRAP_DB = 'remote-db/metadata.json';
 window.HLSF.config = Object.assign({
   bootstrapDbUrl: typeof existingConfig.bootstrapDbUrl === 'string' ? existingConfig.bootstrapDbUrl : DEFAULT_BOOTSTRAP_DB,
   rotationOmega: 0.30,
-  alpha: 0.10,
+  alpha: 0.99,
   scale: 1,
   tx: 0,
   ty: 0,
   emergentActive: true,
   showEdges: true,
-  showLabels: false,
+  showLabels: true,
   fillFaces: false,
   whiteBg: false,
   showEnglish: true,
@@ -3278,11 +3278,11 @@ const clampAlpha = (value) => {
 };
 window.HLSF.config.alpha = (() => {
   const initial = clampAlpha(window.HLSF.config.alpha);
-  return Number.isFinite(initial) ? initial : 0.1;
+  return Number.isFinite(initial) ? initial : 0.99;
 })();
 const baseAlpha = () => {
   const resolved = clampAlpha(window.HLSF.config.alpha);
-  return Number.isFinite(resolved) ? resolved : 0.1;
+  return Number.isFinite(resolved) ? resolved : 0.99;
 };
 
 function hideVisualizer() {
@@ -6919,8 +6919,8 @@ function initHLSFCanvas() {
 
       <div class="hlsf-control-group">
         <label>Alpha Transparency</label>
-        <input type="range" id="hlsf-alpha" min="0" max="0.99" step="0.01" value="0.10">
-        <span id="hlsf-alpha-val">0.10</span>
+        <input type="range" id="hlsf-alpha" min="0" max="0.99" step="0.01" value="0.99">
+        <span id="hlsf-alpha-val">0.99</span>
       </div>
 
       <div class="hlsf-control-group">
