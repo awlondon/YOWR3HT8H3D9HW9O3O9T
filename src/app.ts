@@ -4471,9 +4471,58 @@ const CoherenceStore = (() => {
   };
 })();
 
+function normalizeCoherenceEvaluation(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const normalized = { ...payload };
+  const pick = (...keys) => {
+    for (const key of keys) {
+      if (key in payload && payload[key] != null) {
+        return payload[key];
+      }
+    }
+    return undefined;
+  };
+
+  const score = pick('coherence_score', 'coherenceScore', 'score', 'coherence');
+  if (score != null && normalized.coherence_score == null) {
+    normalized.coherence_score = score;
+  }
+
+  const response = pick(
+    'coherent_response',
+    'coherentResponse',
+    'refined_response',
+    'refinedResponse',
+    'rewrite',
+    'response'
+  );
+  if (response != null && normalized.coherent_response == null) {
+    normalized.coherent_response = response;
+  }
+
+  const explanation = pick(
+    'coherence_explanation',
+    'coherenceExplanation',
+    'explanation',
+    'rationale',
+    'analysis',
+    'notes'
+  );
+  if (explanation != null && normalized.explanation == null) {
+    normalized.explanation = explanation;
+  }
+
+  return normalized;
+}
+
 function parseCoherenceEvaluation(raw) {
   if (!raw) return null;
-  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return normalizeCoherenceEvaluation(raw) || raw;
+  }
   const text = String(raw).trim();
   if (!text) return null;
 
@@ -4490,22 +4539,23 @@ function parseCoherenceEvaluation(raw) {
 
   const cleaned = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
   let parsed = tryParse(cleaned);
-  if (parsed) return parsed;
+  if (parsed) return normalizeCoherenceEvaluation(parsed) || parsed;
 
   const match = cleaned.match(/\{[\s\S]*\}/);
   if (match) {
     parsed = tryParse(match[0]);
-    if (parsed) return parsed;
+    if (parsed) return normalizeCoherenceEvaluation(parsed) || parsed;
   }
 
   const ndjson = parseMaybeNdjson(cleaned);
   if (ndjson && typeof ndjson === 'object' && !Array.isArray(ndjson)) {
-    return ndjson;
+    return normalizeCoherenceEvaluation(ndjson) || ndjson;
   }
   if (Array.isArray(ndjson)) {
     for (const entry of ndjson) {
-      if (entry && typeof entry === 'object' && !Array.isArray(entry) && entry.coherence_score != null) {
-        return entry;
+      const normalized = normalizeCoherenceEvaluation(entry);
+      if (normalized && normalized.coherence_score != null) {
+        return normalized;
       }
     }
   }
