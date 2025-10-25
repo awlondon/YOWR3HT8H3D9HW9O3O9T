@@ -574,13 +574,19 @@ function recomputeAndRender() {
   debouncedLegacyRender();
 }
 
+function isAdjacencyExpansionEnabled() {
+  return window.HLSF?.config?.showAllAdjacencies === true;
+}
+
 function getRelationTypeCap() {
+  if (isAdjacencyExpansionEnabled()) return Infinity;
   const raw = window.HLSF?.config?.relationTypeCap;
   if (raw === Infinity) return Infinity;
   return clampRelationTypeCap(raw);
 }
 
 function getEdgesPerType() {
+  if (isAdjacencyExpansionEnabled()) return Infinity;
   const raw = window.HLSF?.config?.edgesPerType;
   if (raw === Infinity) return Infinity;
   return clampEdgesPerType(raw);
@@ -862,7 +868,7 @@ function microtask() {
 }
 
 function activeRelationTypes(index, scope, stateRelTypes) {
-  const cap = clampRelationTypeCap(window.HLSF?.config?.relationTypeCap);
+  const cap = getRelationTypeCap();
   if (scope === 'state' && stateRelTypes && Number.isFinite(stateRelTypes.maxPresent)) {
     return Math.min(cap, Math.max(0, stateRelTypes.maxPresent | 0));
   }
@@ -2598,6 +2604,7 @@ function ensureHLSFCanvas() {
           <label>Display options</label>
           <div class="hlsf-button-row">
             <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
+            <button id="hlsf-toggle-adjacency" class="btn btn-secondary">Adjacency: Compact</button>
             <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
             <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
             <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
@@ -2930,6 +2937,15 @@ function bindHlsfControls(wrapper) {
     });
   }
 
+  const adjacencyBtn = wrapper.querySelector('#hlsf-toggle-adjacency');
+  if (adjacencyBtn) {
+    adjacencyBtn.addEventListener('click', () => {
+      toggleAdjacencyExpansion({ root: wrapper, source: 'button' }).catch(err => {
+        console.warn('Failed to toggle adjacency expansion:', err);
+      });
+    });
+  }
+
   const labelsBtn = wrapper.querySelector('#hlsf-toggle-labels');
   if (labelsBtn) {
     labelsBtn.addEventListener('click', () => {
@@ -3053,6 +3069,7 @@ function syncHlsfControls(wrapper) {
 
   syncViewToConfig();
   const config = window.HLSF.config || {};
+  const showAllAdj = isAdjacencyExpansionEnabled();
   const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
   const speedVal = wrapper.querySelector('#hlsf-speed-val');
   const emergentState = window.HLSF.state && typeof window.HLSF.state.emergent === 'object'
@@ -3102,8 +3119,10 @@ function syncHlsfControls(wrapper) {
   window.HLSF.config.relationTypeCap = relationCap;
   if (relationInput) {
     relationInput.value = relationCap === Infinity ? String(MAX_REL_TYPES) : String(relationCap);
+    relationInput.disabled = showAllAdj;
   }
-  if (relationVal) relationVal.textContent = relationCap === Infinity ? '∞' : String(relationCap);
+  const effectiveRelationCap = showAllAdj ? Infinity : relationCap;
+  if (relationVal) relationVal.textContent = effectiveRelationCap === Infinity ? '∞' : String(effectiveRelationCap);
 
   const scopeSelect = wrapper.querySelector('#hlsf-scope');
   const normalizedScope = config.hlsfScope === 'state' ? 'state' : 'db';
@@ -3127,8 +3146,10 @@ function syncHlsfControls(wrapper) {
   window.HLSF.config.edgesPerType = edgesPerType;
   if (edgesInput) {
     edgesInput.value = edgesPerType === Infinity ? String(MAX_EDGES_PER_TYPE) : String(edgesPerType);
+    edgesInput.disabled = showAllAdj;
   }
-  if (edgesVal) edgesVal.textContent = edgesPerType === Infinity ? '∞' : String(edgesPerType);
+  const effectiveEdgesPerType = showAllAdj ? Infinity : edgesPerType;
+  if (edgesVal) edgesVal.textContent = effectiveEdgesPerType === Infinity ? '∞' : String(effectiveEdgesPerType);
 
   const affinityCfg = (config.affinity && typeof config.affinity === 'object') ? config.affinity : {};
   const threshold = (() => {
@@ -3167,6 +3188,14 @@ function syncHlsfControls(wrapper) {
   const edgesBtn = wrapper.querySelector('#hlsf-toggle-edges');
   if (edgesBtn) edgesBtn.textContent = config.showEdges ? 'Edges: On' : 'Edges: Off';
 
+  const adjacencyBtn = wrapper.querySelector('#hlsf-toggle-adjacency');
+  if (adjacencyBtn) {
+    adjacencyBtn.textContent = showAllAdj ? 'Adjacency: Expanded' : 'Adjacency: Compact';
+    adjacencyBtn.classList.add('btn');
+    adjacencyBtn.classList.toggle('btn-primary', showAllAdj);
+    adjacencyBtn.classList.toggle('btn-secondary', !showAllAdj);
+  }
+
   const labelsBtn = wrapper.querySelector('#hlsf-toggle-labels');
   if (labelsBtn) labelsBtn.textContent = config.showLabels ? 'Labels: On' : 'Labels: Off';
 
@@ -3183,6 +3212,68 @@ function syncHlsfControls(wrapper) {
     layoutSelect.value = layout;
   }
 }
+
+async function setAdjacencyExpansion(enabled, options = {}) {
+  const desired = enabled === true;
+  const previous = isAdjacencyExpansionEnabled();
+  window.HLSF.config.showAllAdjacencies = desired;
+  const root = options.root instanceof HTMLElement
+    ? options.root
+    : document.getElementById('hlsf-canvas-container');
+  if (root) syncHlsfControls(root);
+  if (desired === previous) {
+    return desired;
+  }
+  if (options.log !== false) {
+    const origin = options.source ? ` via ${options.source}` : '';
+    const message = desired
+      ? 'Adjacency expansion enabled — showing all relation types and edges.'
+      : 'Adjacency expansion disabled — using configured adjacency caps.';
+    logStatus(`${message}${origin}`.trim());
+  }
+  if (options.rebuild === false) {
+    if (window.HLSF.currentGraph) {
+      debouncedLegacyRender();
+    }
+    return desired;
+  }
+  const rebuilt = await rebuildHlsfFromLastCommand(true);
+  if (!rebuilt && window.HLSF.currentGraph) {
+    debouncedLegacyRender();
+  }
+  return desired;
+}
+
+function toggleAdjacencyExpansion(options = {}) {
+  return setAdjacencyExpansion(!isAdjacencyExpansionEnabled(), options);
+}
+
+function isEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName ? target.tagName.toLowerCase() : '';
+  if (tag === 'textarea') return true;
+  if (tag === 'input') {
+    const type = (target.getAttribute('type') || '').toLowerCase();
+    const nonTextTypes = new Set(['button', 'checkbox', 'radio', 'submit', 'reset', 'range', 'color', 'file', 'image']);
+    return !nonTextTypes.has(type);
+  }
+  return false;
+}
+
+window.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented) return;
+  const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+  if (key !== 'a' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+    return;
+  }
+  if (isEditableTarget(event.target)) return;
+  event.preventDefault();
+  const root = document.getElementById('hlsf-canvas-container');
+  toggleAdjacencyExpansion({ root, source: 'Alt+A shortcut' }).catch(err => {
+    console.warn('Adjacency shortcut toggle failed:', err);
+  });
+});
 
 window.HLSF = window.HLSF || {};
 const existingConfig = window.HLSF.config || {};
@@ -3216,6 +3307,7 @@ window.HLSF.config = Object.assign({
   nodeSize: 1,
   edgeColorMode: 'relation',
   showNodeGlow: false,
+  showAllAdjacencies: existingConfig.showAllAdjacencies === true,
   affinity: { threshold: 0.35, iterations: 8 },
 }, existingConfig);
 const initialRelationCap = window.HLSF.config.relationTypeCap;
@@ -3230,6 +3322,7 @@ window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
 window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
 window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
 window.HLSF.config.showNodeGlow = window.HLSF.config.showNodeGlow === true;
+window.HLSF.config.showAllAdjacencies = window.HLSF.config.showAllAdjacencies === true;
 window.HLSF.config.layout = normalizeLayout(window.HLSF.config.layout);
 window.HLSF.config.batchLogging = window.HLSF.config.batchLogging !== false;
 window.HLSF.config.deferredRender = window.HLSF.config.deferredRender !== false;
@@ -7423,6 +7516,7 @@ function initHLSFCanvas() {
         <label>Display Options</label>
         <div class="hlsf-button-row">
           <button id="hlsf-toggle-edges" class="btn btn-neutral">Edges: On</button>
+          <button id="hlsf-toggle-adjacency" class="btn btn-neutral">Adjacency: Compact</button>
           <button id="hlsf-toggle-labels" class="btn btn-neutral">Labels: On</button>
           <button id="hlsf-toggle-bg" class="btn btn-neutral">BG: Dark</button>
         </div>
@@ -7575,6 +7669,15 @@ function initHLSFCanvas() {
     edgesBtn.textContent = window.HLSF.config.showEdges ? 'Edges: On' : 'Edges: Off';
     debouncedLegacyRender();
   });
+
+  const adjacencyBtn = document.getElementById('hlsf-toggle-adjacency');
+  if (adjacencyBtn) {
+    adjacencyBtn.addEventListener('click', () => {
+      toggleAdjacencyExpansion({ root: document.getElementById('hlsf-canvas-container'), source: 'button' }).catch(err => {
+        console.warn('Failed to toggle adjacency expansion:', err);
+      });
+    });
+  }
 
   const labelsBtn = document.getElementById('hlsf-toggle-labels');
   labelsBtn.addEventListener('click', () => {
