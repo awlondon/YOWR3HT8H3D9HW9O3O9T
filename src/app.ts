@@ -4411,16 +4411,18 @@ const CoherenceStore = (() => {
   function summarize(target = 0.99) {
     const records = load();
     if (!records.length) {
-      return { total: 0, targetCount: 0, averageTokens: 0, targetAverageTokens: 0 };
+      return { total: 0, targetCount: 0, averageTokens: 0, targetAverageTokens: 0, averageScore: 0 };
     }
     let totalTokens = 0;
     let totalCount = 0;
+    let totalScore = 0;
     let targetTokens = 0;
     let targetCount = 0;
     for (const entry of records) {
       if (!Number.isFinite(entry.coherenceScore) || !Number.isFinite(entry.tokenCount)) continue;
       totalTokens += entry.tokenCount;
       totalCount += 1;
+      totalScore += entry.coherenceScore;
       if (entry.coherenceScore >= target) {
         targetTokens += entry.tokenCount;
         targetCount += 1;
@@ -4431,10 +4433,42 @@ const CoherenceStore = (() => {
       targetCount,
       averageTokens: totalCount ? totalTokens / totalCount : 0,
       targetAverageTokens: targetCount ? targetTokens / targetCount : 0,
+      averageScore: totalCount ? totalScore / totalCount : 0,
     };
   }
 
-  return { record, summarize, loadAll: () => load().slice() };
+  function deriveRefinementLexicon(options = {}) {
+    const { targetScore = 0.9, maxTokens = 24 } = options || {};
+    const records = load();
+    if (!records.length || maxTokens <= 0) return [];
+
+    const frequency = new Map();
+    for (const entry of records) {
+      if (!Number.isFinite(entry.coherenceScore) || entry.coherenceScore < targetScore) continue;
+      const localTokens = new Set(tokenize(entry.localResponse || ''));
+      const refinedTokens = tokenize(entry.coherentResponse || '');
+      for (const token of refinedTokens) {
+        if (!token || localTokens.has(token)) continue;
+        const weight = entry.coherenceScore || 0;
+        frequency.set(token, (frequency.get(token) || 0) + weight);
+      }
+    }
+
+    return Array.from(frequency.entries())
+      .sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return a[0].localeCompare(b[0]);
+      })
+      .slice(0, maxTokens)
+      .map(([token]) => token);
+  }
+
+  return {
+    record,
+    summarize,
+    loadAll: () => load().slice(),
+    getRefinementLexicon: deriveRefinementLexicon,
+  };
 })();
 
 function parseCoherenceEvaluation(raw) {
@@ -11685,6 +11719,8 @@ Write a reflective synthesis of this passage in the voice of the cached database
     const adjacencyLexicon = Array.isArray(localOutputData.visitedTokens)
       ? localOutputData.visitedTokens.slice(0, 24)
       : [];
+    const historicalRefinementLexicon = CoherenceStore.getRefinementLexicon({ targetScore: 0.9, maxTokens: 16 });
+    const uncachedHistoricalHints = historicalRefinementLexicon.filter(token => token && !adjacencyLexicon.includes(token));
     const coherenceMessages = [
       {
         role: 'system',
@@ -11692,7 +11728,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
       },
       {
         role: 'user',
-        content: `Local response:\n${localOutput}\n\nAdjacency lexicon hints:${adjacencyLexicon.length ? ` ${adjacencyLexicon.join(', ')}` : ' (none)'}\nInstructions: Produce a grammatically coherent rewrite that incorporates adjacency hints when natural. Rate the original response coherence on a 0-1 scale and explain improvements in the rewrite where relevant.`,
+        content: `Local response:\n${localOutput}\n\nAdjacency lexicon hints:${adjacencyLexicon.length ? ` ${adjacencyLexicon.join(', ')}` : ' (none)'}\nHistorical refinement hints:${uncachedHistoricalHints.length ? ` ${uncachedHistoricalHints.join(', ')}` : ' (none available)' }\nInstructions: Produce a grammatically coherent rewrite that incorporates adjacency hints and, when helpful, the historical refinement hints to fill gaps with coherent replacements. Rate the original response coherence on a 0-1 scale and explain improvements in the rewrite where relevant.`,
       },
     ];
     const rawCoherence = await safeAsync(
@@ -11727,20 +11763,26 @@ Write a reflective synthesis of this passage in the voice of the cached database
 
       const safeCoherent = sanitize(coherentResponse);
       const scoreLabel = coherenceScore != null ? `${(coherenceScore * 100).toFixed(2)}%` : 'N/A';
+      const decimalScoreLabel = coherenceScore != null ? coherenceScore.toFixed(2) : 'N/A';
       const lexiconLabel = adjacencyLexicon.slice(0, 12).join(', ') || 'none';
+      const historicalLexiconLabel = uncachedHistoricalHints.slice(0, 12).join(', ') || 'none';
       const summaryLabel = coherenceSummary && coherenceSummary.targetCount
         ? `Avg tokens for ≥0.99 coherence: ${coherenceSummary.targetAverageTokens.toFixed(1)} (${coherenceSummary.targetCount} samples)`
         : 'Collecting samples to estimate tokens for ≥0.99 coherence.';
+      const avgScoreLabel = coherenceSummary && coherenceSummary.total
+        ? `Offline average coherence: ${coherenceSummary.averageScore.toFixed(2)}`
+        : '';
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🧮 Coherence Evaluation</div>
-        <div class="adjacency-insight"><strong>Score:</strong> ${sanitize(scoreLabel)}<br><strong>Adjacency lexicon:</strong> ${sanitize(lexiconLabel)}<br>${sanitize(summaryLabel)}</div>
-        <details open><summary>Coherent rewrite</summary><pre>${safeCoherent || 'No coherent rewrite returned.'}</pre></details>
+        <div class="adjacency-insight"><strong>Local HLSF AGI coherence score:</strong> ${sanitize(decimalScoreLabel)} (${sanitize(scoreLabel)})<br><strong>Adjacency lexicon:</strong> ${sanitize(lexiconLabel)}<br><strong>Historical refinement lexicon:</strong> ${sanitize(historicalLexiconLabel)}<br>${sanitize(summaryLabel)}${avgScoreLabel ? `<br>${sanitize(avgScoreLabel)}` : ''}</div>
+        <details open><summary>Refined LLM output</summary><pre>${safeCoherent || 'No coherent rewrite returned.'}</pre></details>
       `);
 
       coherenceAssessment = {
         score: coherenceScore,
         coherentResponse,
         adjacencyLexicon,
+        historicalRefinementLexicon: uncachedHistoricalHints,
         summary: coherenceSummary,
       };
     }
