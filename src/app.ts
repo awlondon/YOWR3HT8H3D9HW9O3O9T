@@ -28,6 +28,8 @@ const CONFIG = {
     prompt: 220,
     completion: 320,
   },
+  ADJACENCY_RECURSION_DEPTH: 3,
+  ADJACENCY_EDGES_PER_LEVEL: 50,
   NETWORK_RETRY_BACKOFF_MS: 5000,
 };
 
@@ -6273,6 +6275,179 @@ async function batchFetchAdjacencies(tokens, context, label) {
   }
 }
 
+function limitAdjacencyEntryEdges(entry, maxEdges) {
+  if (!entry || typeof entry !== 'object') return entry;
+  const limit = Number.isFinite(maxEdges) && maxEdges > 0 ? Math.floor(maxEdges) : 0;
+  if (limit <= 0) return entry;
+
+  const aggregated = [];
+  const rels = entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
+  for (const [rel, edges] of Object.entries(rels)) {
+    if (!Array.isArray(edges)) continue;
+    for (const edge of edges) {
+      if (!edge || !edge.token) continue;
+      aggregated.push({
+        relation: rel,
+        token: String(edge.token).trim(),
+        weight: Number(edge.weight) || 0,
+      });
+    }
+  }
+
+  aggregated.sort((a, b) => b.weight - a.weight);
+  const selected = aggregated.slice(0, limit);
+  const relationships = {};
+  for (const item of selected) {
+    if (!item.token) continue;
+    if (!relationships[item.relation]) relationships[item.relation] = [];
+    relationships[item.relation].push({ token: item.token, weight: item.weight });
+  }
+
+  return {
+    ...entry,
+    relationships,
+  };
+}
+
+function selectStrongestNeighbor(entry, visitedTokens) {
+  if (!entry || typeof entry !== 'object') return null;
+  const rels = entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
+  let best = null;
+  for (const edges of Object.values(rels)) {
+    if (!Array.isArray(edges)) continue;
+    for (const edge of edges) {
+      if (!edge || !edge.token) continue;
+      const token = String(edge.token).trim();
+      if (!token) continue;
+      const key = token.toLowerCase();
+      if (visitedTokens.has(key)) continue;
+      const weight = Number(edge.weight) || 0;
+      if (!best || weight > best.weight) {
+        best = { token, weight };
+      }
+    }
+  }
+  return best ? best.token : null;
+}
+
+async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
+  CacheBatch.begin();
+  try {
+    const normalized = normalizeAdjacencyInputs(tokens);
+    const depth = Number.isFinite(options.depth) && options.depth > 0
+      ? Math.floor(options.depth)
+      : CONFIG.ADJACENCY_RECURSION_DEPTH;
+    const edgesPerLevel = Number.isFinite(options.edgesPerLevel) && options.edgesPerLevel > 0
+      ? Math.floor(options.edgesPerLevel)
+      : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
+
+    const queue = [];
+    const enqueued = new Set();
+    for (const entry of normalized) {
+      const token = String(entry.token || '').trim();
+      if (!token) continue;
+      const key = token.toLowerCase();
+      if (enqueued.has(key)) continue;
+      queue.push({ entry, depthRemaining: depth });
+      enqueued.add(key);
+    }
+
+    const visited = new Set();
+    const results = new Map();
+    const stats = {
+      seedCount: queue.length,
+      depth,
+      edgesPerLevel,
+      expansions: 0,
+      apiCalls: 0,
+      visitedTokens: 0,
+    };
+
+    const totalSteps = Math.max(1, queue.length * depth);
+    const progress = new ProgressTracker(totalSteps, label || 'adjacency recursion');
+
+    while (queue.length) {
+      if (currentAbortController?.signal.aborted) {
+        progress.complete(`${label || 'adjacency recursion'} cancelled after ${visited.size} tokens`);
+        break;
+      }
+
+      const current = queue.shift();
+      if (!current || !current.entry) {
+        progress.increment(1);
+        continue;
+      }
+
+      const token = String(current.entry.token || '').trim();
+      if (!token) {
+        progress.increment(1);
+        continue;
+      }
+      const key = token.toLowerCase();
+      enqueued.delete(key);
+      if (visited.has(key)) {
+        progress.increment(1);
+        continue;
+      }
+      visited.add(key);
+
+      let result;
+      if (current.entry.kind === 'sym') {
+        result = {
+          token,
+          relationships: {},
+          kind: current.entry.kind,
+          offline: true,
+          cache_hit: true,
+          symbol: { cat: current.entry.cat || null },
+        };
+      } else {
+        result = await fetchAdjacency(current.entry, context);
+        stats.visitedTokens += 1;
+        if (result && result.cache_hit === false && !result.offline) {
+          stats.apiCalls += 1;
+        }
+      }
+
+      if (result && result.token) {
+        const limited = limitAdjacencyEntryEdges(result, edgesPerLevel);
+        results.set(limited.token, limited);
+
+        const nextDepth = current.depthRemaining - 1;
+        if (nextDepth > 0 && current.entry.kind !== 'sym') {
+          const nextToken = selectStrongestNeighbor(limited, visited);
+          if (nextToken) {
+            const nextKey = nextToken.toLowerCase();
+            if (!visited.has(nextKey) && !enqueued.has(nextKey)) {
+              queue.push({ entry: { token: nextToken, kind: 'word' }, depthRemaining: nextDepth });
+              enqueued.add(nextKey);
+              stats.expansions += 1;
+            }
+          }
+        }
+      }
+
+      progress.increment(1);
+    }
+
+    progress.complete(`${label || 'adjacency recursion'}: explored ${visited.size} token${visited.size === 1 ? '' : 's'} to depth ${depth}`);
+
+    return {
+      matrices: results,
+      stats: {
+        seedCount: stats.seedCount,
+        depth: stats.depth,
+        edgesPerLevel: stats.edgesPerLevel,
+        expansions: stats.expansions,
+        apiCalls: stats.apiCalls,
+        visitedTokens: visited.size,
+      },
+    };
+  } finally {
+    CacheBatch.end();
+  }
+}
+
 function summarizeAdjacencyResults(map) {
   let hits = 0;
   let misses = 0;
@@ -6301,6 +6476,7 @@ function hasNewAdjacencyData(matrices) {
 window.CognitionEngine.processing = {
   fetchAdjacency,
   batchFetchAdjacencies,
+  fetchRecursiveAdjacencies,
 };
 
 function calculateAttention(matrices) {
@@ -10298,71 +10474,45 @@ async function processPrompt(prompt) {
     const cachedTokens = uniqueTokens.filter(isTokenCached).length;
     const newTokenCount = Math.max(0, uniqueTokens.length - cachedTokens);
 
-    const chatMessages = [
-      { role: 'system', content: `You are an expert assistant. Limit your reply to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words.` },
-      { role: 'user', content: normalizedPrompt },
-    ];
-    const chatPromptTokens = estimateTokensForMessages(chatMessages);
-    const chatCompletionTokens = estimateCompletionTokens(chatPromptTokens);
-    const chatCallCount = state.apiKey ? 2 : 0;
-    const chatCostEstimate = chatCallCount * estimateCostUsd(chatPromptTokens, chatCompletionTokens);
-
-    const adjacencyCallCount = state.apiKey ? newTokenCount : 0;
-    const adjacencyCostEstimate = adjacencyCallCount > 0
-      ? adjacencyCallCount * estimateCostUsd(
+    const adjacencyCallEstimate = state.apiKey
+      ? uniqueTokens.length * CONFIG.ADJACENCY_RECURSION_DEPTH
+      : 0;
+    const adjacencyCostEstimate = adjacencyCallEstimate > 0
+      ? adjacencyCallEstimate * estimateCostUsd(
           CONFIG.ADJACENCY_TOKEN_ESTIMATES.prompt,
           CONFIG.ADJACENCY_TOKEN_ESTIMATES.completion
         )
       : 0;
 
-    const estimatedCost = chatCostEstimate + adjacencyCostEstimate;
-    const totalEstimatedCalls = chatCallCount + adjacencyCallCount;
-
     addLog(`<div class="cost-estimate">
       📊 <strong>Estimate:</strong> ${tokens.length} input tokens observed (${newTokenCount} new, ${cachedTokens} cached).<br>
-      • Chat completions: ~${chatCallCount} call${chatCallCount === 1 ? '' : 's'} (${formatCurrency(chatCostEstimate)}).<br>
-      • Adjacency builds: ~${adjacencyCallCount} new call${adjacencyCallCount === 1 ? '' : 's'} (${formatCurrency(adjacencyCostEstimate)}).<br>
-      <strong>Total projected cost:</strong> ${formatCurrency(estimatedCost)} across ~${totalEstimatedCalls} API call${totalEstimatedCalls === 1 ? '' : 's'} (final depends on model output).
+      • Adjacency recursion depth ${CONFIG.ADJACENCY_RECURSION_DEPTH}: ≈${adjacencyCallEstimate} call${adjacencyCallEstimate === 1 ? '' : 's'} (${formatCurrency(adjacencyCostEstimate)}).<br>
+      • Targeted edges: ${CONFIG.ADJACENCY_RECURSION_DEPTH} × ${CONFIG.ADJACENCY_EDGES_PER_LEVEL} = ${CONFIG.ADJACENCY_RECURSION_DEPTH * CONFIG.ADJACENCY_EDGES_PER_LEVEL} potential adjacencies per seed token.
     </div>`);
 
-    // Step 1: Initial response
-    let initialResponse = '';
-    if (state.apiKey) {
-      const s1 = logStatus('⏳ Generating initial response...');
-      initialResponse = await callOpenAI([
-        { role: 'system', content: `You are an expert assistant. Limit your reply to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words.` },
-        { role: 'user', content: normalizedPrompt },
-      ], { max_tokens: 600, temperature: 0.6 });
-      s1.innerHTML = `✅ Initial response generated`;
-    } else {
-      initialResponse = '⚠️ Offline mode';
-      logWarning('Skipped (offline)');
-    }
-
-    const initialWordInfo = limitWords(initialResponse, CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT);
-    if (initialWordInfo.trimmed) {
-      logWarning(`Initial response trimmed to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words for archival.`);
-    }
-    initialResponse = initialWordInfo.text;
-    const originalWordCount = initialWordInfo.wordCount;
-
-    // Step 2: Adjacency analysis
-    const responseTokens = tokenize(initialResponse);
-    addConversationTokens(responseTokens);
-    addOutputTokens(responseTokens, { render: false });
     const inputAdjTokens = collectSymbolAwareTokens(normalizedPrompt, tokens, 'prompt-input');
-    const outputAdjTokens = collectSymbolAwareTokens(initialResponse, responseTokens, 'initial-output');
-    const [inputMatrices, outputMatrices] = await Promise.all([
-      batchFetchAdjacencies(inputAdjTokens, normalizedPrompt, 'input'),
-      batchFetchAdjacencies(outputAdjTokens, initialResponse, 'output'),
-    ]);
+    const recursionResult = await fetchRecursiveAdjacencies(
+      inputAdjTokens,
+      normalizedPrompt,
+      'recursive adjacency',
+      {
+        depth: CONFIG.ADJACENCY_RECURSION_DEPTH,
+        edgesPerLevel: CONFIG.ADJACENCY_EDGES_PER_LEVEL,
+      },
+    );
 
-    let shouldReloadHlsf = hasNewAdjacencyData(inputMatrices) || hasNewAdjacencyData(outputMatrices);
+    const inputMatrices = recursionResult.matrices;
+    const recursionStats = recursionResult.stats || {};
+
+    addLog(`<div class="adjacency-insight">
+      <strong>🔁 Recursive expansion:</strong> seeds ${recursionStats.seedCount || 0} · visited ${recursionStats.visitedTokens || 0} · expansions ${recursionStats.expansions || 0} · API calls ${recursionStats.apiCalls || 0}
+    </div>`);
+
+    let shouldReloadHlsf = hasNewAdjacencyData(inputMatrices);
 
     calculateAttention(inputMatrices);
-    calculateAttention(outputMatrices);
 
-    const allMatrices = new Map([...inputMatrices, ...outputMatrices]);
+    const allMatrices = inputMatrices instanceof Map ? new Map(inputMatrices) : new Map();
     const topTokens = summarizeAttention(allMatrices);
     const keyRels = extractKeyRelationships(allMatrices);
 
@@ -10447,15 +10597,10 @@ async function processPrompt(prompt) {
     rebuildLiveGraph();
 
     const time = ((performance.now() - startTime) / 1000).toFixed(1);
-    const safeOriginal = sanitize(initialResponse);
 
     addLog(`<div class="section-divider"></div>
       <div class="final-output">
         <h3>🧩 HLSF Output Suite</h3>
-        <details open>
-          <summary>Original LLM response (${originalWordCount} words)</summary>
-          <pre>${safeOriginal}</pre>
-        </details>
         <details open>
           <summary>Local HLSF AGI thought stream (${localThoughtWordCount} words)</summary>
           <pre>${safeThought}</pre>
