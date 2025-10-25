@@ -4249,6 +4249,143 @@ const LessonStore = (() => {
   return { fetch, record };
 })();
 
+const CoherenceStore = (() => {
+  const STORAGE_KEY = 'hlsf-coherence-metrics-v1';
+  const MAX_ENTRIES = 1000;
+  let cache = null;
+
+  function sanitizeRecord(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const score = Number(entry.coherenceScore);
+    const tokenCount = Number(entry.tokenCount);
+    const dbSize = Number(entry.databaseSize);
+    if (!Number.isFinite(score) || !Number.isFinite(tokenCount)) {
+      return null;
+    }
+    const trimmedLocal = typeof entry.localResponse === 'string'
+      ? entry.localResponse.slice(0, 4000)
+      : '';
+    const trimmedCoherent = typeof entry.coherentResponse === 'string'
+      ? entry.coherentResponse.slice(0, 4000)
+      : '';
+    return {
+      timestamp: Number.isFinite(entry.timestamp) ? entry.timestamp : Date.now(),
+      chunkLabel: typeof entry.chunkLabel === 'string' ? entry.chunkLabel : '',
+      coherenceScore: Math.max(0, Math.min(1, score)),
+      tokenCount,
+      databaseSize: Number.isFinite(dbSize) ? dbSize : null,
+      localResponse: trimmedLocal,
+      coherentResponse: trimmedCoherent,
+    };
+  }
+
+  function load() {
+    if (cache) return cache;
+    const raw = safeStorageGet(STORAGE_KEY, []);
+    const parsed = Array.isArray(raw)
+      ? raw
+      : (typeof raw === 'string'
+        ? (() => {
+          try { return JSON.parse(raw); } catch { return []; }
+        })()
+        : []);
+    const records = [];
+    for (const entry of parsed) {
+      const sanitized = sanitizeRecord(entry);
+      if (sanitized) records.push(sanitized);
+    }
+    cache = records;
+    return records;
+  }
+
+  function persist(records) {
+    cache = records;
+    safeStorageSet(STORAGE_KEY, JSON.stringify(records));
+  }
+
+  function record(entry) {
+    const records = load();
+    const sanitized = sanitizeRecord(entry);
+    if (!sanitized) return false;
+    records.push(sanitized);
+    if (records.length > MAX_ENTRIES) {
+      records.splice(0, records.length - MAX_ENTRIES);
+    }
+    persist(records);
+    return true;
+  }
+
+  function summarize(target = 0.99) {
+    const records = load();
+    if (!records.length) {
+      return { total: 0, targetCount: 0, averageTokens: 0, targetAverageTokens: 0 };
+    }
+    let totalTokens = 0;
+    let totalCount = 0;
+    let targetTokens = 0;
+    let targetCount = 0;
+    for (const entry of records) {
+      if (!Number.isFinite(entry.coherenceScore) || !Number.isFinite(entry.tokenCount)) continue;
+      totalTokens += entry.tokenCount;
+      totalCount += 1;
+      if (entry.coherenceScore >= target) {
+        targetTokens += entry.tokenCount;
+        targetCount += 1;
+      }
+    }
+    return {
+      total: totalCount,
+      targetCount,
+      averageTokens: totalCount ? totalTokens / totalCount : 0,
+      targetAverageTokens: targetCount ? targetTokens / targetCount : 0,
+    };
+  }
+
+  return { record, summarize, loadAll: () => load().slice() };
+})();
+
+function parseCoherenceEvaluation(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  const text = String(raw).trim();
+  if (!text) return null;
+
+  const tryParse = (value) => {
+    if (!value) return null;
+    if (typeof value === 'object' && !Array.isArray(value)) return value;
+    try {
+      const parsed = JSON.parse(value);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const cleaned = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+  let parsed = tryParse(cleaned);
+  if (parsed) return parsed;
+
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (match) {
+    parsed = tryParse(match[0]);
+    if (parsed) return parsed;
+  }
+
+  const ndjson = parseMaybeNdjson(cleaned);
+  if (ndjson && typeof ndjson === 'object' && !Array.isArray(ndjson)) {
+    return ndjson;
+  }
+  if (Array.isArray(ndjson)) {
+    for (const entry of ndjson) {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry) && entry.coherence_score != null) {
+        return entry;
+      }
+    }
+  }
+
+  return null;
+}
+
 
 function isValidApiKey(key) {
   if (typeof key !== 'string') return false;
@@ -11262,6 +11399,78 @@ Write a reflective synthesis of this passage in the voice of the cached database
     </div>
   `);
 
+  let coherenceAssessment = null;
+  let coherenceSummary = null;
+  if (state.apiKey && localOutput) {
+    const db = getDb();
+    const dbStats = db?.database_stats || {};
+    const databaseSize = Number.isFinite(dbStats.total_tokens)
+      ? dbStats.total_tokens
+      : (Array.isArray(db?.full_token_data) ? db.full_token_data.length : null);
+    const adjacencyLexicon = Array.isArray(localOutputData.visitedTokens)
+      ? localOutputData.visitedTokens.slice(0, 24)
+      : [];
+    const coherenceMessages = [
+      {
+        role: 'system',
+        content: 'You evaluate text coherence. Compare the provided local response against adjacency lexicon hints and craft a coherent rewrite. Respond strictly in JSON with keys coherence_score (0-1 float) and coherent_response (string).',
+      },
+      {
+        role: 'user',
+        content: `Local response:\n${localOutput}\n\nAdjacency lexicon hints:${adjacencyLexicon.length ? ` ${adjacencyLexicon.join(', ')}` : ' (none)'}\nInstructions: Produce a grammatically coherent rewrite that incorporates adjacency hints when natural. Rate the original response coherence on a 0-1 scale and explain improvements in the rewrite where relevant.`,
+      },
+    ];
+    const rawCoherence = await safeAsync(
+      () => callOpenAI(coherenceMessages, { temperature: 0.2, max_tokens: 420 }),
+      `${chunkLabel} coherence assessment failed`,
+      { fallbackValue: null }
+    );
+    const parsedCoherence = parseCoherenceEvaluation(rawCoherence);
+    if (parsedCoherence) {
+      const coherentResponse = typeof parsedCoherence.coherent_response === 'string'
+        ? parsedCoherence.coherent_response.trim()
+        : '';
+      const coherenceScoreValue = Number(parsedCoherence.coherence_score);
+      const coherenceScore = Number.isFinite(coherenceScoreValue)
+        ? Math.max(0, Math.min(1, coherenceScoreValue))
+        : null;
+      if (coherenceScore != null) {
+        const tokenCount = Array.isArray(localResponseTokens) && localResponseTokens.length
+          ? localResponseTokens.length
+          : countWords(localOutput);
+        CoherenceStore.record({
+          timestamp: Date.now(),
+          chunkLabel,
+          coherenceScore,
+          tokenCount,
+          databaseSize,
+          localResponse: localOutput,
+          coherentResponse,
+        });
+        coherenceSummary = CoherenceStore.summarize(0.99);
+      }
+
+      const safeCoherent = sanitize(coherentResponse);
+      const scoreLabel = coherenceScore != null ? `${(coherenceScore * 100).toFixed(2)}%` : 'N/A';
+      const lexiconLabel = adjacencyLexicon.slice(0, 12).join(', ') || 'none';
+      const summaryLabel = coherenceSummary && coherenceSummary.targetCount
+        ? `Avg tokens for ≥0.99 coherence: ${coherenceSummary.targetAverageTokens.toFixed(1)} (${coherenceSummary.targetCount} samples)`
+        : 'Collecting samples to estimate tokens for ≥0.99 coherence.';
+      addLog(`<div class="section-divider"></div>
+        <div class="section-title">🧮 Coherence Evaluation</div>
+        <div class="adjacency-insight"><strong>Score:</strong> ${sanitize(scoreLabel)}<br><strong>Adjacency lexicon:</strong> ${sanitize(lexiconLabel)}<br>${sanitize(summaryLabel)}</div>
+        <details open><summary>Coherent rewrite</summary><pre>${safeCoherent || 'No coherent rewrite returned.'}</pre></details>
+      `);
+
+      coherenceAssessment = {
+        score: coherenceScore,
+        coherentResponse,
+        adjacencyLexicon,
+        summary: coherenceSummary,
+      };
+    }
+  }
+
   if (originalFromLive && originalResponse) {
     lessonUpdates.originalResponse = originalResponse;
   }
@@ -11314,6 +11523,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
     originalResponse,
     localOutput,
     thoughtStream: localThought,
+    coherence: coherenceAssessment,
     matrices: allMatrices,
     topTokens,
     keyRelationships: keyRels,
