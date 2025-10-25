@@ -6214,14 +6214,30 @@ window.CognitionEngine.api = {
 // ============================================
 class ProgressTracker {
   constructor(total, label) {
-    this.total = total;
+    const initialTotal = Number.isFinite(total) && total > 0 ? Math.floor(total) : 0;
+    this.total = Math.max(1, initialTotal);
     this.current = 0;
     this.label = label;
-    this.element = logStatus(`⏳ ${label} (0/${total})`);
+    this.element = logStatus(`⏳ ${label} (0/${this.total})`);
   }
 
   increment(count = 1) {
     this.current += count;
+    if (this.current > this.total) {
+      this.total = this.current;
+    }
+    const percent = this.total === 0 ? 100 : Math.round((this.current / this.total) * 100);
+    if (this.element) {
+      this.element.innerHTML = `⏳ ${this.label} (${this.current}/${this.total}) - ${percent}%`;
+    }
+  }
+
+  addTotal(count = 0) {
+    if (!Number.isFinite(count) || count <= 0) return;
+    this.total += Math.floor(count);
+    if (this.total < this.current) {
+      this.total = this.current;
+    }
     const percent = this.total === 0 ? 100 : Math.round((this.current / this.total) * 100);
     if (this.element) {
       this.element.innerHTML = `⏳ ${this.label} (${this.current}/${this.total}) - ${percent}%`;
@@ -6539,10 +6555,11 @@ function limitAdjacencyEntryEdges(entry, maxEdges) {
   };
 }
 
-function selectStrongestNeighbor(entry, visitedTokens) {
-  if (!entry || typeof entry !== 'object') return null;
+function collectNeighborCandidates(entry) {
+  if (!entry || typeof entry !== 'object') return [];
   const rels = entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
-  let best = null;
+  const seen = new Set();
+  const candidates = [];
   for (const edges of Object.values(rels)) {
     if (!Array.isArray(edges)) continue;
     for (const edge of edges) {
@@ -6550,14 +6567,13 @@ function selectStrongestNeighbor(entry, visitedTokens) {
       const token = String(edge.token).trim();
       if (!token) continue;
       const key = token.toLowerCase();
-      if (visitedTokens.has(key)) continue;
-      const weight = Number(edge.weight) || 0;
-      if (!best || weight > best.weight) {
-        best = { token, weight };
-      }
+      if (seen.has(key)) continue;
+      seen.add(key);
+      candidates.push({ token, weight: Number(edge.weight) || 0 });
     }
   }
-  return best ? best.token : null;
+  candidates.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+  return candidates;
 }
 
 async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
@@ -6590,10 +6606,11 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       edgesPerLevel,
       expansions: 0,
       apiCalls: 0,
+      fetchCount: 0,
       visitedTokens: 0,
     };
 
-    const totalSteps = Math.max(1, queue.length * depth);
+    const totalSteps = Math.max(1, queue.length);
     const progress = new ProgressTracker(totalSteps, label || 'adjacency recursion');
 
     while (queue.length) {
@@ -6633,7 +6650,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
         };
       } else {
         result = await fetchAdjacency(current.entry, context);
-        stats.visitedTokens += 1;
+        stats.fetchCount += 1;
         if (result && result.cache_hit === false && !result.offline) {
           stats.apiCalls += 1;
         }
@@ -6645,14 +6662,18 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
 
         const nextDepth = current.depthRemaining - 1;
         if (nextDepth > 0 && current.entry.kind !== 'sym') {
-          const nextToken = selectStrongestNeighbor(limited, visited);
-          if (nextToken) {
-            const nextKey = nextToken.toLowerCase();
-            if (!visited.has(nextKey) && !enqueued.has(nextKey)) {
-              queue.push({ entry: { token: nextToken, kind: 'word' }, depthRemaining: nextDepth });
-              enqueued.add(nextKey);
-              stats.expansions += 1;
-            }
+          const candidates = collectNeighborCandidates(limited);
+          let enqueuedCount = 0;
+          for (const candidate of candidates) {
+            const nextKey = candidate.token.toLowerCase();
+            if (visited.has(nextKey) || enqueued.has(nextKey)) continue;
+            queue.push({ entry: { token: candidate.token, kind: 'word' }, depthRemaining: nextDepth });
+            enqueued.add(nextKey);
+            enqueuedCount += 1;
+          }
+          if (enqueuedCount > 0) {
+            progress.addTotal(enqueuedCount);
+            stats.expansions += enqueuedCount;
           }
         }
       }
@@ -6662,6 +6683,8 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
 
     progress.complete(`${label || 'adjacency recursion'}: explored ${visited.size} token${visited.size === 1 ? '' : 's'} to depth ${depth}`);
 
+    const connectivity = analyzeAdjacencyConnectivity(results, normalized);
+
     return {
       matrices: results,
       stats: {
@@ -6670,12 +6693,132 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
         edgesPerLevel: stats.edgesPerLevel,
         expansions: stats.expansions,
         apiCalls: stats.apiCalls,
+        fetchCount: stats.fetchCount,
         visitedTokens: visited.size,
+        connectivity,
       },
+      connectivity,
     };
   } finally {
     CacheBatch.end();
   }
+}
+
+function analyzeAdjacencyConnectivity(matrices, seeds) {
+  if (!(matrices instanceof Map) || matrices.size === 0) {
+    return null;
+  }
+
+  const graph = new Map();
+  const tokenForKey = new Map();
+
+  const ensureNode = (rawToken) => {
+    const token = (rawToken == null ? '' : String(rawToken)).trim();
+    if (!token) return null;
+    const key = token.toLowerCase();
+    if (!graph.has(key)) {
+      graph.set(key, new Set());
+    }
+    if (!tokenForKey.has(key)) {
+      tokenForKey.set(key, token);
+    }
+    return key;
+  };
+
+  for (const [mapToken, entry] of matrices.entries()) {
+    const fallbackToken = entry?.token || mapToken;
+    const nodeKey = ensureNode(fallbackToken);
+    if (!nodeKey) continue;
+    const rels = entry?.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
+    for (const edges of Object.values(rels)) {
+      if (!Array.isArray(edges)) continue;
+      for (const edge of edges) {
+        const neighborKey = ensureNode(edge?.token);
+        if (!neighborKey) continue;
+        graph.get(nodeKey).add(neighborKey);
+        graph.get(neighborKey).add(nodeKey);
+      }
+    }
+  }
+
+  const seedEntries = Array.isArray(seeds) ? seeds : [];
+  const seedKeys = new Set();
+  for (const entry of seedEntries) {
+    const token = typeof entry === 'string' ? entry : entry?.token;
+    const key = ensureNode(token);
+    if (key) seedKeys.add(key);
+  }
+
+  const components = [];
+  const visited = new Set();
+  for (const key of graph.keys()) {
+    if (visited.has(key)) continue;
+    const stack = [key];
+    const componentNodes = new Set();
+    const componentSeeds = new Set();
+    while (stack.length) {
+      const current = stack.pop();
+      if (!current || visited.has(current)) continue;
+      visited.add(current);
+      componentNodes.add(current);
+      if (seedKeys.has(current)) componentSeeds.add(current);
+      const neighbors = graph.get(current) || new Set();
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor)) stack.push(neighbor);
+      }
+    }
+    components.push({ nodes: componentNodes, seeds: componentSeeds });
+  }
+
+  const componentSummaries = components.map(component => ({
+    size: component.nodes.size,
+    seedCount: component.seeds.size,
+    tokens: Array.from(component.nodes).slice(0, 12).map(key => tokenForKey.get(key) || key),
+    seedTokens: Array.from(component.seeds).map(key => tokenForKey.get(key) || key),
+  })).sort((a, b) => {
+    if (b.seedCount !== a.seedCount) return b.seedCount - a.seedCount;
+    return b.size - a.size;
+  });
+
+  let primarySeedComponent = null;
+  for (const component of components) {
+    if (!primarySeedComponent) {
+      primarySeedComponent = component;
+      continue;
+    }
+    if (component.seeds.size > primarySeedComponent.seeds.size) {
+      primarySeedComponent = component;
+      continue;
+    }
+    if (component.seeds.size === primarySeedComponent.seeds.size && component.nodes.size > primarySeedComponent.nodes.size) {
+      primarySeedComponent = component;
+    }
+  }
+
+  const connectedSeedKeys = new Set(primarySeedComponent ? primarySeedComponent.seeds : []);
+  const disconnectedSeedKeys = [];
+  for (const key of seedKeys) {
+    if (!connectedSeedKeys.has(key)) disconnectedSeedKeys.push(key);
+  }
+
+  const isolatedSeedKeys = disconnectedSeedKeys.filter(key => {
+    const neighbors = graph.get(key);
+    return !neighbors || neighbors.size === 0;
+  });
+
+  const allSeedsConnected = seedKeys.size === 0
+    ? true
+    : connectedSeedKeys.size === seedKeys.size && disconnectedSeedKeys.length === 0;
+
+  return {
+    componentCount: componentSummaries.length,
+    components: componentSummaries,
+    seedCount: seedKeys.size,
+    connectedSeedCount: connectedSeedKeys.size,
+    allSeedsConnected,
+    disconnectedSeeds: disconnectedSeedKeys.map(key => tokenForKey.get(key) || key),
+    isolatedSeeds: isolatedSeedKeys.map(key => tokenForKey.get(key) || key),
+  };
 }
 
 function summarizeAdjacencyResults(map) {
@@ -10744,9 +10887,38 @@ async function processPrompt(prompt) {
     const inputMatrices = recursionResult.matrices;
     const recursionStats = recursionResult.stats || {};
 
+    const connectivitySummary = recursionStats.connectivity || recursionResult.connectivity || null;
+    const summaryParts = [
+      `seeds ${recursionStats.seedCount || 0}`,
+      `visited ${recursionStats.visitedTokens || 0}`,
+      `expansions ${recursionStats.expansions || 0}`,
+    ];
+    if (Number.isFinite(recursionStats.fetchCount)) {
+      summaryParts.push(`fetches ${recursionStats.fetchCount}`);
+    }
+    summaryParts.push(`API calls ${recursionStats.apiCalls || 0}`);
+    const connectivityText = connectivitySummary
+      ? ` · connectivity ${connectivitySummary.allSeedsConnected ? 'complete' : 'partial'} (${connectivitySummary.componentCount || 0} component${(connectivitySummary.componentCount || 0) === 1 ? '' : 's'})`
+      : '';
+
     addLog(`<div class="adjacency-insight">
-      <strong>🔁 Recursive expansion:</strong> seeds ${recursionStats.seedCount || 0} · visited ${recursionStats.visitedTokens || 0} · expansions ${recursionStats.expansions || 0} · API calls ${recursionStats.apiCalls || 0}
+      <strong>🔁 Recursive expansion:</strong> ${summaryParts.join(' · ')}${connectivityText}
     </div>`);
+
+    if (connectivitySummary && !connectivitySummary.allSeedsConnected) {
+      const disconnected = Array.isArray(connectivitySummary.disconnectedSeeds)
+        ? connectivitySummary.disconnectedSeeds.slice(0, 8)
+        : [];
+      if (disconnected.length) {
+        logWarning(`Adjacency graph still has disconnected seeds: ${sanitize(disconnected.join(', '))}`);
+      }
+      const isolated = Array.isArray(connectivitySummary.isolatedSeeds)
+        ? connectivitySummary.isolatedSeeds.slice(0, 8)
+        : [];
+      if (isolated.length) {
+        logWarning(`Isolated seeds lack adjacency edges: ${sanitize(isolated.join(', '))}`);
+      }
+    }
 
     let shouldReloadHlsf = hasNewAdjacencyData(inputMatrices);
 
