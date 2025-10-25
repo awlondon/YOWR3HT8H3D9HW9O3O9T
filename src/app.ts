@@ -10564,6 +10564,40 @@ async function processPrompt(prompt) {
     localOutput = localLimited.text;
     const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
 
+    const localResponseTokens = Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
+      ? localOutputData.responseTokens
+      : tokenize(localOutput);
+
+    if (localResponseTokens.length) {
+      addConversationTokens(localResponseTokens);
+      addOutputTokens(localResponseTokens, { render: false });
+    }
+
+    let localAdjacency = null;
+    if (localResponseTokens.length) {
+      const localAdjTargets = collectSymbolAwareTokens(localOutput, localResponseTokens, 'prompt-local-output');
+      if (localAdjTargets.length) {
+        const localAdjStatus = logStatus('⏳ Caching local HLSF AGI adjacencies');
+        try {
+          localAdjacency = await batchFetchAdjacencies(localAdjTargets, localOutput, 'local response adjacencies');
+          localAdjStatus.innerHTML = `✅ ${sanitize('Local HLSF AGI adjacencies cached')}`;
+        } catch (err) {
+          localAdjStatus.innerHTML = `❌ ${sanitize(`Local HLSF AGI adjacency cache failed: ${err?.message || err}`)}`;
+          logError(`Failed to cache local HLSF AGI adjacencies: ${err?.message || err}`);
+          localAdjacency = null;
+        }
+      }
+    }
+
+    if (localAdjacency instanceof Map && localAdjacency.size) {
+      calculateAttention(localAdjacency);
+      mergeAdjacencyMaps(allMatrices, localAdjacency);
+      calculateAttention(allMatrices);
+      if (shouldReloadHlsf !== true && hasNewAdjacencyData(localAdjacency)) {
+        shouldReloadHlsf = true;
+      }
+    }
+
     const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
       ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
       : '';
@@ -11091,6 +11125,8 @@ Write a reflective synthesis of this passage in the voice of the cached database
   const outputAdjDuration = outputData.duration || 0;
   const inputAdjStats = summarizeAdjacencyResults(inputMatrices);
   const outputAdjStats = summarizeAdjacencyResults(outputMatrices);
+  let localAdjDuration = 0;
+  let localAdjStats = { hits: 0, misses: 0, total: 0 };
 
   calculateAttention(inputMatrices);
   calculateAttention(outputMatrices);
@@ -11140,6 +11176,41 @@ Write a reflective synthesis of this passage in the voice of the cached database
   }
   localOutput = localLimited.text;
   const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
+
+  const localResponseTokens = Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
+    ? localOutputData.responseTokens
+    : tokenize(localOutput);
+
+  if (localResponseTokens.length) {
+    addConversationTokens(localResponseTokens);
+    addOutputTokens(localResponseTokens, { render: false });
+  }
+
+  let localAdjacency = null;
+  if (localResponseTokens.length) {
+    const localAdjTargets = collectSymbolAwareTokens(localOutput, localResponseTokens, `${chunkLabel}-local-output`);
+    if (localAdjTargets.length) {
+      const localAdjStatus = logStatus(`⏳ ${chunkLabel}: caching local HLSF AGI adjacencies`);
+      const localAdjStart = performance.now();
+      try {
+        localAdjacency = await batchFetchAdjacencies(localAdjTargets, localOutput, `${chunkLabel} local response adjacencies`);
+        localAdjDuration = performance.now() - localAdjStart;
+        localAdjStatus.innerHTML = `✅ ${sanitize(`${chunkLabel}: Local HLSF AGI adjacencies cached`)}`;
+      } catch (err) {
+        localAdjDuration = performance.now() - localAdjStart;
+        localAdjStatus.innerHTML = `❌ ${sanitize(`${chunkLabel}: Local HLSF AGI adjacency cache failed: ${err?.message || err}`)}`;
+        logError(`${chunkLabel}: failed to cache local HLSF AGI adjacencies: ${err?.message || err}`);
+        localAdjacency = null;
+      }
+    }
+  }
+
+  if (localAdjacency instanceof Map && localAdjacency.size) {
+    calculateAttention(localAdjacency);
+    localAdjStats = summarizeAdjacencyResults(localAdjacency);
+    mergeAdjacencyMaps(allMatrices, localAdjacency);
+    calculateAttention(allMatrices);
+  }
 
   const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
     ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
@@ -11231,10 +11302,10 @@ Write a reflective synthesis of this passage in the voice of the cached database
     newBefore = uniqueTokenCount;
   }
 
-  const adjacencyDurationMs = inputAdjDuration + outputAdjDuration;
-  const adjacencyHits = inputAdjStats.hits + outputAdjStats.hits;
-  const adjacencyMisses = inputAdjStats.misses + outputAdjStats.misses;
-  const adjacencyRequests = inputAdjStats.total + outputAdjStats.total;
+  const adjacencyDurationMs = inputAdjDuration + outputAdjDuration + localAdjDuration;
+  const adjacencyHits = inputAdjStats.hits + outputAdjStats.hits + localAdjStats.hits;
+  const adjacencyMisses = inputAdjStats.misses + outputAdjStats.misses + localAdjStats.misses;
+  const adjacencyRequests = inputAdjStats.total + outputAdjStats.total + localAdjStats.total;
   const totalDurationMs = performance.now() - chunkStart;
   const adjacencyHitRate = adjacencyRequests > 0 ? adjacencyHits / adjacencyRequests : 0;
 
