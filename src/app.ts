@@ -3549,7 +3549,20 @@ window.CognitionEngine = window.CognitionEngine || {
   processing: {},
 };
 window.CognitionEngine.export = window.CognitionEngine.export || {};
-window.CognitionEngine.export.session = buildSessionExport;
+window.CognitionEngine.export.session = options => {
+  const opts = options && typeof options === 'object' ? { ...options } : {};
+  const extras = opts.extras && typeof opts.extras === 'object' ? { ...opts.extras } : {};
+  try {
+    const clonePayload = window.CognitionEngine?.voice?.getProfileClone?.();
+    if (clonePayload) extras.voiceProfileClone = clonePayload;
+  } catch (err) {
+    console.warn('Unable to attach voice profile clone to session export:', err);
+  }
+  opts.extras = extras;
+  const tokens = Array.isArray(opts.tokens) ? opts.tokens : opts.tokens ? [].concat(opts.tokens) : [];
+  const edges = Array.isArray(opts.edges) ? opts.edges : opts.edges || [];
+  return buildSessionExport({ tokens, edges, extras: opts.extras });
+};
 
 window.GlyphSystem = window.GlyphSystem || {
   ledger: null,
