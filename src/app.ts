@@ -11,6 +11,7 @@ const CONFIG = {
   MAX_TOKENS_PER_RESPONSE: 1500,
   INPUT_WORD_LIMIT: 100,
   DOCUMENT_WORD_LIMIT: 350,
+  PROMPT_LOG_LIMIT: 250,
   ORIGINAL_OUTPUT_WORD_LIMIT: 200,
   LOCAL_OUTPUT_WORD_LIMIT: 100,
   MAX_CONCURRENCY: 5,
@@ -4762,7 +4763,14 @@ const Session = (() => {
   const existing = window.Session && typeof window.Session === 'object'
     ? window.Session
     : {};
-  const session = Object.assign({ tokens: new Set() }, existing);
+  const session = Object.assign({ tokens: new Set(), prompts: [] }, existing);
+  if (!(session.tokens instanceof Set)) {
+    const seedTokens = Array.isArray(session.tokens) ? session.tokens : [];
+    session.tokens = new Set(seedTokens.filter(Boolean));
+  }
+  if (!Array.isArray(session.prompts)) {
+    session.prompts = Array.isArray(existing.prompts) ? [...existing.prompts] : [];
+  }
   window.Session = session;
   return session;
 })();
@@ -4880,9 +4888,58 @@ function commitInputTokensFromText(text) {
   return committedTokens;
 }
 
+function getSessionPromptLog() {
+  if (!Array.isArray(Session.prompts)) {
+    Session.prompts = [];
+  }
+  return Session.prompts;
+}
+
+function recordSessionPrompt(text, context = {}) {
+  const normalized = typeof text === 'string' ? text.trim() : '';
+  if (!normalized) return;
+
+  const entry = {
+    text: normalized,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (context && typeof context === 'object') {
+    const meta = {};
+    for (const [key, value] of Object.entries(context)) {
+      if (value == null) continue;
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) continue;
+        meta[key] = trimmed;
+      } else if (typeof value === 'number') {
+        if (Number.isFinite(value)) meta[key] = value;
+      } else if (typeof value === 'boolean') {
+        meta[key] = value;
+      } else if (Array.isArray(value)) {
+        if (value.length > 0) meta[key] = value;
+      }
+    }
+    if (Object.keys(meta).length > 0) {
+      entry.meta = meta;
+    }
+  }
+
+  const log = getSessionPromptLog();
+  log.push(entry);
+  const limit = Math.max(0, Number(CONFIG?.PROMPT_LOG_LIMIT) || 0);
+  if (limit && log.length > limit) {
+    log.splice(0, log.length - limit);
+  }
+}
+
 function onUserPromptSubmitted(text) {
   const toks = text.trim().split(/\s+/).filter(Boolean);
   addConversationTokens(toks);
+  recordSessionPrompt(text, {
+    source: 'prompt',
+    tokenCount: toks.length,
+  });
 }
 
 function formatCurrency(amountUsd) {
@@ -8767,6 +8824,24 @@ function exportDatabaseMetadata() {
     ? 'early'
     : (coverageRatio >= 0.95 ? 'mature' : coverageRatio >= 0.6 ? 'growing' : 'early');
 
+  const sessionPromptLog = Array.isArray(Session?.prompts) ? Session.prompts : [];
+  const promptsForExport = sessionPromptLog
+    .map((entry, index) => {
+      if (!entry || typeof entry.text !== 'string' || !entry.text.trim()) return null;
+      const promptRecord = {
+        order: index + 1,
+        text: entry.text,
+      };
+      if (entry.timestamp) {
+        promptRecord.timestamp = entry.timestamp;
+      }
+      if (entry.meta && typeof entry.meta === 'object' && Object.keys(entry.meta).length) {
+        promptRecord.meta = entry.meta;
+      }
+      return promptRecord;
+    })
+    .filter(Boolean);
+
   const exportData = {
     export_timestamp: new Date().toISOString(),
     readme: {
@@ -8826,7 +8901,8 @@ function exportDatabaseMetadata() {
       date_range_days: metadata.oldestToken && metadata.newestToken ?
         Math.ceil((new Date(metadata.newestToken.cached_at) - new Date(metadata.oldestToken.cached_at)) / (1000 * 60 * 60 * 24)) : 0
     },
-    full_token_data: metadata.rawData
+    full_token_data: metadata.rawData,
+    user_prompts: promptsForExport
   };
 
   try {
@@ -11132,6 +11208,9 @@ async function handleCommand(cmd) {
           window.HLSF.__centerInit = false;
         }
         Session.tokens.clear();
+        if (Array.isArray(Session.prompts)) {
+          Session.prompts.length = 0;
+        }
         try {
           const recorder = window.HLSF?.remoteDbRecorder;
           if (recorder && typeof recorder.reset === 'function') {
@@ -11879,6 +11958,15 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     return null;
   }
 
+  recordSessionPrompt(promptText, {
+    source: 'document',
+    chunk: chunkLabel,
+    chunkIndex: index,
+    totalChunks,
+    tokenCount: promptTokens.length,
+    documentName: typeof chunkMeta?.documentName === 'string' ? chunkMeta.documentName : undefined,
+  });
+
   const uniqueTokens = [...new Set(promptTokens)].slice(0, 80);
   const lexiconHint = uniqueTokens.join(', ');
 
@@ -12355,6 +12443,9 @@ async function processDocumentFile(file) {
       commitTokens(chunk, { render: false });
       addConversationTokens(chunk);
       const chunkMeta = estimator ? estimator.prepareChunk(i, chunk) : {};
+      if (!chunkMeta.documentName) {
+        chunkMeta.documentName = file?.name || 'document';
+      }
       const result = await analyzeDocumentChunk(chunk, i, chunks.length, chunkMeta);
       if (result) {
         chunkResults.push(result);
