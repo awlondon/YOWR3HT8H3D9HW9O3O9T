@@ -8,6 +8,696 @@ const MAX_RENDERED_TOKENS = 800;
 const PROFILE_SYNTHESIS_TOKEN_THRESHOLD = 100;
 const SYNTHESIZED_PREVIEW_TOKEN_LIMIT = 120;
 
+const TAG_SYNONYMS = {
+  neutral: ['neutral', 'baseline', 'plain'],
+  energetic: ['energetic', 'energetic expression', 'animated'],
+  excited: ['excited', 'enthusiastic', 'ecstatic', 'joyful', 'happy'],
+  calm: ['calm', 'soft', 'relaxed', 'gentle', 'soothing', 'chill'],
+  somber: ['somber', 'solemn', 'melancholy', 'sad', 'lament', 'downcast'],
+  angry: ['angry', 'furious', 'irate', 'agitated', 'frustrated'],
+  urgent: ['urgent', 'panicked', 'stressed', 'tense'],
+  inquisitive: ['inquisitive', 'question', 'curious'],
+  authoritative: ['authoritative', 'commanding', 'firm'],
+  whisper: ['whisper', 'hushed', 'quiet'],
+  shout: ['shout', 'yell', 'loud', 'projected'],
+  playful: ['playful', 'humorous', 'sarcastic', 'wry', 'teasing'],
+  bright: ['bright', 'uplifting', 'optimistic', 'cheerful'],
+};
+
+const TAG_PRIORITY = {
+  urgent: 12,
+  angry: 11,
+  shout: 10,
+  excited: 9,
+  energetic: 8,
+  inquisitive: 7,
+  authoritative: 6,
+  playful: 5,
+  bright: 4,
+  calm: 3,
+  somber: 3,
+  whisper: 2,
+  neutral: 1,
+};
+
+const TAG_HINTS = {
+  energetic: { pitchDelta: 0.18, rateDelta: 0.22, volumeDelta: 0.12, intensity: 0.8 },
+  excited: { pitchDelta: 0.24, rateDelta: 0.26, volumeDelta: 0.16, intensity: 0.9 },
+  calm: { pitchDelta: -0.08, rateDelta: -0.18, volumeDelta: -0.12, intensity: 0.25 },
+  somber: { pitchDelta: -0.14, rateDelta: -0.12, volumeDelta: -0.1, intensity: 0.35 },
+  angry: { pitchDelta: 0.12, rateDelta: 0.18, volumeDelta: 0.22, intensity: 0.85 },
+  urgent: { pitchDelta: 0.1, rateDelta: 0.24, volumeDelta: 0.18, intensity: 0.8 },
+  inquisitive: { pitchDelta: 0.08, rateDelta: 0.06, volumeDelta: 0.02, intensity: 0.45 },
+  authoritative: { pitchDelta: -0.02, rateDelta: 0.08, volumeDelta: 0.14, intensity: 0.65 },
+  whisper: { pitchDelta: -0.06, rateDelta: -0.12, volumeDelta: -0.35, intensity: 0.25 },
+  shout: { pitchDelta: 0.16, rateDelta: 0.2, volumeDelta: 0.3, intensity: 1 },
+  playful: { pitchDelta: 0.1, rateDelta: 0.16, volumeDelta: 0.08, intensity: 0.6 },
+  bright: { pitchDelta: 0.12, rateDelta: 0.14, volumeDelta: 0.1, intensity: 0.65 },
+};
+
+const POSITIVE_WORDS = new Set([
+  'happy',
+  'joy',
+  'delight',
+  'love',
+  'wonderful',
+  'great',
+  'excited',
+  'calm',
+  'serene',
+  'peace',
+  'smile',
+  'proud',
+  'amazing',
+  'hope',
+  'grace',
+  'bright',
+  'cheerful',
+  'uplift',
+  'gentle',
+  'thankful',
+]);
+
+const NEGATIVE_WORDS = new Set([
+  'sad',
+  'angry',
+  'fear',
+  'terrible',
+  'hate',
+  'pain',
+  'dark',
+  'gloom',
+  'sorrow',
+  'tired',
+  'worry',
+  'afraid',
+  'anxious',
+  'stress',
+  'urgent',
+  'panic',
+  'dread',
+  'melancholy',
+  'alone',
+  'grief',
+]);
+
+function canonicalExpressionTag(tag) {
+  if (!tag) return '';
+  const normalized = String(tag).trim().toLowerCase();
+  if (!normalized) return '';
+  for (const [key, list] of Object.entries(TAG_SYNONYMS)) {
+    if (key === normalized) return key;
+    if (list.includes(normalized)) return key;
+  }
+  return normalized;
+}
+
+function canonicalizeTagList(tags) {
+  if (!Array.isArray(tags)) return [];
+  const seen = new Set();
+  const normalized = [];
+  for (const tag of tags) {
+    const canonical = canonicalExpressionTag(tag);
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    normalized.push(canonical);
+  }
+  return normalized;
+}
+
+function createExpressionStats() {
+  return {
+    count: 0,
+    pitch: 0,
+    rate: 0,
+    volume: 0,
+    intensity: 0,
+    pitchSq: 0,
+    rateSq: 0,
+    volumeSq: 0,
+    intensitySq: 0,
+    tokens: new Set(),
+  };
+}
+
+function addSampleToStats(stats, metrics) {
+  if (!stats || !metrics) return;
+  const pitch = Number(metrics.pitchDelta) || 0;
+  const rate = Number(metrics.rateDelta) || 0;
+  const volume = Number(metrics.volumeDelta) || 0;
+  const intensity = Number(metrics.intensity) || 0;
+  stats.count += 1;
+  stats.pitch += pitch;
+  stats.rate += rate;
+  stats.volume += volume;
+  stats.intensity += intensity;
+  stats.pitchSq += pitch * pitch;
+  stats.rateSq += rate * rate;
+  stats.volumeSq += volume * volume;
+  stats.intensitySq += intensity * intensity;
+}
+
+function computeStatsMean(stats) {
+  if (!stats || !stats.count) {
+    return { pitch: 0, rate: 0, volume: 0, intensity: 0 };
+  }
+  const denom = stats.count;
+  return {
+    pitch: stats.pitch / denom,
+    rate: stats.rate / denom,
+    volume: stats.volume / denom,
+    intensity: stats.intensity / denom,
+  };
+}
+
+function computeStatsStd(stats, mean) {
+  if (!stats || stats.count < 2) {
+    return { pitch: 0, rate: 0, volume: 0, intensity: 0 };
+  }
+  const denom = stats.count;
+  const meanPitch = mean?.pitch || 0;
+  const meanRate = mean?.rate || 0;
+  const meanVolume = mean?.volume || 0;
+  const meanIntensity = mean?.intensity || 0;
+  const pitchVar = Math.max(0, stats.pitchSq / denom - meanPitch * meanPitch);
+  const rateVar = Math.max(0, stats.rateSq / denom - meanRate * meanRate);
+  const volumeVar = Math.max(0, stats.volumeSq / denom - meanVolume * meanVolume);
+  const intensityVar = Math.max(0, stats.intensitySq / denom - meanIntensity * meanIntensity);
+  return {
+    pitch: Math.sqrt(pitchVar),
+    rate: Math.sqrt(rateVar),
+    volume: Math.sqrt(volumeVar),
+    intensity: Math.sqrt(intensityVar),
+  };
+}
+
+function clampValue(value, min, max) {
+  const num = Number.isFinite(value) ? value : min;
+  return Math.max(min, Math.min(max, num));
+}
+
+function estimateIntensityFromAdjustments(adjustments) {
+  if (!adjustments) return 0;
+  const pitch = Number(adjustments.pitchDelta) || 0;
+  const rate = Number(adjustments.rateDelta) || 0;
+  const volume = Number(adjustments.volumeDelta) || 0;
+  const magnitude = Math.sqrt(pitch * pitch * 0.75 + rate * rate + volume * volume * 0.8);
+  return clampValue(magnitude, 0, 1.2);
+}
+
+function blendAdjustments(a, b, weightA = 0.5, weightB = 0.5) {
+  const wa = Number.isFinite(weightA) ? Math.max(weightA, 0) : 0;
+  const wb = Number.isFinite(weightB) ? Math.max(weightB, 0) : 0;
+  const total = wa + wb || 1;
+  const normalizedA = wa / total;
+  const normalizedB = wb / total;
+  const adjA = a || {};
+  const adjB = b || {};
+  return {
+    pitchDelta: (Number(adjA.pitchDelta) || 0) * normalizedA + (Number(adjB.pitchDelta) || 0) * normalizedB,
+    rateDelta: (Number(adjA.rateDelta) || 0) * normalizedA + (Number(adjB.rateDelta) || 0) * normalizedB,
+    volumeDelta: (Number(adjA.volumeDelta) || 0) * normalizedA + (Number(adjB.volumeDelta) || 0) * normalizedB,
+  };
+}
+
+function clampAdjustments(adjustments) {
+  return {
+    pitchDelta: clampValue(adjustments?.pitchDelta, -0.75, 0.75),
+    rateDelta: clampValue(adjustments?.rateDelta, -0.9, 0.9),
+    volumeDelta: clampValue(adjustments?.volumeDelta, -0.7, 0.7),
+  };
+}
+
+function computeSentimentScore(text) {
+  if (!text) return 0;
+  const words = String(text)
+    .toLowerCase()
+    .match(/[a-z']+/g);
+  if (!words || !words.length) return 0;
+  let score = 0;
+  for (const word of words) {
+    if (POSITIVE_WORDS.has(word)) score += 1;
+    if (NEGATIVE_WORDS.has(word)) score -= 1;
+  }
+  const normalized = score / Math.sqrt(words.length);
+  return clampValue(normalized / 5, -1, 1);
+}
+
+function applyTagHints(metrics, tags) {
+  if (!Array.isArray(tags) || !tags.length) return metrics;
+  const adjusted = { ...metrics };
+  for (const tag of tags) {
+    const hint = TAG_HINTS[tag];
+    if (!hint) continue;
+    if (Number.isFinite(hint.pitchDelta)) adjusted.pitchDelta += hint.pitchDelta;
+    if (Number.isFinite(hint.rateDelta)) adjusted.rateDelta += hint.rateDelta;
+    if (Number.isFinite(hint.volumeDelta)) adjusted.volumeDelta += hint.volumeDelta;
+    if (Number.isFinite(hint.intensity)) {
+      adjusted.intensity = Math.max(adjusted.intensity, hint.intensity);
+    }
+  }
+  adjusted.pitchDelta = clampValue(adjusted.pitchDelta, -0.75, 0.75);
+  adjusted.rateDelta = clampValue(adjusted.rateDelta, -0.9, 0.9);
+  adjusted.volumeDelta = clampValue(adjusted.volumeDelta, -0.7, 0.7);
+  return adjusted;
+}
+
+function inferTagFromFeatures(metrics, tags) {
+  if (Array.isArray(tags) && tags.length) {
+    const prioritized = tags
+      .slice()
+      .sort((a, b) => (TAG_PRIORITY[b] || 0) - (TAG_PRIORITY[a] || 0));
+    return prioritized[0] || 'neutral';
+  }
+  const features = metrics?.features || {};
+  if (features.questionCount > 0) return 'inquisitive';
+  if ((metrics?.intensity || 0) >= 0.75) {
+    return (metrics?.sentiment || 0) >= 0 ? 'excited' : 'urgent';
+  }
+  if ((metrics?.sentiment || 0) <= -0.4) return 'somber';
+  if (features.ellipsisCount > 0 || (metrics?.rateDelta || 0) < -0.25) return 'calm';
+  if ((metrics?.sentiment || 0) >= 0.35 && (metrics?.intensity || 0) >= 0.35) return 'bright';
+  return 'neutral';
+}
+
+function analyzeTranscriptDynamics(text, tags = []) {
+  const raw = typeof text === 'string' ? text : '';
+  const normalized = raw.replace(/\s+/g, ' ').trim();
+  const words = normalized ? normalized.split(/\s+/).filter(Boolean) : [];
+  const letters = normalized.replace(/[^a-zA-Z]/g, '');
+  const uppercaseLetters = normalized.replace(/[^A-Z]/g, '');
+  const uppercaseRatio = letters.length ? uppercaseLetters.length / letters.length : 0;
+  const exclamationCount = (normalized.match(/!/g) || []).length;
+  const questionCount = (normalized.match(/\?/g) || []).length;
+  const ellipsisCount = (normalized.match(/\.\.+/g) || []).length;
+  const punctuationCount = (normalized.match(/[.!?]/g) || []).length;
+  const sentenceCount = punctuationCount || (normalized ? 1 : 0);
+  const wordCount = words.length;
+  const avgWordsPerSentence = sentenceCount ? wordCount / sentenceCount : wordCount;
+
+  let pitchDelta = 0;
+  let rateDelta = 0;
+  let volumeDelta = 0;
+
+  pitchDelta += questionCount * 0.05;
+  pitchDelta += exclamationCount * 0.08;
+  pitchDelta -= ellipsisCount * 0.05;
+  pitchDelta += uppercaseRatio * 0.18;
+
+  rateDelta += exclamationCount * 0.12;
+  rateDelta += uppercaseRatio * 0.12;
+  rateDelta -= ellipsisCount * 0.12;
+  if (avgWordsPerSentence > 14) {
+    rateDelta -= Math.min(0.35, (avgWordsPerSentence - 14) * 0.01);
+  } else {
+    rateDelta += Math.min(0.12, (14 - avgWordsPerSentence) * 0.005);
+  }
+
+  volumeDelta += exclamationCount * 0.12;
+  volumeDelta += uppercaseRatio * 0.15;
+  volumeDelta -= ellipsisCount * 0.08;
+
+  const sentiment = computeSentimentScore(normalized);
+  pitchDelta += sentiment * 0.05;
+  rateDelta += sentiment * 0.04;
+  volumeDelta += sentiment * 0.05;
+
+  let intensity = Math.max(
+    0,
+    exclamationCount * 0.5 + uppercaseRatio * 0.7 + Math.max(0, sentiment) * 0.5 + (questionCount ? 0.1 : 0)
+  );
+
+  const canonicalTags = canonicalizeTagList(tags);
+  const hinted = applyTagHints(
+    {
+      pitchDelta,
+      rateDelta,
+      volumeDelta,
+      intensity,
+      sentiment,
+      features: { questionCount, exclamationCount, ellipsisCount, uppercaseRatio },
+    },
+    canonicalTags
+  );
+
+  intensity = Math.max(hinted.intensity, estimateIntensityFromAdjustments(hinted));
+  const inferredTag = inferTagFromFeatures({ ...hinted, intensity }, canonicalTags);
+
+  return {
+    pitchDelta: hinted.pitchDelta,
+    rateDelta: hinted.rateDelta,
+    volumeDelta: hinted.volumeDelta,
+    intensity,
+    sentiment,
+    features: hinted.features,
+    tag: inferredTag,
+  };
+}
+
+function buildVoiceExpressionModel() {
+  const recordings = Array.isArray(store.recordings) ? store.recordings : [];
+  const model = {
+    baseline: { pitch: 0, rate: 0, volume: 0, intensity: 0, std: { pitch: 0, rate: 0, volume: 0, intensity: 0 } },
+    expressions: {},
+    tokenExpressions: {},
+    recordingExpressions: {},
+  };
+  if (!recordings.length) {
+    return model;
+  }
+
+  const baseStats = createExpressionStats();
+  const neutralStats = createExpressionStats();
+  const expressionStats = new Map();
+
+  for (const recording of recordings) {
+    if (!recording?.id) continue;
+    const tags = canonicalizeTagList(recording.tags);
+    const metrics = analyzeTranscriptDynamics(recording.transcript || recording.token || '', tags);
+    addSampleToStats(baseStats, metrics);
+    if (!tags.length || tags.includes('neutral')) {
+      addSampleToStats(neutralStats, metrics);
+    }
+
+    const statsTags = tags.length ? tags : ['neutral'];
+    for (const tag of statsTags) {
+      if (!expressionStats.has(tag)) expressionStats.set(tag, createExpressionStats());
+      const stats = expressionStats.get(tag);
+      addSampleToStats(stats, metrics);
+      stats.tokens.add(recording.token);
+      const assignedTokens = listTokensForRecording(recording.id);
+      for (const token of assignedTokens) {
+        stats.tokens.add(token);
+      }
+    }
+
+    const adjustments = {
+      pitchDelta: metrics.pitchDelta,
+      rateDelta: metrics.rateDelta,
+      volumeDelta: metrics.volumeDelta,
+    };
+    const expressionEntry = {
+      tag: metrics.tag || statsTags.find(tag => tag !== 'neutral') || 'neutral',
+      adjustments,
+      intensity: metrics.intensity,
+      recordingId: recording.id,
+    };
+    model.recordingExpressions[recording.id] = expressionEntry;
+
+    const associatedTokens = new Set(listTokensForRecording(recording.id));
+    if (recording.token) associatedTokens.add(recording.token);
+    for (const token of associatedTokens) {
+      if (!token) continue;
+      const existing = model.tokenExpressions[token];
+      const priority = metrics.intensity;
+      if (!existing || (existing.priority ?? -1) <= priority) {
+        model.tokenExpressions[token] = {
+          tag: expressionEntry.tag,
+          adjustments,
+          intensity: metrics.intensity,
+          recordingId: recording.id,
+          priority,
+        };
+      }
+    }
+  }
+
+  const baselineSource = neutralStats.count ? neutralStats : baseStats;
+  const baselineMean = computeStatsMean(baselineSource);
+  const baselineStd = computeStatsStd(baselineSource, baselineMean);
+  model.baseline = {
+    pitch: baselineMean.pitch,
+    rate: baselineMean.rate,
+    volume: baselineMean.volume,
+    intensity: baselineMean.intensity,
+    std: baselineStd,
+  };
+
+  for (const [tag, stats] of expressionStats) {
+    const mean = computeStatsMean(stats);
+    const std = computeStatsStd(stats, mean);
+    const delta = {
+      pitch: mean.pitch - baselineMean.pitch,
+      rate: mean.rate - baselineMean.rate,
+      volume: mean.volume - baselineMean.volume,
+      intensity: mean.intensity - baselineMean.intensity,
+    };
+    const threshold = {
+      pitch: Math.max(Math.abs(delta.pitch), std.pitch) + baselineStd.pitch * 0.5,
+      rate: Math.max(Math.abs(delta.rate), std.rate) + baselineStd.rate * 0.5,
+      volume: Math.max(Math.abs(delta.volume), std.volume) + baselineStd.volume * 0.5,
+      intensity: Math.max(Math.abs(delta.intensity), std.intensity) + baselineStd.intensity * 0.5 + 0.1,
+    };
+    model.expressions[tag] = {
+      tag,
+      mean,
+      std,
+      delta,
+      threshold,
+      tokens: Array.from(stats.tokens || []),
+      count: stats.count,
+    };
+  }
+
+  if (!model.expressions.neutral) {
+    model.expressions.neutral = {
+      tag: 'neutral',
+      mean: baselineMean,
+      std: baselineStd,
+      delta: { pitch: 0, rate: 0, volume: 0, intensity: 0 },
+      threshold: {
+        pitch: baselineStd.pitch + 0.05,
+        rate: baselineStd.rate + 0.05,
+        volume: baselineStd.volume + 0.05,
+        intensity: baselineStd.intensity + 0.1,
+      },
+      tokens: [],
+      count: baselineSource.count,
+    };
+  }
+
+  for (const [token, entry] of Object.entries(model.tokenExpressions)) {
+    if (!entry) continue;
+    const cleaned = {
+      tag: entry.tag,
+      adjustments: clampAdjustments(entry.adjustments),
+      intensity: entry.intensity,
+      recordingId: entry.recordingId,
+    };
+    model.tokenExpressions[token] = cleaned;
+  }
+
+  return model;
+}
+
+function getTokenExpressionInfo(token) {
+  if (!token || !voiceExpressionModel?.tokenExpressions) return null;
+  const info = voiceExpressionModel.tokenExpressions[token];
+  if (!info) return null;
+  return {
+    tag: info.tag,
+    adjustments: { ...info.adjustments },
+    intensity: info.intensity,
+    recordingId: info.recordingId,
+  };
+}
+
+function getRecordingExpression(recordingId) {
+  if (!recordingId || !voiceExpressionModel?.recordingExpressions) return null;
+  const info = voiceExpressionModel.recordingExpressions[recordingId];
+  if (!info) return null;
+  return {
+    tag: info.tag,
+    adjustments: { ...info.adjustments },
+    intensity: info.intensity,
+    recordingId,
+  };
+}
+
+function blendContextExpressions(segments, index) {
+  if (!Array.isArray(segments) || index == null) return null;
+  const neighbors = [];
+  const maxDistance = 3;
+  for (let offset = 1; offset <= maxDistance; offset += 1) {
+    const beforeIndex = index - offset;
+    if (beforeIndex >= 0) {
+      const candidate = segments[beforeIndex];
+      const info = candidate?.resolvedAdjustments
+        ? {
+            adjustments: candidate.resolvedAdjustments,
+            intensity: candidate.resolvedIntensity,
+            tag: candidate.resolvedTag,
+          }
+        : candidate?.expressionInfo || null;
+      if (info) neighbors.push({ ...info, distance: offset });
+    }
+    const afterIndex = index + offset;
+    if (afterIndex < segments.length) {
+      const candidate = segments[afterIndex];
+      const info = candidate?.expressionInfo || null;
+      if (info) neighbors.push({ ...info, distance: offset });
+    }
+  }
+  if (!neighbors.length) return null;
+  let weightTotal = 0;
+  const blended = { adjustments: { pitchDelta: 0, rateDelta: 0, volumeDelta: 0 }, intensity: 0 };
+  const tagWeights = new Map();
+  for (const neighbor of neighbors) {
+    const distance = neighbor.distance || 1;
+    const weight = 1 / distance;
+    weightTotal += weight;
+    blended.adjustments.pitchDelta += (neighbor.adjustments?.pitchDelta || 0) * weight;
+    blended.adjustments.rateDelta += (neighbor.adjustments?.rateDelta || 0) * weight;
+    blended.adjustments.volumeDelta += (neighbor.adjustments?.volumeDelta || 0) * weight;
+    const neighborIntensity = neighbor.intensity ?? estimateIntensityFromAdjustments(neighbor.adjustments);
+    blended.intensity += neighborIntensity * weight;
+    if (neighbor.tag) {
+      tagWeights.set(neighbor.tag, (tagWeights.get(neighbor.tag) || 0) + weight);
+    }
+  }
+  if (!weightTotal) return null;
+  blended.adjustments.pitchDelta /= weightTotal;
+  blended.adjustments.rateDelta /= weightTotal;
+  blended.adjustments.volumeDelta /= weightTotal;
+  blended.intensity /= weightTotal;
+  let selectedTag = null;
+  let maxWeight = -Infinity;
+  for (const [tag, weight] of tagWeights) {
+    if (weight > maxWeight) {
+      selectedTag = tag;
+      maxWeight = weight;
+    }
+  }
+  blended.tag = selectedTag;
+  blended.adjustments = clampAdjustments(blended.adjustments);
+  return blended;
+}
+
+function resolveSegmentAdjustments(segment, segments, index) {
+  const baseInfo = segment?.expressionInfo
+    ? {
+        tag: segment.expressionInfo.tag,
+        adjustments: { ...segment.expressionInfo.adjustments },
+        intensity:
+          segment.expressionInfo.intensity ?? estimateIntensityFromAdjustments(segment.expressionInfo.adjustments),
+        source: 'token',
+      }
+    : null;
+
+  const heuristics = analyzeTranscriptDynamics(segment?.text || segment?.token || '');
+  let resolved = baseInfo || {
+    tag: heuristics.tag,
+    adjustments: {
+      pitchDelta: heuristics.pitchDelta,
+      rateDelta: heuristics.rateDelta,
+      volumeDelta: heuristics.volumeDelta,
+    },
+    intensity: heuristics.intensity,
+    source: 'heuristic',
+  };
+
+  const contextBlend = blendContextExpressions(segments, index);
+  if (contextBlend) {
+    const baselineIntensity = voiceExpressionModel?.baseline?.intensity || 0;
+    const baselineStd = voiceExpressionModel?.baseline?.std?.intensity || 0;
+    const threshold =
+      (contextBlend.tag && voiceExpressionModel?.expressions?.[contextBlend.tag]?.threshold?.intensity) ||
+      baselineIntensity + baselineStd + 0.15;
+    const contextIntensity = contextBlend.intensity || 0;
+    const currentIntensity = resolved.intensity || 0;
+    if (contextIntensity >= threshold || currentIntensity < threshold) {
+      const weightContext = clampValue(contextIntensity / (contextIntensity + currentIntensity + 0.0001), 0.2, 0.8);
+      const weightSelf = 1 - weightContext;
+      resolved.adjustments = clampAdjustments(blendAdjustments(resolved.adjustments, contextBlend.adjustments, weightSelf, weightContext));
+      resolved.intensity = Math.max(currentIntensity, contextIntensity);
+      if (contextBlend.tag) resolved.tag = contextBlend.tag;
+    }
+  }
+
+  if (resolved.tag) {
+    const expressionEntry = voiceExpressionModel?.expressions?.[resolved.tag];
+    if (expressionEntry) {
+      const threshold = expressionEntry.threshold?.intensity ?? 0.3;
+      const intensity = resolved.intensity || estimateIntensityFromAdjustments(resolved.adjustments);
+      if (intensity >= threshold) {
+        const stdIntensity = expressionEntry.std?.intensity || 0.1;
+        const normalized = clampValue((intensity - threshold) / (threshold + stdIntensity + 0.0001), 0, 1);
+        const weightExpression = 0.35 + 0.5 * normalized;
+        resolved.adjustments = clampAdjustments(
+          blendAdjustments(resolved.adjustments, expressionEntry.mean, 1 - weightExpression, weightExpression)
+        );
+        resolved.intensity = Math.max(intensity, expressionEntry.mean?.intensity || intensity);
+      }
+    }
+  }
+
+  resolved.adjustments = clampAdjustments(resolved.adjustments);
+  if (!resolved.intensity || !Number.isFinite(resolved.intensity)) {
+    resolved.intensity = estimateIntensityFromAdjustments(resolved.adjustments);
+  }
+  return resolved;
+}
+
+function makeSegmentForToken(token) {
+  if (!token) {
+    return { token: '', text: '', expressionInfo: null };
+  }
+  const assignments = store.assignments || {};
+  let recordingId = assignments[token];
+  let recording = recordingId ? store.recordings.find(rec => rec.id === recordingId) : null;
+  if (!recording) {
+    const candidates = recordingIndex.get(token);
+    if (Array.isArray(candidates) && candidates.length) {
+      recording = candidates[0];
+      recordingId = recording?.id || recordingId;
+    }
+  }
+  const textSource = recording?.transcript || recording?.token || token;
+  const expressionInfo =
+    getTokenExpressionInfo(token) || (recording ? getRecordingExpression(recording.id) : null);
+  return {
+    token,
+    text: typeof textSource === 'string' ? textSource.replace(/\s+/g, ' ').trim() || token : token,
+    expressionInfo,
+    recordingId: recording?.id || null,
+  };
+}
+
+function speakSegments(segments) {
+  if (!Array.isArray(segments) || !segments.length) return;
+  stopActivePlayback();
+  if (typeof window.speechSynthesis === 'undefined') {
+    setStatus('Speech synthesis is not available in this browser.', 'error');
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const prefs = store.voicePreferences || defaultVoicePreferences();
+  const voices = window.speechSynthesis.getVoices();
+  let selectedVoice = null;
+  if (prefs.voiceURI && Array.isArray(voices) && voices.length) {
+    selectedVoice = voices.find(v => v.voiceURI === prefs.voiceURI) || null;
+  }
+
+  segments.forEach((segment, index) => {
+    const text = segment?.text || segment?.token || '';
+    if (!text) return;
+    const resolved = resolveSegmentAdjustments(segment, segments, index);
+    segment.resolvedAdjustments = resolved.adjustments;
+    segment.resolvedIntensity = resolved.intensity;
+    segment.resolvedTag = resolved.tag;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const pitch = clampValue(prefs.pitch + resolved.adjustments.pitchDelta, 0.5, 2);
+    const rate = clampValue(prefs.rate + resolved.adjustments.rateDelta, 0.5, 2.5);
+    const volume = clampValue(prefs.volume + resolved.adjustments.volumeDelta, 0, 1);
+    utterance.pitch = pitch;
+    utterance.rate = rate;
+    utterance.volume = volume;
+    if (selectedVoice) utterance.voice = selectedVoice;
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
 function defaultVoicePreferences() {
   return {
     voiceURI: '',
@@ -111,16 +801,18 @@ function generateCloneId() {
 
 function refreshVoiceProfileClone(persist = false) {
   const clone = store.profileClone;
-  if (!clone) return;
-  const hasRecording = store.recordings.some(rec => rec.id === clone.recordingId);
-  if (!hasRecording) {
-    store.profileClone = null;
-    saveVoiceStore();
-    return;
+  if (clone) {
+    const hasRecording = store.recordings.some(rec => rec.id === clone.recordingId);
+    if (!hasRecording) {
+      store.profileClone = null;
+      saveVoiceStore();
+    } else {
+      clone.wordCount = getTotalTranscriptWords();
+      clone.divergenceMap = buildCloneDivergence();
+      if (persist) saveVoiceStore();
+    }
   }
-  clone.wordCount = getTotalTranscriptWords();
-  clone.divergenceMap = buildCloneDivergence();
-  if (persist) saveVoiceStore();
+  voiceExpressionModel = buildVoiceExpressionModel();
 }
 
 function getValidProfileClone() {
@@ -377,6 +1069,7 @@ function buildRecordingIndex() {
 }
 
 let recordingIndex = buildRecordingIndex();
+let voiceExpressionModel = buildVoiceExpressionModel();
 
 function setStatus(message, type = 'info') {
   panelState.status = { message, type };
@@ -392,6 +1085,7 @@ function refreshTokens() {
     return;
   }
   recordingIndex = buildRecordingIndex();
+  voiceExpressionModel = buildVoiceExpressionModel();
   panelState.tokens = gatherTokens();
   if (panelState.selectedToken && !panelState.tokens.includes(panelState.selectedToken)) {
     panelState.selectedToken = panelState.tokens[0] || null;
@@ -740,43 +1434,34 @@ function playProfileClone(token) {
 
 function buildSynthesizedPreviewSegments(contextToken = null) {
   const assignments = store.assignments || {};
-  const recordingMap = new Map((store.recordings || []).map(rec => [rec.id, rec]));
   const segments = [];
   const seenTokens = new Set();
 
   const pushToken = token => {
-    if (!token || seenTokens.has(token)) return;
+    if (!token || seenTokens.has(token) || segments.length >= SYNTHESIZED_PREVIEW_TOKEN_LIMIT) return;
+    const segment = makeSegmentForToken(token);
+    if (!segment?.text) return;
     seenTokens.add(token);
-    const recordingId = assignments[token];
-    const recording = recordingId ? recordingMap.get(recordingId) : null;
-    const rawTranscript = recording?.transcript || recording?.token || token;
-    const cleaned = typeof rawTranscript === 'string'
-      ? rawTranscript.replace(/\s+/g, ' ').trim()
-      : '';
-    if (!cleaned) return;
-    segments.push(cleaned);
+    segments.push(segment);
   };
 
   if (contextToken) pushToken(contextToken);
 
-  const sortedTokens = Object.keys(assignments)
+  const sortedAssigned = Object.keys(assignments)
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
 
-  for (const token of sortedTokens) {
-    if (segments.length >= SYNTHESIZED_PREVIEW_TOKEN_LIMIT) break;
+  for (const token of sortedAssigned) {
     if (token === contextToken) continue;
     pushToken(token);
+    if (segments.length >= SYNTHESIZED_PREVIEW_TOKEN_LIMIT) break;
   }
 
   if (segments.length < SYNTHESIZED_PREVIEW_TOKEN_LIMIT) {
-    const recordingTokens = (store.recordings || [])
-      .map(rec => rec.token)
-      .filter(Boolean)
+    const recordingTokens = Array.from(new Set((store.recordings || []).map(rec => rec.token).filter(Boolean)))
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
     for (const token of recordingTokens) {
       if (segments.length >= SYNTHESIZED_PREVIEW_TOKEN_LIMIT) break;
-      if (assignments[token]) continue;
       pushToken(token);
     }
   }
@@ -796,23 +1481,7 @@ function playSynthesizedPreview(token) {
     return;
   }
 
-  stopActivePlayback();
-  window.speechSynthesis.cancel();
-
-  const script = segments.join('. ');
-  const utterance = new SpeechSynthesisUtterance(script);
-  const prefs = store.voicePreferences || defaultVoicePreferences();
-  utterance.rate = Number.isFinite(prefs.rate) ? prefs.rate : 1;
-  utterance.pitch = Number.isFinite(prefs.pitch) ? prefs.pitch : 1;
-  utterance.volume = Number.isFinite(prefs.volume) ? prefs.volume : 1;
-
-  const voices = window.speechSynthesis.getVoices();
-  if (prefs.voiceURI && Array.isArray(voices) && voices.length) {
-    const voice = voices.find(v => v.voiceURI === prefs.voiceURI);
-    if (voice) utterance.voice = voice;
-  }
-
-  window.speechSynthesis.speak(utterance);
+  speakSegments(segments);
   setStatus('Playing synthesized voice profile preview using speech synthesis.', 'info');
 }
 
@@ -1154,19 +1823,9 @@ function playTokenTts(token) {
     return;
   }
   if (!token) return;
-  stopActivePlayback();
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(token);
-  const prefs = store.voicePreferences || defaultVoicePreferences();
-  utterance.rate = Number.isFinite(prefs.rate) ? prefs.rate : 1;
-  utterance.pitch = Number.isFinite(prefs.pitch) ? prefs.pitch : 1;
-  utterance.volume = Number.isFinite(prefs.volume) ? prefs.volume : 1;
-  const voices = window.speechSynthesis.getVoices();
-  if (prefs.voiceURI && Array.isArray(voices) && voices.length) {
-    const voice = voices.find(v => v.voiceURI === prefs.voiceURI);
-    if (voice) utterance.voice = voice;
-  }
-  window.speechSynthesis.speak(utterance);
+  const segment = makeSegmentForToken(token);
+  segment.text = segment.text || token;
+  speakSegments([segment]);
   setStatus('Playing token using speech synthesis voice profile.', 'info');
 }
 
@@ -1439,6 +2098,7 @@ async function finalizeRecording(session) {
     refreshVoiceProfileClone(false);
     saveVoiceStore();
     recordingIndex = buildRecordingIndex();
+    voiceExpressionModel = buildVoiceExpressionModel();
     setStatus('Recording saved and mapped to token.', 'success');
     selectToken(token);
     signalVoiceCloneTokensChanged('recording-added');
@@ -1543,6 +2203,7 @@ function deleteRecording(recordingId) {
   refreshVoiceProfileClone(false);
   saveVoiceStore();
   recordingIndex = buildRecordingIndex();
+  voiceExpressionModel = buildVoiceExpressionModel();
   const message = wasCloneSource
     ? 'Recording removed. Voice profile clone cleared.'
     : 'Recording removed.';
