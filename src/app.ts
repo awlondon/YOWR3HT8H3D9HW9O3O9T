@@ -10041,6 +10041,326 @@ function craftSelfThoughtStream(options) {
   return fragments.join(' ').replace(/\s+/g, ' ').trim();
 }
 
+function joinWithAnd(items) {
+  if (!Array.isArray(items)) return '';
+  const filtered = items.filter(Boolean);
+  if (!filtered.length) return '';
+  if (filtered.length === 1) return filtered[0];
+  if (filtered.length === 2) return `${filtered[0]} and ${filtered[1]}`;
+  return `${filtered.slice(0, -1).join(', ')}, and ${filtered[filtered.length - 1]}`;
+}
+
+function craftMentalStateStream(options = {}) {
+  const {
+    mentalState = {},
+    threshold = 0.35,
+    iterations = 8,
+    focusTokens = [],
+    tokenHighlights = [],
+    relationTypes = [],
+    topConnections = [],
+    clusterInfo = {},
+    adjacencyExcerpt = '',
+    dbSummary = 'unavailable',
+    computedSummary = 'unavailable',
+    clusterSummaryText = '',
+    tokenHighlightSummary = '',
+    relationTypeSummary = '',
+    requestedTokens = [],
+  } = options;
+
+  const moodName = mentalState.name || 'Undefined mental state';
+  const paragraphs = [];
+  const introSegments = [];
+  introSegments.push(`I settle into the ${moodName} state calibrated at threshold ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`);
+  if (mentalState.desc) {
+    introSegments.push(mentalState.desc.trim());
+  }
+  if (mentalState.mechanics) {
+    const mechanicsText = mentalState.mechanics.trim().replace(/\.$/, '');
+    if (mechanicsText) {
+      const normalized = mechanicsText.charAt(0).toLowerCase() + mechanicsText.slice(1);
+      introSegments.push(`Mechanics circulate as ${normalized}.`);
+    }
+  }
+  paragraphs.push(introSegments.join(' '));
+
+  const focusList = Array.isArray(focusTokens) ? focusTokens.filter(Boolean) : [];
+  const requestedList = Array.isArray(requestedTokens) ? requestedTokens.filter(Boolean) : [];
+  if (focusList.length) {
+    const primary = focusList.slice(0, 6);
+    const tail = focusList.slice(6, 12);
+    const focusParts = [`Focus threads follow ${joinWithAnd(primary)}.`];
+    if (tail.length) {
+      focusParts.push(`Peripheral signals include ${joinWithAnd(tail)}.`);
+    }
+    if (requestedList.length) {
+      focusParts.push(`Requested attention centers on ${joinWithAnd(requestedList.slice(0, 6))}.`);
+    }
+    paragraphs.push(focusParts.join(' '));
+  } else if (requestedList.length) {
+    paragraphs.push(`I orient toward the requested tokens ${joinWithAnd(requestedList.slice(0, 8))} while the global matrix guides the rest.`);
+  } else {
+    paragraphs.push('Focus threads remain undefined, so I lean on global adjacency pressure to frame the walkthrough.');
+  }
+
+  const highlightTokens = Array.isArray(tokenHighlights)
+    ? tokenHighlights.map(entry => entry?.token).filter(Boolean)
+    : [];
+  if (highlightTokens.length) {
+    const highlightParts = [`Highest weighted highlights gravitate toward ${joinWithAnd(highlightTokens.slice(0, 6))}.`];
+    const neighborPreview = tokenHighlights.find(entry => Array.isArray(entry?.neighbors) && entry.neighbors.length);
+    if (neighborPreview) {
+      highlightParts.push(`They cohere with neighbors like ${joinWithAnd(neighborPreview.neighbors.slice(0, 4))}.`);
+    }
+    paragraphs.push(highlightParts.join(' '));
+  } else if (tokenHighlightSummary) {
+    paragraphs.push(`Global highlight summary reports: ${tokenHighlightSummary.replace(/\n+/g, '; ')}.`);
+  }
+
+  if (Array.isArray(topConnections) && topConnections.length) {
+    const connectionSamples = topConnections.slice(0, 4).map(conn => {
+      const label = relDisplay(conn?.type);
+      const weight = Number.isFinite(conn?.weight) ? conn.weight.toFixed(3) : '—';
+      return `${conn?.source} ↔ ${conn?.target} (${label}, ${weight})`;
+    }).filter(Boolean);
+    if (connectionSamples.length) {
+      paragraphs.push(`Strongest edges pulse through ${joinWithAnd(connectionSamples)}.`);
+    }
+  }
+
+  if (Array.isArray(relationTypes) && relationTypes.length) {
+    const relationSamples = relationTypes.slice(0, 3).map(rel => {
+      const label = relDisplay(rel?.type);
+      const count = Number.isFinite(rel?.count) ? rel.count : 0;
+      const weight = Number.isFinite(rel?.weight) ? rel.weight.toFixed(3) : '0.000';
+      return `${label} (${count} edges, Σ=${weight})`;
+    }).filter(Boolean);
+    if (relationSamples.length) {
+      paragraphs.push(`Relationship distribution leans on ${joinWithAnd(relationSamples)}.`);
+    }
+  } else if (relationTypeSummary) {
+    paragraphs.push(`Relationship summary indicates: ${relationTypeSummary.replace(/\n+/g, '; ')}.`);
+  }
+
+  const clusterLines = [];
+  if (Number.isFinite(clusterInfo?.clusterCount)) {
+    clusterLines.push(`${clusterInfo.clusterCount} clusters stay active`);
+  }
+  if (Number.isFinite(clusterInfo?.anchorCount)) {
+    clusterLines.push(`${clusterInfo.anchorCount} anchors stabilize attention`);
+  }
+  if (Number.isFinite(clusterInfo?.totalNodes)) {
+    clusterLines.push(`${clusterInfo.totalNodes} nodes participate in the current frame`);
+  }
+  if (clusterLines.length) {
+    paragraphs.push(`${clusterLines.join(', ')}, reinforcing the mood.`);
+  }
+
+  if (clusterSummaryText) {
+    const summaryLines = clusterSummaryText.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 3);
+    if (summaryLines.length) {
+      paragraphs.push(`Cluster synopsis notes ${summaryLines.join('; ')}.`);
+    }
+  }
+
+  const adjacencyLines = typeof adjacencyExcerpt === 'string'
+    ? adjacencyExcerpt.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 3)
+    : [];
+  if (adjacencyLines.length) {
+    paragraphs.push(`Adjacency excerpt surfaces ${adjacencyLines.join('; ')}.`);
+  }
+
+  paragraphs.push(`Reported database metrics read ${dbSummary}, while computed scan totals show ${computedSummary}.`);
+  paragraphs.push('I weave these signals into a continuous stream, letting weighted edges and clusters reinforce the declared mental state.');
+
+  let streamText = paragraphs.filter(Boolean).join('\n\n');
+
+  const filler = [];
+  if (highlightTokens.length > 6) {
+    filler.push(`Additional highlights ripple from ${joinWithAnd(highlightTokens.slice(6, 12))}.`);
+  }
+  if (Array.isArray(tokenHighlights)) {
+    const scored = tokenHighlights.slice(0, 5).map(entry => {
+      if (!entry?.token) return '';
+      const score = Number.isFinite(entry?.score) ? entry.score.toFixed(3) : '0.000';
+      return `${entry.token} at ${score}`;
+    }).filter(Boolean);
+    if (scored.length) {
+      filler.push(`Scoreboard whispers ${joinWithAnd(scored)}.`);
+    }
+  }
+  if (relationTypes.length > 3) {
+    filler.push(`Secondary relationship currents mention ${joinWithAnd(relationTypes.slice(3, 6).map(rel => relDisplay(rel?.type)).filter(Boolean))}.`);
+  }
+  if (adjacencyLines.length >= 3 && typeof adjacencyExcerpt === 'string') {
+    const extraAdj = adjacencyExcerpt.split('\n').map(line => line.trim()).filter(Boolean).slice(3, 6);
+    if (extraAdj.length) {
+      filler.push(`Extended adjacency trace notes ${extraAdj.join('; ')}.`);
+    }
+  }
+  if (!filler.length && tokenHighlightSummary) {
+    filler.push(`Full highlight ledger: ${tokenHighlightSummary.replace(/\n+/g, '; ')}.`);
+  }
+  if (!filler.length && relationTypeSummary) {
+    filler.push(`Full relationship ledger: ${relationTypeSummary.replace(/\n+/g, '; ')}.`);
+  }
+
+  let fillerIdx = 0;
+  while (countWords(streamText) < 190 && fillerIdx < filler.length) {
+    streamText = `${streamText}\n\n${filler[fillerIdx]}`;
+    fillerIdx += 1;
+  }
+
+  if (countWords(streamText) < 190) {
+    const padding = `I continue to circulate through stored adjacency memory, letting every weighted edge confirm the present mood until the stream feels saturated.`;
+    streamText = `${streamText}\n\n${padding}`;
+  }
+
+  const limited = limitWords(streamText, 220);
+  return limited.text;
+}
+
+function craftMentalStateStructure(options = {}) {
+  const {
+    mentalState = {},
+    threshold = 0.35,
+    iterations = 8,
+    focusTokens = [],
+    tokenHighlights = [],
+    relationTypes = [],
+    topConnections = [],
+    clusterInfo = {},
+    dbSummary = 'unavailable',
+    computedSummary = 'unavailable',
+    clusterSummaryText = '',
+    relationTypeSummary = '',
+    tokenHighlightSummary = '',
+    adjacencyExcerpt = '',
+    requestedTokens = [],
+  } = options;
+
+  const sentences = [];
+  const moodName = mentalState.name || 'Undefined mental state';
+  sentences.push(`Structural reading of ${moodName}: threshold ${threshold.toFixed(2)}, iterations ${iterations}, reported stats ${dbSummary}, computed stats ${computedSummary}.`);
+
+  const focusList = Array.isArray(focusTokens) ? focusTokens.filter(Boolean) : [];
+  const requestedList = Array.isArray(requestedTokens) ? requestedTokens.filter(Boolean) : [];
+  if (focusList.length || requestedList.length) {
+    const segments = [];
+    if (focusList.length) {
+      segments.push(`Focus tokens (${focusList.length}) include ${joinWithAnd(focusList.slice(0, 10))}`);
+    }
+    if (requestedList.length) {
+      segments.push(`Requested inputs (${requestedList.length}) cover ${joinWithAnd(requestedList.slice(0, 8))}`);
+    }
+    sentences.push(`${segments.join('; ')}.`);
+  }
+
+  if (Array.isArray(tokenHighlights) && tokenHighlights.length) {
+    const highlightDetails = tokenHighlights.slice(0, 4).map(entry => {
+      if (!entry?.token) return '';
+      const score = Number.isFinite(entry?.score) ? entry.score.toFixed(3) : '0.000';
+      return `${entry.token} (${score})`;
+    }).filter(Boolean);
+    if (highlightDetails.length) {
+      sentences.push(`Top weighted highlights: ${joinWithAnd(highlightDetails)}.`);
+    }
+  } else if (tokenHighlightSummary) {
+    sentences.push(`Highlight summary: ${tokenHighlightSummary.replace(/\n+/g, '; ')}.`);
+  }
+
+  if (Array.isArray(relationTypes) && relationTypes.length) {
+    const relationDetails = relationTypes.slice(0, 4).map(rel => {
+      const label = relDisplay(rel?.type);
+      const count = Number.isFinite(rel?.count) ? rel.count : 0;
+      const weight = Number.isFinite(rel?.weight) ? rel.weight.toFixed(3) : '0.000';
+      return `${label} (${count} edges, Σ=${weight})`;
+    }).filter(Boolean);
+    if (relationDetails.length) {
+      sentences.push(`Relation weighting emphasizes ${joinWithAnd(relationDetails)}.`);
+    }
+  } else if (relationTypeSummary) {
+    sentences.push(`Relation summary: ${relationTypeSummary.replace(/\n+/g, '; ')}.`);
+  }
+
+  if (Array.isArray(topConnections) && topConnections.length) {
+    const connectionDetails = topConnections.slice(0, 3).map(conn => {
+      const label = relDisplay(conn?.type);
+      const weight = Number.isFinite(conn?.weight) ? conn.weight.toFixed(3) : '0.000';
+      return `${conn?.source} ↔ ${conn?.target} (${label}, ${weight})`;
+    }).filter(Boolean);
+    if (connectionDetails.length) {
+      sentences.push(`Peak connections: ${joinWithAnd(connectionDetails)}.`);
+    }
+  }
+
+  const clusterSegments = [];
+  if (Number.isFinite(clusterInfo?.clusterCount)) {
+    clusterSegments.push(`Clusters=${clusterInfo.clusterCount}`);
+  }
+  if (Number.isFinite(clusterInfo?.anchorCount)) {
+    clusterSegments.push(`Anchors=${clusterInfo.anchorCount}`);
+  }
+  if (Number.isFinite(clusterInfo?.totalNodes)) {
+    clusterSegments.push(`Nodes=${clusterInfo.totalNodes}`);
+  }
+  if (clusterSegments.length) {
+    sentences.push(`Cluster frame: ${clusterSegments.join(', ')}.`);
+  }
+
+  if (clusterSummaryText) {
+    const summaryLines = clusterSummaryText.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2);
+    if (summaryLines.length) {
+      sentences.push(`Cluster detail: ${summaryLines.join('; ')}.`);
+    }
+  }
+
+  if (adjacencyExcerpt) {
+    const adjacencyLines = adjacencyExcerpt.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2);
+    if (adjacencyLines.length) {
+      sentences.push(`Adjacency notes: ${adjacencyLines.join('; ')}.`);
+    }
+  }
+
+  sentences.push('Structure synthesis prepared for export to the live adjacency graph.');
+
+  let structureText = sentences.join(' ');
+
+  const filler = [];
+  if (Array.isArray(tokenHighlights) && tokenHighlights.length > 4) {
+    const more = tokenHighlights.slice(4, 8).map(entry => entry?.token).filter(Boolean);
+    if (more.length) {
+      filler.push(`Additional highlight tokens: ${joinWithAnd(more)}.`);
+    }
+  }
+  if (Array.isArray(relationTypes) && relationTypes.length > 4) {
+    const moreRel = relationTypes.slice(4, 7).map(rel => relDisplay(rel?.type)).filter(Boolean);
+    if (moreRel.length) {
+      filler.push(`Supplementary relation modes: ${joinWithAnd(moreRel)}.`);
+    }
+  }
+  if (!filler.length && tokenHighlightSummary) {
+    filler.push(`Full highlight register: ${tokenHighlightSummary.replace(/\n+/g, '; ')}.`);
+  }
+  if (!filler.length && relationTypeSummary) {
+    filler.push(`Full relation register: ${relationTypeSummary.replace(/\n+/g, '; ')}.`);
+  }
+
+  let fillerIdx = 0;
+  while (countWords(structureText) < 90 && fillerIdx < filler.length) {
+    structureText = `${structureText} ${filler[fillerIdx]}`;
+    fillerIdx += 1;
+  }
+
+  if (countWords(structureText) < 90) {
+    structureText = `${structureText} Offline synthesis confirms stability across weighted adjacency memory.`;
+  }
+
+  const limited = limitWords(structureText, 130);
+  return limited.text;
+}
+
 function parseStateTokens(args) {
   if (!Array.isArray(args)) return [];
   const tokens = [];
@@ -10372,11 +10692,6 @@ async function cmd_loaddb(args) {
 }
 
 async function cmd_state(args = []) {
-  if (!state.apiKey) {
-    logError('Configure an API key to use /state.');
-    return;
-  }
-
   if (!getDb()) {
     const ok = await tryBootstrapDb();
     if (!ok) {
@@ -10532,62 +10847,73 @@ async function cmd_state(args = []) {
       '5. Emphasize the most important insights discovered during synthesis, citing pivotal tokens, relationships, and clusters when relevant.',
     ].join('\n');
 
-    statusEl = logStatus('⏳ Synthesizing global mental state stream...');
-    const completion = await callOpenAI([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ], { temperature: 0.65, max_tokens: 900 });
+    statusEl = logStatus('🔄 Synthesizing offline mental state stream...');
+    const stream = craftMentalStateStream({
+      mentalState,
+      threshold,
+      iterations,
+      focusTokens,
+      tokenHighlights: globalAnalysis.tokenHighlights || [],
+      relationTypes: globalAnalysis.relationTypes || [],
+      topConnections,
+      clusterInfo,
+      adjacencyExcerpt,
+      dbSummary,
+      computedSummary,
+      clusterSummaryText: clusterSummary,
+      tokenHighlightSummary,
+      relationTypeSummary,
+      requestedTokens: manualTokens,
+    });
+    const structure = craftMentalStateStructure({
+      mentalState,
+      threshold,
+      iterations,
+      focusTokens,
+      tokenHighlights: globalAnalysis.tokenHighlights || [],
+      relationTypes: globalAnalysis.relationTypes || [],
+      topConnections,
+      clusterInfo,
+      dbSummary,
+      computedSummary,
+      clusterSummaryText: clusterSummary,
+      relationTypeSummary,
+      tokenHighlightSummary,
+      adjacencyExcerpt,
+      requestedTokens: manualTokens,
+    });
 
-    if (statusEl) statusEl.innerHTML = '✅ Global stream synthesized';
+    if (statusEl) statusEl.innerHTML = '✅ Offline mental state stream ready';
 
-    const safeCompletion = sanitize(completion || '').replace(/\n{3,}/g, '\n\n');
-    addLog(`<div class="section-divider"></div><div class="section-title">🧠 Stream of Consciousness</div><pre>${safeCompletion}</pre>`);
+    const safeStream = sanitize(stream || '').replace(/\n{3,}/g, '\n\n');
+    addLog(`<div class="section-divider"></div><div class="section-title">🧠 Stream of Consciousness</div><pre>${safeStream}</pre>`);
+
+    const safeStructure = sanitize(structure || '').replace(/\n{3,}/g, '\n\n');
+    addLog(`<div class="section-divider"></div><div class="section-title">🧱 Structural Summary</div><pre>${safeStructure}</pre>`);
 
     let streamAdjacency = null;
-    const completionTokens = tokenize(completion || '');
-    if (completionTokens.length) {
-      addConversationTokens(completionTokens);
-      addOutputTokens(completionTokens, { render: false });
-      const streamAdjTokens = collectSymbolAwareTokens(completion, completionTokens, 'mental-state-stream');
-      streamAdjacency = await batchFetchAdjacencies(streamAdjTokens, completion, 'mental state stream adjacencies');
+    const streamTokens = tokenize(stream || '');
+    if (streamTokens.length) {
+      addConversationTokens(streamTokens);
+      addOutputTokens(streamTokens, { render: false });
+      const streamAdjTokens = collectSymbolAwareTokens(stream, streamTokens, 'mental-state-stream');
+      streamAdjacency = await batchFetchAdjacencies(streamAdjTokens, stream, 'mental state stream adjacencies');
       calculateAttention(streamAdjacency);
     }
 
-    let grammarStream = completion || '';
-    let grammarStatus = null;
-    if (grammarStream.trim()) {
-      grammarStatus = logStatus('⏳ Polishing stream for grammar...');
-      const polished = await editForCoherence('mental state stream', 'mental state', grammarStream);
-      if (!state.apiKey && grammarStatus) {
-        grammarStatus.innerHTML = '⚠️ Grammar refinement skipped (offline)';
-      } else if (grammarStatus) {
-        grammarStatus.innerHTML = '✅ Grammar refinement complete';
-      }
-      grammarStream = polished;
-      const grammarLimited = limitWords(grammarStream, CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT);
-      grammarStream = grammarLimited.text;
-      if (grammarLimited.trimmed) {
-        logWarning(`Mental state stream trimmed to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words after grammatical refinement.`);
-      }
-    }
-
-    const grammarTokens = tokenize(grammarStream || '');
-    let grammarAdjacency = null;
-    if (grammarTokens.length) {
-      addConversationTokens(grammarTokens);
-      addOutputTokens(grammarTokens, { render: false });
-      const grammarAdjTokens = collectSymbolAwareTokens(grammarStream, grammarTokens, 'mental-state-grammar');
-      grammarAdjacency = await batchFetchAdjacencies(grammarAdjTokens, grammarStream, 'mental state grammar adjacencies');
-      calculateAttention(grammarAdjacency);
-    }
-
-    if (grammarStream) {
-      addLog(`<div class="section-divider"></div><div class="section-title">✏️ Grammar-Polished Stream</div><pre>${sanitize(grammarStream)}</pre>`);
+    let structureAdjacency = null;
+    const structureTokens = tokenize(structure || '');
+    if (structureTokens.length) {
+      addConversationTokens(structureTokens);
+      addOutputTokens(structureTokens, { render: false });
+      const structureAdjTokens = collectSymbolAwareTokens(structure, structureTokens, 'mental-state-structure');
+      structureAdjacency = await batchFetchAdjacencies(structureAdjTokens, structure, 'mental state structure adjacencies');
+      calculateAttention(structureAdjacency);
     }
 
     const streamReload = streamAdjacency ? hasNewAdjacencyData(streamAdjacency) : false;
-    const grammarReload = grammarAdjacency ? hasNewAdjacencyData(grammarAdjacency) : false;
-    if (streamReload || grammarReload) {
+    const structureReload = structureAdjacency ? hasNewAdjacencyData(structureAdjacency) : false;
+    if (streamReload || structureReload) {
       notifyHlsfAdjacencyChange('mental-state', { immediate: true });
     }
     rebuildLiveGraph();
