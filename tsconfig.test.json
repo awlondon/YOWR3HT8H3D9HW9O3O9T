@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./build/test",
+    "noEmit": false,
+    "declaration": false,
+    "emitDeclarationOnly": false
+  },
+  "include": [
+    "src/export/modelParams.ts",
+    "src/export/modelParams.test.ts",
+    "src/export/modelParams.js.d.ts",
+    "types/node-test.d.ts"
+  ]
+}

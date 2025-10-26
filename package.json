@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "format": "prettier --write \"**/*.{ts,tsx,js,json,css,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,css,md}\"",
+    "test": "tsc --project tsconfig.test.json && node --test build/test/modelParams.test.js"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^7.1.1",
