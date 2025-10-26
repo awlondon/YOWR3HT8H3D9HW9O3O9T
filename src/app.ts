@@ -39,6 +39,9 @@ const CONFIG = {
 const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
 const DATABASE_READY_EVENT = 'hlsf:database-ready';
 
+const GLOBAL_CONNECTION_RELATION = '∼';
+const GLOBAL_CONNECTION_WEIGHT = 0.05;
+
 // Canonical 50-type display names
 const REL_EN = {
   "≡":"Identity","⊃":"Contains","⊂":"Is Contained By","≈":"Variant","∈":"Is Instance Of","∋":"Has Instance",
@@ -3694,6 +3697,117 @@ function normalizeRecord(rec) {
   return out;
 }
 
+function ensureGlobalConnectionEdge(record, targetToken, relation = GLOBAL_CONNECTION_RELATION, weight = GLOBAL_CONNECTION_WEIGHT) {
+  if (!record || typeof record !== 'object') return false;
+  if (!targetToken || typeof targetToken !== 'string') return false;
+
+  const relKey = normRelKey(relation) || relation;
+  if (!relKey) return false;
+
+  if (!record.relationships || typeof record.relationships !== 'object') {
+    record.relationships = {};
+  }
+
+  const relationships = record.relationships;
+  let edges = Array.isArray(relationships[relKey]) ? relationships[relKey] : null;
+  if (!edges) {
+    edges = [];
+    relationships[relKey] = edges;
+  }
+
+  const normalizedTarget = targetToken.toLowerCase();
+  let changed = false;
+
+  for (const edge of edges) {
+    if (!edge || typeof edge.token !== 'string') continue;
+    if (edge.token.toLowerCase() !== normalizedTarget) continue;
+
+    const current = Number.isFinite(Number(edge.weight)) ? Number(edge.weight) : null;
+    const updated = Number.isFinite(current) ? Math.max(current, weight) : weight;
+    if (!Number.isFinite(current) || updated !== current) {
+      edge.weight = updated;
+      changed = true;
+    }
+    return changed;
+  }
+
+  edges.push({ token: targetToken, weight });
+  return true;
+}
+
+function applyGlobalConnectionRule(records, tokensToConnect = null) {
+  if (!Array.isArray(records) || !records.length) return new Set();
+
+  const recordMap = new Map();
+  const orderedRecords = [];
+
+  for (const rec of records) {
+    if (!rec || typeof rec.token !== 'string') continue;
+    const key = rec.token.toLowerCase();
+    if (!key) continue;
+    if (!recordMap.has(key)) {
+      if (!rec.relationships || typeof rec.relationships !== 'object') {
+        rec.relationships = {};
+      }
+      recordMap.set(key, rec);
+      orderedRecords.push(rec);
+    }
+  }
+
+  if (!recordMap.size) return new Set();
+
+  const targets = tokensToConnect instanceof Set && tokensToConnect.size
+    ? Array.from(tokensToConnect)
+        .map(token => (typeof token === 'string' ? token.toLowerCase() : ''))
+        .filter(token => token && recordMap.has(token))
+    : orderedRecords.map(rec => rec.token.toLowerCase());
+
+  const changedTokens = new Set();
+
+  for (const key of targets) {
+    const record = recordMap.get(key);
+    if (!record) continue;
+
+    for (const other of orderedRecords) {
+      if (!other || typeof other.token !== 'string') continue;
+      const otherKey = other.token.toLowerCase();
+      if (!otherKey || otherKey === key) continue;
+
+      if (ensureGlobalConnectionEdge(record, other.token)) {
+        changedTokens.add(record.token);
+      }
+      if (ensureGlobalConnectionEdge(other, record.token)) {
+        changedTokens.add(other.token);
+      }
+    }
+  }
+
+  return changedTokens;
+}
+
+function persistChangedTokenCaches(records, changedTokens) {
+  if (!(changedTokens instanceof Set) || changedTokens.size === 0) return;
+  const lookup = new Map();
+  for (const rec of Array.isArray(records) ? records : []) {
+    if (!rec || typeof rec.token !== 'string') continue;
+    const key = rec.token.toLowerCase();
+    if (!key || lookup.has(key)) continue;
+    lookup.set(key, rec);
+  }
+
+  for (const token of changedTokens) {
+    if (!token || typeof token !== 'string') continue;
+    const rec = lookup.get(token.toLowerCase());
+    if (!rec) continue;
+    const cacheKey = getCacheKey(rec.token);
+    const payload = JSON.stringify(rec);
+    const persisted = safeStorageSet(cacheKey, payload);
+    if (!persisted && !memoryStorageFallback.has(cacheKey)) {
+      memoryStorageFallback.set(cacheKey, payload);
+    }
+  }
+}
+
 function announceDatabaseReady(reason = 'unknown') {
   const normalizedReason = typeof reason === 'string' && reason.trim() ? reason.trim() : 'unknown';
   const timestamp = Date.now();
@@ -3797,6 +3911,12 @@ function loadDbObject(dbLike, options = {}) {
     }
 
     const mergedArray = Array.from(mergedMap.values());
+    const newTokenSet = new Set(clean.map(record => (record && typeof record.token === 'string') ? record.token : null).filter(Boolean));
+    const globalChanged = applyGlobalConnectionRule(mergedArray, newTokenSet);
+    if (globalChanged.size) {
+      persistChangedTokenCaches(mergedArray, globalChanged);
+    }
+
     const out = Object.assign({}, replace ? db : existingDb, db, { full_token_data: mergedArray });
     const rawPayload = JSON.stringify(out);
     const indexPayload = JSON.stringify(Array.from(indexSet));
@@ -3876,6 +3996,12 @@ function refreshDbReference(recordLike, options = {}) {
     storedRecord = normalized;
   }
 
+  const targetTokens = new Set(storedRecord?.token ? [storedRecord.token] : []);
+  const globalChanged = applyGlobalConnectionRule(entries, targetTokens);
+  if (persist && globalChanged.size) {
+    persistChangedTokenCaches(entries, globalChanged);
+  }
+
   window.HLSF.dbCache = db;
   if (persist) {
     try {
@@ -3898,6 +4024,7 @@ function refreshDbReference(recordLike, options = {}) {
     notifyHlsfAdjacencyChange('cache-update');
   }
   updateHeaderCounts();
+  return storedRecord;
 }
 
 function getDb() {
@@ -6158,15 +6285,17 @@ function saveToCache(token, data, options = {}) {
       ? payloadData.token
       : token;
     payloadData.token = recordToken;
-    const cacheKey = getCacheKey(recordToken);
     const wasCached = isTokenCached(recordToken);
-    const payload = JSON.stringify(payloadData);
+    const enrichedRecord = refreshDbReference(payloadData, { deferReload });
+    if (!enrichedRecord || typeof enrichedRecord.token !== 'string') return;
+    const finalToken = enrichedRecord.token;
+    const cacheKey = getCacheKey(finalToken);
+    const payload = JSON.stringify(enrichedRecord);
     const persisted = safeStorageSet(cacheKey, payload);
     const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
     if (!persisted && !fallbackStored) return;
-    updateTokenIndex(recordToken);
-    if (!wasCached) CacheBatch.record(recordToken);
-    refreshDbReference(payloadData, { deferReload });
+    updateTokenIndex(finalToken);
+    if (!wasCached) CacheBatch.record(finalToken);
     signalVoiceCloneTokensChanged('token-cached');
   } catch (err) {
     if (err.name === 'QuotaExceededError') {
