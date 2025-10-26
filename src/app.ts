@@ -36,6 +36,7 @@ const CONFIG = {
 };
 
 const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
+const DATABASE_READY_EVENT = 'hlsf:database-ready';
 
 // Canonical 50-type display names
 const REL_EN = {
@@ -3690,6 +3691,51 @@ function normalizeRecord(rec) {
     out[key] = value;
   }
   return out;
+}
+
+function announceDatabaseReady(reason = 'unknown') {
+  const normalizedReason = typeof reason === 'string' && reason.trim() ? reason.trim() : 'unknown';
+  const timestamp = Date.now();
+  const db = getDb();
+  const tokenCount = Array.isArray(db?.full_token_data) ? db.full_token_data.length : getCachedTokenCount();
+  const remoteReady = Boolean(window.HLSF?.remoteDb?.isReady?.());
+  const detail = {
+    reason: normalizedReason,
+    timestamp,
+    hasDatabase: !!db,
+    tokenCount,
+    remoteReady,
+  };
+
+  window.HLSF = window.HLSF || {};
+  window.HLSF.databaseReady = detail;
+
+  const listeners = window.HLSF.databaseReadyListeners;
+  if (Array.isArray(listeners)) {
+    for (const listener of listeners) {
+      if (typeof listener !== 'function') continue;
+      try {
+        listener(detail);
+      } catch (err) {
+        console.warn('Database ready listener failed:', err);
+      }
+    }
+  } else if (typeof listeners === 'function') {
+    try {
+      listeners(detail);
+    } catch (err) {
+      console.warn('Database ready listener failed:', err);
+    }
+  }
+
+  if (typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+    try {
+      const event = new window.CustomEvent(DATABASE_READY_EVENT, { detail });
+      window.dispatchEvent(event);
+    } catch (err) {
+      console.warn('Failed to dispatch database-ready event:', err);
+    }
+  }
 }
 
 function loadDbObject(dbLike, options = {}) {
