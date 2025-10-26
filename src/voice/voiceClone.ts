@@ -5,6 +5,7 @@ const PROFILE_CLONE_WORD_THRESHOLD = 100;
 const TOKENS_CHANGED_EVENT = 'voice:tokens-changed';
 const DATABASE_READY_EVENT = 'hlsf:database-ready';
 const MAX_RENDERED_TOKENS = 800;
+const PROFILE_SYNTHESIS_TOKEN_THRESHOLD = 100;
 
 function defaultVoicePreferences() {
   return {
@@ -15,6 +16,14 @@ function defaultVoicePreferences() {
   };
 }
 
+function defaultProfileSynthesis() {
+  return {
+    available: false,
+    synthesizedAt: null,
+    tokenCount: 0,
+  };
+}
+
 function defaultVoiceStore() {
   return {
     recordings: [],
@@ -22,6 +31,7 @@ function defaultVoiceStore() {
     profileRecordingId: null,
     voicePreferences: defaultVoicePreferences(),
     profileClone: null,
+    profileSynthesis: defaultProfileSynthesis(),
   };
 }
 
@@ -154,6 +164,7 @@ function loadVoiceStore() {
       const exists = normalized.recordings.some(rec => rec.id === normalized.profileClone.recordingId);
       if (!exists) normalized.profileClone = null;
     }
+    normalized.profileSynthesis = normalizeProfileSynthesis(parsed?.profileSynthesis);
     if (parsed?.voicePreferences && typeof parsed.voicePreferences === 'object') {
       normalized.voicePreferences = Object.assign(defaultVoicePreferences(), parsed.voicePreferences);
     }
@@ -219,6 +230,15 @@ function normalizeProfileClone(entry) {
   };
 }
 
+function normalizeProfileSynthesis(entry) {
+  const state = defaultProfileSynthesis();
+  if (!entry || typeof entry !== 'object') return state;
+  state.available = entry.available === true;
+  state.tokenCount = Number.isFinite(entry.tokenCount) ? Math.max(0, Math.floor(entry.tokenCount)) : 0;
+  state.synthesizedAt = typeof entry.synthesizedAt === 'string' ? entry.synthesizedAt : null;
+  return state;
+}
+
 function saveVoiceStore() {
   try {
     const payload = JSON.stringify(store);
@@ -226,6 +246,24 @@ function saveVoiceStore() {
   } catch (err) {
     console.warn('Unable to persist voice clone store:', err);
   }
+}
+
+function getMappedTokenCount() {
+  let count = 0;
+  const assignments = store.assignments || {};
+  const validIds = new Set((store.recordings || []).map(rec => rec.id));
+  for (const [token, recordingId] of Object.entries(assignments)) {
+    if (!token || typeof token !== 'string') continue;
+    if (!recordingId || !validIds.has(recordingId)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function hasSynthesizedVoiceProfile() {
+  const synthesis = store.profileSynthesis;
+  if (!synthesis || synthesis.available !== true) return false;
+  return Boolean(getValidProfileClone());
 }
 
 function gatherTokens() {
@@ -317,6 +355,7 @@ function renderTokenList() {
     tokenStats.set(token, list.length);
   }
   const clone = getValidProfileClone();
+  const usingSynthesizedPreview = hasSynthesizedVoiceProfile();
   const items = [];
   let rendered = 0;
   for (const token of panelState.tokens) {
@@ -335,7 +374,7 @@ function renderTokenList() {
           ? 'Cloned profile available'
           : 'No voice data';
     const disabledAssigned = hasAssigned || usingClone ? '' : 'disabled';
-    const disabledTts = typeof window.speechSynthesis === 'undefined' ? 'disabled' : '';
+    const disabledTts = !usingSynthesizedPreview && typeof window.speechSynthesis === 'undefined' ? 'disabled' : '';
     const selectedClass = panelState.selectedToken === token ? 'selected' : '';
     items.push(`
       <li class="voice-token-item ${selectedClass}">
@@ -363,6 +402,10 @@ function renderProfileCloneSection(contextToken = null) {
   );
   const canClone = hasProfileRecording && totalWords >= PROFILE_CLONE_WORD_THRESHOLD;
   const wordsRemaining = Math.max(0, PROFILE_CLONE_WORD_THRESHOLD - totalWords);
+  const mappedTokens = getMappedTokenCount();
+  const synthesisState = store.profileSynthesis || defaultProfileSynthesis();
+  const synthesisTokensRemaining = Math.max(0, PROFILE_SYNTHESIS_TOKEN_THRESHOLD - mappedTokens);
+  const canSynthesize = mappedTokens >= PROFILE_SYNTHESIS_TOKEN_THRESHOLD;
   let requirementMessage = '';
   if (!hasProfileRecording) {
     requirementMessage = 'Set a recording as your voice profile to unlock cloning.';
@@ -376,15 +419,23 @@ function renderProfileCloneSection(contextToken = null) {
     requirementMessage = `Record ${wordsRemaining} more word${wordsRemaining === 1 ? '' : 's'} to unlock cloning.`;
   }
 
+  const synthesisRequirementMessage = canSynthesize
+    ? synthesisState?.available
+      ? 'Re-synthesize your mapped tokens whenever you capture new material to refresh the generated preview.'
+      : 'Synthesize your mapped tokens to enable the generated preview on every token.'
+    : `Map ${synthesisTokensRemaining} more token${synthesisTokensRemaining === 1 ? '' : 's'} to unlock synthesis.`;
+
   const buttonLabel = clone ? 'Re-clone voice profile' : 'Clone voice profile';
   const cloneButtonDisabled = canClone ? '' : 'disabled';
   const previewDisabled = clone ? '' : 'disabled';
   const attachDisabled = clone ? '' : 'disabled';
   const attachLabel = clone?.attached ? 'Detach from HLSF export' : 'Attach to HLSF export';
   const tokenAttr = contextToken ? ` data-token="${escapeAttr(contextToken)}"` : '';
+  const synthesisButtonDisabled = canSynthesize ? '' : 'disabled';
 
   const summaryParts = [
     `<div><strong>Captured words:</strong> ${escapeHtml(String(totalWords))}</div>`,
+    `<div><strong>Tokens mapped:</strong> ${escapeHtml(String(mappedTokens))} / ${PROFILE_SYNTHESIS_TOKEN_THRESHOLD}</div>`,
   ];
   if (clone) {
     const created = clone.createdAt && !Number.isNaN(Date.parse(clone.createdAt))
@@ -394,6 +445,14 @@ function renderProfileCloneSection(contextToken = null) {
       summaryParts.push(`<div><strong>Cloned:</strong> ${escapeHtml(created)}</div>`);
     }
     summaryParts.push(`<div><strong>Offline export:</strong> ${escapeHtml(clone.attached ? 'Attached' : 'Detached')}</div>`);
+  }
+  if (synthesisState?.available && clone) {
+    const synthesized = synthesisState.synthesizedAt && !Number.isNaN(Date.parse(synthesisState.synthesizedAt))
+      ? new Date(synthesisState.synthesizedAt).toLocaleString()
+      : 'Ready';
+    summaryParts.push(
+      `<div><strong>Synthesized:</strong> ${escapeHtml(synthesized)} (${escapeHtml(String(synthesisState.tokenCount || 0))} tokens)</div>`
+    );
   }
 
   let divergenceMarkup = '';
@@ -440,8 +499,10 @@ function renderProfileCloneSection(contextToken = null) {
         ${summaryParts.join('')}
       </div>
       <p class="voice-clone-requirement">${escapeHtml(requirementMessage)}</p>
+      <p class="voice-clone-requirement">${escapeHtml(synthesisRequirementMessage)}</p>
       <div class="voice-clone-actions">
         <button type="button" data-action="clone-profile" ${cloneButtonDisabled}>${escapeHtml(buttonLabel)}</button>
+        <button type="button" data-action="synthesize-profile" ${synthesisButtonDisabled}>Synthesize voice profile</button>
         <button type="button" data-action="play-clone"${tokenAttr} ${previewDisabled}>Preview cloned profile</button>
         <button type="button" data-action="toggle-clone-attachment" ${attachDisabled}>${escapeHtml(attachLabel)}</button>
       </div>
@@ -468,7 +529,8 @@ function renderTokenDetail() {
   const clone = getValidProfileClone();
   const recCount = recordings.length;
   const recordingLabel = recCount === 1 ? '1 recording' : `${recCount} recordings`;
-  const ttsDisabled = typeof window.speechSynthesis === 'undefined';
+  const usingSynthPreview = hasSynthesizedVoiceProfile();
+  const ttsDisabled = !usingSynthPreview && typeof window.speechSynthesis === 'undefined';
   const assignedMarkup = assignedRecording
     ? renderAssignedBlock(assignedRecording)
     : '<div class="voice-assigned-block"><em>No voice mapped to this token yet.</em></div>';
@@ -480,6 +542,7 @@ function renderTokenDetail() {
   const recordBtnLabel = panelState.isRecording ? 'Recording…' : 'Record new iteration';
   const stopButton = panelState.isRecording ? '<button type="button" data-action="stop-recording">Stop recording</button>' : '';
   const assignedButtonLabel = assignedRecording ? 'Play assigned voice' : clone ? 'Play cloned voice' : 'Play assigned voice';
+  const ttsButtonLabel = usingSynthPreview ? 'Play synthesized preview' : 'Play TTS preview';
 
   const profileSection = renderProfileCloneSection(token);
   elements.detail.innerHTML = `
@@ -491,7 +554,7 @@ function renderTokenDetail() {
       <button type="button" data-action="start-recording" ${panelState.isRecording ? 'disabled' : ''}>${escapeHtml(recordBtnLabel)}</button>
       ${stopButton}
       <button type="button" data-action="play-assigned" ${assignedRecording || clone ? '' : 'disabled'} data-recording-id="${assignedRecording ? escapeAttr(assignedRecording.id) : ''}">${escapeHtml(assignedButtonLabel)}</button>
-      <button type="button" data-action="play-tts" ${ttsDisabled ? 'disabled' : ''}>Play TTS preview</button>
+      <button type="button" data-action="play-tts" ${ttsDisabled ? 'disabled' : ''}>${escapeHtml(ttsButtonLabel)}</button>
     </div>
     ${panelState.isRecording ? `<div class="voice-live-transcript" data-role="live-transcript">${escapeHtml(panelState.activeTranscript || 'Listening…')}</div>` : ''}
     <div class="voice-voice-settings">
@@ -550,6 +613,29 @@ function cloneVoiceProfile() {
   store.profileClone = clone;
   saveVoiceStore();
   setStatus('Voice profile cloned. Preview it on any token or attach it to offline exports.', 'success');
+  renderTokenList();
+  renderTokenDetail();
+}
+
+function synthesizeVoiceProfile() {
+  const mappedTokens = getMappedTokenCount();
+  if (mappedTokens < PROFILE_SYNTHESIS_TOKEN_THRESHOLD) {
+    const needed = PROFILE_SYNTHESIS_TOKEN_THRESHOLD - mappedTokens;
+    setStatus(`Map ${needed} more token${needed === 1 ? '' : 's'} before synthesizing your voice profile.`, 'warning');
+    return;
+  }
+  const clone = getValidProfileClone();
+  if (!clone) {
+    setStatus('Clone your voice profile before synthesizing it.', 'warning');
+    return;
+  }
+  store.profileSynthesis = {
+    available: true,
+    synthesizedAt: new Date().toISOString(),
+    tokenCount: mappedTokens,
+  };
+  saveVoiceStore();
+  setStatus('Voice profile synthesized. TTS preview now uses the generated voice.', 'success');
   renderTokenList();
   renderTokenDetail();
 }
@@ -737,6 +823,11 @@ function playRecordingById(recordingId) {
 }
 
 function playTokenTts(token) {
+  if (hasSynthesizedVoiceProfile()) {
+    playProfileClone(token);
+    setStatus('Playing synthesized voice profile preview.', 'info');
+    return;
+  }
   if (typeof window.speechSynthesis === 'undefined') {
     setStatus('Speech synthesis is not available in this browser.', 'error');
     return;
@@ -827,6 +918,9 @@ function handleDetailClick(event) {
       break;
     case 'play-tts':
       playTokenTts(panelState.selectedToken);
+      break;
+    case 'synthesize-profile':
+      synthesizeVoiceProfile();
       break;
     case 'play-recording':
       playRecordingById(recordingId);
