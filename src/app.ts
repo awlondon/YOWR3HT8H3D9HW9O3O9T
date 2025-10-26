@@ -3,6 +3,7 @@ import { SETTINGS } from './settings';
 import { runPipeline } from './engine/pipeline';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
+import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './export/modelParams';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -8852,7 +8853,7 @@ function showDatabaseMetadata() {
   `);
 }
 
-function exportDatabaseMetadata() {
+function exportDatabaseMetadata(args = []) {
   const metadata = analyzeDatabaseMetadata();
   const dbStats = Object.assign({
     tokens: metadata.totalTokens,
@@ -8891,6 +8892,62 @@ function exportDatabaseMetadata() {
       return promptRecord;
     })
     .filter(Boolean);
+
+  const relationTypeCount = Array.isArray(metadata.relHistogramRows) ? metadata.relHistogramRows.length : null;
+  const cliArgs = Array.isArray(args) ? args : [];
+  const parseResult = resolveModelParamConfig(window.HLSF?.modelParamConfig || MODEL_PARAM_DEFAULTS, cliArgs, {
+    relationTypeCount,
+  });
+  const layoutSnapshot = window.HLSF?.currentLayoutSnapshot || null;
+  const resolvedConfig = Object.assign({}, parseResult.config);
+  if (layoutSnapshot && typeof layoutSnapshot === 'object') {
+    if (!parseResult.modified?.D && Number.isFinite(layoutSnapshot.dimension) && layoutSnapshot.dimension > 0) {
+      resolvedConfig.D = Math.round(layoutSnapshot.dimension);
+    }
+    if (!parseResult.modified?.levels && Number.isFinite(layoutSnapshot.levelCount) && layoutSnapshot.levelCount >= 0) {
+      resolvedConfig.levels = Math.round(layoutSnapshot.levelCount);
+    }
+    if (
+      !parseResult.modified?.last_level_components &&
+      Number.isFinite(layoutSnapshot.lastLevelComponents) &&
+      layoutSnapshot.lastLevelComponents >= 0
+    ) {
+      resolvedConfig.last_level_components = Math.round(layoutSnapshot.lastLevelComponents);
+    }
+  }
+
+  window.HLSF = window.HLSF || {};
+  window.HLSF.modelParamConfig = resolvedConfig;
+
+  const modelParams = computeModelParameters(
+    {
+      graph_nodes: dbStats.nodes,
+      anchors: dbStats.anchors,
+      edge_types_enumerated: dbStats.edges,
+      total_relationships: dbStats.relationships,
+      relation_types: relationTypeCount ?? undefined,
+    },
+    resolvedConfig,
+    {
+      fallbackRelationTypeCount: relationTypeCount ?? undefined,
+      assumptions: parseResult.assumptions,
+    }
+  );
+
+  if (parseResult.warnings && parseResult.warnings.length) {
+    for (const msg of parseResult.warnings) {
+      if (msg) logWarning(msg);
+    }
+  }
+  if (parseResult.preset) {
+    logStatus(`Model parameter preset: ${parseResult.preset}`);
+  }
+
+  const dimensionStats = {
+    D: resolvedConfig.D,
+    levels: resolvedConfig.levels,
+    last_level_components: resolvedConfig.last_level_components,
+  };
 
   const exportData = {
     export_timestamp: new Date().toISOString(),
@@ -8932,7 +8989,10 @@ function exportDatabaseMetadata() {
       session_token_count: sessionTokenCount,
       session_tokens_cached: metadata.cachedSessionTokens || 0,
       session_token_coverage_ratio: Number(coverageRatio.toFixed(3)),
-      session_token_coverage_percent: coveragePercent
+      session_token_coverage_percent: coveragePercent,
+      D: dimensionStats.D,
+      levels: dimensionStats.levels,
+      last_level_components: dimensionStats.last_level_components,
     },
     relationship_distribution: Object.fromEntries(metadata.topRelationships),
     relationship_distribution_named: Object.fromEntries(metadata.topRelationships.map(([glyph, count]) => [relDisplay(glyph), count])),
@@ -8954,6 +9014,11 @@ function exportDatabaseMetadata() {
     full_token_data: metadata.rawData,
     user_prompts: promptsForExport
   };
+
+  exportData.model_params = modelParams;
+  if (modelParams?.total_parameters != null) {
+    logStatus(`Model parameter accounting → ${modelParams.total_parameters.toLocaleString()} parameters`);
+  }
 
   try {
     const recorder = window.HLSF?.remoteDbRecorder;
@@ -8979,7 +9044,8 @@ function exportDatabaseMetadata() {
     console.warn('Remote DB export snapshot failed:', err);
   }
 
-  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const serialized = JSON.stringify(exportData, null, 2);
+  const blob = new Blob([serialized], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -8989,7 +9055,11 @@ function exportDatabaseMetadata() {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 
-  logOK(`Database metadata exported: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships, ${(new Blob([JSON.stringify(exportData)]).size / 1024).toFixed(1)}KB`);
+  const approxSizeKb = (blob.size / 1024).toFixed(1);
+  const totalParamDisplay = modelParams?.total_parameters != null
+    ? modelParams.total_parameters.toLocaleString()
+    : '0';
+  logOK(`Database metadata exported: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships, ${approxSizeKb}KB, model parameters ${totalParamDisplay}`);
 }
 
 async function importHLSFDBFromFile(file) {
@@ -11294,7 +11364,7 @@ async function handleCommand(cmd) {
       showDatabaseMetadata();
       break;
     case 'export':
-      exportDatabaseMetadata();
+      exportDatabaseMetadata(args);
       break;
     case 'glyph':
       cmdGlyph(args.join(' '));
