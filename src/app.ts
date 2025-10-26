@@ -6283,6 +6283,13 @@ function registerPromptReview(promptId, tokenMap, matrices) {
     summaryElement: entry.querySelector(`[data-prompt-summary="${cssEscape(promptId)}"]`),
   };
   promptReviewStore.set(promptId, review);
+  if (review.tokens.size) {
+    try {
+      removeTokensFromCache(Array.from(review.tokens.values()));
+    } catch (err) {
+      console.warn('Failed to stage prompt review tokens:', err);
+    }
+  }
   updatePromptReviewSummary(review);
   setPromptReviewStatus(review, 'Review changes before committing.', 'info');
 }
@@ -6312,26 +6319,12 @@ function savePromptReviewEdits(review) {
     normalizedEntries.push(Object.assign({}, normalized, { token }));
   }
 
-  const previousTokens = Array.from(review.tokens.keys());
-  const removedTokens = previousTokens
-    .filter(key => !newTokenMap.has(key))
-    .map(key => review.tokens.get(key))
-    .filter(Boolean);
-  if (removedTokens.length) {
-    removeTokensFromCache(removedTokens);
-  }
-
-  for (const normalized of normalizedEntries) {
-    saveToCache(normalized.token, normalized, { deferReload: true });
-  }
-
   review.tokens = newTokenMap;
   review.adjacency = new Map(normalizedEntries.map(record => [record.token.toLowerCase(), record]));
   review.serialized = JSON.stringify(normalizedEntries, null, 2);
   if (review.textarea) review.textarea.value = review.serialized;
   updatePromptReviewSummary(review);
-  setPromptReviewStatus(review, 'Edits saved to cache.', 'success');
-  notifyHlsfAdjacencyChange('manual-cache');
+  setPromptReviewStatus(review, 'Edits staged. Approve to commit.', 'success');
   return true;
 }
 
@@ -6353,7 +6346,29 @@ function finalizePromptReview(review, message, tone = 'info') {
 }
 
 function approvePromptReview(review) {
-  finalizePromptReview(review, 'Changes committed to database.', 'success');
+  if (!review) return;
+  const entries = Array.from(review.adjacency.values()).filter(Boolean);
+  if (!entries.length) {
+    finalizePromptReview(review, 'No staged adjacency updates to commit.', 'info');
+    logWarning('Prompt review approved without staged updates.');
+    return;
+  }
+
+  let committed = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (!entry || !entry.token) continue;
+    saveToCache(entry.token, entry, { deferReload: i < entries.length - 1 });
+    committed += 1;
+  }
+
+  if (committed > 0) {
+    commitTokens(entries.map(entry => entry.token), { render: false });
+    notifyHlsfAdjacencyChange('prompt-review-approve');
+    rebuildLiveGraph();
+  }
+
+  finalizePromptReview(review, `Committed ${committed} token${committed === 1 ? '' : 's'} to database.`, 'success');
   logOK('Adjacency updates committed to database.');
 }
 
