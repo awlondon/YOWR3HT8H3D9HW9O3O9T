@@ -4,6 +4,7 @@ import { runPipeline } from './engine/pipeline';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
 import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './export/modelParams';
+import { initializeVoiceClonePanel, signalVoiceCloneTokensChanged } from './voice/voiceClone';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -3736,6 +3737,7 @@ function announceDatabaseReady(reason = 'unknown') {
       console.warn('Failed to dispatch database-ready event:', err);
     }
   }
+  signalVoiceCloneTokensChanged('database-ready');
 }
 
 function loadDbObject(dbLike, options = {}) {
@@ -6165,6 +6167,7 @@ function saveToCache(token, data, options = {}) {
     updateTokenIndex(recordToken);
     if (!wasCached) CacheBatch.record(recordToken);
     refreshDbReference(payloadData, { deferReload });
+    signalVoiceCloneTokensChanged('token-cached');
   } catch (err) {
     if (err.name === 'QuotaExceededError') {
       logWarning('Cache full. Use /reset to clear old data.');
@@ -6176,6 +6179,7 @@ window.CognitionEngine.cache = {
   get: getFromCache,
   set: saveToCache,
   key: getCacheKey,
+  list: listCachedTokens,
 };
 
 function removeTokensFromCache(tokens) {
@@ -6245,6 +6249,9 @@ function removeTokensFromCache(tokens) {
   }
   updateHeaderCounts();
   queueLiveGraphUpdate(80);
+  if (removed > 0) {
+    signalVoiceCloneTokensChanged('token-removed');
+  }
   return removed;
 }
 
@@ -13451,6 +13458,7 @@ async function initialize() {
     announceDatabaseReady('startup');
   }
 
+  initializeVoiceClonePanel();
   elements.input.focus();
 }
 

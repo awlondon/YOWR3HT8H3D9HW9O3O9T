@@ -311,6 +311,415 @@
       color: var(--success);
     }
 
+    /* ================================ */
+    /* Voice Clone Studio               */
+    /* ================================ */
+
+    .voice-panel {
+      margin-top: 1.5rem;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid #222;
+      border-radius: 12px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      box-shadow: 0 0 24px rgba(0, 255, 136, 0.08);
+    }
+
+    .voice-panel-description {
+      margin: 0;
+      font-size: 0.9rem;
+      opacity: 0.75;
+      line-height: 1.5;
+    }
+
+    .voice-panel-controls {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .voice-panel-controls input[type="search"] {
+      flex: 1;
+      min-width: 220px;
+      padding: 0.6rem 0.8rem;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.95rem;
+      transition: border 0.2s ease;
+    }
+
+    .voice-panel-controls input[type="search"]:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.18);
+    }
+
+    .btn-compact {
+      padding: 0.55rem 0.9rem;
+      font-size: 0.85rem;
+    }
+
+    .voice-panel-columns {
+      display: grid;
+      grid-template-columns: minmax(240px, 0.9fr) minmax(320px, 1.1fr);
+      gap: 1rem;
+    }
+
+    @media (max-width: 960px) {
+      .voice-panel-columns {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .voice-token-column,
+    .voice-detail-column {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid #1d1d1d;
+      border-radius: 12px;
+      padding: 0.75rem;
+      min-height: 260px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .voice-token-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      max-height: 420px;
+      overflow-y: auto;
+    }
+
+    .voice-token-list::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .voice-token-list::-webkit-scrollbar-thumb {
+      background: var(--scrollbar);
+      border-radius: 8px;
+    }
+
+    .voice-token-item {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.55rem 0.65rem;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid transparent;
+      transition: border 0.15s ease, background 0.15s ease;
+    }
+
+    .voice-token-item:hover {
+      border-color: rgba(0, 255, 136, 0.35);
+      background: rgba(0, 255, 136, 0.08);
+    }
+
+    .voice-token-item.selected {
+      border-color: var(--accent);
+      box-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+    }
+
+    .voice-token-name {
+      text-align: left;
+      background: none;
+      border: none;
+      color: var(--text);
+      font-size: 0.95rem;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .voice-token-name:hover,
+    .voice-token-name:focus {
+      color: var(--accent);
+      outline: none;
+    }
+
+    .voice-token-meta {
+      font-size: 0.75rem;
+      opacity: 0.65;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .voice-token-actions {
+      display: flex;
+      gap: 0.35rem;
+    }
+
+    .voice-token-actions button {
+      background: #1f1f1f;
+      border: 1px solid #2c2c2c;
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.75rem;
+      padding: 0.35rem 0.5rem;
+      cursor: pointer;
+      transition: border 0.15s ease, transform 0.15s ease;
+    }
+
+    .voice-token-actions button:hover:not(:disabled) {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .voice-token-actions button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .voice-status-message {
+      min-height: 1.25rem;
+      font-size: 0.85rem;
+      opacity: 0.85;
+    }
+
+    .voice-status-message.success { color: var(--success); }
+    .voice-status-message.warning { color: var(--warning); }
+    .voice-status-message.error { color: var(--error); }
+    .voice-status-message.info { color: var(--accent); }
+
+    .voice-token-detail {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .voice-detail-placeholder {
+      margin: 0;
+      opacity: 0.7;
+      font-size: 0.95rem;
+    }
+
+    .voice-detail-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .voice-detail-header h3 {
+      margin: 0;
+      font-size: 1.1rem;
+      color: var(--accent);
+    }
+
+    .voice-iteration-count {
+      font-size: 0.75rem;
+      opacity: 0.6;
+    }
+
+    .voice-detail-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .voice-detail-actions button {
+      background: #1f1f1f;
+      border: 1px solid #2e2e2e;
+      border-radius: 8px;
+      color: var(--text);
+      padding: 0.55rem 0.85rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: border 0.15s ease, transform 0.15s ease;
+    }
+
+    .voice-detail-actions button:hover:not(:disabled) {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .voice-detail-actions button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .voice-live-transcript {
+      font-size: 0.85rem;
+      opacity: 0.75;
+      border-left: 2px solid rgba(0, 255, 136, 0.4);
+      padding-left: 0.6rem;
+    }
+
+    .voice-voice-settings {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid #1f1f1f;
+      border-radius: 10px;
+      padding: 0.75rem;
+      display: grid;
+      gap: 0.6rem;
+    }
+
+    .voice-voice-settings select,
+    .voice-voice-settings input[type="range"] {
+      width: 100%;
+    }
+
+    .voice-voice-settings label {
+      font-size: 0.8rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .voice-voice-settings select {
+      background: #121212;
+      border: 1px solid #2e2e2e;
+      border-radius: 8px;
+      color: var(--text);
+      padding: 0.45rem 0.6rem;
+      font-size: 0.85rem;
+    }
+
+    .voice-assigned-block {
+      background: rgba(0, 255, 136, 0.05);
+      border: 1px solid rgba(0, 255, 136, 0.2);
+      border-radius: 10px;
+      padding: 0.75rem;
+      display: grid;
+      gap: 0.45rem;
+    }
+
+    .voice-assigned-block .voice-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      opacity: 0.8;
+    }
+
+    .voice-assigned-block .voice-tags span {
+      background: rgba(0, 0, 0, 0.35);
+      padding: 0.2rem 0.4rem;
+      border-radius: 6px;
+      border: 1px solid rgba(0, 255, 136, 0.25);
+    }
+
+    .voice-recordings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      max-height: 360px;
+      overflow-y: auto;
+      padding-right: 0.25rem;
+    }
+
+    .voice-recordings-list::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .voice-recordings-list::-webkit-scrollbar-thumb {
+      background: var(--scrollbar);
+      border-radius: 8px;
+    }
+
+    .voice-recording-card {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid #1f1f1f;
+      border-radius: 10px;
+      padding: 0.75rem;
+      display: grid;
+      gap: 0.6rem;
+    }
+
+    .voice-recording-card.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+    }
+
+    .voice-recording-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    .voice-recording-header .badge {
+      background: rgba(0, 255, 136, 0.18);
+      border: 1px solid rgba(0, 255, 136, 0.5);
+      border-radius: 6px;
+      padding: 0.15rem 0.4rem;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .voice-recording-meta {
+      font-size: 0.8rem;
+      line-height: 1.5;
+      opacity: 0.85;
+    }
+
+    .voice-recording-meta strong {
+      color: var(--accent);
+    }
+
+    .voice-recording-editor,
+    .voice-recording-assign {
+      display: grid;
+      gap: 0.35rem;
+      font-size: 0.8rem;
+    }
+
+    .voice-recording-editor input,
+    .voice-recording-assign textarea {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid #2b2b2b;
+      border-radius: 8px;
+      color: var(--text);
+      padding: 0.45rem 0.6rem;
+      font-size: 0.85rem;
+    }
+
+    .voice-recording-assign textarea {
+      resize: vertical;
+      min-height: 48px;
+    }
+
+    .voice-recording-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .voice-recording-actions button {
+      background: #1a1a1a;
+      border: 1px solid #292929;
+      border-radius: 6px;
+      color: var(--text);
+      padding: 0.4rem 0.65rem;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: border 0.15s ease, transform 0.15s ease;
+    }
+
+    .voice-recording-actions button:hover:not(:disabled) {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .voice-recording-actions button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
     details {
       background: rgba(255, 255, 255, 0.02);
       border: 1px solid #222;
