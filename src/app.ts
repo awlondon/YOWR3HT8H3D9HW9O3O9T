@@ -7195,6 +7195,27 @@ async function batchFetchAdjacencies(tokens, context, label) {
   }
 }
 
+function formatTokenList(tokens, limit = 12) {
+  const unique = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(tokens) ? tokens : []) {
+    if (!entry) continue;
+    const value = String(entry).trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+  }
+
+  if (!unique.length) return '';
+
+  const capped = unique.slice(0, Math.max(1, limit));
+  const extra = unique.length - capped.length;
+  const base = capped.join(', ');
+  return extra > 0 ? `${base} +${extra} more` : base;
+}
+
 function limitAdjacencyEntryEdges(entry, maxEdges) {
   if (!entry || typeof entry !== 'object') return entry;
   const limit = Number.isFinite(maxEdges) && maxEdges > 0 ? Math.floor(maxEdges) : 0;
@@ -7253,7 +7274,9 @@ function collectNeighborCandidates(entry) {
 async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
   CacheBatch.begin();
   try {
-    const normalized = normalizeAdjacencyInputs(tokens);
+    const normalized = Array.isArray(options.normalizedSeeds)
+      ? options.normalizedSeeds
+      : normalizeAdjacencyInputs(tokens);
     const depth = Number.isFinite(options.depth) && options.depth > 0
       ? Math.floor(options.depth)
       : CONFIG.ADJACENCY_RECURSION_DEPTH;
@@ -7261,6 +7284,11 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       ? Math.floor(options.edgesPerLevel)
       : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
     const onTokenLoaded = typeof options.onTokenLoaded === 'function' ? options.onTokenLoaded : null;
+    const preferDb = options.preferDb === true;
+    const dbRecordIndex = preferDb && options.dbRecordIndex instanceof Map
+      ? options.dbRecordIndex
+      : null;
+    const remoteDb = preferDb ? window.HLSF?.remoteDb : null;
 
     const queue = [];
     const enqueued = new Set();
@@ -7275,6 +7303,10 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
 
     const visited = new Set();
     const results = new Map();
+    const cacheHitTokens = new Set();
+    const llmGeneratedTokens = new Set();
+    const offlineTokens = new Set();
+    const errorTokens = new Set();
     const stats = {
       seedCount: queue.length,
       depth,
@@ -7324,6 +7356,27 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
           symbol: { cat: current.entry.cat || null },
         };
       } else {
+        if (preferDb && !isTokenCached(token)) {
+          let staged = false;
+          const key = token.toLowerCase();
+          if (!staged && dbRecordIndex && dbRecordIndex.has(key)) {
+            const record = dbRecordIndex.get(key);
+            if (record && record.relationships && Object.keys(record.relationships).length) {
+              staged = stageDbRecordForCache(record) || staged;
+            }
+          }
+          if (!staged && remoteDb && typeof remoteDb.isReady === 'function' && remoteDb.isReady()
+            && typeof remoteDb.preloadTokens === 'function') {
+            try {
+              const preloadStats = await remoteDb.preloadTokens([token]);
+              if (preloadStats && (Number(preloadStats.loaded) > 0 || Number(preloadStats.hits) > 0)) {
+                staged = true;
+              }
+            } catch (err) {
+              console.warn('Remote DB preload failed during recursion for', token, err);
+            }
+          }
+        }
         result = await fetchAdjacency(current.entry, context);
         stats.fetchCount += 1;
         if (result && result.cache_hit === false && !result.offline) {
@@ -7332,6 +7385,15 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       }
 
       if (result && result.token) {
+        if (result.cache_hit) {
+          cacheHitTokens.add(result.token);
+        } else if (result.offline) {
+          offlineTokens.add(result.token);
+        } else if (result.error) {
+          errorTokens.add(result.token);
+        } else {
+          llmGeneratedTokens.add(result.token);
+        }
         const limited = limitAdjacencyEntryEdges(result, edgesPerLevel);
         results.set(limited.token, limited);
         if (onTokenLoaded) {
@@ -7380,6 +7442,12 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
         connectivity,
       },
       connectivity,
+      provenance: {
+        cacheHits: Array.from(cacheHitTokens),
+        llmGenerated: Array.from(llmGeneratedTokens),
+        offline: Array.from(offlineTokens),
+        errors: Array.from(errorTokens),
+      },
     };
   } finally {
     CacheBatch.end();
@@ -9730,6 +9798,34 @@ function dbIndex() {
   return idx;
 }
 
+function buildDbRecordIndexMap() {
+  const map = new Map();
+  const db = getDb();
+  if (!db?.full_token_data) return map;
+  for (const record of db.full_token_data) {
+    if (!record || !record.token) continue;
+    const token = String(record.token).trim();
+    if (!token) continue;
+    map.set(token.toLowerCase(), record);
+  }
+  return map;
+}
+
+function stageDbRecordForCache(record) {
+  if (!record || !record.token) return false;
+  try {
+    const cacheKey = getCacheKey(record.token);
+    if (isTokenCached(record.token) || memoryStorageFallback.has(cacheKey)) return true;
+    const payload = JSON.stringify(Object.assign({ token: record.token }, record));
+    memoryStorageFallback.set(cacheKey, payload);
+    CacheBatch.record(record.token);
+    return true;
+  } catch (err) {
+    console.warn('Failed to stage database record for cache:', err);
+    return false;
+  }
+}
+
 const DbLexicon = (() => {
   let cache = null;
 
@@ -11989,6 +12085,51 @@ async function processPrompt(prompt) {
     </div>`);
 
     const inputAdjTokens = collectSymbolAwareTokens(normalizedPrompt, tokens, 'prompt-input');
+    const normalizedSeeds = normalizeAdjacencyInputs(inputAdjTokens);
+    const dbRecordIndex = buildDbRecordIndexMap();
+    const remoteDbReady = window.HLSF?.remoteDb?.isReady?.() === true;
+    const preferDbHydration = remoteDbReady || dbRecordIndex.size > 0;
+    const dbSeedTokens = [];
+    const llmSeedTokens = [];
+
+    if (preferDbHydration) {
+      for (const seed of normalizedSeeds) {
+        if (!seed || seed.kind === 'sym') continue;
+        const rawToken = String(seed.token || '').trim();
+        if (!rawToken) continue;
+        const seedKey = rawToken.toLowerCase();
+        if (isTokenCached(rawToken)) {
+          dbSeedTokens.push(rawToken);
+          continue;
+        }
+
+        let hydrated = false;
+        if (dbRecordIndex.has(seedKey)) {
+          const record = dbRecordIndex.get(seedKey);
+          if (record && record.relationships && Object.keys(record.relationships).length) {
+            hydrated = stageDbRecordForCache(record);
+          }
+        }
+
+        if (hydrated) {
+          dbSeedTokens.push(rawToken);
+        } else {
+          llmSeedTokens.push(rawToken);
+        }
+      }
+    }
+
+    const dbSeedSummary = formatTokenList(dbSeedTokens);
+    if (dbSeedSummary) {
+      addLog(`<div class="adjacency-insight"><strong>📚 Database adjacencies ready:</strong> ${sanitize(dbSeedSummary)}</div>`);
+      notifyHlsfAdjacencyChange('prompt-db-seeds', { immediate: true });
+    }
+
+    const llmSeedSummary = formatTokenList(llmSeedTokens);
+    if (llmSeedSummary) {
+      addLog(`<div class="adjacency-insight"><strong>🤖 Awaiting LLM adjacency generation:</strong> ${sanitize(llmSeedSummary)}</div>`);
+    }
+
     const recursionResult = await fetchRecursiveAdjacencies(
       inputAdjTokens,
       normalizedPrompt,
@@ -11997,11 +12138,33 @@ async function processPrompt(prompt) {
         depth: CONFIG.ADJACENCY_RECURSION_DEPTH,
         edgesPerLevel: CONFIG.ADJACENCY_EDGES_PER_LEVEL,
         onTokenLoaded: () => queueLiveGraphUpdate(48),
+        preferDb: preferDbHydration,
+        dbRecordIndex,
+        normalizedSeeds,
       },
     );
 
     const inputMatrices = recursionResult.matrices;
     const recursionStats = recursionResult.stats || {};
+
+    const provenance = recursionResult.provenance || {};
+    const dbExpansionSummary = formatTokenList(provenance.cacheHits);
+    if (dbExpansionSummary) {
+      addLog(`<div class="adjacency-insight"><strong>📈 Database coverage:</strong> ${sanitize(dbExpansionSummary)}</div>`);
+      notifyHlsfAdjacencyChange('prompt-db-expansion', { immediate: true });
+    }
+
+    const llmExpansionSummary = formatTokenList(provenance.llmGenerated);
+    if (llmExpansionSummary) {
+      addLog(`<div class="adjacency-insight"><strong>🤖 LLM adjacency expansions:</strong> ${sanitize(llmExpansionSummary)}</div>`);
+    }
+
+    if (Array.isArray(provenance.offline) && provenance.offline.length) {
+      const offlineSummary = formatTokenList(provenance.offline);
+      if (offlineSummary) {
+        addLog(`<div class="adjacency-insight"><strong>⚠️ Offline adjacencies skipped:</strong> ${sanitize(offlineSummary)}</div>`);
+      }
+    }
 
     const connectivitySummary = recursionStats.connectivity || recursionResult.connectivity || null;
     const summaryParts = [
