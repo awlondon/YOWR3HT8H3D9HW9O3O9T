@@ -3710,6 +3710,7 @@ function loadDbObject(dbLike, options = {}) {
 
     const opts = options || {};
     const replace = opts.replace === true;
+    const skipVisualization = opts.skipVisualization === true;
     const now = new Date().toISOString();
 
     const existingDb = replace ? { full_token_data: [] } : (getDb() || { full_token_data: [] });
@@ -3758,15 +3759,17 @@ function loadDbObject(dbLike, options = {}) {
     window.HLSF.dbCache = out;
     state.liveGraphMode = false;
     markHlsfDataDirty();
-    if (typeof buildHLSFMatrices === 'function') {
-      try {
-        buildHLSFMatrices(out);
-      } catch (err) {
-        console.warn('Failed to rebuild HLSF matrices:', err);
+    if (!skipVisualization) {
+      if (typeof buildHLSFMatrices === 'function') {
+        try {
+          buildHLSFMatrices(out);
+        } catch (err) {
+          console.warn('Failed to rebuild HLSF matrices:', err);
+        }
       }
+      scheduleHlsfReload('load-db');
     }
     updateHeaderCounts();
-    scheduleHlsfReload('load-db');
     return clean.length;
   } finally {
     CacheBatch.end();
@@ -9648,8 +9651,9 @@ async function cmdImport() {
       const f = e.target.files?.[0];
       if (!f) return;
       const text = await f.text();
-      const n = loadDbObject(text);
+      const n = loadDbObject(text, { skipVisualization: true });
       logFinal(`DB loaded. Tokens: ${n}`);
+      await handleCommand('/db');
     } catch (err) {
       logError(String(err.message || err));
     } finally {
