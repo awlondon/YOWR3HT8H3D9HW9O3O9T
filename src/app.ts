@@ -2511,6 +2511,14 @@ function updateAffinityAnnotations(wrapper, threshold, iterations) {
   if (descEl) descEl.textContent = desc;
   const mechanicsEl = wrapper.querySelector('#hlsf-affinity-mechanics');
   if (mechanicsEl) mechanicsEl.textContent = mechanics;
+  const overlayName = wrapper.querySelector('#hlsf-overlay-mental-name');
+  if (overlayName) overlayName.textContent = name;
+  const overlayThreshold = wrapper.querySelector('#hlsf-overlay-threshold');
+  if (overlayThreshold)
+    overlayThreshold.textContent = Number.isFinite(threshold) ? Number(threshold).toFixed(2) : '—';
+  const overlayIterations = wrapper.querySelector('#hlsf-overlay-iterations');
+  if (overlayIterations)
+    overlayIterations.textContent = Number.isFinite(iterations) ? String(Math.round(iterations)) : '—';
   syncMentalStatePresetControl(wrapper, threshold, iterations);
 }
 
@@ -2553,6 +2561,33 @@ function ensureHLSFCanvas() {
         <div id="hlsf-loading-detail" class="hlsf-loading-detail">This can take a few seconds for large datasets.</div>
       </div>
       <canvas id="hlsf-canvas"></canvas>
+      <div class="hlsf-overlay" id="hlsf-overlay">
+        <button
+          id="hlsf-overlay-toggle"
+          class="hlsf-overlay-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="hlsf-overlay-panel"
+          title="Show affinity cognition details"
+        >
+          State
+        </button>
+        <div id="hlsf-overlay-panel" class="hlsf-overlay-panel" hidden>
+          <div class="hlsf-overlay-row">
+            <span class="hlsf-overlay-label">Mental state</span>
+            <span id="hlsf-overlay-mental-name" class="hlsf-overlay-value">Focused yet flexible attention</span>
+          </div>
+          <div class="hlsf-overlay-divider"></div>
+          <div class="hlsf-overlay-row">
+            <span class="hlsf-overlay-label">Affinity threshold</span>
+            <span id="hlsf-overlay-threshold" class="hlsf-overlay-value">0.35</span>
+          </div>
+          <div class="hlsf-overlay-row">
+            <span class="hlsf-overlay-label">Affinity iterations</span>
+            <span id="hlsf-overlay-iterations" class="hlsf-overlay-value">8</span>
+          </div>
+        </div>
+      </div>
       <div class="hlsf-controls">
         <div class="hlsf-control-group">
           <label for="hlsf-rotation-speed">Emergent rotation speed <span id="hlsf-speed-val">0.00</span></label>
@@ -2688,6 +2723,21 @@ function bindHlsfControls(wrapper) {
   if (canvas) {
     window.HLSF.canvas = canvas;
     window.HLSF.ctx = canvas.getContext('2d');
+  }
+
+  const overlay = wrapper.querySelector('#hlsf-overlay');
+  const overlayToggle = wrapper.querySelector('#hlsf-overlay-toggle');
+  const overlayPanel = wrapper.querySelector('#hlsf-overlay-panel');
+  if (overlayToggle && overlayPanel) {
+    overlayToggle.addEventListener('click', () => {
+      const expanded = overlayToggle.getAttribute('aria-expanded') === 'true';
+      const next = !expanded;
+      overlayToggle.setAttribute('aria-expanded', String(next));
+      overlayPanel.hidden = !next;
+      overlayToggle.classList.toggle('is-active', next);
+      if (overlay) overlay.classList.toggle('open', next);
+      wrapper.classList.toggle('hlsf-overlay-open', next);
+    });
   }
 
   const scopeSelect = wrapper.querySelector('#hlsf-scope');

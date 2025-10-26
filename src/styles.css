@@ -308,6 +308,103 @@
       cursor: grab;
     }
 
+    .hlsf-overlay {
+      position: absolute;
+      bottom: 1.25rem;
+      right: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.5rem;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    .hlsf-overlay > * {
+      pointer-events: auto;
+    }
+
+    .hlsf-overlay-toggle {
+      background: rgba(0, 0, 0, 0.35);
+      color: var(--accent);
+      border: 1px solid rgba(0, 255, 136, 0.25);
+      border-radius: 999px;
+      padding: 0.25rem 0.75rem;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0.75;
+      cursor: pointer;
+      transition: opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+    }
+
+    .hlsf-overlay-toggle:hover,
+    .hlsf-overlay-toggle:focus-visible {
+      opacity: 1;
+      background: rgba(0, 0, 0, 0.55);
+      border-color: rgba(0, 255, 136, 0.45);
+      outline: none;
+    }
+
+    .hlsf-overlay-toggle.is-active {
+      opacity: 1;
+      background: rgba(0, 0, 0, 0.6);
+      border-color: rgba(0, 255, 136, 0.55);
+    }
+
+    .hlsf-overlay-panel {
+      min-width: 220px;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(0, 255, 136, 0.25);
+      border-radius: 12px;
+      padding: 0.85rem 1rem;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      font-size: 0.75rem;
+    }
+
+    .hlsf-overlay.open #hlsf-overlay-panel {
+      animation: hlsf-overlay-in 160ms ease-out;
+    }
+
+    .hlsf-overlay-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      align-items: baseline;
+    }
+
+    .hlsf-overlay-label {
+      font-weight: 500;
+      opacity: 0.75;
+    }
+
+    .hlsf-overlay-value {
+      font-weight: 600;
+      color: var(--accent);
+      text-align: right;
+    }
+
+    .hlsf-overlay-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0, 255, 136, 0.35), transparent);
+      border-radius: 999px;
+    }
+
+    @keyframes hlsf-overlay-in {
+      from {
+        transform: translateY(6px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
     #hlsf-canvas:active {
       cursor: grabbing;
     }
