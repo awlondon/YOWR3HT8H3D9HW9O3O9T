@@ -46,6 +46,12 @@ When prompted, enter an OpenAI API key (`sk-...`) to enable live calls. Selectin
 
 Run `python scripts/process_latest_db.py` to generate the chunked adjacency dataset from the latest export. Artifacts are written to `remote-db/` and include `metadata.json`, per-prefix chunks, and a sorted token index.
 
+## Prompt Workflow Highlights
+
+- **Database hand-off.** Loading or importing a database now surfaces the `/db` metadata view and `/help` command output instead of forcing a full HLSF redraw. This keeps the console responsive while still advertising the dataset contents.
+- **Context-first prompting.** The engine hydrates only the tokens and adjacencies mentioned in the active prompt, streaming them into the live graph as they arrive. Unknown tokens discovered mid-session animate in real time instead of waiting for a monolithic matrix build.
+- **Offline prompt review.** A review panel tracks newly cached tokens, lets you edit adjacency JSON via a ✏️ editor toggle, and exposes 👍/👎 actions so you can commit or discard offline explorations before they update the database.
+
 ## Documentation
 
 - [Architecture overview](docs/ARCHITECTURE.md)
