@@ -63,6 +63,8 @@ let activePlayback = null;
 let activeRecorder = null;
 const audioUrlCache = new Map();
 let sessionVoiceApplied = false;
+let scheduledTokenRefreshHandle = null;
+let scheduledTokenRefreshMode = null;
 
 function countWords(text) {
   if (!text) return 0;
@@ -246,6 +248,60 @@ function saveVoiceStore() {
     localStorage.setItem(STORAGE_KEY, payload);
   } catch (err) {
     console.warn('Unable to persist voice clone store:', err);
+  }
+}
+
+function clearScheduledTokenRefresh() {
+  if (scheduledTokenRefreshHandle == null) return;
+  try {
+    if (scheduledTokenRefreshMode === 'idle' && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(scheduledTokenRefreshHandle);
+    } else if (scheduledTokenRefreshMode === 'raf' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(scheduledTokenRefreshHandle);
+    } else {
+      clearTimeout(scheduledTokenRefreshHandle);
+    }
+  } catch {
+    // ignore cancellation errors
+  }
+  scheduledTokenRefreshHandle = null;
+  scheduledTokenRefreshMode = null;
+}
+
+function scheduleTokenRefresh(reason = 'unknown', options = {}) {
+  const { priority = 'normal' } = options || {};
+  pendingTokenRefresh = true;
+  if (scheduledTokenRefreshHandle != null && priority !== 'high') {
+    return;
+  }
+  if (scheduledTokenRefreshHandle != null && priority === 'high') {
+    clearScheduledTokenRefresh();
+  }
+
+  const runRefresh = () => {
+    scheduledTokenRefreshHandle = null;
+    scheduledTokenRefreshMode = null;
+    if (!panelReady) {
+      pendingTokenRefresh = true;
+      return;
+    }
+    try {
+      refreshTokens();
+    } catch (err) {
+      console.warn('Voice token refresh failed:', err, reason);
+    }
+  };
+
+  if (typeof window.requestIdleCallback === 'function') {
+    scheduledTokenRefreshHandle = window.requestIdleCallback(runRefresh, { timeout: priority === 'high' ? 100 : 250 });
+    scheduledTokenRefreshMode = 'idle';
+  } else if (typeof window.requestAnimationFrame === 'function') {
+    scheduledTokenRefreshHandle = window.requestAnimationFrame(() => runRefresh());
+    scheduledTokenRefreshMode = 'raf';
+  } else {
+    const delay = priority === 'high' ? 0 : 40;
+    scheduledTokenRefreshHandle = window.setTimeout(runRefresh, delay);
+    scheduledTokenRefreshMode = 'timeout';
   }
 }
 
@@ -1418,7 +1474,7 @@ function handleSearchInput(event) {
 }
 
 function signalVoiceCloneTokensChanged(reason = 'unknown') {
-  pendingTokenRefresh = true;
+  scheduleTokenRefresh(reason);
   try {
     if (typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
       window.dispatchEvent(new CustomEvent(TOKENS_CHANGED_EVENT, { detail: { reason } }));
@@ -1426,13 +1482,11 @@ function signalVoiceCloneTokensChanged(reason = 'unknown') {
   } catch {
     // ignore dispatch errors
   }
-  if (panelReady) {
-    refreshTokens();
-  }
 }
 
-function handleTokensChanged() {
-  refreshTokens();
+function handleTokensChanged(event) {
+  const reason = event?.detail?.reason || event?.type || 'unknown';
+  scheduleTokenRefresh(reason);
 }
 
 function initializeVoiceClonePanel() {
@@ -1452,7 +1506,7 @@ function initializeVoiceClonePanel() {
   recordingIndex = buildRecordingIndex();
 
   elements.search?.addEventListener('input', handleSearchInput);
-  elements.refresh?.addEventListener('click', () => refreshTokens());
+  elements.refresh?.addEventListener('click', () => scheduleTokenRefresh('manual-refresh', { priority: 'high' }));
   elements.tokenList?.addEventListener('click', handleTokenListClick);
   elements.detail?.addEventListener('click', handleDetailClick);
   elements.detail?.addEventListener('input', handleDetailInput);
@@ -1462,8 +1516,10 @@ function initializeVoiceClonePanel() {
     window.addEventListener(DATABASE_READY_EVENT, handleTokensChanged);
   }
 
+  clearScheduledTokenRefresh();
   refreshTokens();
   if (pendingTokenRefresh) {
+    clearScheduledTokenRefresh();
     refreshTokens();
     pendingTokenRefresh = false;
   }
@@ -1471,7 +1527,7 @@ function initializeVoiceClonePanel() {
   window.CognitionEngine = window.CognitionEngine || {};
   window.CognitionEngine.voice = Object.assign({}, window.CognitionEngine.voice || {}, {
     getStore: () => JSON.parse(JSON.stringify(store)),
-    refreshTokens,
+    refreshTokens: () => scheduleTokenRefresh('external-refresh', { priority: 'high' }),
     playToken: playAssignedForToken,
     playTts: playTokenTts,
     signalTokensChanged: signalVoiceCloneTokensChanged,
