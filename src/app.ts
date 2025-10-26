@@ -3556,8 +3556,11 @@ window.CognitionEngine.export.session = options => {
   const opts = options && typeof options === 'object' ? { ...options } : {};
   const extras = opts.extras && typeof opts.extras === 'object' ? { ...opts.extras } : {};
   try {
-    const clonePayload = window.CognitionEngine?.voice?.getProfileClone?.();
+    const voiceApi = window.CognitionEngine?.voice;
+    const clonePayload = voiceApi?.getProfileClone?.();
     if (clonePayload) extras.voiceProfileClone = clonePayload;
+    const profilePayload = voiceApi?.getProfileExport?.();
+    if (profilePayload) extras.voiceProfile = profilePayload;
   } catch (err) {
     console.warn('Unable to attach voice profile clone to session export:', err);
   }
