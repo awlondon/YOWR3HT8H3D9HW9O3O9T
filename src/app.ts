@@ -3359,6 +3359,7 @@ window.HLSF.config = Object.assign({
   nodeSize: 1,
   edgeColorMode: 'relation',
   showNodeGlow: false,
+  autoHlsfOnChange: existingConfig.autoHlsfOnChange === true,
   showAllAdjacencies: existingConfig.showAllAdjacencies === true,
   affinity: { threshold: 0.35, iterations: 8 },
 }, existingConfig);
@@ -3770,6 +3771,7 @@ function loadDbObject(dbLike, options = {}) {
       scheduleHlsfReload('load-db');
     }
     updateHeaderCounts();
+    announceDatabaseReady('load-db');
     return clean.length;
   } finally {
     CacheBatch.end();
@@ -3928,12 +3930,14 @@ const state = {
   tokenOrder: [],
   liveGraph: { nodes: new Map(), links: [] },
   liveGraphMode: true,
+  liveGraphUpdateTimer: null,
   documentCacheBaseline: 0,
   documentCacheBaselineManuallyCleared: false,
   networkOffline: false,
   networkErrorNotified: false,
   lastNetworkErrorTime: 0,
   lastComputedCacheBase: 0,
+  pendingPromptReviews: new Map(),
   symbolMetrics: {
     history: [],
     last: null,
@@ -3946,6 +3950,7 @@ const state = {
 
 state.hlsfReady = false;
 window.CognitionEngine.state = state;
+const promptReviewStore = state.pendingPromptReviews;
 syncSettings();
 
 let currentAbortController = null;
@@ -3976,6 +3981,14 @@ function sanitize(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function cssEscape(value) {
+  const str = value == null ? '' : String(value);
+  if (window.CSS && typeof window.CSS.escape === 'function') {
+    return window.CSS.escape(str);
+  }
+  return str.replace(/[^a-zA-Z0-9_\-]/g, ch => `\\${ch}`);
 }
 
 const ExternalLoaders = (() => {
@@ -4930,9 +4943,42 @@ function tokensFromCompletedInput(text) {
   return tokenize(portion);
 }
 
+let previewPreloadTimer = null;
+let lastPreviewPreloadKey = '';
+
+function schedulePreviewTokenPreload(tokens) {
+  const normalized = normalizeTokenList(tokens);
+  if (!normalized.length) {
+    lastPreviewPreloadKey = '';
+    if (previewPreloadTimer) {
+      clearTimeout(previewPreloadTimer);
+      previewPreloadTimer = null;
+    }
+    return;
+  }
+  const key = normalized.join('|');
+  if (key === lastPreviewPreloadKey) return;
+  lastPreviewPreloadKey = key;
+  if (previewPreloadTimer) {
+    clearTimeout(previewPreloadTimer);
+    previewPreloadTimer = null;
+  }
+  previewPreloadTimer = setTimeout(async () => {
+    previewPreloadTimer = null;
+    try {
+      if (window.HLSF?.remoteDb?.isReady?.() && typeof window.HLSF.remoteDb.preloadTokens === 'function') {
+        await window.HLSF.remoteDb.preloadTokens(normalized);
+      }
+    } catch (err) {
+      console.warn('Preview token preload failed:', err);
+    }
+  }, 180);
+}
+
 function handleLiveInputChange(text) {
   const previewTokens = tokensFromCompletedInput(text);
   setInputPreviewTokens(previewTokens);
+  schedulePreviewTokenPreload(previewTokens);
 }
 
 function commitInputTokensFromText(text) {
@@ -5208,7 +5254,22 @@ function scheduleHlsfReload(reason = 'cache-update', options = {}) {
 
 function notifyHlsfAdjacencyChange(reason = 'cache-update', options = {}) {
   markHlsfDataDirty();
-  scheduleHlsfReload(reason, options);
+  const shouldAutoReload = window.HLSF?.config?.autoHlsfOnChange === true;
+  if (shouldAutoReload) {
+    scheduleHlsfReload(reason, options);
+    return;
+  }
+  if (reason && typeof reason === 'string') {
+    if (reason.startsWith('prompt')) {
+      queueLiveGraphUpdate(60);
+      return;
+    }
+    if (reason === 'cache-update' || reason === 'manual-cache') {
+      queueLiveGraphUpdate(180);
+      return;
+    }
+  }
+  queueLiveGraphUpdate(200);
 }
 
 // ============================================
@@ -5573,7 +5634,7 @@ async function safeAsync(fn, errorMsg, options = null) {
 // CACHE BATCH TRACKING
 // ============================================
 const CacheBatch = (() => {
-  const tracker = { depth: 0, baseline: 0, pendingTokens: new Set() };
+  const tracker = { depth: 0, baseline: 0, pendingTokens: new Set(), listeners: new Set() };
 
   const normalizeCount = (value) => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
 
@@ -5603,6 +5664,16 @@ const CacheBatch = (() => {
     if (!normalized || tracker.pendingTokens.has(normalized)) return;
     tracker.pendingTokens.add(normalized);
     updateCachedTokenDisplay(state.lastComputedCacheBase || 0);
+    if (tracker.listeners.size) {
+      const original = token == null ? '' : String(token);
+      tracker.listeners.forEach(listener => {
+        try {
+          listener(original);
+        } catch (err) {
+          console.warn('CacheBatch listener failed:', err);
+        }
+      });
+    }
   }
 
   function end(options = {}) {
@@ -5624,6 +5695,12 @@ const CacheBatch = (() => {
     } else {
       updateCachedTokenDisplay(state.lastComputedCacheBase || 0);
     }
+  }
+
+  function listen(listener) {
+    if (typeof listener !== 'function') return () => {};
+    tracker.listeners.add(listener);
+    return () => tracker.listeners.delete(listener);
   }
 
   function cancel() {
@@ -5649,7 +5726,7 @@ const CacheBatch = (() => {
     return `${base} +${getPending()}`;
   }
 
-  return { begin, end, cancel, record, isActive, getBaseline, getPending, resolvedBase, total, format };
+  return { begin, end, cancel, record, isActive, getBaseline, getPending, resolvedBase, total, format, listen };
 })();
 
 const RemoteDbRecorder = (() => {
@@ -5793,6 +5870,33 @@ const RemoteDbRecorder = (() => {
     lastGeneratedAt = generatedAt;
   };
 
+  const remove = (token, options = {}) => {
+    const { deferPersist = false } = options || {};
+    const normalized = normalizeTokenKey(token);
+    if (!normalized) return false;
+    let removed = false;
+    for (const [prefix, bucket] of chunkMap.entries()) {
+      if (!bucket || bucket.size === 0) continue;
+      if (bucket.delete(normalized)) {
+        removed = true;
+        if (bucket.size === 0) chunkMap.delete(prefix);
+        break;
+      }
+    }
+    if (removed && !deferPersist) persist();
+    return removed;
+  };
+
+  const removeMany = (tokens) => {
+    if (!Array.isArray(tokens) || !tokens.length) return 0;
+    let removed = 0;
+    for (const token of tokens) {
+      if (remove(token, { deferPersist: true })) removed += 1;
+    }
+    if (removed > 0) persist();
+    return removed;
+  };
+
   const ingest = (record, options = {}) => {
     const { deferPersist = false } = options || {};
     const normalized = normalizeRecord(record);
@@ -5884,7 +5988,7 @@ const RemoteDbRecorder = (() => {
 
   hydrateFromStorage();
 
-  return { ingest, ingestMany, listChunks, manifest, tokenIndex, hasData, reset };
+  return { ingest, ingestMany, listChunks, manifest, tokenIndex, hasData, reset, remove, removeMany };
 })();
 
 window.HLSF = window.HLSF || {};
@@ -6027,6 +6131,318 @@ window.CognitionEngine.cache = {
   set: saveToCache,
   key: getCacheKey,
 };
+
+function removeTokensFromCache(tokens) {
+  const map = new Map();
+  for (const raw of Array.isArray(tokens) ? tokens : []) {
+    if (!raw) continue;
+    const original = String(raw).trim();
+    if (!original) continue;
+    const normalized = original.toLowerCase();
+    if (!normalized || map.has(normalized)) continue;
+    map.set(normalized, original);
+  }
+
+  if (!map.size) return 0;
+
+  let removed = 0;
+  for (const [, original] of map) {
+    const cacheKey = getCacheKey(original);
+    if (safeStorageRemove(cacheKey)) removed += 1;
+    else if (original.toLowerCase() !== original) {
+      const fallbackKey = getCacheKey(original.toLowerCase());
+      if (safeStorageRemove(fallbackKey)) removed += 1;
+    }
+  }
+
+  let index = safeStorageGet(DB_INDEX_KEY, []);
+  if (typeof index === 'string') {
+    try { index = JSON.parse(index); }
+    catch { index = []; }
+  }
+  if (Array.isArray(index) && index.length) {
+    const filtered = index.filter(token => !map.has(String(token).toLowerCase()));
+    if (filtered.length !== index.length) {
+      safeStorageSet(DB_INDEX_KEY, JSON.stringify(filtered));
+    }
+  }
+
+  const db = window.HLSF.dbCache;
+  if (db && Array.isArray(db.full_token_data)) {
+    const filtered = db.full_token_data.filter(record => {
+      const key = record && record.token ? String(record.token).toLowerCase() : '';
+      return key && !map.has(key);
+    });
+    if (filtered.length !== db.full_token_data.length) {
+      db.full_token_data = filtered;
+      try {
+        safeStorageSet(DB_RAW_KEY, JSON.stringify(db));
+      } catch (err) {
+        console.warn('Failed to persist DB snapshot after removal:', err);
+      }
+    }
+  }
+
+  try {
+    const recorder = window.HLSF?.remoteDbRecorder;
+    if (recorder && typeof recorder.removeMany === 'function') {
+      recorder.removeMany(Array.from(map.values()));
+    }
+  } catch (err) {
+    console.warn('Remote DB recorder removal failed:', err);
+  }
+
+  markHlsfDataDirty();
+  const cachedCount = getCachedTokenCount();
+  if (Number.isFinite(cachedCount)) {
+    setDocumentCacheBaseline(Math.max(0, cachedCount));
+  }
+  updateHeaderCounts();
+  queueLiveGraphUpdate(80);
+  return removed;
+}
+
+function cloneAdjacencyForTokens(matrices, tokenMap) {
+  const entries = [];
+  if (!(matrices instanceof Map) || !(tokenMap instanceof Map)) return entries;
+  for (const [normalized, original] of tokenMap.entries()) {
+    const key = normalized || (original ? String(original).toLowerCase() : '');
+    const source = matrices.get(key) || matrices.get(original);
+    if (!source) continue;
+    const clone = cloneAdjacencyEntry(source, original);
+    if (!clone) continue;
+    clone.token = original || clone.token;
+    entries.push(clone);
+  }
+  return entries;
+}
+
+function updatePromptReviewSummary(review) {
+  if (!review || !review.summaryElement) return;
+  const tokens = Array.from(review.tokens.values());
+  if (!tokens.length) {
+    review.summaryElement.innerHTML = '<em>No new tokens cached in this prompt.</em>';
+    return;
+  }
+  const rendered = tokens.map(token => `<span class="token-highlight">${sanitize(token)}</span>`).join(', ');
+  review.summaryElement.innerHTML = `Captured tokens: ${rendered}`;
+}
+
+function setPromptReviewStatus(review, message, tone = 'info') {
+  if (!review || !review.statusElement) return;
+  review.statusElement.textContent = message || '';
+  review.statusElement.dataset.tone = tone || 'info';
+}
+
+function setPromptReviewEditorState(review, open) {
+  if (!review || !review.editorPanel) return;
+  const editButton = review.element?.querySelector('button[data-prompt-action="edit"]');
+  if (open) {
+    review.editorPanel.classList.remove('hidden');
+    if (editButton) editButton.setAttribute('aria-expanded', 'true');
+  } else {
+    review.editorPanel.classList.add('hidden');
+    if (editButton) editButton.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function registerPromptReview(promptId, tokenMap, matrices) {
+  if (!promptId || !(tokenMap instanceof Map) || tokenMap.size === 0) return;
+  const adjacencyEntries = cloneAdjacencyForTokens(matrices, tokenMap);
+  const serialized = JSON.stringify(adjacencyEntries, null, 2);
+  const html = `
+    <div class="prompt-review" data-prompt-id="${sanitize(promptId)}">
+      <div class="prompt-review-header">
+        <div class="prompt-review-title"><strong>Offline adjacency updates ready</strong></div>
+        <div class="prompt-review-actions">
+          <button type="button" class="btn btn-primary" data-prompt-action="approve">👍 Save</button>
+          <button type="button" class="btn btn-secondary" data-prompt-action="discard">👎 Discard</button>
+          <button type="button" class="btn btn-secondary" data-prompt-action="edit" aria-expanded="false">✏️ Edit</button>
+        </div>
+      </div>
+      <div class="prompt-review-summary" data-prompt-summary="${sanitize(promptId)}"></div>
+      <div class="prompt-review-editor hidden" data-prompt-editor-panel="${sanitize(promptId)}">
+        <p class="prompt-review-instructions">Adjust tokens, weights, and adjacencies below. Provide an array of objects shaped like {"token": "example", "relationships": { ... }}.</p>
+        <textarea class="prompt-review-editor-field" data-prompt-editor="${sanitize(promptId)}" spellcheck="false"></textarea>
+        <div class="prompt-review-editor-actions">
+          <button type="button" class="btn btn-primary" data-prompt-action="save">Save edits</button>
+          <button type="button" class="btn btn-secondary" data-prompt-action="cancel">Cancel</button>
+        </div>
+        <div class="prompt-review-status" data-prompt-status="${sanitize(promptId)}"></div>
+      </div>
+    </div>
+  `;
+  const entry = addLog(html);
+  const textarea = entry.querySelector(`[data-prompt-editor="${cssEscape(promptId)}"]`);
+  if (textarea) textarea.value = serialized;
+  const review = {
+    id: promptId,
+    tokens: new Map(tokenMap),
+    adjacency: new Map(adjacencyEntries.map(record => [String(record.token).toLowerCase(), record])),
+    serialized,
+    element: entry,
+    textarea,
+    statusElement: entry.querySelector(`[data-prompt-status="${cssEscape(promptId)}"]`),
+    editorPanel: entry.querySelector(`[data-prompt-editor-panel="${cssEscape(promptId)}"]`),
+    summaryElement: entry.querySelector(`[data-prompt-summary="${cssEscape(promptId)}"]`),
+  };
+  promptReviewStore.set(promptId, review);
+  if (review.tokens.size) {
+    try {
+      removeTokensFromCache(Array.from(review.tokens.values()));
+    } catch (err) {
+      console.warn('Failed to stage prompt review tokens:', err);
+    }
+  }
+  updatePromptReviewSummary(review);
+  setPromptReviewStatus(review, 'Review changes before committing.', 'info');
+}
+
+function savePromptReviewEdits(review) {
+  if (!review || !review.textarea) return false;
+  let parsed;
+  try {
+    parsed = JSON.parse(review.textarea.value || '[]');
+  } catch (err) {
+    setPromptReviewStatus(review, 'Unable to parse edits. Ensure valid JSON.', 'error');
+    return false;
+  }
+  const list = Array.isArray(parsed)
+    ? parsed
+    : (parsed && typeof parsed === 'object') ? Object.values(parsed) : [];
+
+  const normalizedEntries = [];
+  const newTokenMap = new Map();
+  for (const entry of list) {
+    const normalized = normalizeRecord(entry);
+    if (!normalized || !normalized.token) continue;
+    const token = String(normalized.token).trim();
+    if (!token) continue;
+    const key = token.toLowerCase();
+    newTokenMap.set(key, token);
+    normalizedEntries.push(Object.assign({}, normalized, { token }));
+  }
+
+  review.tokens = newTokenMap;
+  review.adjacency = new Map(normalizedEntries.map(record => [record.token.toLowerCase(), record]));
+  review.serialized = JSON.stringify(normalizedEntries, null, 2);
+  if (review.textarea) review.textarea.value = review.serialized;
+  updatePromptReviewSummary(review);
+  setPromptReviewStatus(review, 'Edits staged. Approve to commit.', 'success');
+  return true;
+}
+
+function cancelPromptReviewEdits(review) {
+  if (!review) return;
+  if (review.textarea) review.textarea.value = review.serialized;
+  setPromptReviewEditorState(review, false);
+  setPromptReviewStatus(review, 'Edits cancelled.', 'info');
+}
+
+function finalizePromptReview(review, message, tone = 'info') {
+  if (!review || !review.element) return;
+  const buttons = review.element.querySelectorAll('button[data-prompt-action]');
+  buttons.forEach(btn => { btn.disabled = true; });
+  setPromptReviewEditorState(review, false);
+  review.element.classList.add('prompt-review-completed');
+  setPromptReviewStatus(review, message, tone);
+  promptReviewStore.delete(review.id);
+}
+
+function approvePromptReview(review) {
+  if (!review) return;
+  const entries = Array.from(review.adjacency.values()).filter(Boolean);
+  if (!entries.length) {
+    finalizePromptReview(review, 'No staged adjacency updates to commit.', 'info');
+    logWarning('Prompt review approved without staged updates.');
+    return;
+  }
+
+  let committed = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (!entry || !entry.token) continue;
+    saveToCache(entry.token, entry, { deferReload: i < entries.length - 1 });
+    committed += 1;
+  }
+
+  if (committed > 0) {
+    commitTokens(entries.map(entry => entry.token), { render: false });
+    notifyHlsfAdjacencyChange('prompt-review-approve');
+    rebuildLiveGraph();
+  }
+
+  finalizePromptReview(review, `Committed ${committed} token${committed === 1 ? '' : 's'} to database.`, 'success');
+  logOK('Adjacency updates committed to database.');
+}
+
+function discardPromptReview(review) {
+  const tokens = Array.from(review.tokens.values());
+  const removed = tokens.length ? removeTokensFromCache(tokens) : 0;
+  for (const token of tokens) {
+    const normalized = token ? String(token).toLowerCase() : '';
+    if (normalized) {
+      state.tokenSources.delete(normalized);
+    }
+    if (token) {
+      Session.tokens.delete(token);
+      Session.tokens.delete(token.toLowerCase());
+    }
+  }
+  pruneInactiveTokens();
+  rebuildLiveGraph();
+  review.tokens.clear();
+  review.adjacency.clear();
+  review.serialized = '[]';
+  if (review.textarea) review.textarea.value = review.serialized;
+  updatePromptReviewSummary(review);
+  finalizePromptReview(review, `Discarded ${removed} token${removed === 1 ? '' : 's'} from cache.`, 'warning');
+  logWarning('Prompt tokens discarded without committing to database.');
+}
+
+function togglePromptReviewEditor(review) {
+  if (!review || !review.editorPanel) return;
+  const isHidden = review.editorPanel.classList.contains('hidden');
+  setPromptReviewEditorState(review, isHidden);
+  if (isHidden && review.textarea) {
+    review.textarea.focus();
+  }
+}
+
+function handlePromptReviewClick(event) {
+  const button = event.target.closest('button[data-prompt-action]');
+  if (!button) return;
+  const container = button.closest('.prompt-review');
+  if (!container) return;
+  const promptId = container.getAttribute('data-prompt-id');
+  const review = promptReviewStore.get(promptId);
+  if (!review) return;
+  event.preventDefault();
+  const action = button.getAttribute('data-prompt-action');
+  switch (action) {
+    case 'approve':
+      approvePromptReview(review);
+      break;
+    case 'discard':
+      discardPromptReview(review);
+      break;
+    case 'edit':
+      togglePromptReviewEditor(review);
+      break;
+    case 'save':
+      savePromptReviewEdits(review);
+      break;
+    case 'cancel':
+      cancelPromptReviewEdits(review);
+      break;
+    default:
+      break;
+  }
+}
+
+if (elements.log) {
+  elements.log.addEventListener('click', handlePromptReviewClick);
+}
 
 const RemoteDbStore = (() => {
   let metadata = null;
@@ -6269,8 +6685,25 @@ function computeLiveGraphEdges(nodes) {
   return edges;
 }
 
+function queueLiveGraphUpdate(delay = 120) {
+  const ms = Number.isFinite(delay) ? Math.max(16, Math.floor(delay)) : 120;
+  if (state.liveGraphUpdateTimer) return;
+  state.liveGraphUpdateTimer = setTimeout(() => {
+    state.liveGraphUpdateTimer = null;
+    try {
+      rebuildLiveGraph();
+    } catch (err) {
+      console.warn('Live graph update failed:', err);
+    }
+  }, ms);
+}
+
 function rebuildLiveGraph(options = {}) {
   const { render = true } = options;
+  if (state.liveGraphUpdateTimer) {
+    clearTimeout(state.liveGraphUpdateTimer);
+    state.liveGraphUpdateTimer = null;
+  }
   const graph = state.liveGraph || { nodes: new Map(), links: [] };
   state.liveGraph = graph;
 
@@ -6781,6 +7214,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const edgesPerLevel = Number.isFinite(options.edgesPerLevel) && options.edgesPerLevel > 0
       ? Math.floor(options.edgesPerLevel)
       : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
+    const onTokenLoaded = typeof options.onTokenLoaded === 'function' ? options.onTokenLoaded : null;
 
     const queue = [];
     const enqueued = new Set();
@@ -6854,6 +7288,13 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       if (result && result.token) {
         const limited = limitAdjacencyEntryEdges(result, edgesPerLevel);
         results.set(limited.token, limited);
+        if (onTokenLoaded) {
+          try {
+            onTokenLoaded(limited);
+          } catch (err) {
+            console.warn('Adjacency listener failed:', err);
+          }
+        }
 
         const nextDepth = current.depthRemaining - 1;
         if (nextDepth > 0 && current.entry.kind !== 'sym') {
@@ -9126,7 +9567,7 @@ function importDatabaseData(data, source = 'file') {
       safeStorageSet(DB_INDEX_KEY, JSON.stringify(Array.from(seen)));
     }
     updateStats();
-    scheduleHlsfReload('import-db');
+    announceDatabaseReady('import-db');
 
     const summary = [];
     if (imported > 0) summary.push(`${imported} new tokens imported`);
@@ -9710,6 +10151,7 @@ async function cmdLoadDb(arg) {
     if (tokenCount != null) parts.push(`${tokenCount} tokens`);
     if (chunkCount != null) parts.push(`${chunkCount} chunks`);
     logFinal(`Remote DB ready${parts.length ? `: ${parts.join(', ')}` : ''}.`);
+    announceDatabaseReady('force');
   } catch (e) {
     logError(`load failed: ${String(e.message || e)}`);
   }
@@ -11291,6 +11733,27 @@ async function dispatchCommand(input) {
 
 function isCommand(input) { return input.startsWith('/'); }
 
+function helpCommandHtml() {
+  return `<strong>Commands:</strong><br>
+        /clear - Clear log<br>
+        /reset - Clear cache<br>
+        /stats - Session statistics<br>
+        /database or /db - View database metadata<br>
+        /export - Export database metadata as JSON<br>
+        /glyph - Generate glyph mappings<br>
+        /ledger - Inspect glyph ledger<br>
+        /encrypt - Encode text into glyphs<br>
+        /decrypt - Decode glyph sequences<br>
+        /visualize or /hlsf - Render the current HLSF graph<br>
+        /scheme &lt;color&gt; - Toggle visual theme<br>
+        /spin on|off - Toggle emergent rotation<br>
+        /symbols [on|off|status|mode|weight] - Symbol tokenization controls`;
+}
+
+function showHelpCommand() {
+  addLog(helpCommandHtml());
+}
+
 async function handleCommand(cmd) {
   const trimmed = cmd.trim();
   const handled = await safeAsync(() => dispatchCommand(trimmed), `Command dispatch failed for ${trimmed}`);
@@ -11345,7 +11808,9 @@ async function handleCommand(cmd) {
         }
         setDocumentCacheBaseline(0, { manual: true });
         updateStats();
-        scheduleHlsfReload('reset', { immediate: true });
+        markHlsfDataDirty();
+        stopHLSFAnimation();
+        hideVisualizer();
         const clearedMsg = hadDbSnapshot
           ? `Cleared ${keys.length} tokens and database snapshot`
           : `Cleared ${keys.length} tokens`;
@@ -11386,25 +11851,7 @@ async function handleCommand(cmd) {
       cmdLedger('export');
       break;
     case 'help':
-      addLog(`<strong>Commands:</strong><br>
-        /clear - Clear log<br>
-        /reset - Clear cache<br>
-        /stats - Session statistics<br>
-        /database or /db - View database metadata<br>
-        /export - Export database metadata as JSON<br>
-        /import - Import database from JSON file<br>
-        /read or /ingest - Import and analyze a document in 1,000-character segments<br>
-        /loaddb &lt;url&gt; - Load database JSON from URL<br>
-        /glyph &lt;token1 token2 ...&gt; - Show weighted glyph assignments<br>
-        /ledger [show|export|import] - Manage private glyph ledger<br>
-        /encrypt &lt;text&gt; - Encrypt text into weighted glyphs<br>
-        /decrypt &lt;glyph+float&gt; - Decrypt using private ledger<br>
-        /exportledger - Shortcut for /ledger export<br>
-        /state [tokens...] - Mental state walkthrough with 200-word stream and 100-word structure<br>
-        /self - Stream the current HLSF self-reflection<br>
-        /hlsf or /visualize - Visualize database as Hierarchical-Level Semantic Framework — builds from anchors<br>
-        /symbols [on|off|mode|weight] - Inspect or tweak symbol tokenization settings<br>
-        /help - Show commands`);
+      showHelpCommand();
       break;
     default:
       logError(`Unknown: ${command}`);
@@ -11441,6 +11888,15 @@ async function processPrompt(prompt) {
   if (!enterProcessingState()) return;
 
   const startTime = performance.now();
+  const promptReviewId = `review-${Date.now()}`;
+  const batchTokens = new Map();
+  const detachCacheListener = CacheBatch.listen((token) => {
+    if (!token) return;
+    const normalized = String(token).toLowerCase();
+    if (!normalized || batchTokens.has(normalized)) return;
+    batchTokens.set(normalized, token);
+  });
+  let promptSucceeded = false;
 
   try {
     const limitedPrompt = limitWords(prompt, CONFIG.INPUT_WORD_LIMIT);
@@ -11494,6 +11950,7 @@ async function processPrompt(prompt) {
       {
         depth: CONFIG.ADJACENCY_RECURSION_DEPTH,
         edgesPerLevel: CONFIG.ADJACENCY_EDGES_PER_LEVEL,
+        onTokenLoaded: () => queueLiveGraphUpdate(48),
       },
     );
 
@@ -11677,7 +12134,12 @@ async function processPrompt(prompt) {
 
     logOK(`Output suite ready (${time}s)`);
 
-    scheduleHlsfReload('prompt-complete', { immediate: true });
+    if (batchTokens.size) {
+      registerPromptReview(promptReviewId, batchTokens, allMatrices);
+    }
+    promptSucceeded = true;
+
+    notifyHlsfAdjacencyChange('prompt-complete');
 
   } catch (err) {
     if (err.name === 'AbortError' || err.message === 'AbortError') {
@@ -11687,6 +12149,10 @@ async function processPrompt(prompt) {
       console.error(err);
     }
   } finally {
+    detachCacheListener();
+    if (!promptSucceeded && batchTokens.size) {
+      removeTokensFromCache(Array.from(batchTokens.values()));
+    }
     exitProcessingState();
   }
 }
@@ -12769,8 +13235,7 @@ async function initialize() {
 
   const hasHlsfData = dbAvailable || cachedCount > 0;
   if (hasHlsfData) {
-    HlsfLoading.show('Preparing HLSF visualization…');
-    scheduleHlsfReload('startup', { immediate: true });
+    announceDatabaseReady('startup');
   }
 
   elements.input.focus();
