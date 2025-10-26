@@ -52,6 +52,7 @@ let voiceOptionsBound = false;
 let activePlayback = null;
 let activeRecorder = null;
 const audioUrlCache = new Map();
+let sessionVoiceApplied = false;
 
 function countWords(text) {
   if (!text) return 0;
@@ -597,19 +598,22 @@ function playProfileClone(token) {
   setStatus(`Playing voice profile clone${suffix}.`, 'info');
 }
 
-function getProfileCloneExportPayload() {
+function getProfileCloneExportPayload(options = {}) {
+  const { requireAttachment = true } = options || {};
   refreshVoiceProfileClone(false);
   const clone = getValidProfileClone();
-  if (!clone || clone.attached === false) return null;
+  if (!clone) return null;
+  if (requireAttachment && clone.attached === false) return null;
   const recording = store.recordings.find(rec => rec.id === clone.recordingId);
   if (!recording) return null;
   const divergence = clone.divergenceMap ? JSON.parse(JSON.stringify(clone.divergenceMap)) : {};
   return {
     id: clone.id,
+    recordingId: recording.id,
     createdAt: clone.createdAt,
     wordCount: clone.wordCount,
     divergenceMap: divergence,
-    attached: true,
+    attached: clone.attached !== false,
     recording: {
       id: recording.id,
       token: recording.token,
@@ -620,6 +624,185 @@ function getProfileCloneExportPayload() {
       audioType: recording.audioType || 'audio/webm',
     },
   };
+}
+
+function getVoiceProfileExportPayload() {
+  const recordings = Array.isArray(store.recordings) ? store.recordings : [];
+  if (!recordings.length) return null;
+
+  const normalizedRecordings = [];
+  const recordingIds = new Set();
+  for (const recording of recordings) {
+    if (!recording?.id || !recording.token) continue;
+    recordingIds.add(recording.id);
+    normalizedRecordings.push({
+      id: recording.id,
+      token: recording.token,
+      createdAt: recording.createdAt,
+      transcript: recording.transcript,
+      tags: Array.isArray(recording.tags) ? recording.tags.slice() : [],
+      iteration: Number.isFinite(recording.iteration) ? recording.iteration : 1,
+      sourceToken: recording.sourceToken || recording.token,
+      audioBase64: recording.audioBase64 || '',
+      audioType: recording.audioType || 'audio/webm',
+    });
+  }
+
+  if (!normalizedRecordings.length) return null;
+
+  const assignments = {};
+  for (const [token, recId] of Object.entries(store.assignments || {})) {
+    if (!token || typeof recId !== 'string') continue;
+    if (!recordingIds.has(recId)) continue;
+    assignments[token] = recId;
+  }
+
+  const clonePayload = getProfileCloneExportPayload({ requireAttachment: false });
+  const voicePreferences = Object.assign(defaultVoicePreferences(), store.voicePreferences || {});
+
+  const preferredProfileId = recordingIds.has(store.profileRecordingId)
+    ? store.profileRecordingId
+    : (clonePayload?.recording?.id && recordingIds.has(clonePayload.recording.id))
+      ? clonePayload.recording.id
+      : null;
+
+  return {
+    version: 1,
+    recordings: normalizedRecordings,
+    assignments,
+    profileRecordingId: preferredProfileId,
+    voicePreferences,
+    profileClone: clonePayload,
+  };
+}
+
+function normalizeVoiceProfilePayload(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const normalizedStore = defaultVoiceStore();
+  const recordingMap = new Map();
+
+  const addRecording = entry => {
+    if (!entry) return;
+    const candidate = Object.assign({}, entry);
+    if (payload.profileClone && payload.profileClone.recording === entry) {
+      candidate.id = payload.profileClone.recordingId || entry.id;
+    }
+    const normalized = normalizeRecording(candidate);
+    if (!normalized) return;
+    recordingMap.set(normalized.id, normalized);
+  };
+
+  if (Array.isArray(payload.recordings)) {
+    for (const rec of payload.recordings) {
+      addRecording(rec);
+    }
+  }
+
+  const cloneSource = payload.profileClone && typeof payload.profileClone === 'object'
+    ? payload.profileClone
+    : null;
+  let normalizedClone = null;
+  if (cloneSource) {
+    const cloneCandidate = Object.assign({}, cloneSource);
+    if (!cloneCandidate.recordingId && cloneCandidate.recording && typeof cloneCandidate.recording.id === 'string') {
+      cloneCandidate.recordingId = cloneCandidate.recording.id;
+    }
+    normalizedClone = normalizeProfileClone(cloneCandidate);
+    if (normalizedClone?.recordingId) {
+      const cloneRecording = cloneSource.recording && typeof cloneSource.recording === 'object'
+        ? Object.assign({ id: normalizedClone.recordingId }, cloneSource.recording)
+        : null;
+      if (cloneRecording) addRecording(cloneRecording);
+    }
+  }
+
+  if (!recordingMap.size) return null;
+
+  const sortedRecordings = Array.from(recordingMap.values()).sort((a, b) => {
+    const timeA = Date.parse(a.createdAt) || 0;
+    const timeB = Date.parse(b.createdAt) || 0;
+    return timeB - timeA;
+  });
+  normalizedStore.recordings = sortedRecordings;
+
+  const assignments = {};
+  if (payload.assignments && typeof payload.assignments === 'object') {
+    for (const [token, recId] of Object.entries(payload.assignments)) {
+      if (!token || typeof recId !== 'string') continue;
+      if (!recordingMap.has(recId)) continue;
+      assignments[token] = recId;
+    }
+  }
+  normalizedStore.assignments = assignments;
+
+  if (payload.voicePreferences && typeof payload.voicePreferences === 'object') {
+    normalizedStore.voicePreferences = Object.assign(
+      defaultVoicePreferences(),
+      payload.voicePreferences,
+    );
+  }
+
+  let profileRecordingId = typeof payload.profileRecordingId === 'string'
+    ? payload.profileRecordingId
+    : null;
+  if (!profileRecordingId || !recordingMap.has(profileRecordingId)) {
+    if (normalizedClone && recordingMap.has(normalizedClone.recordingId)) {
+      profileRecordingId = normalizedClone.recordingId;
+    } else {
+      profileRecordingId = null;
+    }
+  }
+  normalizedStore.profileRecordingId = profileRecordingId;
+
+  if (normalizedClone && recordingMap.has(normalizedClone.recordingId)) {
+    normalizedStore.profileClone = Object.assign({}, normalizedClone, { attached: normalizedClone.attached !== false });
+  }
+
+  return normalizedStore;
+}
+
+function importVoiceProfileExportPayload(payload, options = {}) {
+  const { persist = true, source = 'manual' } = options || {};
+  const normalized = normalizeVoiceProfilePayload(payload);
+  if (!normalized) return false;
+
+  store = normalized;
+  audioUrlCache.clear();
+  recordingIndex = buildRecordingIndex();
+  refreshVoiceProfileClone(false);
+  if (persist) saveVoiceStore();
+  signalVoiceCloneTokensChanged('voice-profile-import');
+  if (panelReady) {
+    renderTokenList();
+    renderTokenDetail();
+    const message = source === 'session'
+      ? 'Voice profile imported from session.'
+      : 'Voice profile imported.';
+    setStatus(message, 'success');
+  }
+  return true;
+}
+
+function maybeImportVoiceProfileFromSession() {
+  if (sessionVoiceApplied) return;
+  const session = window.Session;
+  if (!session || typeof session !== 'object') return;
+
+  let payload = null;
+  if (session.voiceProfile && typeof session.voiceProfile === 'object') {
+    payload = session.voiceProfile;
+  } else if (session.voiceProfileClone && typeof session.voiceProfileClone === 'object') {
+    const cloneOnly = session.voiceProfileClone;
+    payload = { profileClone: cloneOnly };
+    if (cloneOnly.recording && typeof cloneOnly.recording === 'object') {
+      payload.recordings = [Object.assign({}, cloneOnly.recording)];
+    }
+  }
+
+  if (!payload) return;
+  const imported = importVoiceProfileExportPayload(payload, { source: 'session', persist: true });
+  if (imported) sessionVoiceApplied = true;
 }
 
 function renderAssignedBlock(recording) {
@@ -1161,6 +1344,7 @@ function handleTokensChanged() {
 function initializeVoiceClonePanel() {
   if (panelReady) return;
   store = loadVoiceStore();
+  maybeImportVoiceProfileFromSession();
   refreshVoiceProfileClone(false);
   elements.panel = document.getElementById('voice-clone-panel');
   elements.tokenList = document.getElementById('voice-token-list');
@@ -1198,6 +1382,8 @@ function initializeVoiceClonePanel() {
     playTts: playTokenTts,
     signalTokensChanged: signalVoiceCloneTokensChanged,
     getProfileClone: getProfileCloneExportPayload,
+    getProfileExport: getVoiceProfileExportPayload,
+    importProfile: importVoiceProfileExportPayload,
   });
 }
 
