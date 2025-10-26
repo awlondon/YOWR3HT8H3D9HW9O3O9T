@@ -6651,6 +6651,23 @@ const RemoteDbStore = (() => {
   const tokenCache = new Map();
   let tokenIndex = [];
 
+  const resolveChunkConcurrency = () => {
+    const configured = Number(window.HLSF?.config?.remoteChunkConcurrency);
+    if (Number.isFinite(configured) && configured > 0) {
+      return Math.max(1, Math.floor(configured));
+    }
+    const hardware = typeof navigator !== 'undefined'
+      && navigator
+      && typeof navigator.hardwareConcurrency === 'number'
+      ? navigator.hardwareConcurrency
+      : 0;
+    if (Number.isFinite(hardware) && hardware > 0) {
+      const derived = Math.floor(hardware / 2) || 1;
+      return Math.max(1, Math.min(6, derived));
+    }
+    return 3;
+  };
+
   const normalizeToken = (token) => (token == null ? '' : String(token)).toLowerCase();
 
   const hasMetadata = () => metadata != null;
@@ -6751,20 +6768,35 @@ const RemoteDbStore = (() => {
       pending.get(prefix).add(token);
     }
 
-    for (const [prefix, set] of pending.entries()) {
-      let chunk;
-      try {
-        chunk = await ensureChunk(prefix);
-      } catch (err) {
-        console.warn(`Failed to hydrate remote DB chunk ${prefix}:`, err);
-        continue;
-      }
-      for (const token of set) {
-        const record = chunk.get(token);
-        if (!record) continue;
-        tokenCache.set(token, record);
-        if (ingestRecord(record)) stats.loaded++;
-        else stats.hits++;
+    const requests = Array.from(pending.entries()).map(([prefix, set]) => ({
+      prefix,
+      tokens: Array.from(set),
+    }));
+
+    if (requests.length) {
+      const concurrency = Math.max(1, Math.min(resolveChunkConcurrency(), requests.length));
+      for (let i = 0; i < requests.length; i += concurrency) {
+        const batch = requests.slice(i, i + concurrency);
+        const results = await Promise.all(batch.map(async request => {
+          try {
+            const chunk = await ensureChunk(request.prefix);
+            return { request, chunk };
+          } catch (err) {
+            console.warn(`Failed to hydrate remote DB chunk ${request.prefix}:`, err);
+            return { request, chunk: null };
+          }
+        }));
+
+        for (const { request, chunk } of results) {
+          if (!chunk) continue;
+          for (const token of request.tokens) {
+            const record = chunk.get(token);
+            if (!record) continue;
+            tokenCache.set(token, record);
+            if (ingestRecord(record)) stats.loaded++;
+            else stats.hits++;
+          }
+        }
       }
     }
 
