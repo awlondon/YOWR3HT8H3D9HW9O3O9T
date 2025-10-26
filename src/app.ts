@@ -7653,7 +7653,11 @@ function extractKeyRelationships(matrices) {
     for (const [rel, edges] of Object.entries(rels)) {
       if (!Array.isArray(edges) || edges.length === 0) continue;
       const topEdge = edges.sort((a, b) => b.weight - a.weight)[0];
-      relationships.push(`${token} ${rel} ${topEdge.token} (${topEdge.weight.toFixed(2)})`);
+      const weight = Number(topEdge?.weight);
+      const weightText = Number.isFinite(weight) ? weight.toFixed(2) : '0.00';
+      const relEnglish = edgeLabel(rel);
+      const details = relEnglish ? `${relEnglish}, ${weightText}` : weightText;
+      relationships.push(`${token} ${rel} ${topEdge.token} (${details})`);
       count++;
       if (count >= 5) break;
     }
