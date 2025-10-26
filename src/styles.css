@@ -586,6 +586,67 @@
       font-size: 0.85rem;
     }
 
+    .voice-profile-clone {
+      background: rgba(0, 30, 20, 0.28);
+      border: 1px dashed rgba(0, 255, 136, 0.35);
+      border-radius: 10px;
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-top: 0.5rem;
+    }
+
+    .voice-clone-heading {
+      font-size: 0.95rem;
+      color: var(--accent);
+    }
+
+    .voice-clone-summary {
+      display: grid;
+      gap: 0.35rem;
+      font-size: 0.85rem;
+      opacity: 0.85;
+    }
+
+    .voice-clone-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .voice-clone-actions button {
+      flex: none;
+    }
+
+    .voice-clone-requirement,
+    .voice-clone-empty {
+      margin: 0;
+      font-size: 0.85rem;
+      opacity: 0.75;
+    }
+
+    .voice-clone-divergence {
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      font-size: 0.85rem;
+    }
+
+    .voice-clone-divergence ul {
+      margin: 0;
+      padding-left: 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .voice-clone-divergence li {
+      line-height: 1.4;
+    }
+
     .voice-assigned-block {
       background: rgba(0, 255, 136, 0.05);
       border: 1px solid rgba(0, 255, 136, 0.2);

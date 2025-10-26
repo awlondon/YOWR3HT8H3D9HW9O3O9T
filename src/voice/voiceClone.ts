@@ -1,6 +1,7 @@
 // @ts-nocheck
 
 const STORAGE_KEY = 'HLSF_VOICE_CLONE_STATE_V1';
+const PROFILE_CLONE_WORD_THRESHOLD = 100;
 const TOKENS_CHANGED_EVENT = 'voice:tokens-changed';
 const DATABASE_READY_EVENT = 'hlsf:database-ready';
 const MAX_RENDERED_TOKENS = 800;
@@ -20,6 +21,7 @@ function defaultVoiceStore() {
     assignments: {},
     profileRecordingId: null,
     voicePreferences: defaultVoicePreferences(),
+    profileClone: null,
   };
 }
 
@@ -51,6 +53,70 @@ let activePlayback = null;
 let activeRecorder = null;
 const audioUrlCache = new Map();
 
+function countWords(text) {
+  if (!text) return 0;
+  return String(text)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+function getTotalTranscriptWords() {
+  let total = 0;
+  for (const recording of store.recordings || []) {
+    total += countWords(recording?.transcript || recording?.token || '');
+  }
+  return total;
+}
+
+function buildCloneDivergence() {
+  const map = {};
+  for (const recording of store.recordings || []) {
+    const tags = Array.isArray(recording?.tags) ? recording.tags : [];
+    if (!tags.length) continue;
+    const tokenList = listTokensForRecording(recording.id);
+    for (const tag of tags) {
+      const key = typeof tag === 'string' ? tag.trim() : '';
+      if (!key) continue;
+      if (!map[key]) map[key] = [];
+      map[key].push({
+        recordingId: recording.id,
+        token: recording.token || '',
+        transcript: recording.transcript || '',
+        iteration: recording.iteration || 1,
+        tokens: tokenList,
+      });
+    }
+  }
+  return map;
+}
+
+function generateCloneId() {
+  return `clone_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function refreshVoiceProfileClone(persist = false) {
+  const clone = store.profileClone;
+  if (!clone) return;
+  const hasRecording = store.recordings.some(rec => rec.id === clone.recordingId);
+  if (!hasRecording) {
+    store.profileClone = null;
+    saveVoiceStore();
+    return;
+  }
+  clone.wordCount = getTotalTranscriptWords();
+  clone.divergenceMap = buildCloneDivergence();
+  if (persist) saveVoiceStore();
+}
+
+function getValidProfileClone() {
+  const clone = store.profileClone;
+  if (!clone) return null;
+  const hasRecording = store.recordings.some(rec => rec.id === clone.recordingId);
+  if (!hasRecording) return null;
+  return clone;
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -81,6 +147,13 @@ function loadVoiceStore() {
     if (Array.isArray(parsed?.recordings)) normalized.recordings = parsed.recordings.map(normalizeRecording).filter(Boolean);
     if (parsed?.assignments && typeof parsed.assignments === 'object') normalized.assignments = { ...parsed.assignments };
     if (typeof parsed?.profileRecordingId === 'string') normalized.profileRecordingId = parsed.profileRecordingId;
+    if (parsed?.profileClone && typeof parsed.profileClone === 'object') {
+      normalized.profileClone = normalizeProfileClone(parsed.profileClone);
+    }
+    if (normalized.profileClone && normalized.profileClone.recordingId) {
+      const exists = normalized.recordings.some(rec => rec.id === normalized.profileClone.recordingId);
+      if (!exists) normalized.profileClone = null;
+    }
     if (parsed?.voicePreferences && typeof parsed.voicePreferences === 'object') {
       normalized.voicePreferences = Object.assign(defaultVoicePreferences(), parsed.voicePreferences);
     }
@@ -106,6 +179,43 @@ function normalizeRecording(entry) {
     tags: Array.isArray(entry.tags) ? entry.tags.filter(Boolean).map(String) : [],
     iteration: Number.isFinite(entry.iteration) ? Number(entry.iteration) : 1,
     sourceToken: typeof entry.sourceToken === 'string' ? entry.sourceToken : token,
+  };
+}
+
+function normalizeProfileClone(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const recordingId = typeof entry.recordingId === 'string' ? entry.recordingId : null;
+  if (!recordingId) return null;
+  const id = typeof entry.id === 'string' && entry.id ? entry.id : `clone_${Date.now().toString(36)}`;
+  const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
+  const wordCount = Number.isFinite(entry.wordCount) ? Math.max(0, Math.floor(entry.wordCount)) : 0;
+  const attached = entry.attached !== false;
+  const divergenceMap = {};
+  if (entry.divergenceMap && typeof entry.divergenceMap === 'object') {
+    for (const [tag, list] of Object.entries(entry.divergenceMap)) {
+      if (!Array.isArray(list) || !tag) continue;
+      const normalizedList = list
+        .map(item => {
+          if (!item || typeof item !== 'object') return null;
+          const recId = typeof item.recordingId === 'string' ? item.recordingId : null;
+          if (!recId) return null;
+          const token = typeof item.token === 'string' ? item.token : '';
+          const transcript = typeof item.transcript === 'string' ? item.transcript : '';
+          const iteration = Number.isFinite(item.iteration) ? Number(item.iteration) : 1;
+          const tokens = Array.isArray(item.tokens) ? item.tokens.filter(Boolean).map(String) : [];
+          return { recordingId: recId, token, transcript, iteration, tokens };
+        })
+        .filter(Boolean);
+      if (normalizedList.length) divergenceMap[tag] = normalizedList;
+    }
+  }
+  return {
+    id,
+    recordingId,
+    createdAt,
+    wordCount,
+    attached,
+    divergenceMap,
   };
 }
 
@@ -200,11 +310,13 @@ function refreshTokens() {
 
 function renderTokenList() {
   if (!elements.tokenList) return;
+  refreshVoiceProfileClone(false);
   const filter = panelState.filter.trim().toLowerCase();
   const tokenStats = new Map();
   for (const [token, list] of recordingIndex) {
     tokenStats.set(token, list.length);
   }
+  const clone = getValidProfileClone();
   const items = [];
   let rendered = 0;
   for (const token of panelState.tokens) {
@@ -214,12 +326,15 @@ function renderTokenList() {
     const assignedId = store.assignments?.[token] || null;
     const recordings = tokenStats.get(token) || 0;
     const hasAssigned = Boolean(assignedId);
+    const usingClone = !hasAssigned && Boolean(clone);
     const statusLabel = hasAssigned
       ? 'Voice mapped'
       : recordings > 0
         ? `${recordings} recording${recordings === 1 ? '' : 's'}`
-        : 'No voice data';
-    const disabledAssigned = hasAssigned ? '' : 'disabled';
+        : usingClone
+          ? 'Cloned profile available'
+          : 'No voice data';
+    const disabledAssigned = hasAssigned || usingClone ? '' : 'disabled';
     const disabledTts = typeof window.speechSynthesis === 'undefined' ? 'disabled' : '';
     const selectedClass = panelState.selectedToken === token ? 'selected' : '';
     items.push(`
@@ -239,17 +354,118 @@ function renderTokenList() {
   }
 }
 
+function renderProfileCloneSection(contextToken = null) {
+  refreshVoiceProfileClone(false);
+  const totalWords = getTotalTranscriptWords();
+  const clone = getValidProfileClone();
+  const hasProfileRecording = Boolean(
+    store.profileRecordingId && store.recordings.some(rec => rec.id === store.profileRecordingId)
+  );
+  const canClone = hasProfileRecording && totalWords >= PROFILE_CLONE_WORD_THRESHOLD;
+  const wordsRemaining = Math.max(0, PROFILE_CLONE_WORD_THRESHOLD - totalWords);
+  let requirementMessage = '';
+  if (!hasProfileRecording) {
+    requirementMessage = 'Set a recording as your voice profile to unlock cloning.';
+  } else if (clone) {
+    requirementMessage = canClone
+      ? 'Re-clone to capture your latest recordings or tag adjustments.'
+      : 'Voice clone ready. Capture more speech to refresh when you have new material.';
+  } else if (canClone) {
+    requirementMessage = 'You have enough captured speech to clone your voice profile.';
+  } else {
+    requirementMessage = `Record ${wordsRemaining} more word${wordsRemaining === 1 ? '' : 's'} to unlock cloning.`;
+  }
+
+  const buttonLabel = clone ? 'Re-clone voice profile' : 'Clone voice profile';
+  const cloneButtonDisabled = canClone ? '' : 'disabled';
+  const previewDisabled = clone ? '' : 'disabled';
+  const attachDisabled = clone ? '' : 'disabled';
+  const attachLabel = clone?.attached ? 'Detach from HLSF export' : 'Attach to HLSF export';
+  const tokenAttr = contextToken ? ` data-token="${escapeAttr(contextToken)}"` : '';
+
+  const summaryParts = [
+    `<div><strong>Captured words:</strong> ${escapeHtml(String(totalWords))}</div>`,
+  ];
+  if (clone) {
+    const created = clone.createdAt && !Number.isNaN(Date.parse(clone.createdAt))
+      ? new Date(clone.createdAt).toLocaleString()
+      : '';
+    if (created) {
+      summaryParts.push(`<div><strong>Cloned:</strong> ${escapeHtml(created)}</div>`);
+    }
+    summaryParts.push(`<div><strong>Offline export:</strong> ${escapeHtml(clone.attached ? 'Attached' : 'Detached')}</div>`);
+  }
+
+  let divergenceMarkup = '';
+  if (clone) {
+    const entries = Object.entries(clone.divergenceMap || {});
+    if (entries.length) {
+      const listItems = entries
+        .map(([tag, items]) => {
+          if (!Array.isArray(items) || !tag) return '';
+          const details = items
+            .map(item => {
+              if (!item || typeof item !== 'object') return '';
+              const tokens = Array.isArray(item.tokens) && item.tokens.length ? item.tokens.join(', ') : '';
+              if (tokens) return escapeHtml(tokens);
+              if (item.token) return escapeHtml(item.token);
+              if (item.transcript) return escapeHtml(item.transcript);
+              return '';
+            })
+            .filter(Boolean)
+            .join('; ');
+          const descriptor = details ? ` – ${details}` : '';
+          return `<li><strong>${escapeHtml(tag)}</strong>${descriptor}</li>`;
+        })
+        .filter(Boolean)
+        .join('');
+      divergenceMarkup = `
+        <div class="voice-clone-divergence">
+          <strong>Emotional divergence tags</strong>
+          <ul>${listItems}</ul>
+        </div>`;
+    } else {
+      divergenceMarkup = `
+        <div class="voice-clone-divergence">
+          <strong>Emotional divergence tags</strong>
+          <p class="voice-clone-empty">No tagged recordings yet.</p>
+        </div>`;
+    }
+  }
+
+  return `
+    <section class="voice-profile-clone">
+      <div class="voice-clone-heading"><strong>Voice profile cloning</strong></div>
+      <div class="voice-clone-summary">
+        ${summaryParts.join('')}
+      </div>
+      <p class="voice-clone-requirement">${escapeHtml(requirementMessage)}</p>
+      <div class="voice-clone-actions">
+        <button type="button" data-action="clone-profile" ${cloneButtonDisabled}>${escapeHtml(buttonLabel)}</button>
+        <button type="button" data-action="play-clone"${tokenAttr} ${previewDisabled}>Preview cloned profile</button>
+        <button type="button" data-action="toggle-clone-attachment" ${attachDisabled}>${escapeHtml(attachLabel)}</button>
+      </div>
+      ${divergenceMarkup}
+    </section>
+  `;
+}
+
 function renderTokenDetail() {
   if (!elements.detail) return;
   const token = panelState.selectedToken;
   if (!token) {
-    elements.detail.innerHTML = '<p class="voice-detail-placeholder">Select a cache token to begin recording and mapping your voice profile.</p>';
+    const profileSection = renderProfileCloneSection();
+    elements.detail.innerHTML = `
+      <p class="voice-detail-placeholder">Select a cache token to begin recording and mapping your voice profile.</p>
+      ${profileSection}
+    `;
     setStatus('', 'info');
     return;
   }
   const recordings = recordingIndex.get(token) || [];
   const assignedId = store.assignments?.[token] || null;
   const assignedRecording = assignedId ? store.recordings.find(rec => rec.id === assignedId) : null;
+  const clone = getValidProfileClone();
   const recCount = recordings.length;
   const recordingLabel = recCount === 1 ? '1 recording' : `${recCount} recordings`;
   const ttsDisabled = typeof window.speechSynthesis === 'undefined';
@@ -263,7 +479,9 @@ function renderTokenDetail() {
   const voicePrefs = store.voicePreferences || defaultVoicePreferences();
   const recordBtnLabel = panelState.isRecording ? 'Recording…' : 'Record new iteration';
   const stopButton = panelState.isRecording ? '<button type="button" data-action="stop-recording">Stop recording</button>' : '';
+  const assignedButtonLabel = assignedRecording ? 'Play assigned voice' : clone ? 'Play cloned voice' : 'Play assigned voice';
 
+  const profileSection = renderProfileCloneSection(token);
   elements.detail.innerHTML = `
     <div class="voice-detail-header">
       <h3>${escapeHtml(token)}</h3>
@@ -272,7 +490,7 @@ function renderTokenDetail() {
     <div class="voice-detail-actions">
       <button type="button" data-action="start-recording" ${panelState.isRecording ? 'disabled' : ''}>${escapeHtml(recordBtnLabel)}</button>
       ${stopButton}
-      <button type="button" data-action="play-assigned" ${assignedRecording ? '' : 'disabled'} data-recording-id="${assignedRecording ? escapeAttr(assignedRecording.id) : ''}">Play assigned voice</button>
+      <button type="button" data-action="play-assigned" ${assignedRecording || clone ? '' : 'disabled'} data-recording-id="${assignedRecording ? escapeAttr(assignedRecording.id) : ''}">${escapeHtml(assignedButtonLabel)}</button>
       <button type="button" data-action="play-tts" ${ttsDisabled ? 'disabled' : ''}>Play TTS preview</button>
     </div>
     ${panelState.isRecording ? `<div class="voice-live-transcript" data-role="live-transcript">${escapeHtml(panelState.activeTranscript || 'Listening…')}</div>` : ''}
@@ -294,12 +512,114 @@ function renderTokenDetail() {
         <input type="range" min="0" max="1" step="0.05" value="${voicePrefs.volume}" data-role="voice-volume">
       </label>
     </div>
+    ${profileSection}
     ${assignedMarkup}
     ${recordingsMarkup}
   `;
 
   populateVoiceSelect();
   setStatus(panelState.status?.message || '', panelState.status?.type || 'info');
+}
+
+function cloneVoiceProfile() {
+  const profileId = store.profileRecordingId;
+  if (!profileId) {
+    setStatus('Set a recording as the voice profile before cloning.', 'warning');
+    return;
+  }
+  const profileRecording = store.recordings.find(rec => rec.id === profileId);
+  if (!profileRecording) {
+    setStatus('Voice profile recording is missing. Select a valid recording first.', 'error');
+    return;
+  }
+  const totalWords = getTotalTranscriptWords();
+  if (totalWords < PROFILE_CLONE_WORD_THRESHOLD) {
+    const needed = PROFILE_CLONE_WORD_THRESHOLD - totalWords;
+    setStatus(`Record ${needed} more word${needed === 1 ? '' : 's'} before cloning your voice profile.`, 'warning');
+    return;
+  }
+  const previouslyAttached = store.profileClone ? store.profileClone.attached !== false : true;
+  const clone = {
+    id: store.profileClone?.id || generateCloneId(),
+    recordingId: profileRecording.id,
+    createdAt: new Date().toISOString(),
+    wordCount: totalWords,
+    attached: previouslyAttached,
+    divergenceMap: buildCloneDivergence(),
+  };
+  store.profileClone = clone;
+  saveVoiceStore();
+  setStatus('Voice profile cloned. Preview it on any token or attach it to offline exports.', 'success');
+  renderTokenList();
+  renderTokenDetail();
+}
+
+function toggleProfileCloneAttachment() {
+  const clone = getValidProfileClone();
+  if (!clone) {
+    setStatus('Clone your voice profile before toggling offline export.', 'warning');
+    return;
+  }
+  clone.attached = !clone.attached;
+  saveVoiceStore();
+  setStatus(
+    clone.attached
+      ? 'Voice profile clone will be attached to offline HLSF exports.'
+      : 'Voice profile clone detached from offline exports.',
+    'info'
+  );
+  renderTokenDetail();
+}
+
+function playProfileClone(token) {
+  const clone = getValidProfileClone();
+  if (!clone) {
+    setStatus('Clone your voice profile to enable this preview.', 'warning');
+    return;
+  }
+  const recording = store.recordings.find(rec => rec.id === clone.recordingId);
+  if (!recording) {
+    store.profileClone = null;
+    saveVoiceStore();
+    setStatus('Voice profile clone is missing its source recording. Create a new clone.', 'error');
+    renderTokenDetail();
+    renderTokenList();
+    return;
+  }
+  if (activePlayback) {
+    try { activePlayback.pause(); } catch {}
+    activePlayback = null;
+  }
+  const audio = new Audio(getRecordingUrl(recording));
+  audio.play().catch(err => console.warn('Failed to play voice profile clone:', err));
+  activePlayback = audio;
+  const suffix = token ? ` for ${token}` : '';
+  setStatus(`Playing voice profile clone${suffix}.`, 'info');
+}
+
+function getProfileCloneExportPayload() {
+  refreshVoiceProfileClone(false);
+  const clone = getValidProfileClone();
+  if (!clone || clone.attached === false) return null;
+  const recording = store.recordings.find(rec => rec.id === clone.recordingId);
+  if (!recording) return null;
+  const divergence = clone.divergenceMap ? JSON.parse(JSON.stringify(clone.divergenceMap)) : {};
+  return {
+    id: clone.id,
+    createdAt: clone.createdAt,
+    wordCount: clone.wordCount,
+    divergenceMap: divergence,
+    attached: true,
+    recording: {
+      id: recording.id,
+      token: recording.token,
+      transcript: recording.transcript,
+      tags: Array.isArray(recording.tags) ? recording.tags.slice() : [],
+      tokens: listTokensForRecording(recording.id),
+      audioBase64: recording.audioBase64,
+      audioType: recording.audioType || 'audio/webm',
+    },
+  };
 }
 
 function renderAssignedBlock(recording) {
@@ -389,7 +709,11 @@ function playAssignedForToken(token) {
   if (!token) return;
   const assignedId = store.assignments?.[token];
   if (!assignedId) {
-    setStatus('No voice has been assigned to this token yet.', 'warning');
+    if (getValidProfileClone()) {
+      playProfileClone(token);
+    } else {
+      setStatus('No voice has been assigned to this token yet.', 'warning');
+    }
     return;
   }
   playRecordingById(assignedId);
@@ -527,6 +851,17 @@ function handleDetailClick(event) {
       panelState.selectedRecordingId = recordingId;
       renderTokenDetail();
       break;
+    case 'clone-profile':
+      cloneVoiceProfile();
+      break;
+    case 'toggle-clone-attachment':
+      toggleProfileCloneAttachment();
+      break;
+    case 'play-clone': {
+      const targetToken = target.dataset.token || panelState.selectedToken || '';
+      playProfileClone(targetToken || null);
+      break;
+    }
     default:
       break;
   }
@@ -685,6 +1020,7 @@ async function finalizeRecording(session) {
     if (!store.profileRecordingId) {
       store.profileRecordingId = newRecording.id;
     }
+    refreshVoiceProfileClone(false);
     saveVoiceStore();
     recordingIndex = buildRecordingIndex();
     setStatus('Recording saved and mapped to token.', 'success');
@@ -726,6 +1062,7 @@ function updateRecordingTags(recordingId, value) {
     .map(tag => tag.trim())
     .filter(Boolean);
   recording.tags = tags;
+  refreshVoiceProfileClone(false);
   saveVoiceStore();
   setStatus('Tags updated.', 'success');
   renderTokenDetail();
@@ -746,6 +1083,7 @@ function assignRecordingToTokens(recordingId, value) {
   for (const token of nextAssignments) {
     store.assignments[token] = recordingId;
   }
+  refreshVoiceProfileClone(false);
   saveVoiceStore();
   setStatus('Voice mapping updated.', 'success');
   signalVoiceCloneTokensChanged('assignment-updated');
@@ -760,8 +1098,16 @@ function setProfileRecording(recordingId) {
     return;
   }
   store.profileRecordingId = recordingId;
+  let statusMessage = 'Voice profile updated.';
+  let statusType = 'success';
+  if (store.profileClone && store.profileClone.recordingId !== recordingId) {
+    store.profileClone = null;
+    statusMessage = 'Voice profile updated. Existing clone cleared; create a new clone to refresh offline previews.';
+    statusType = 'info';
+  }
+  refreshVoiceProfileClone(false);
   saveVoiceStore();
-  setStatus('Voice profile updated.', 'success');
+  setStatus(statusMessage, statusType);
   renderTokenDetail();
 }
 
@@ -770,6 +1116,7 @@ function deleteRecording(recordingId) {
   const idx = store.recordings.findIndex(rec => rec.id === recordingId);
   if (idx === -1) return;
   if (!window.confirm('Delete this recording? This action cannot be undone.')) return;
+  const wasCloneSource = store.profileClone?.recordingId === recordingId;
   store.recordings.splice(idx, 1);
   for (const [token, assigned] of Object.entries(store.assignments || {})) {
     if (assigned === recordingId) delete store.assignments[token];
@@ -777,9 +1124,13 @@ function deleteRecording(recordingId) {
   if (store.profileRecordingId === recordingId) {
     store.profileRecordingId = null;
   }
+  refreshVoiceProfileClone(false);
   saveVoiceStore();
   recordingIndex = buildRecordingIndex();
-  setStatus('Recording removed.', 'warning');
+  const message = wasCloneSource
+    ? 'Recording removed. Voice profile clone cleared.'
+    : 'Recording removed.';
+  setStatus(message, 'warning');
   renderTokenDetail();
   renderTokenList();
 }
@@ -810,6 +1161,7 @@ function handleTokensChanged() {
 function initializeVoiceClonePanel() {
   if (panelReady) return;
   store = loadVoiceStore();
+  refreshVoiceProfileClone(false);
   elements.panel = document.getElementById('voice-clone-panel');
   elements.tokenList = document.getElementById('voice-token-list');
   elements.detail = document.getElementById('voice-token-detail');
@@ -845,6 +1197,7 @@ function initializeVoiceClonePanel() {
     playToken: playAssignedForToken,
     playTts: playTokenTts,
     signalTokensChanged: signalVoiceCloneTokensChanged,
+    getProfileClone: getProfileCloneExportPayload,
   });
 }
 
