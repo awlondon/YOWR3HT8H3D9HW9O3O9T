@@ -7290,6 +7290,9 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const edgesPerLevel = Number.isFinite(options.edgesPerLevel) && options.edgesPerLevel > 0
       ? Math.floor(options.edgesPerLevel)
       : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
+    const concurrency = Number.isFinite(options.concurrency) && options.concurrency > 0
+      ? Math.max(1, Math.floor(options.concurrency))
+      : CONFIG.MAX_CONCURRENCY;
     const onTokenLoaded = typeof options.onTokenLoaded === 'function' ? options.onTokenLoaded : null;
     const preferDb = options.preferDb === true;
     const dbRecordIndex = preferDb && options.dbRecordIndex instanceof Map
@@ -7327,109 +7330,155 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const totalSteps = Math.max(1, queue.length);
     const progress = new ProgressTracker(totalSteps, label || 'adjacency recursion');
 
+    const processEntry = async (item) => {
+      if (!item || !item.entry) {
+        return { item, result: null, fetchAttempted: false };
+      }
+
+      const token = item.token;
+
+      if (item.entry.kind === 'sym') {
+        return {
+          item,
+          result: {
+            token,
+            relationships: {},
+            kind: item.entry.kind,
+            offline: true,
+            cache_hit: true,
+            symbol: { cat: item.entry.cat || null },
+          },
+          fetchAttempted: false,
+        };
+      }
+
+      if (preferDb && !isTokenCached(token)) {
+        let staged = false;
+        const normalizedKey = token.toLowerCase();
+        if (!staged && dbRecordIndex && dbRecordIndex.has(normalizedKey)) {
+          const record = dbRecordIndex.get(normalizedKey);
+          if (record && record.relationships && Object.keys(record.relationships).length) {
+            staged = stageDbRecordForCache(record) || staged;
+          }
+        }
+        if (!staged && remoteDb && typeof remoteDb.isReady === 'function' && remoteDb.isReady()
+          && typeof remoteDb.preloadTokens === 'function') {
+          try {
+            const preloadStats = await remoteDb.preloadTokens([token]);
+            if (preloadStats && (Number(preloadStats.loaded) > 0 || Number(preloadStats.hits) > 0)) {
+              staged = true;
+            }
+          } catch (err) {
+            console.warn('Remote DB preload failed during recursion for', token, err);
+          }
+        }
+      }
+
+      try {
+        const result = await fetchAdjacency(item.entry, context);
+        return { item, result, fetchAttempted: true };
+      } catch (err) {
+        if (err?.name === 'AbortError') throw err;
+        console.warn('Adjacency fetch failed during recursion for', token, err);
+        return { item, result: null, error: err, fetchAttempted: true };
+      }
+    };
+
     while (queue.length) {
       if (currentAbortController?.signal.aborted) {
         progress.complete(`${label || 'adjacency recursion'} cancelled after ${visited.size} tokens`);
         break;
       }
 
-      const current = queue.shift();
-      if (!current || !current.entry) {
-        progress.increment(1);
-        continue;
-      }
-
-      const token = String(current.entry.token || '').trim();
-      if (!token) {
-        progress.increment(1);
-        continue;
-      }
-      const key = token.toLowerCase();
-      enqueued.delete(key);
-      if (visited.has(key)) {
-        progress.increment(1);
-        continue;
-      }
-      visited.add(key);
-
-      let result;
-      if (current.entry.kind === 'sym') {
-        result = {
-          token,
-          relationships: {},
-          kind: current.entry.kind,
-          offline: true,
-          cache_hit: true,
-          symbol: { cat: current.entry.cat || null },
-        };
-      } else {
-        if (preferDb && !isTokenCached(token)) {
-          let staged = false;
-          const key = token.toLowerCase();
-          if (!staged && dbRecordIndex && dbRecordIndex.has(key)) {
-            const record = dbRecordIndex.get(key);
-            if (record && record.relationships && Object.keys(record.relationships).length) {
-              staged = stageDbRecordForCache(record) || staged;
-            }
-          }
-          if (!staged && remoteDb && typeof remoteDb.isReady === 'function' && remoteDb.isReady()
-            && typeof remoteDb.preloadTokens === 'function') {
-            try {
-              const preloadStats = await remoteDb.preloadTokens([token]);
-              if (preloadStats && (Number(preloadStats.loaded) > 0 || Number(preloadStats.hits) > 0)) {
-                staged = true;
-              }
-            } catch (err) {
-              console.warn('Remote DB preload failed during recursion for', token, err);
-            }
-          }
+      const batch = [];
+      while (batch.length < concurrency && queue.length) {
+        const current = queue.shift();
+        if (!current || !current.entry) {
+          progress.increment(1);
+          continue;
         }
-        result = await fetchAdjacency(current.entry, context);
-        stats.fetchCount += 1;
+
+        const token = String(current.entry.token || '').trim();
+        if (!token) {
+          progress.increment(1);
+          continue;
+        }
+
+        const key = token.toLowerCase();
+        enqueued.delete(key);
+        if (visited.has(key)) {
+          progress.increment(1);
+          continue;
+        }
+        visited.add(key);
+
+        batch.push({ entry: current.entry, depthRemaining: current.depthRemaining, token, key });
+      }
+
+      if (!batch.length) continue;
+
+      const responses = await Promise.all(batch.map(processEntry));
+
+      for (const response of responses) {
+        const item = response.item;
+        if (!item) {
+          progress.increment(1);
+          continue;
+        }
+
+        if (response.fetchAttempted) {
+          stats.fetchCount += 1;
+        }
+
+        const result = response.result;
         if (result && result.cache_hit === false && !result.offline) {
           stats.apiCalls += 1;
         }
+
+        if (result && result.token) {
+          if (result.cache_hit) {
+            cacheHitTokens.add(result.token);
+          } else if (result.offline) {
+            offlineTokens.add(result.token);
+          } else if (result.error) {
+            errorTokens.add(result.token);
+          } else {
+            llmGeneratedTokens.add(result.token);
+          }
+
+          const limited = limitAdjacencyEntryEdges(result, edgesPerLevel);
+          results.set(limited.token, limited);
+
+          if (onTokenLoaded) {
+            try {
+              onTokenLoaded(limited);
+            } catch (err) {
+              console.warn('Adjacency listener failed:', err);
+            }
+          }
+
+          const nextDepth = item.depthRemaining - 1;
+          if (nextDepth > 0 && item.entry.kind !== 'sym') {
+            const candidates = collectNeighborCandidates(limited);
+            let enqueuedCount = 0;
+            for (const candidate of candidates) {
+              const nextKey = candidate.token.toLowerCase();
+              if (visited.has(nextKey) || enqueued.has(nextKey)) continue;
+              queue.push({ entry: { token: candidate.token, kind: 'word' }, depthRemaining: nextDepth });
+              enqueued.add(nextKey);
+              enqueuedCount += 1;
+            }
+            if (enqueuedCount > 0) {
+              progress.addTotal(enqueuedCount);
+              stats.expansions += enqueuedCount;
+            }
+          }
+        } else if (response.error && item.token) {
+          errorTokens.add(item.token);
+        }
+
+        progress.increment(1);
       }
-
-      if (result && result.token) {
-        if (result.cache_hit) {
-          cacheHitTokens.add(result.token);
-        } else if (result.offline) {
-          offlineTokens.add(result.token);
-        } else if (result.error) {
-          errorTokens.add(result.token);
-        } else {
-          llmGeneratedTokens.add(result.token);
-        }
-        const limited = limitAdjacencyEntryEdges(result, edgesPerLevel);
-        results.set(limited.token, limited);
-        if (onTokenLoaded) {
-          try {
-            onTokenLoaded(limited);
-          } catch (err) {
-            console.warn('Adjacency listener failed:', err);
-          }
-        }
-
-        const nextDepth = current.depthRemaining - 1;
-        if (nextDepth > 0 && current.entry.kind !== 'sym') {
-          const candidates = collectNeighborCandidates(limited);
-          let enqueuedCount = 0;
-          for (const candidate of candidates) {
-            const nextKey = candidate.token.toLowerCase();
-            if (visited.has(nextKey) || enqueued.has(nextKey)) continue;
-            queue.push({ entry: { token: candidate.token, kind: 'word' }, depthRemaining: nextDepth });
-            enqueued.add(nextKey);
-            enqueuedCount += 1;
-          }
-          if (enqueuedCount > 0) {
-            progress.addTotal(enqueuedCount);
-            stats.expansions += enqueuedCount;
-          }
-        }
-      }
-
-      progress.increment(1);
     }
 
     progress.complete(`${label || 'adjacency recursion'}: explored ${visited.size} token${visited.size === 1 ? '' : 's'} to depth ${depth}`);
@@ -7459,6 +7508,110 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
   } finally {
     CacheBatch.end();
   }
+}
+
+function collectHiddenAdjacencyTokens(options = {}) {
+  const minAdjacencies = Number.isFinite(options.minAdjacencies) && options.minAdjacencies >= 0
+    ? Math.floor(options.minAdjacencies)
+    : 2;
+
+  const stats = new Map();
+  const neighborSources = new Map();
+
+  const ingestEntry = (token, relationships, origin) => {
+    const safeToken = (token == null ? '' : String(token)).trim();
+    if (!safeToken) return;
+
+    const rels = relationships && typeof relationships === 'object' ? relationships : {};
+    let adjacencyCount = 0;
+    let relationshipTypes = 0;
+
+    for (const edges of Object.values(rels)) {
+      if (!Array.isArray(edges) || edges.length === 0) continue;
+      relationshipTypes += 1;
+      for (const edge of edges) {
+        if (!edge || !edge.token) continue;
+        const neighborToken = String(edge.token).trim();
+        if (!neighborToken) continue;
+        adjacencyCount += 1;
+        const neighborKey = neighborToken.toLowerCase();
+        if (!neighborSources.has(neighborKey)) {
+          neighborSources.set(neighborKey, { token: neighborToken, sources: new Set(), edgeCount: 0 });
+        }
+        const info = neighborSources.get(neighborKey);
+        if (!info.token) info.token = neighborToken;
+        info.sources.add(safeToken);
+        info.edgeCount += 1;
+      }
+    }
+
+    const key = safeToken.toLowerCase();
+    if (!stats.has(key)) {
+      stats.set(key, {
+        token: safeToken,
+        adjacencyCount,
+        relationshipTypes,
+        origins: new Set(origin ? [origin] : []),
+      });
+    } else {
+      const existing = stats.get(key);
+      if (adjacencyCount > existing.adjacencyCount) existing.adjacencyCount = adjacencyCount;
+      if (relationshipTypes > existing.relationshipTypes) existing.relationshipTypes = relationshipTypes;
+      if (origin) existing.origins.add(origin);
+    }
+  };
+
+  const cacheKeys = safeStorageKeys(TOKEN_CACHE_PREFIX);
+  for (const key of cacheKeys) {
+    const stored = safeStorageGet(key, null);
+    if (!stored) continue;
+    try {
+      const entry = typeof stored === 'string' ? JSON.parse(stored) : stored;
+      if (!entry || typeof entry !== 'object') continue;
+      ingestEntry(entry.token, entry.relationships, 'cache');
+    } catch (err) {
+      console.warn('Failed to inspect cached adjacency entry', key, err);
+    }
+  }
+
+  const db = getDb();
+  if (db?.full_token_data) {
+    for (const record of db.full_token_data) {
+      if (!record || typeof record !== 'object') continue;
+      ingestEntry(record.token, record.relationships, 'db');
+    }
+  }
+
+  const sparse = [];
+  for (const info of stats.values()) {
+    const count = Number.isFinite(info.adjacencyCount) ? info.adjacencyCount : 0;
+    if (count < minAdjacencies) {
+      sparse.push({
+        token: info.token,
+        adjacencyCount: count,
+        relationshipTypes: Number.isFinite(info.relationshipTypes) ? info.relationshipTypes : 0,
+        origins: info.origins instanceof Set ? Array.from(info.origins) : [],
+      });
+    }
+  }
+
+  const unmapped = [];
+  for (const [neighborKey, info] of neighborSources.entries()) {
+    if (stats.has(neighborKey)) continue;
+    unmapped.push({
+      token: info.token,
+      sources: Array.from(info.sources || []),
+      edgeCount: Number.isFinite(info.edgeCount) ? info.edgeCount : 0,
+    });
+  }
+
+  return {
+    minAdjacencies,
+    stats,
+    sparse,
+    unmapped,
+    neighborSources,
+  };
 }
 
 function analyzeAdjacencyConnectivity(matrices, seeds) {
@@ -11486,6 +11639,281 @@ async function cmd_loaddb(args) {
   await cmdLoadDb(joined);
 }
 
+function parseHiddenSweepArgs(args = []) {
+  const options = {
+    minAdjacencies: 2,
+    depth: null,
+    edgesPerLevel: null,
+    limit: null,
+    concurrency: null,
+  };
+
+  const manualTokens = [];
+
+  const setNumericOption = (key, value) => {
+    if (value == null) return;
+    const num = Number(value);
+    if (!Number.isFinite(num)) return;
+    options[key] = num;
+  };
+
+  const handleNumericFlag = (flag, key, raw, index) => {
+    const lower = raw.toLowerCase();
+    if (lower === flag) {
+      const next = args[index + 1];
+      if (next != null && !next.startsWith('--')) {
+        setNumericOption(key, next);
+        return { consumedNext: true, handled: true };
+      }
+      return { consumedNext: false, handled: true };
+    }
+    if (lower.startsWith(`${flag}=`)) {
+      setNumericOption(key, raw.slice(flag.length + 1));
+      return { consumedNext: false, handled: true };
+    }
+    return { consumedNext: false, handled: false };
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const raw = args[i];
+    if (!raw) continue;
+    const trimmed = String(raw).trim();
+    if (!trimmed) continue;
+
+    const flags = [
+      { flag: '--min', key: 'minAdjacencies' },
+      { flag: '--depth', key: 'depth' },
+      { flag: '--edges', key: 'edgesPerLevel' },
+      { flag: '--limit', key: 'limit' },
+      { flag: '--concurrency', key: 'concurrency' },
+    ];
+
+    let handled = false;
+    for (const { flag, key } of flags) {
+      const result = handleNumericFlag(flag, key, trimmed, i);
+      if (result.handled) {
+        if (result.consumedNext) i += 1;
+        handled = true;
+        break;
+      }
+    }
+
+    if (handled) continue;
+
+    manualTokens.push(trimmed);
+  }
+
+  return { options, manualTokens };
+}
+
+async function cmd_hidden(args = []) {
+  if (!enterProcessingState()) return;
+
+  const start = performance.now();
+
+  try {
+    const { options, manualTokens } = parseHiddenSweepArgs(Array.isArray(args) ? args : []);
+    const minAdjacencies = Number.isFinite(options.minAdjacencies) && options.minAdjacencies >= 0
+      ? Math.floor(options.minAdjacencies)
+      : 2;
+
+    const analysis = collectHiddenAdjacencyTokens({ minAdjacencies });
+
+    const reasonPriority = new Map([
+      ['unmapped', 0],
+      ['sparse', 1],
+      ['manual', 2],
+    ]);
+
+    const hiddenMap = new Map();
+    const ensureEntry = (token) => {
+      const safeToken = (token == null ? '' : String(token)).trim();
+      if (!safeToken) return null;
+      const key = safeToken.toLowerCase();
+      if (!hiddenMap.has(key)) {
+        const stat = analysis.stats.get(key) || { adjacencyCount: 0, relationshipTypes: 0, origins: [] };
+        const initialOrigins = stat.origins instanceof Set
+          ? Array.from(stat.origins)
+          : Array.isArray(stat.origins)
+            ? stat.origins
+            : [];
+        hiddenMap.set(key, {
+          token: safeToken,
+          adjacencyCount: Number.isFinite(stat.adjacencyCount) ? stat.adjacencyCount : 0,
+          relationshipTypes: Number.isFinite(stat.relationshipTypes) ? stat.relationshipTypes : 0,
+          reasons: new Set(),
+          sources: new Set(initialOrigins),
+        });
+      }
+      return hiddenMap.get(key);
+    };
+
+    for (const record of analysis.unmapped) {
+      const entry = ensureEntry(record.token);
+      if (!entry) continue;
+      entry.reasons.add('unmapped');
+      if (Array.isArray(record.sources)) {
+        for (const source of record.sources) {
+          if (source) entry.sources.add(source);
+        }
+      }
+    }
+
+    for (const record of analysis.sparse) {
+      const entry = ensureEntry(record.token);
+      if (!entry) continue;
+      entry.reasons.add('sparse');
+      entry.adjacencyCount = Number.isFinite(record.adjacencyCount) ? record.adjacencyCount : entry.adjacencyCount;
+      entry.relationshipTypes = Number.isFinite(record.relationshipTypes) ? record.relationshipTypes : entry.relationshipTypes;
+      if (Array.isArray(record.origins)) {
+        for (const origin of record.origins) {
+          if (origin) entry.sources.add(origin);
+        }
+      }
+    }
+
+    for (const token of manualTokens) {
+      const entry = ensureEntry(token);
+      if (!entry) continue;
+      entry.reasons.add('manual');
+    }
+
+    const entries = Array.from(hiddenMap.values());
+    if (!entries.length) {
+      logOK('No hidden tokens require adjacency mapping.');
+      return;
+    }
+
+    entries.sort((a, b) => {
+      const aPriority = Math.min(...Array.from(a.reasons).map(reason => reasonPriority.get(reason) ?? 3));
+      const bPriority = Math.min(...Array.from(b.reasons).map(reason => reasonPriority.get(reason) ?? 3));
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      if ((a.adjacencyCount || 0) !== (b.adjacencyCount || 0)) {
+        return (a.adjacencyCount || 0) - (b.adjacencyCount || 0);
+      }
+      return a.token.localeCompare(b.token, undefined, { sensitivity: 'base' });
+    });
+
+    const limit = Number.isFinite(options.limit) && options.limit > 0 ? Math.floor(options.limit) : null;
+    const limitedEntries = limit && entries.length > limit ? entries.slice(0, limit) : entries;
+    if (limit && entries.length > limit) {
+      logWarning(`Processing limited to ${limit} hidden tokens (of ${entries.length}).`);
+    }
+
+    const seeds = limitedEntries.map(entry => ({ token: entry.token, kind: 'word' }));
+    const normalizedSeeds = normalizeAdjacencyInputs(seeds);
+
+    const seedPreview = formatTokenList(seeds.map(entry => entry.token));
+    const unmappedCount = analysis.unmapped.length;
+    const sparseCount = analysis.sparse.length;
+    const manualCount = manualTokens.length;
+    const summaryParts = [
+      `${unmappedCount} unmapped`,
+      `${sparseCount} sparse (<${minAdjacencies})`,
+    ];
+    if (manualCount > 0) summaryParts.push(`${manualCount} manual`);
+
+    addLog(`<div class="adjacency-insight">
+      <strong>🕵️ Hidden token sweep:</strong> ${sanitize(summaryParts.join(' · '))}.<br>
+      <em>Seeds:</em> ${sanitize(seedPreview || 'n/a')}
+    </div>`);
+
+    const contextPieces = [
+      'Hidden token adjacency sweep to reveal unmapped or sparse relationship tokens.',
+      `Minimum adjacency threshold: ${minAdjacencies}.`,
+    ];
+    if (seedPreview) {
+      contextPieces.push(`Focus tokens: ${seedPreview}.`);
+    }
+    const context = contextPieces.join(' ');
+
+    const depth = Number.isFinite(options.depth) && options.depth > 0
+      ? Math.floor(options.depth)
+      : CONFIG.ADJACENCY_RECURSION_DEPTH;
+    const edgesPerLevel = Number.isFinite(options.edgesPerLevel) && options.edgesPerLevel > 0
+      ? Math.floor(options.edgesPerLevel)
+      : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
+    const concurrency = Number.isFinite(options.concurrency) && options.concurrency > 0
+      ? Math.floor(options.concurrency)
+      : null;
+
+    const dbRecordIndex = buildDbRecordIndexMap();
+    const preferDbHydration = window.HLSF?.remoteDb?.isReady?.() === true || dbRecordIndex.size > 0;
+
+    const recursionResult = await fetchRecursiveAdjacencies(
+      seeds,
+      context,
+      `hidden adjacency sweep (${seeds.length} seeds)`,
+      {
+        depth,
+        edgesPerLevel,
+        onTokenLoaded: () => queueLiveGraphUpdate(48),
+        preferDb: preferDbHydration,
+        dbRecordIndex,
+        normalizedSeeds,
+        concurrency: concurrency || undefined,
+      },
+    );
+
+    const matrices = recursionResult?.matrices instanceof Map ? recursionResult.matrices : new Map();
+    const stats = recursionResult?.stats || {};
+    const provenance = recursionResult?.provenance || {};
+    const connectivity = recursionResult?.connectivity || stats.connectivity || null;
+
+    const resultSummary = [
+      `seeds ${stats.seedCount ?? seeds.length}`,
+      `visited ${stats.visitedTokens ?? matrices.size}`,
+      `expansions ${stats.expansions ?? 0}`,
+    ];
+    if (Number.isFinite(stats.fetchCount)) resultSummary.push(`fetches ${stats.fetchCount}`);
+    if (Number.isFinite(stats.apiCalls)) resultSummary.push(`API calls ${stats.apiCalls}`);
+
+    const connectivityText = connectivity
+      ? ` · connectivity ${connectivity.allSeedsConnected ? 'complete' : 'partial'} (${connectivity.componentCount || 0} component${(connectivity.componentCount || 0) === 1 ? '' : 's'})`
+      : '';
+
+    addLog(`<div class="adjacency-insight">
+      <strong>🔁 Hidden sweep summary:</strong> ${sanitize(resultSummary.join(' · '))}${sanitize(connectivityText)}
+    </div>`);
+
+    const cacheSummary = formatTokenList(provenance.cacheHits);
+    if (cacheSummary) {
+      addLog(`<div class="adjacency-insight"><strong>📚 Cache hits:</strong> ${sanitize(cacheSummary)}</div>`);
+    }
+
+    const llmSummary = formatTokenList(provenance.llmGenerated);
+    if (llmSummary) {
+      addLog(`<div class="adjacency-insight"><strong>🤖 New adjacencies:</strong> ${sanitize(llmSummary)}</div>`);
+    }
+
+    if (Array.isArray(provenance.offline) && provenance.offline.length) {
+      const offlineSummary = formatTokenList(provenance.offline);
+      if (offlineSummary) {
+        logWarning(`Offline tokens skipped: ${sanitize(offlineSummary)}`);
+      }
+    }
+
+    if (Array.isArray(provenance.errors) && provenance.errors.length) {
+      const errorSummary = formatTokenList(provenance.errors);
+      if (errorSummary) {
+        logWarning(`Tokens with errors: ${sanitize(errorSummary)}`);
+      }
+    }
+
+    if (hasNewAdjacencyData(matrices)) {
+      notifyHlsfAdjacencyChange('hidden-token-sweep', { immediate: true });
+      queueLiveGraphUpdate(64);
+    }
+
+    const durationSec = ((performance.now() - start) / 1000).toFixed(1);
+    logOK(`Hidden adjacency sweep completed in ${durationSec}s (${seeds.length} seed${seeds.length === 1 ? '' : 's'}).`);
+  } catch (err) {
+    logError(`Hidden adjacency sweep failed: ${err.message || err}`);
+  } finally {
+    exitProcessingState();
+  }
+}
+
 async function cmd_state(args = []) {
   if (!getDb()) {
     const ok = await tryBootstrapDb();
@@ -11793,6 +12221,8 @@ registerCommand('/import', cmd_import);
 registerCommand('/read', () => cmdRead());
 registerCommand('/ingest', () => cmdRead());
 registerCommand('/loaddb', cmd_loaddb);
+registerCommand('/maphidden', cmd_hidden);
+registerCommand('/hidden', cmd_hidden);
 window.COMMANDS = COMMANDS;
 // Router guard (prevents duplicate logs)
 if (!COMMANDS.__hlsf_bound) {
@@ -11898,6 +12328,7 @@ function helpCommandHtml() {
         /encrypt - Encode text into glyphs<br>
         /decrypt - Decode glyph sequences<br>
         /visualize or /hlsf - Render the current HLSF graph<br>
+        /maphidden [--min N --limit N --depth N --edges N --concurrency N] - Reveal hidden adjacency tokens<br>
         /scheme &lt;color&gt; - Toggle visual theme<br>
         /spin on|off - Toggle emergent rotation<br>
         /symbols [on|off|status|mode|weight] - Symbol tokenization controls`;
