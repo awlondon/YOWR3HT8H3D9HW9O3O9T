@@ -6,6 +6,7 @@ const TOKENS_CHANGED_EVENT = 'voice:tokens-changed';
 const DATABASE_READY_EVENT = 'hlsf:database-ready';
 const MAX_RENDERED_TOKENS = 800;
 const PROFILE_SYNTHESIS_TOKEN_THRESHOLD = 100;
+const SYNTHESIZED_PREVIEW_TOKEN_LIMIT = 120;
 
 function defaultVoicePreferences() {
   return {
@@ -729,15 +730,90 @@ function playProfileClone(token) {
     renderTokenList();
     return;
   }
-  if (activePlayback) {
-    try { activePlayback.pause(); } catch {}
-    activePlayback = null;
-  }
+  stopActivePlayback();
   const audio = new Audio(getRecordingUrl(recording));
   audio.play().catch(err => console.warn('Failed to play voice profile clone:', err));
   activePlayback = audio;
   const suffix = token ? ` for ${token}` : '';
   setStatus(`Playing voice profile clone${suffix}.`, 'info');
+}
+
+function buildSynthesizedPreviewSegments(contextToken = null) {
+  const assignments = store.assignments || {};
+  const recordingMap = new Map((store.recordings || []).map(rec => [rec.id, rec]));
+  const segments = [];
+  const seenTokens = new Set();
+
+  const pushToken = token => {
+    if (!token || seenTokens.has(token)) return;
+    seenTokens.add(token);
+    const recordingId = assignments[token];
+    const recording = recordingId ? recordingMap.get(recordingId) : null;
+    const rawTranscript = recording?.transcript || recording?.token || token;
+    const cleaned = typeof rawTranscript === 'string'
+      ? rawTranscript.replace(/\s+/g, ' ').trim()
+      : '';
+    if (!cleaned) return;
+    segments.push(cleaned);
+  };
+
+  if (contextToken) pushToken(contextToken);
+
+  const sortedTokens = Object.keys(assignments)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
+
+  for (const token of sortedTokens) {
+    if (segments.length >= SYNTHESIZED_PREVIEW_TOKEN_LIMIT) break;
+    if (token === contextToken) continue;
+    pushToken(token);
+  }
+
+  if (segments.length < SYNTHESIZED_PREVIEW_TOKEN_LIMIT) {
+    const recordingTokens = (store.recordings || [])
+      .map(rec => rec.token)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
+    for (const token of recordingTokens) {
+      if (segments.length >= SYNTHESIZED_PREVIEW_TOKEN_LIMIT) break;
+      if (assignments[token]) continue;
+      pushToken(token);
+    }
+  }
+
+  return segments;
+}
+
+function playSynthesizedPreview(token) {
+  if (typeof window.speechSynthesis === 'undefined') {
+    setStatus('Speech synthesis is not available in this browser.', 'error');
+    return;
+  }
+
+  const segments = buildSynthesizedPreviewSegments(token);
+  if (!segments.length) {
+    setStatus('No mapped tokens are available for synthesized preview.', 'warning');
+    return;
+  }
+
+  stopActivePlayback();
+  window.speechSynthesis.cancel();
+
+  const script = segments.join('. ');
+  const utterance = new SpeechSynthesisUtterance(script);
+  const prefs = store.voicePreferences || defaultVoicePreferences();
+  utterance.rate = Number.isFinite(prefs.rate) ? prefs.rate : 1;
+  utterance.pitch = Number.isFinite(prefs.pitch) ? prefs.pitch : 1;
+  utterance.volume = Number.isFinite(prefs.volume) ? prefs.volume : 1;
+
+  const voices = window.speechSynthesis.getVoices();
+  if (prefs.voiceURI && Array.isArray(voices) && voices.length) {
+    const voice = voices.find(v => v.voiceURI === prefs.voiceURI);
+    if (voice) utterance.voice = voice;
+  }
+
+  window.speechSynthesis.speak(utterance);
+  setStatus('Playing synthesized voice profile preview using speech synthesis.', 'info');
 }
 
 function getProfileCloneExportPayload(options = {}) {
@@ -1044,6 +1120,16 @@ function playAssignedForToken(token) {
   playRecordingById(assignedId);
 }
 
+function stopActivePlayback() {
+  if (!activePlayback) return;
+  try {
+    activePlayback.pause();
+  } catch {
+    // ignore pause errors
+  }
+  activePlayback = null;
+}
+
 function playRecordingById(recordingId) {
   if (!recordingId) return;
   const recording = store.recordings.find(rec => rec.id === recordingId);
@@ -1051,10 +1137,7 @@ function playRecordingById(recordingId) {
     setStatus('Unable to locate the requested recording.', 'error');
     return;
   }
-  if (activePlayback) {
-    try { activePlayback.pause(); } catch {}
-    activePlayback = null;
-  }
+  stopActivePlayback();
   const audio = new Audio(getRecordingUrl(recording));
   audio.play().catch(err => console.warn('Failed to play recording:', err));
   activePlayback = audio;
@@ -1063,8 +1146,7 @@ function playRecordingById(recordingId) {
 
 function playTokenTts(token) {
   if (hasSynthesizedVoiceProfile()) {
-    playProfileClone(token);
-    setStatus('Playing synthesized voice profile preview.', 'info');
+    playSynthesizedPreview(token);
     return;
   }
   if (typeof window.speechSynthesis === 'undefined') {
@@ -1072,6 +1154,7 @@ function playTokenTts(token) {
     return;
   }
   if (!token) return;
+  stopActivePlayback();
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(token);
   const prefs = store.voicePreferences || defaultVoicePreferences();
