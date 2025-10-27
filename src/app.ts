@@ -37,6 +37,57 @@ const CONFIG = {
   NETWORK_RETRY_BACKOFF_MS: 5000,
 };
 
+const MEMBERSHIP_LEVELS = {
+  DEMO: 'demo',
+  MEMBER: 'member',
+};
+
+const COMMAND_HELP_ENTRIES = [
+  { command: '/help', description: 'Show this command catalog', requiresMembership: false },
+  { command: '/clear', description: 'Clear log history', requiresMembership: true },
+  { command: '/reset', description: 'Clear cache and database snapshots', requiresMembership: true },
+  { command: '/stats', description: 'Session statistics overview', requiresMembership: true },
+  { command: '/database', description: 'View database metadata', requiresMembership: true },
+  { command: '/db', description: 'Alias for /database', requiresMembership: true },
+  { command: '/export', description: 'Export database metadata as JSON', requiresMembership: true },
+  { command: '/glyph', description: 'Generate glyph mappings', requiresMembership: true },
+  { command: '/ledger', description: 'Inspect glyph ledger', requiresMembership: true },
+  { command: '/encrypt', description: 'Encode text into glyphs', requiresMembership: true },
+  { command: '/decrypt', description: 'Decode glyph sequences', requiresMembership: true },
+  { command: '/exportledger', description: 'Export glyph ledger', requiresMembership: true },
+  { command: '/import', description: 'Import HLSF database file', requiresMembership: true },
+  { command: '/read', description: 'Ingest document for adjacency mapping', requiresMembership: true },
+  { command: '/ingest', description: 'Alias for /read', requiresMembership: true },
+  { command: '/loaddb', description: 'Load remote database manifest', requiresMembership: true },
+  { command: '/hlsf', description: 'Render HLSF visualization', requiresMembership: true },
+  { command: '/visualize', description: 'Alias for /hlsf', requiresMembership: true },
+  { command: '/scheme', description: 'Toggle visual theme', requiresMembership: true },
+  { command: '/spin', description: 'Toggle emergent rotation', requiresMembership: true },
+  { command: '/omega', description: 'Adjust rotation omega', requiresMembership: true },
+  { command: '/alpha', description: 'Adjust alpha transparency', requiresMembership: true },
+  { command: '/symbols', description: 'Symbol tokenization controls', requiresMembership: true },
+  { command: '/self', description: 'Display engine self state', requiresMembership: true },
+  { command: '/state', description: 'Inspect runtime state snapshot', requiresMembership: true },
+  { command: '/maphidden', description: 'Reveal hidden adjacency tokens', requiresMembership: true },
+  { command: '/hidden', description: 'Alias for /maphidden', requiresMembership: true },
+  { command: '/signup', description: 'Create a SaaS profile', requiresMembership: true },
+  { command: '/switchuser', description: 'Switch active SaaS profile', requiresMembership: true },
+  { command: '/plan', description: 'View subscription and credits', requiresMembership: true },
+  { command: '/topup', description: 'Purchase additional credits', requiresMembership: true },
+  { command: '/userlist', description: 'List SaaS user profiles', requiresMembership: true },
+  { command: '/message', description: 'Send encrypted SaaS message', requiresMembership: true },
+  { command: '/inbox', description: 'Show encrypted inbox entries', requiresMembership: true },
+  { command: '/decryptmsg', description: 'Decrypt inbox message', requiresMembership: true },
+];
+
+const COMMAND_RESTRICTIONS = {
+  [MEMBERSHIP_LEVELS.DEMO]: new Set(
+    COMMAND_HELP_ENTRIES
+      .filter(entry => entry.requiresMembership)
+      .map(entry => entry.command.toLowerCase()),
+  ),
+};
+
 const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
 const DATABASE_READY_EVENT = 'hlsf:database-ready';
 
@@ -4139,6 +4190,14 @@ const state = {
     lastTokens: [],
     lastPipeline: null,
   },
+  membership: {
+    level: MEMBERSHIP_LEVELS.DEMO,
+    name: '',
+    email: '',
+    plan: null,
+    trial: true,
+    demoMode: 'api',
+  },
 };
 
 state.hlsfReady = false;
@@ -4146,6 +4205,7 @@ window.CognitionEngine.state = state;
 const saasPlatform = initializeSaasPlatform();
 state.saas = saasPlatform;
 window.CognitionEngine.saas = saasPlatform;
+applyMembershipUi();
 const promptReviewStore = state.pendingPromptReviews;
 syncSettings();
 
@@ -4177,6 +4237,47 @@ function sanitize(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function getMembershipLevel() {
+  return (state?.membership?.level || MEMBERSHIP_LEVELS.DEMO);
+}
+
+function isDemoUser() {
+  return getMembershipLevel() === MEMBERSHIP_LEVELS.DEMO;
+}
+
+function isCommandLocked(command) {
+  if (!command || typeof command !== 'string') return false;
+  const normalized = command.startsWith('/') ? command.toLowerCase() : `/${command.toLowerCase()}`;
+  const restrictions = COMMAND_RESTRICTIONS[getMembershipLevel()];
+  if (!restrictions || !(restrictions instanceof Set)) return false;
+  return restrictions.has(normalized);
+}
+
+function logCommandLocked(command) {
+  const label = command ? sanitize(command) : 'This command';
+  addLog(`
+    <div class="command-locked">
+      ⚠️ ${label} is unavailable in demo mode. <a href="#" class="command-upgrade-link" data-upgrade="trial">Start your 7-day trial for full access</a>.
+    </div>
+  `);
+}
+
+function ensureCommandAvailable(command) {
+  if (!command || typeof command !== 'string') return true;
+  const normalized = command.startsWith('/') ? command.toLowerCase() : `/${command.toLowerCase()}`;
+  if (normalized === '/help') return true;
+  if (!isCommandLocked(normalized)) return true;
+  logCommandLocked(normalized);
+  return false;
+}
+
+function applyMembershipUi() {
+  const body = document.body;
+  if (!body) return;
+  body.classList.remove('membership-demo', 'membership-member');
+  body.classList.add(isDemoUser() ? 'membership-demo' : 'membership-member');
 }
 
 function cssEscape(value) {
@@ -12498,6 +12599,8 @@ async function dispatchCommand(input) {
   const command = raw.startsWith('/') ? raw.toLowerCase() : `/${raw.toLowerCase()}`;
   const arg = rest.join(' ').trim();
 
+  if (!ensureCommandAvailable(command)) return true;
+
   if (command === '/import') { await cmdImport(); return true; }
   if (command === '/read' || command === '/ingest') { await cmdRead(); return true; }
   if (command === '/loaddb') { await cmdLoadDb(arg); return true; }
@@ -12514,29 +12617,30 @@ async function dispatchCommand(input) {
 function isCommand(input) { return input.startsWith('/'); }
 
 function helpCommandHtml() {
-  return `<strong>Commands:</strong><br>
-        /clear - Clear log<br>
-        /reset - Clear cache<br>
-        /stats - Session statistics<br>
-        /database or /db - View database metadata<br>
-        /export - Export database metadata as JSON<br>
-        /glyph - Generate glyph mappings<br>
-        /ledger - Inspect glyph ledger<br>
-        /encrypt - Encode text into glyphs<br>
-        /decrypt - Decode glyph sequences<br>
-        /visualize or /hlsf - Render the current HLSF graph<br>
-        /signup &lt;handle&gt; [display name] - Create a SaaS profile<br>
-        /switchuser &lt;handle&gt; - Switch active SaaS profile<br>
-        /plan - View subscription and credit status<br>
-        /topup &lt;amount&gt; - Purchase additional API credits<br>
-        /userlist - List SaaS users<br>
-        /message &lt;handle&gt; &lt;text&gt; - Send an encrypted message<br>
-        /inbox - Show encrypted inbox entries<br>
-        /decryptmsg &lt;messageId&gt; - Decrypt an inbox message<br>
-        /maphidden [--min N --limit N --depth N --edges N --concurrency N] - Reveal hidden adjacency tokens<br>
-        /scheme &lt;color&gt; - Toggle visual theme<br>
-        /spin on|off - Toggle emergent rotation<br>
-        /symbols [on|off|status|mode|weight] - Symbol tokenization controls`;
+  const level = getMembershipLevel();
+  const restrictions = COMMAND_RESTRICTIONS[level] || new Set();
+  const intro = level === MEMBERSHIP_LEVELS.DEMO
+    ? 'Demo mode active: upgrade to unlock slash commands and ingestion.'
+    : 'Full membership active: all commands available.';
+
+  const rows = COMMAND_HELP_ENTRIES.map(entry => {
+    const locked = entry.requiresMembership && restrictions.has(entry.command.toLowerCase());
+    const classes = ['command-entry'];
+    if (locked) classes.push('command-entry--locked');
+    const upgrade = locked
+      ? `<a href="#" class="command-upgrade-link" data-upgrade="trial">Start trial</a>`
+      : '';
+    return `<div class="${classes.join(' ')}">
+      <span class="command-entry__cmd">${sanitize(entry.command)}</span>
+      <span class="command-entry__desc">${sanitize(entry.description)}</span>
+      <span class="command-entry__cta">${upgrade}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="command-list">
+    <p class="command-list__intro">${sanitize(intro)}</p>
+    ${rows}
+  </div>`;
 }
 
 function showHelpCommand() {
@@ -12557,6 +12661,7 @@ async function handleCommand(cmd) {
   }
 
   const normalized = `/${command.toLowerCase()}`;
+  if (!ensureCommandAvailable(normalized)) return;
   const mapped = COMMANDS[normalized];
   if (mapped) {
     await mapped(args, trimmed);
@@ -12658,6 +12763,140 @@ function enterProcessingState() {
   if (elements.cancelBtn) elements.cancelBtn.style.display = 'inline-block';
   if (elements.input) elements.input.disabled = true;
   return true;
+}
+
+function setupLandingExperience() {
+  const landingRoot = document.getElementById('landing-screen');
+  if (!landingRoot) return;
+
+  const tabButtons = Array.from(landingRoot.querySelectorAll('.landing-tab'));
+  const forms = {
+    signup: document.getElementById('landing-signup-form'),
+    login: document.getElementById('landing-login-form'),
+    demo: document.getElementById('landing-demo-form'),
+  };
+
+  function focusFirstInput(form) {
+    if (!form) return;
+    const target = form.querySelector('input, select, textarea');
+    if (target instanceof HTMLElement) {
+      setTimeout(() => target.focus(), 50);
+    }
+  }
+
+  function setActiveView(view) {
+    const activeKey = view && typeof view === 'string' ? view.toLowerCase() : 'signup';
+    tabButtons.forEach(btn => {
+      const match = btn.dataset.view === activeKey;
+      btn.classList.toggle('is-active', match);
+      btn.setAttribute('aria-selected', match ? 'true' : 'false');
+    });
+    Object.entries(forms).forEach(([key, form]) => {
+      if (!(form instanceof HTMLElement)) return;
+      form.classList.toggle('is-active', key === activeKey);
+      form.setAttribute('aria-hidden', key === activeKey ? 'false' : 'true');
+    });
+    focusFirstInput(forms[activeKey]);
+  }
+
+  function openLanding(view = 'signup') {
+    document.body.classList.add('onboarding-active');
+    landingRoot.removeAttribute('aria-hidden');
+    setActiveView(view);
+  }
+
+  function finalizeOnboarding(level, details = {}) {
+    const nextMembership = Object.assign({}, state.membership || {}, details, { level });
+    if (level === MEMBERSHIP_LEVELS.MEMBER) {
+      nextMembership.plan = details.plan || nextMembership.plan || 'pro';
+      nextMembership.trial = true;
+      nextMembership.demoMode = 'api';
+    } else {
+      nextMembership.trial = false;
+      nextMembership.demoMode = details.demoMode === 'offline' ? 'offline' : 'api';
+    }
+    state.membership = nextMembership;
+    state.networkOffline = level === MEMBERSHIP_LEVELS.DEMO && (nextMembership.demoMode === 'offline');
+    applyMembershipUi();
+    document.body.classList.remove('onboarding-active');
+    landingRoot.setAttribute('aria-hidden', 'true');
+
+    const displayName = nextMembership.name || nextMembership.email || (level === MEMBERSHIP_LEVELS.MEMBER ? 'member' : 'demo explorer');
+    if (level === MEMBERSHIP_LEVELS.MEMBER) {
+      logOK(`Full membership activated for ${displayName} · Plan ${nextMembership.plan || 'pro'} with 7-day trial.`);
+    } else {
+      const modeLabel = nextMembership.demoMode === 'offline' ? 'offline sandbox' : 'API key + GitHub adjacency bridge';
+      logStatus(`Demo mode enabled for ${displayName} (${modeLabel}). Slash commands remain disabled until upgrade.`);
+    }
+
+    if (level === MEMBERSHIP_LEVELS.DEMO && nextMembership.demoMode !== 'offline') {
+      tryBootstrapDb().catch(err => console.warn('Demo bootstrap failed:', err));
+    }
+
+    if (!state.apiKey && (level === MEMBERSHIP_LEVELS.MEMBER || (level === MEMBERSHIP_LEVELS.DEMO && nextMembership.demoMode === 'api'))) {
+      showApiModal();
+    }
+
+    setTimeout(() => {
+      if (elements.input instanceof HTMLElement) {
+        elements.input.focus();
+      }
+    }, 180);
+  }
+
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const view = btn.dataset.view || 'signup';
+      setActiveView(view);
+    });
+  });
+
+  if (forms.signup instanceof HTMLFormElement) {
+    forms.signup.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!forms.signup.reportValidity()) return;
+      const data = new FormData(forms.signup);
+      finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
+        name: String(data.get('fullName') || '').trim(),
+        email: String(data.get('email') || '').trim(),
+        company: String(data.get('company') || '').trim(),
+        role: String(data.get('role') || '').trim(),
+        plan: 'pro',
+      });
+    });
+  }
+
+  if (forms.login instanceof HTMLFormElement) {
+    forms.login.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!forms.login.reportValidity()) return;
+      const data = new FormData(forms.login);
+      finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
+        email: String(data.get('loginEmail') || '').trim(),
+        name: String(data.get('loginEmail') || '').trim(),
+        plan: 'pro',
+      });
+    });
+  }
+
+  if (forms.demo instanceof HTMLFormElement) {
+    forms.demo.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!forms.demo.reportValidity()) return;
+      const data = new FormData(forms.demo);
+      const demoMode = String(data.get('demoMode') || 'api').toLowerCase() === 'offline' ? 'offline' : 'api';
+      finalizeOnboarding(MEMBERSHIP_LEVELS.DEMO, {
+        name: String(data.get('demoName') || '').trim(),
+        email: String(data.get('demoEmail') || '').trim(),
+        focus: String(data.get('demoFocus') || '').trim(),
+        demoMode,
+      });
+    });
+  }
+
+  setActiveView('signup');
+  landingRoot.setAttribute('aria-hidden', 'false');
+  window.CognitionEngine.openLanding = openLanding;
 }
 
 function exitProcessingState(options = {}) {
@@ -13957,6 +14196,16 @@ async function processDocumentFile(file) {
 // ============================================
 // EVENTS
 // ============================================
+function showApiModal() {
+  if (!elements.apiModal) return;
+  elements.apiModal.classList.remove('hidden');
+  setTimeout(() => {
+    if (elements.apiKeyInput instanceof HTMLElement) {
+      elements.apiKeyInput.focus();
+    }
+  }, 80);
+}
+
 function applyApiKeyFromModal() {
   const key = elements.apiKeyInput.value.trim();
   if (!isValidApiKey(key)) {
@@ -13984,6 +14233,17 @@ elements.apiKeyInput.addEventListener('keydown', (event) => {
 elements.apiCancelBtn.addEventListener('click', () => {
   elements.apiModal.classList.add('hidden');
   logWarning('Offline mode - limited functionality');
+});
+
+document.addEventListener('click', (event) => {
+  const target = event.target instanceof HTMLElement ? event.target.closest('.command-upgrade-link') : null;
+  if (!target) return;
+  event.preventDefault();
+  if (window.CognitionEngine && typeof window.CognitionEngine.openLanding === 'function') {
+    window.CognitionEngine.openLanding('signup');
+  } else {
+    document.body.classList.add('onboarding-active');
+  }
 });
 
 elements.sendBtn.addEventListener('click', () => {
@@ -14103,4 +14363,5 @@ window.addEventListener('load', () => {
   tryBootstrapDb();
 });
 
+setupLandingExperience();
 initialize();
