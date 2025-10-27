@@ -14464,7 +14464,7 @@ async function initialize() {
     5. <strong>Symbolic glyph encryption</strong> (complex number encoding)<br>
     6. <strong>HLSF visualization</strong> (hierarchical semantic framework)<br><br>
     <strong>Commands:</strong> /help, /hlsf, /read, /ingest, /glyph, /encrypt, /decrypt<br>
-    <br><strong>SaaS:</strong> 7-day trial then $19.99/mo with $10 LLM API credits. Use /signup to create a profile.<br>
+    <br><strong>SaaS:</strong> Hosted workspace features are available. Use /signup to create a profile.<br>
     ${cachedCount > 0 ? `<br>✅ Loaded with ${cachedCount} cached tokens` : ''}
     <br><small>⚠️ Note: Download HTML and run locally for API calls to work.</small>
   `);
