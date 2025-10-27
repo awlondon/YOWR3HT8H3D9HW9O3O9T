@@ -1564,7 +1564,9 @@ function playSynthesizedPreview(token) {
   }
 
   const suffix = token ? ` for ${token}` : '';
-  const shouldSpeakTokens = segments.some(segment => segment?.usingCloneFallback) && supportsSpeechSynthesis();
+  const shouldSpeakTokens =
+    segments.some(segment => segment?.usingCloneFallback && (!segment.recordingId || !recordingMap.has(segment.recordingId))) &&
+    supportsSpeechSynthesis();
   if (shouldSpeakTokens) {
     const spoken = playSegmentsWithSpeechSynthesis(entries, prefs);
     if (spoken) {
