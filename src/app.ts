@@ -4063,6 +4063,7 @@ const EXPORT_PAYLOAD_VERSION = 2;
 
 const memoryStorageFallback = new Map();
 let storageQuotaWarningIssued = false;
+let storageQuotaHardLimitActive = false;
 
 function isQuotaExceededError(err) {
   if (!err) return false;
@@ -4093,6 +4094,9 @@ function purgeTokenCache() {
   if (removed > 0 && typeof state !== 'undefined' && state && typeof state === 'object') {
     setDocumentCacheBaseline(0, { manual: true });
   }
+  if (removed > 0) {
+    storageQuotaHardLimitActive = false;
+  }
   return removed;
 }
 
@@ -4108,6 +4112,9 @@ function purgeSpecificKey(key) {
   }
   if (memoryStorageFallback.delete(key)) {
     removed = true;
+  }
+  if (removed) {
+    storageQuotaHardLimitActive = false;
   }
   return removed;
 }
@@ -4904,11 +4911,28 @@ function safeStorageGet(key, defaultValue = null) {
 }
 
 function safeStorageSet(key, value) {
+  const fallbackToMemory = (err = null) => {
+    memoryStorageFallback.set(key, value);
+    if (!storageQuotaWarningIssued) {
+      logWarning('Browser storage quota exceeded. Falling back to in-memory storage for this session.');
+      storageQuotaWarningIssued = true;
+    }
+    if (err) {
+      console.warn(`Storage write failed for ${key}: using in-memory fallback`, err);
+    }
+    return false;
+  };
+
   const attemptWrite = () => {
     localStorage.setItem(key, value);
     memoryStorageFallback.delete(key);
+    storageQuotaHardLimitActive = false;
     return true;
   };
+
+  if (storageQuotaHardLimitActive) {
+    return fallbackToMemory();
+  }
 
   try {
     return attemptWrite();
@@ -4942,13 +4966,8 @@ function safeStorageSet(key, value) {
       }
     }
 
-    memoryStorageFallback.set(key, value);
-    if (!storageQuotaWarningIssued) {
-      logWarning('Browser storage quota exceeded. Falling back to in-memory storage for this session.');
-      storageQuotaWarningIssued = true;
-    }
-    console.warn(`Storage write failed for ${key}: using in-memory fallback`, err);
-    return false;
+    storageQuotaHardLimitActive = true;
+    return fallbackToMemory(err);
   }
 }
 
@@ -4962,6 +4981,9 @@ function safeStorageRemove(key) {
   }
   if (memoryStorageFallback.delete(key)) {
     removed = true;
+  }
+  if (removed) {
+    storageQuotaHardLimitActive = false;
   }
   return removed;
 }
