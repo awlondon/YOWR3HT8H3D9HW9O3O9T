@@ -6,8 +6,126 @@
   <title>HLSF Cognition Engine v2.0</title>
   
 </head>
-<body>
-  <div id="api-modal" class="modal">
+<body class="onboarding-active membership-demo">
+  <div id="landing-screen" class="landing-screen" role="dialog" aria-modal="true">
+    <div class="landing-container">
+      <section class="landing-hero" aria-labelledby="landing-title">
+        <div class="landing-brand">
+          <span class="landing-kicker">HLSF Cognition Engine</span>
+          <h1 id="landing-title" class="landing-title">Map your knowledge graph with guided intelligence</h1>
+          <p class="landing-subtitle">Streamline semantic adjacency mapping, cached lexicon orchestration, and HLSF visualization before you ever enter a prompt.</p>
+        </div>
+        <ul class="landing-benefits">
+          <li>50 relationship types with automatic GitHub-hosted adjacency bootstrapping</li>
+          <li>Symbol-aware prompting, document ingestion, and encrypted SaaS messaging</li>
+          <li>Marketing-ready onboarding for research labs, founders, and operations teams</li>
+        </ul>
+        <div class="landing-trust">7-day free trial · $19.99/mo membership · Cancel anytime</div>
+      </section>
+      <section class="landing-panel">
+        <div class="landing-tabs" role="tablist">
+          <button type="button" class="landing-tab is-active" data-view="signup" role="tab" aria-selected="true">Start trial</button>
+          <button type="button" class="landing-tab" data-view="login" role="tab" aria-selected="false">Log in</button>
+          <button type="button" class="landing-tab" data-view="demo" role="tab" aria-selected="false">Try demo</button>
+        </div>
+
+        <form id="landing-signup-form" class="landing-form is-active" autocomplete="on">
+          <div class="form-row">
+            <label>Full name
+              <input type="text" name="fullName" placeholder="Ada Lovelace" required />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Work email
+              <input type="email" name="email" placeholder="you@company.com" required />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Company / organization
+              <input type="text" name="company" placeholder="Helios Labs" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Role / use case
+              <input type="text" name="role" placeholder="Head of Research" />
+            </label>
+          </div>
+          <fieldset class="plan-fieldset">
+            <legend>Membership</legend>
+            <label class="plan-card">
+              <input type="radio" name="plan" value="pro" checked />
+              <div class="plan-card__content">
+                <div class="plan-card__price">$19.99<span>/mo</span></div>
+                <div class="plan-card__trial">7-day free trial · Full engine capabilities (non-admin)</div>
+                <ul class="plan-card__benefits">
+                  <li>Unlimited adjacency mapping &amp; visualization</li>
+                  <li>Remote GitHub database hydration &amp; export</li>
+                  <li>SaaS automation, messaging, and glyph encryption</li>
+                </ul>
+              </div>
+            </label>
+          </fieldset>
+          <button type="submit" class="landing-primary-button">Start free trial</button>
+          <p class="landing-footnote">You won’t be charged until the trial ends. Cancel anytime.</p>
+        </form>
+
+        <form id="landing-login-form" class="landing-form" autocomplete="on">
+          <div class="form-row">
+            <label>Work email
+              <input type="email" name="loginEmail" placeholder="you@company.com" required />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Password
+              <input type="password" name="loginPassword" placeholder="Enter your password" required />
+            </label>
+          </div>
+          <button type="submit" class="landing-primary-button">Log in</button>
+          <p class="landing-footnote">Active members instantly unlock the full engine (admin reserved).</p>
+        </form>
+
+        <form id="landing-demo-form" class="landing-form" autocomplete="on">
+          <p class="landing-note">Launch a guided sandbox backed by our GitHub remote database. Demo users still complete standard signup fields before exploring limited offline prompting.</p>
+          <div class="form-row">
+            <label>Full name
+              <input type="text" name="demoName" placeholder="Ada Lovelace" required />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Email
+              <input type="email" name="demoEmail" placeholder="you@example.com" required />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Primary focus area
+              <input type="text" name="demoFocus" placeholder="Knowledge capture, research ops, GTM…" />
+            </label>
+          </div>
+          <fieldset class="demo-options">
+            <legend>Demo launch mode</legend>
+            <label class="demo-option">
+              <input type="radio" name="demoMode" value="api" checked />
+              <span>
+                <strong>API key</strong>
+                <small>Route adjacencies through our GitHub-hosted database for live mapping.</small>
+              </span>
+            </label>
+            <label class="demo-option">
+              <input type="radio" name="demoMode" value="offline" />
+              <span>
+                <strong>Offline sandbox</strong>
+                <small>Limited prompting with cached lexicon. Slash commands stay disabled.</small>
+              </span>
+            </label>
+          </fieldset>
+          <button type="submit" class="landing-primary-button">Launch demo</button>
+          <p class="landing-footnote">Upgrade to activate commands, ingestion, visualization, and SaaS automations.</p>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <div id="api-modal" class="modal hidden">
     <div class="modal-content" role="dialog" aria-modal="true">
       <h2>Enter OpenAI API Key</h2>
       <p>Provide your OpenAI API key (sk-...) to begin using the HLSF Cognition Engine.</p>
