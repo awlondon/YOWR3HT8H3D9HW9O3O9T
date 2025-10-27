@@ -1586,9 +1586,10 @@
     }
 
     .landing-tab.is-active {
-      background: rgba(0, 255, 136, 0.15);
-      color: #0c301b;
-      box-shadow: 0 10px 30px rgba(0, 255, 136, 0.22);
+      background: linear-gradient(135deg, rgba(0, 255, 136, 0.18), rgba(0, 201, 126, 0.24));
+      color: rgba(6, 30, 19, 0.92);
+      box-shadow: 0 14px 36px rgba(0, 255, 136, 0.26), 0 0 0 1px rgba(0, 255, 136, 0.25);
+      backdrop-filter: blur(6px);
       transform: translateY(-1px);
     }
 
