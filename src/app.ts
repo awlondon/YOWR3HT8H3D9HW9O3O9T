@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { SETTINGS } from './settings';
 import { runPipeline } from './engine/pipeline';
 import { createRemoteDbFileWriter } from './engine/remoteDbWriter';
@@ -10,10 +9,38 @@ import { initializeSaasPlatform, registerSaasCommands } from './saas/platform';
 import { demoGoogleSignIn } from './auth/google';
 import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
 import { initializeLoginForm } from './onboarding/loginFlow';
+import { recordCommandUsage } from './analytics/commandUsage';
 // ============================================
 // CONFIGURATION
 // ============================================
-const CONFIG = {
+interface PricingModel {
+  inputPerMillion: number;
+  outputPerMillion: number;
+}
+
+interface EngineConfig {
+  MAX_TOKENS_PER_PROMPT: number;
+  MAX_TOKENS_PER_RESPONSE: number;
+  INPUT_WORD_LIMIT: number;
+  DOCUMENT_WORD_LIMIT: number;
+  PROMPT_LOG_LIMIT: number;
+  ORIGINAL_OUTPUT_WORD_LIMIT: number;
+  LOCAL_OUTPUT_WORD_LIMIT: number;
+  MAX_CONCURRENCY: number;
+  MAX_RETRY_ATTEMPTS: number;
+  RETRY_BASE_DELAY_MS: number;
+  DOCUMENT_CHUNK_SIZE: number;
+  CACHE_SEED_LIMIT: number;
+  DEFAULT_MODEL: string;
+  MODEL_PRICING: Record<string, PricingModel>;
+  ESTIMATED_COMPLETION_RATIO: number;
+  ADJACENCY_TOKEN_ESTIMATES: { prompt: number; completion: number };
+  ADJACENCY_RECURSION_DEPTH: number;
+  ADJACENCY_EDGES_PER_LEVEL: number;
+  NETWORK_RETRY_BACKOFF_MS: number;
+}
+
+const CONFIG: EngineConfig = {
   MAX_TOKENS_PER_PROMPT: 500,
   MAX_TOKENS_PER_RESPONSE: 1500,
   INPUT_WORD_LIMIT: 100,
@@ -44,9 +71,17 @@ const CONFIG = {
 const MEMBERSHIP_LEVELS = {
   DEMO: 'demo',
   MEMBER: 'member',
-};
+} as const;
 
-const COMMAND_HELP_ENTRIES = [
+type MembershipLevel = typeof MEMBERSHIP_LEVELS[keyof typeof MEMBERSHIP_LEVELS];
+
+interface CommandHelpEntry {
+  command: string;
+  description: string;
+  requiresMembership: boolean;
+}
+
+const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/help', description: 'Show this command catalog', requiresMembership: false },
   { command: '/clear', description: 'Clear log history', requiresMembership: true },
   { command: '/reset', description: 'Clear cache and database snapshots', requiresMembership: true },
@@ -96,7 +131,7 @@ const DEMO_UNLOCKED_COMMANDS = new Set([
   '/self',
 ]);
 
-const COMMAND_RESTRICTIONS = {
+const COMMAND_RESTRICTIONS: Partial<Record<MembershipLevel, Set<string>>> = {
   [MEMBERSHIP_LEVELS.DEMO]: new Set(
     COMMAND_HELP_ENTRIES
       .filter(entry => {
@@ -3946,7 +3981,20 @@ window.CognitionEngine.export.session = options => {
   opts.extras = extras;
   const tokens = Array.isArray(opts.tokens) ? opts.tokens : opts.tokens ? [].concat(opts.tokens) : [];
   const edges = Array.isArray(opts.edges) ? opts.edges : opts.edges || [];
-  return buildSessionExport({ tokens, edges, extras: opts.extras });
+  const lastPipeline = state.symbolMetrics?.lastPipeline;
+  const metrics = opts.metrics || lastPipeline?.metrics || null;
+  const topNodes = opts.top || lastPipeline?.top || null;
+  const snapshot = opts.settingsSnapshot && typeof opts.settingsSnapshot === 'object'
+    ? opts.settingsSnapshot
+    : null;
+  return buildSessionExport({
+    tokens,
+    edges,
+    metrics: metrics || undefined,
+    top: topNodes || undefined,
+    settingsSnapshot: snapshot || undefined,
+    extras: opts.extras,
+  });
 };
 
 window.GlyphSystem = window.GlyphSystem || {
@@ -4656,6 +4704,11 @@ function ensureCommandAvailable(command) {
   if (!isCommandLocked(normalized)) return true;
   logCommandLocked(normalized);
   return false;
+}
+
+function trackCommandExecution(command: string, args: string[], source: 'dispatch' | 'handler') {
+  if (!command) return;
+  recordCommandUsage({ command, args, membership: getMembershipLevel(), source });
 }
 
 function applyMembershipUi() {
@@ -13443,15 +13496,15 @@ async function dispatchCommand(input) {
 
   if (!ensureCommandAvailable(command)) return true;
 
-  if (command === '/import') { await cmdImport(); return true; }
-  if (command === '/read' || command === '/ingest') { await cmdRead(); return true; }
-  if (command === '/loaddb') { await cmdLoadDb(arg); return true; }
-  if (command === '/hlsf') { await runHlsfSafely(arg); return true; }
-  if (command === '/scheme') { cmdScheme(arg || 'black'); return true; }
-  if (command === '/spin') { cmdSpin(arg || 'on'); return true; }
-  if (command === '/omega') { cmdOmega(arg); return true; }
-  if (command === '/alpha') { cmdAlpha(arg); return true; }
-  if (command === '/symbols') { cmdSymbols(rest); return true; }
+  if (command === '/import') { trackCommandExecution(command, rest, 'dispatch'); await cmdImport(); return true; }
+  if (command === '/read' || command === '/ingest') { trackCommandExecution(command, rest, 'dispatch'); await cmdRead(); return true; }
+  if (command === '/loaddb') { trackCommandExecution(command, rest, 'dispatch'); await cmdLoadDb(arg); return true; }
+  if (command === '/hlsf') { trackCommandExecution(command, rest, 'dispatch'); await runHlsfSafely(arg); return true; }
+  if (command === '/scheme') { trackCommandExecution(command, rest, 'dispatch'); cmdScheme(arg || 'black'); return true; }
+  if (command === '/spin') { trackCommandExecution(command, rest, 'dispatch'); cmdSpin(arg || 'on'); return true; }
+  if (command === '/omega') { trackCommandExecution(command, rest, 'dispatch'); cmdOmega(arg); return true; }
+  if (command === '/alpha') { trackCommandExecution(command, rest, 'dispatch'); cmdAlpha(arg); return true; }
+  if (command === '/symbols') { trackCommandExecution(command, rest, 'dispatch'); cmdSymbols(rest); return true; }
 
   return false;
 }
@@ -13506,16 +13559,19 @@ async function handleCommand(cmd) {
   if (!ensureCommandAvailable(normalized)) return;
   const mapped = COMMANDS[normalized];
   if (mapped) {
+    trackCommandExecution(normalized, args, 'handler');
     await mapped(args, trimmed);
     return;
   }
 
   switch (command.toLowerCase()) {
     case 'clear':
+      trackCommandExecution(normalized, args, 'handler');
       elements.log.innerHTML = '';
       logOK('Log cleared');
       break;
     case 'reset':
+      trackCommandExecution(normalized, args, 'handler');
       if (confirm('Clear all cached data?')) {
         const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
         keys.forEach(k => safeStorageRemove(k));
@@ -13554,6 +13610,7 @@ async function handleCommand(cmd) {
       }
       break;
     case 'stats':
+      trackCommandExecution(normalized, args, 'handler');
       const { totalApiCalls, totalCacheHits, totalCostUsd } = state.sessionStats;
       const total = totalApiCalls + totalCacheHits;
       const hitRate = total > 0 ? ((totalCacheHits / total) * 100).toFixed(1) : 0;
@@ -13566,27 +13623,35 @@ async function handleCommand(cmd) {
       break;
     case 'database':
     case 'db':
+      trackCommandExecution(normalized, args, 'handler');
       showDatabaseMetadata();
       break;
     case 'export':
+      trackCommandExecution(normalized, args, 'handler');
       exportDatabaseMetadata(args);
       break;
     case 'glyph':
+      trackCommandExecution(normalized, args, 'handler');
       cmdGlyph(args.join(' '));
       break;
     case 'ledger':
+      trackCommandExecution(normalized, args, 'handler');
       cmdLedger(args.join(' '));
       break;
     case 'encrypt':
+      trackCommandExecution(normalized, args, 'handler');
       cmdEncrypt(args.join(' '));
       break;
     case 'decrypt':
+      trackCommandExecution(normalized, args, 'handler');
       cmdDecrypt(args.join(' '));
       break;
     case 'exportledger':
+      trackCommandExecution(normalized, args, 'handler');
       cmdLedger('export');
       break;
     case 'help':
+      trackCommandExecution(normalized, args, 'handler');
       showHelpCommand();
       break;
     default:

@@ -1,4 +1,5 @@
-import type { Token } from '../tokens/tokenize';
+import type { Token, WordNeighborIndex } from '../tokens/tokenize.js';
+import { computeWordNeighborMap } from '../tokens/tokenize.js';
 
 export const LEFT_BIND = new Set(['!', '?', '.', ',', ':', ';']);
 export const RIGHT_BIND = new Set(['(', '[', '{', '“', '‘']);
@@ -25,9 +26,12 @@ export function emitSymbolEdges(
   tokens: Token[],
   addEdge: AddEdge,
   weightScale = 0.35,
-  mode: 'paired' | 'standalone' | 'both' = 'paired'
+  mode: 'paired' | 'standalone' | 'both' = 'paired',
+  neighbors: WordNeighborIndex[] | null = null,
 ) {
   const len = tokens.length;
+  const neighborMap = neighbors ?? computeWordNeighborMap(tokens);
+
   for (let i = 0; i < len; i += 1) {
     const tok = tokens[i];
     if (!tok || tok.kind !== 'sym') continue;
@@ -40,10 +44,9 @@ export function emitSymbolEdges(
     }
 
     if (mode === 'paired' || mode === 'both') {
-      let left = i - 1;
-      while (left >= 0 && tokens[left]?.kind !== 'word') left -= 1;
-      let right = i + 1;
-      while (right < len && tokens[right]?.kind !== 'word') right += 1;
+      const neighbor = neighborMap[i];
+      const left = neighbor?.leftWordIndex ?? -1;
+      const right = neighbor?.rightWordIndex ?? len;
 
       if (LEFT_BIND.has(ch) && left >= 0) {
         addEdge(tokens[left], tok, { type, w: weightScale, meta: { ch } });

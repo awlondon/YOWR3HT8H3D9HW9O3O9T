@@ -1,7 +1,8 @@
-import { SETTINGS, type Settings } from '../settings';
-import { tokenizeWithSymbols, tokenizeWords, type Token } from '../tokens/tokenize';
-import { emitSymbolEdges } from '../graph/symbol_edges';
-import { rankNodes } from '../analytics/metrics';
+import { SETTINGS, type Settings } from '../settings.js';
+import { tokenizeWithSymbols, tokenizeWords, type Token, computeWordNeighborMap } from '../tokens/tokenize.js';
+import { emitSymbolEdges } from '../graph/symbol_edges.js';
+import { rankNodes } from '../analytics/metrics.js';
+import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 
 export interface PipelineGraph {
   nodes: Array<{
@@ -56,46 +57,83 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
   const edges: PipelineGraph['edges'] = [];
 
   let symbolEdgeCount = 0;
-  const limit = Math.max(0, Math.ceil(tokens.length / 5) * 2);
+  let weightSum = 0;
+  const edgeHistogram: Record<string, number> = Object.create(null);
+
+  let wordCount = 0;
+  let symbolCount = 0;
+  for (const token of tokens) {
+    if (!token) continue;
+    if (token.kind === 'sym') {
+      symbolCount += 1;
+    } else {
+      wordCount += 1;
+    }
+  }
+
+  const symbolEdgeLimit = symbolCount === 0
+    ? 0
+    : Math.max(symbolCount * 4, Math.ceil(tokens.length * 0.6));
 
   const addEdge = (source: Token, target: Token, props: { type: string; w?: number; meta?: Record<string, unknown> }) => {
     const isSymbolEdge = source.kind === 'sym' || target.kind === 'sym';
-    if (isSymbolEdge && symbolEdgeCount >= limit) return;
+    if (isSymbolEdge && symbolEdgeCount >= symbolEdgeLimit) return;
 
     const weight = typeof props.w === 'number' ? props.w : 0;
-    edges.push({
+    const entry = {
       source: source.t,
       target: target.t,
       type: props.type,
       w: weight,
       meta: props.meta,
-    });
+    };
+    edges.push(entry);
     if (isSymbolEdge) symbolEdgeCount += 1;
+    if (typeof weight === 'number' && Number.isFinite(weight)) {
+      weightSum += weight;
+    }
+    if (entry.type) {
+      edgeHistogram[entry.type] = (edgeHistogram[entry.type] || 0) + 1;
+    }
   };
 
   if (cfg.tokenizeSymbols) {
-    emitSymbolEdges(tokens, addEdge, cfg.symbolWeightScale, cfg.symbolEmitMode);
+    const neighborMap = computeWordNeighborMap(tokens);
+    emitSymbolEdges(tokens, addEdge, cfg.symbolWeightScale, cfg.symbolEmitMode, neighborMap);
   }
 
-  const symbolCount = tokens.filter(tok => tok.kind === 'sym').length;
-  const wordCount = tokens.length - symbolCount;
-  const weightSum = edges.reduce((sum, edge) => sum + (typeof edge.w === 'number' ? edge.w : 0), 0);
   const graph: PipelineGraph = { nodes, edges };
   const top = rankNodes(nodes, 20);
+
+  const metrics = {
+    tokenCount: tokens.length,
+    wordCount,
+    symbolCount,
+    symbolDensity: tokens.length === 0 ? 0 : symbolCount / tokens.length,
+    edgeCount: edges.length,
+    symbolEdgeCount,
+    weightSum,
+  };
+
+  if (cfg.tokenizeSymbols) {
+    emitPipelineTelemetry({
+      metrics,
+      edgeHistogram,
+      top,
+      settings: {
+        tokenizeSymbols: cfg.tokenizeSymbols,
+        symbolWeightScale: cfg.symbolWeightScale,
+        symbolEmitMode: cfg.symbolEmitMode,
+        includeSymbolInSummaries: cfg.includeSymbolInSummaries,
+      },
+    });
+  }
 
   return {
     tokens,
     graph,
     edges,
-    metrics: {
-      tokenCount: tokens.length,
-      wordCount,
-      symbolCount,
-      symbolDensity: tokens.length === 0 ? 0 : symbolCount / tokens.length,
-      edgeCount: edges.length,
-      symbolEdgeCount,
-      weightSum,
-    },
+    metrics,
     top,
   };
 }

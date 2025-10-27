@@ -1,4 +1,4 @@
-import { symbolCategory } from './symbols';
+import { symbolCategory } from './symbols.js';
 
 export interface Token {
   t: string;
@@ -6,6 +6,11 @@ export interface Token {
   cat?: string | null;
   i: number;
   n: number;
+}
+
+export interface WordNeighborIndex {
+  leftWordIndex: number;
+  rightWordIndex: number;
 }
 
 export interface TokenizeOptions {
@@ -45,6 +50,28 @@ export function tokenizeWithSymbols(source: string, options: TokenizeOptions = {
     return out.map(token => ({ ...token, i: -1 }));
   }
   return out;
+}
+
+export function computeWordNeighborMap(tokens: Token[]): WordNeighborIndex[] {
+  const neighbors: WordNeighborIndex[] = tokens.map(() => ({ leftWordIndex: -1, rightWordIndex: -1 }));
+
+  let lastWord = -1;
+  for (let i = 0; i < tokens.length; i += 1) {
+    neighbors[i].leftWordIndex = lastWord;
+    if (tokens[i]?.kind === 'word') {
+      lastWord = i;
+    }
+  }
+
+  let nextWord = -1;
+  for (let i = tokens.length - 1; i >= 0; i -= 1) {
+    neighbors[i].rightWordIndex = nextWord;
+    if (tokens[i]?.kind === 'word') {
+      nextWord = i;
+    }
+  }
+
+  return neighbors;
 }
 
 export function tokenizeWords(source: string): Token[] {
