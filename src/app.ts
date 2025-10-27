@@ -7,6 +7,7 @@ import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig }
 import { initializeVoiceClonePanel, signalVoiceCloneTokensChanged } from './voice/voiceClone';
 import { initializeSaasPlatform, registerSaasCommands } from './saas/platform';
 import { demoGoogleSignIn } from './auth/google';
+import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -4005,6 +4006,9 @@ const TOKEN_CACHE_PREFIX = 'hlsf_token_';
 const DB_RAW_KEY = 'HLSF_DB_RAW';        // stores JSON export text
 const API_KEY_STORAGE_KEY = 'HLSF_API_KEY';
 const DB_INDEX_KEY = 'HLSF_DB_INDEX';    // array of token strings
+const EXPORT_KEY_STORAGE_KEY = 'HLSF_EXPORT_KEY';
+const EXPORT_PAYLOAD_FORMAT = 'HLSF_DB_EXPORT_V2';
+const EXPORT_PAYLOAD_VERSION = 2;
 
 const memoryStorageFallback = new Map();
 let storageQuotaWarningIssued = false;
@@ -4866,6 +4870,92 @@ function safeStorageKeys(prefix = '') {
   });
 
   return Array.from(combined);
+}
+
+function getStoredExportKey() {
+  const raw = safeStorageGet(EXPORT_KEY_STORAGE_KEY, null);
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+async function ensureExportEncryptionKey() {
+  let key = getStoredExportKey();
+  if (key) return key;
+
+  try {
+    key = await generateSymmetricKey();
+  } catch (err) {
+    console.warn('Failed to generate export encryption key:', err);
+    throw new Error('Unable to initialize export encryption key.');
+  }
+
+  const stored = safeStorageSet(EXPORT_KEY_STORAGE_KEY, key);
+  if (!stored) {
+    console.warn('Export encryption key persisted to in-memory fallback storage.');
+  }
+  return key;
+}
+
+function bytesToBase64(bytes) {
+  if (!bytes || typeof bytes.length !== 'number') return '';
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+  if (!base64) return new Uint8Array();
+  const clean = base64.replace(/\s+/g, '');
+  const binary = atob(clean);
+  const len = binary.length;
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
+
+async function compressStringToBase64(input) {
+  const encoder = new TextEncoder();
+  const source = encoder.encode(input);
+  if (typeof CompressionStream === 'function') {
+    try {
+      const stream = new CompressionStream('gzip');
+      const writer = stream.writable.getWriter();
+      await writer.write(source);
+      await writer.close();
+      const compressed = await new Response(stream.readable).arrayBuffer();
+      return { base64: bytesToBase64(new Uint8Array(compressed)), algorithm: 'gzip' };
+    } catch (err) {
+      console.warn('Compression failed, falling back to identity:', err);
+    }
+  }
+  return { base64: bytesToBase64(source), algorithm: 'identity' };
+}
+
+async function decompressBase64ToString(base64, algorithm = 'gzip') {
+  const decoder = new TextDecoder();
+  const bytes = base64ToBytes(base64);
+  if (algorithm === 'gzip') {
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('This environment cannot decompress gzip data.');
+    }
+    try {
+      const stream = new DecompressionStream('gzip');
+      const writer = stream.writable.getWriter();
+      await writer.write(bytes);
+      await writer.close();
+      const decompressed = await new Response(stream.readable).arrayBuffer();
+      return decoder.decode(decompressed);
+    } catch (err) {
+      console.warn('Gzip decompression failed:', err);
+      throw new Error('Failed to decompress export payload.');
+    }
+  }
+  return decoder.decode(bytes);
 }
 
 const LessonStore = (() => {
@@ -10458,38 +10548,126 @@ function exportDatabaseMetadata(args = []) {
   }
 
   const serialized = JSON.stringify(exportData, null, 2);
-  const blob = new Blob([serialized], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `HLSF_Database_${new Date().toISOString().split('T')[0]}.json`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-
-  const approxSizeKb = (blob.size / 1024).toFixed(1);
+  const originalSizeKb = (serialized.length / 1024).toFixed(1);
   const totalParamDisplay = modelParams?.total_parameters != null
     ? modelParams.total_parameters.toLocaleString()
     : '0';
-  logOK(`Database metadata exported: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships, ${approxSizeKb}KB, model parameters ${totalParamDisplay}`);
+
+  void (async () => {
+    let url = null;
+    try {
+      const key = await ensureExportEncryptionKey();
+      const { base64: compressedBase64, algorithm: compressionAlgorithm } = await compressStringToBase64(serialized);
+      const { ciphertext, iv } = await encryptString(compressedBase64, key);
+      const envelope = {
+        format: EXPORT_PAYLOAD_FORMAT,
+        version: EXPORT_PAYLOAD_VERSION,
+        encryption: 'AES-256-GCM',
+        compression: compressionAlgorithm,
+        ciphertext,
+        iv,
+        metadata: {
+          export_timestamp: exportData.export_timestamp,
+          total_tokens: metadata.totalTokens,
+          total_relationships: metadata.totalRelationships,
+          model_parameters: modelParams?.total_parameters ?? null,
+        },
+      };
+
+      const blob = new Blob([JSON.stringify(envelope)], { type: 'application/json' });
+      url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `HLSF_Database_${new Date().toISOString().split('T')[0]}.hlsf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      const encryptedSizeKb = (blob.size / 1024).toFixed(1);
+      logOK(`Database metadata exported securely: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships. Raw payload ${originalSizeKb}KB → encrypted package ${encryptedSizeKb}KB, model parameters ${totalParamDisplay}.`);
+      logStatus(`Encryption key fingerprint: ${base64Preview(key)} (retain this to decrypt /import payloads).`);
+      logStatus(`Compression: ${compressionAlgorithm.toUpperCase()}, Encryption: AES-256-GCM`);
+    } catch (err) {
+      logError(`Failed to finalize encrypted export: ${err?.message || err}`);
+    } finally {
+      if (url) {
+        URL.revokeObjectURL(url);
+      }
+    }
+  })();
+}
+
+async function decodeDatabaseExportPayload(rawText) {
+  if (!rawText || typeof rawText !== 'string') return rawText;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    return rawText;
+  }
+
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  if (parsed.format !== EXPORT_PAYLOAD_FORMAT) return parsed;
+
+  if (typeof parsed.version === 'number' && Number.isFinite(parsed.version) && parsed.version > EXPORT_PAYLOAD_VERSION) {
+    logWarning('Encrypted export was produced by a newer engine. Attempting import with legacy compatibility.');
+  }
+
+  if (!parsed.ciphertext || !parsed.iv) {
+    throw new Error('Encrypted export payload is missing ciphertext metadata.');
+  }
+
+  const key = getStoredExportKey();
+  if (!key) {
+    throw new Error('Export encryption key not found. Import from the original device or restore your HLSF export key.');
+  }
+
+  let compressedBase64;
+  try {
+    compressedBase64 = await decryptString(parsed.ciphertext, parsed.iv, key);
+  } catch (err) {
+    console.warn('Encrypted export decryption failed:', err);
+    throw new Error('Failed to decrypt export payload. Verify your encryption key.');
+  }
+
+  const compressionAlgorithm = typeof parsed.compression === 'string' ? parsed.compression : 'gzip';
+
+  let jsonText;
+  try {
+    jsonText = await decompressBase64ToString(compressedBase64, compressionAlgorithm);
+  } catch (err) {
+    throw new Error(err?.message || 'Failed to decompress export payload.');
+  }
+
+  try {
+    return JSON.parse(jsonText);
+  } catch (err) {
+    console.warn('Decrypted export JSON parse failed:', err);
+    throw new Error('Decrypted export payload is corrupted.');
+  }
 }
 
 async function importHLSFDBFromFile(file) {
-  const txt = await file.text();
-  const count = loadDbObject(txt);
-  const db = getDb();
-  if (!db) return;
-  const seen = [];
-  for (const rec of db.full_token_data || []) {
-    safeStorageSet(TOKEN_CACHE_PREFIX + rec.token, JSON.stringify(rec));
-    seen.push(rec.token);
+  try {
+    const txt = await file.text();
+    const payload = await decodeDatabaseExportPayload(txt);
+    const count = loadDbObject(payload);
+    const db = getDb();
+    if (!db) return;
+    const seen = [];
+    for (const rec of db.full_token_data || []) {
+      safeStorageSet(TOKEN_CACHE_PREFIX + rec.token, JSON.stringify(rec));
+      seen.push(rec.token);
+    }
+    safeStorageSet(DB_INDEX_KEY, JSON.stringify(seen));
+    window.HLSF_GRAPH = null;
+    updateStats();
+    addLog(`📊 Import: ${seen.length} tokens (${count} normalized).`);
+    updateHeaderCounts();
+  } catch (err) {
+    logError(`Import failed: ${err?.message || err}`);
   }
-  safeStorageSet(DB_INDEX_KEY, JSON.stringify(seen));
-  window.HLSF_GRAPH = null;
-  updateStats();
-  addLog(`📊 Import: ${seen.length} tokens (${count} normalized).`);
-  updateHeaderCounts();
 }
 
 function importDatabaseData(data, source = 'file') {
