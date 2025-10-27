@@ -1106,6 +1106,11 @@
       grid-column: 1 / -1;
     }
 
+    .hlsf-control-group.hlsf-control-legend {
+      grid-column: 1 / -1;
+      gap: 0.35rem;
+    }
+
     .hlsf-mental-state {
       background: rgba(0, 0, 0, 0.25);
       border: 1px solid #222;
@@ -1185,23 +1190,26 @@
     }
 
     .hlsf-legend-container {
-      margin-top: 0.5rem;
-      padding: 0.5rem 0.75rem;
-      background: rgba(0, 0, 0, 0.25);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      margin-top: 0;
+      padding: 0.4rem 0.6rem;
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.05);
       border-radius: 8px;
+      transition: background 0.2s ease, border-color 0.2s ease;
     }
 
     .hlsf-legend-container summary {
       cursor: pointer;
-      font-weight: 600;
-      color: var(--accent);
-      margin: 0 0 0.5rem;
+      font-weight: 500;
+      color: var(--text);
+      opacity: 0.75;
+      font-size: 0.8rem;
+      margin: 0 0 0.35rem;
       list-style: none;
       display: flex;
       align-items: center;
       justify-content: flex-start;
-      gap: 0.5rem;
+      gap: 0.45rem;
     }
 
     .hlsf-legend-container summary::-webkit-details-marker {
@@ -1210,8 +1218,8 @@
 
     .hlsf-legend-container summary::after {
       content: '▾';
-      font-size: 0.85rem;
-      opacity: 0.7;
+      font-size: 0.75rem;
+      opacity: 0.55;
       transition: transform 0.2s ease;
       margin-left: 0.5rem;
     }
@@ -1221,13 +1229,14 @@
     }
 
     .hlsf-legend-count {
-      font-size: 0.75rem;
-      opacity: 0.75;
+      font-size: 0.7rem;
+      opacity: 0.6;
       margin-left: auto;
     }
 
     .hlsf-legend-container[open] {
-      background: rgba(0, 0, 0, 0.35);
+      background: rgba(0, 0, 0, 0.22);
+      border-color: rgba(255, 255, 255, 0.08);
     }
 
     .hlsf-legend-container[hidden] {
@@ -1236,25 +1245,25 @@
 
     .hlsf-legend {
       display: flex;
-      gap: 1.5rem;
+      gap: 1rem;
       flex-wrap: wrap;
-      font-size: 0.85rem;
-      padding: 0.75rem;
-      background: rgba(0, 0, 0, 0.3);
-      border-radius: 6px;
+      font-size: 0.75rem;
+      padding: 0.35rem 0.25rem 0.15rem;
       margin-top: 0;
+      opacity: 0.78;
     }
 
     .hlsf-legend-item {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.4rem;
     }
 
     .hlsf-legend-color {
-      width: 20px;
-      height: 20px;
+      width: 16px;
+      height: 16px;
       border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
     }
 
     .hlsf-node-info {
