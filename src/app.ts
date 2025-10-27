@@ -9,6 +9,7 @@ import { initializeVoiceClonePanel, signalVoiceCloneTokensChanged } from './voic
 import { initializeSaasPlatform, registerSaasCommands } from './saas/platform';
 import { demoGoogleSignIn } from './auth/google';
 import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
+import { initializeLoginForm } from './onboarding/loginFlow';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -13937,15 +13938,9 @@ function setupLandingExperience() {
   }
 
   if (forms.login instanceof HTMLFormElement) {
-    forms.login.addEventListener('submit', (event) => {
-      event.preventDefault();
-      if (!forms.login.reportValidity()) return;
-      const data = new FormData(forms.login);
-      finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
-        email: String(data.get('loginEmail') || '').trim(),
-        name: String(data.get('loginEmail') || '').trim(),
-        plan: 'pro',
-      });
+    initializeLoginForm(forms.login, {
+      finalizeOnboarding,
+      membershipLevels: MEMBERSHIP_LEVELS,
     });
   }
 
