@@ -2339,6 +2339,7 @@ function stopHLSFAnimation() {
 }
 
 const MAX_REL_TYPES = 50;
+const DEFAULT_RELATION_TYPE_CAP = 2;
 const MAX_EDGES_PER_TYPE = 10;
 
 function clampRelationTypeCap(value) {
@@ -2348,8 +2349,8 @@ function clampRelationTypeCap(value) {
     if (norm === 'all' || norm === '∞' || norm === 'infinity') return Infinity;
   }
   const numeric = Math.floor(Number(value));
-  if (!Number.isFinite(numeric)) return MAX_REL_TYPES;
-  if (numeric <= 0) return MAX_REL_TYPES;
+  if (!Number.isFinite(numeric)) return DEFAULT_RELATION_TYPE_CAP;
+  if (numeric <= 0) return DEFAULT_RELATION_TYPE_CAP;
   return Math.min(MAX_REL_TYPES, Math.max(1, numeric));
 }
 
@@ -2687,8 +2688,10 @@ function ensureHLSFCanvas() {
           </select>
         </div>
         <div class="hlsf-control-group">
-          <label for="hlsf-relation-cap">Relation types <span id="hlsf-relation-cap-val">${MAX_REL_TYPES}</span></label>
-          <input id="hlsf-relation-cap" type="number" min="1" max="${MAX_REL_TYPES}" step="1" value="${MAX_REL_TYPES}">
+          <label for="hlsf-relation-cap">
+            Relation types <span id="hlsf-relation-cap-val">${DEFAULT_RELATION_TYPE_CAP}</span>
+          </label>
+          <input id="hlsf-relation-cap" type="number" min="1" max="${MAX_REL_TYPES}" step="1" value="${DEFAULT_RELATION_TYPE_CAP}">
         </div>
         <div class="hlsf-control-group">
           <label for="hlsf-scope">Scope</label>
@@ -3425,7 +3428,7 @@ window.HLSF.config = Object.assign({
   layout: 'dimension',
   hlsfScope: existingConfig.hlsfScope || 'db',
   metricScope: METRIC_SCOPE.RUN,
-  relationTypeCap: MAX_REL_TYPES,
+  relationTypeCap: DEFAULT_RELATION_TYPE_CAP,
   edgesPerType: 3,
   edgeWidth: 0.2,
   nodeSize: 1,
