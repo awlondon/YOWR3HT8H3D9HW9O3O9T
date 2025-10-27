@@ -103,6 +103,17 @@
             </label>
           </div>
           <button type="submit" class="landing-primary-button">Log in</button>
+          <div class="quick-signin" role="group" aria-label="Quick sign-in options">
+            <p class="quick-signin__title">Quick sign-in</p>
+            <button type="button" class="quick-signin__button quick-signin__button--google" data-google-signin>
+              <span class="quick-signin__icon" aria-hidden="true">G</span>
+              <span>Continue with Google</span>
+            </button>
+            <button type="button" class="quick-signin__button quick-signin__button--primary" data-quick-signin disabled aria-disabled="true">
+              Use Google profile
+            </button>
+            <div class="quick-signin__profile" data-google-profile aria-live="polite"></div>
+          </div>
           <p class="landing-footnote">Active members instantly unlock the full engine (admin reserved).</p>
         </form>
 
