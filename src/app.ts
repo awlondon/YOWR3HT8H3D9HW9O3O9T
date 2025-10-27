@@ -4250,22 +4250,47 @@ function announceDatabaseReady(reason = 'unknown') {
   signalVoiceCloneTokensChanged('database-ready');
 }
 
-function loadDbObject(dbLike, options = {}) {
+const DB_IMPORT_MIN_CHUNK_SIZE = 200;
+const DB_IMPORT_MAX_CHUNK_SIZE = 2500;
+
+function resolveDbImportConcurrency() {
+  const configured = Number(window.HLSF?.config?.dbImportConcurrency);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(1, Math.min(8, Math.floor(configured)));
+  }
+  const hardware = typeof navigator !== 'undefined'
+    && navigator
+    && typeof navigator.hardwareConcurrency === 'number'
+      ? navigator.hardwareConcurrency
+      : 0;
+  if (Number.isFinite(hardware) && hardware > 0) {
+    const derived = Math.floor(hardware / 2) || 1;
+    return Math.max(1, Math.min(6, derived));
+  }
+  return 3;
+}
+
+function resolveDbImportChunkSize(total, concurrency) {
+  if (!Number.isFinite(total) || total <= 0) return DB_IMPORT_MIN_CHUNK_SIZE;
+  const denominator = Math.max(1, concurrency * 4);
+  const approx = Math.ceil(total / denominator);
+  return Math.max(DB_IMPORT_MIN_CHUNK_SIZE, Math.min(DB_IMPORT_MAX_CHUNK_SIZE, approx));
+}
+
+async function yieldDbImport() {
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    await new Promise(resolve => window.requestIdleCallback(resolve, { timeout: 100 }));
+    return;
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function loadDbObject(dbLike, options = {}) {
   CacheBatch.begin({ baseline: getDocumentCacheBaseline() });
   try {
     const db = coerceDb(dbLike);
-    const raw = Array.from(db.full_token_data || []);
-    const clean = raw.map(normalizeRecord).filter(Boolean);
-    if (!clean.length) throw new Error('No valid token records');
-
-    try {
-      const recorder = window.HLSF?.remoteDbRecorder;
-      if (recorder && typeof recorder.ingestMany === 'function') {
-        recorder.ingestMany(clean);
-      }
-    } catch (err) {
-      console.warn('Remote DB recorder bulk ingest failed:', err);
-    }
+    const records = Array.isArray(db.full_token_data) ? db.full_token_data : [];
+    if (!records.length) throw new Error('No valid token records');
 
     const opts = options || {};
     const replace = opts.replace === true;
@@ -4290,24 +4315,54 @@ function loadDbObject(dbLike, options = {}) {
       }
     }
 
-    for (const record of clean) {
-      if (!record?.token) continue;
-      const cacheKey = getCacheKey(record.token);
-      const wasCached = isTokenCached(record.token);
-      const previous = mergedMap.get(record.token) || null;
-      const merged = Object.assign({}, previous || {}, record);
-      if (!merged.cached_at) merged.cached_at = previous?.cached_at || now;
-      mergedMap.set(record.token, merged);
-      indexSet.add(record.token);
-      const persisted = safeStorageSet(cacheKey, JSON.stringify(merged));
-      const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
-      if ((persisted || fallbackStored) && !wasCached) {
-        CacheBatch.record(record.token);
+    const totalRecords = records.length;
+    const concurrency = resolveDbImportConcurrency();
+    const chunkSize = resolveDbImportChunkSize(totalRecords, concurrency);
+    const recorder = window.HLSF?.remoteDbRecorder;
+    let normalizedCount = 0;
+    const newTokenSet = new Set();
+
+    const ingestRemoteBatch = (batch) => {
+      if (!batch.length) return;
+      if (!recorder || typeof recorder.ingestMany !== 'function') return;
+      try {
+        recorder.ingestMany(batch);
+      } catch (err) {
+        console.warn('Remote DB recorder bulk ingest failed:', err);
+      }
+    };
+
+    for (let start = 0; start < totalRecords; start += chunkSize) {
+      const end = Math.min(totalRecords, start + chunkSize);
+      const remoteBatch = [];
+      for (let i = start; i < end; i++) {
+        const normalized = normalizeRecord(records[i]);
+        if (!normalized?.token) continue;
+        normalizedCount++;
+        remoteBatch.push(normalized);
+        const cacheKey = getCacheKey(normalized.token);
+        const wasCached = isTokenCached(normalized.token);
+        const previous = mergedMap.get(normalized.token) || null;
+        const merged = Object.assign({}, previous || {}, normalized);
+        if (!merged.cached_at) merged.cached_at = previous?.cached_at || now;
+        mergedMap.set(normalized.token, merged);
+        indexSet.add(normalized.token);
+        const persisted = safeStorageSet(cacheKey, JSON.stringify(merged));
+        const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
+        if ((persisted || fallbackStored) && !wasCached) {
+          CacheBatch.record(normalized.token);
+        }
+        newTokenSet.add(normalized.token);
+      }
+
+      ingestRemoteBatch(remoteBatch);
+
+      if (end < totalRecords) {
+        await yieldDbImport();
       }
     }
 
     const mergedArray = Array.from(mergedMap.values());
-    const newTokenSet = new Set(clean.map(record => (record && typeof record.token === 'string') ? record.token : null).filter(Boolean));
     const globalChanged = applyGlobalConnectionRule(mergedArray, newTokenSet);
     if (globalChanged.size) {
       persistChangedTokenCaches(mergedArray, globalChanged);
@@ -4336,7 +4391,7 @@ function loadDbObject(dbLike, options = {}) {
     }
     updateHeaderCounts();
     announceDatabaseReady('load-db');
-    return clean.length;
+    return normalizedCount;
   } finally {
     CacheBatch.end();
   }
@@ -10822,7 +10877,7 @@ async function importHLSFDBFromFile(file) {
   try {
     const txt = await file.text();
     const payload = await decodeDatabaseExportPayload(txt);
-    const count = loadDbObject(payload);
+    const count = await loadDbObject(payload);
     const db = getDb();
     if (!db) return;
     const seen = [];
@@ -10840,9 +10895,9 @@ async function importHLSFDBFromFile(file) {
   }
 }
 
-function importDatabaseData(data, source = 'file') {
+async function importDatabaseData(data, source = 'file') {
   try {
-    const normalizedCount = loadDbObject(data);
+    const normalizedCount = await loadDbObject(data);
     const db = getDb();
     if (!db) throw new Error('Failed to hydrate database');
 
@@ -10850,33 +10905,44 @@ function importDatabaseData(data, source = 'file') {
       ? db.full_token_data.length
       : normalizedCount;
 
-    const tokenData = data.full_token_data;
+    const tokenData = Array.isArray(data.full_token_data) ? data.full_token_data : [];
     let imported = 0;
     let skipped = 0;
     let updated = 0;
     const seen = new Set();
 
-    for (const token of tokenData) {
-      if (!token?.token) continue;
+    const concurrency = resolveDbImportConcurrency();
+    const chunkSize = resolveDbImportChunkSize(tokenData.length, concurrency);
 
-      const key = getCacheKey(token.token);
-      const existing = safeStorageGet(key);
-      seen.add(token.token);
+    for (let start = 0; start < tokenData.length; start += chunkSize) {
+      const end = Math.min(tokenData.length, start + chunkSize);
+      for (let i = start; i < end; i++) {
+        const token = tokenData[i];
+        if (!token?.token) continue;
 
-      if (existing) {
-        const existingData = typeof existing === 'string' ? JSON.parse(existing) : existing;
-        const importedDate = new Date(token.cached_at || 0);
-        const existingDate = new Date(existingData?.cached_at || 0);
+        const key = getCacheKey(token.token);
+        const existing = safeStorageGet(key);
+        seen.add(token.token);
 
-        if (importedDate > existingDate) {
-          safeStorageSet(key, JSON.stringify(token));
-          updated++;
+        if (existing) {
+          const existingData = typeof existing === 'string' ? JSON.parse(existing) : existing;
+          const importedDate = new Date(token.cached_at || 0);
+          const existingDate = new Date(existingData?.cached_at || 0);
+
+          if (importedDate > existingDate) {
+            safeStorageSet(key, JSON.stringify(token));
+            updated++;
+          } else {
+            skipped++;
+          }
         } else {
-          skipped++;
+          safeStorageSet(key, JSON.stringify(token));
+          imported++;
         }
-      } else {
-        safeStorageSet(key, JSON.stringify(token));
-        imported++;
+      }
+
+      if (end < tokenData.length) {
+        await yieldDbImport();
       }
     }
 
@@ -11437,7 +11503,7 @@ async function cmdImport() {
       const f = e.target.files?.[0];
       if (!f) return;
       const text = await f.text();
-      const n = loadDbObject(text, { skipVisualization: true });
+      const n = await loadDbObject(text, { skipVisualization: true });
       logFinal(`DB loaded. Tokens: ${n}`);
       await handleCommand('/db');
     } catch (err) {
