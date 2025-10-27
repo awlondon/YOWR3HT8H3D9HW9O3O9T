@@ -5717,6 +5717,55 @@ function setDocumentCacheBaseline(value, options = {}) {
   return existing;
 }
 
+function estimateRemoteTokenCount() {
+  let total = 0;
+
+  const remote = window.HLSF?.remoteDb;
+  if (remote && typeof remote === 'object') {
+    try {
+      if (typeof remote.listTokens === 'function') {
+        const tokens = remote.listTokens();
+        if (Array.isArray(tokens) && tokens.length) {
+          total = Math.max(total, tokens.length);
+        }
+      }
+    } catch {
+      // ignore remote token index errors
+    }
+
+    try {
+      const meta = typeof remote.metadata === 'function' ? remote.metadata() : null;
+      if (meta && typeof meta === 'object') {
+        const declared = Number(meta.total_tokens);
+        if (Number.isFinite(declared) && declared > 0) {
+          total = Math.max(total, Math.floor(declared));
+        }
+        if (Array.isArray(meta.chunks) && meta.chunks.length) {
+          let chunkTotal = 0;
+          for (const chunk of meta.chunks) {
+            const count = Number(chunk?.token_count);
+            if (Number.isFinite(count) && count > 0) {
+              chunkTotal += Math.floor(count);
+            }
+          }
+          if (chunkTotal > 0) {
+            total = Math.max(total, chunkTotal);
+          }
+        }
+      }
+    } catch {
+      // ignore metadata access errors
+    }
+  }
+
+  const metricTokens = Number(window.HLSF?.metrics?.db?.tokens);
+  if (Number.isFinite(metricTokens) && metricTokens > 0) {
+    total = Math.max(total, Math.floor(metricTokens));
+  }
+
+  return total;
+}
+
 function getCachedTokenCount() {
   const cachedKeys = safeStorageKeys(TOKEN_CACHE_PREFIX).length;
   if (cachedKeys > 0) return cachedKeys;
@@ -5733,6 +5782,11 @@ function getCachedTokenCount() {
   const db = getDb();
   if (db && Array.isArray(db.full_token_data)) {
     return db.full_token_data.length;
+  }
+
+  const remoteCount = estimateRemoteTokenCount();
+  if (remoteCount > 0) {
+    return remoteCount;
   }
 
   const baseline = getDocumentCacheBaseline();
