@@ -32,19 +32,15 @@ The HLSF Cognition Engine is a browser-based workbench for analyzing language pr
 
 When prompted, enter an OpenAI API key (`sk-...`) to enable live calls. Selecting **Continue offline** dismisses the modal and restricts the app to cached or offline behaviors. Keys are stored only in memory.
 
-## SaaS subscription model
+## SaaS workspace commands
 
-The console now supports a hosted SaaS experience:
-
-- New users start with a seven-day trial that automatically transitions to a $19.99/month plan.
-- Each subscription cycle includes $10 in hosted LLM API credits and unlimited use of the offline model.
-- Additional API credits can be added in $10, $20, $50, $100, or $1,000 increments. Payments are routed to
-  `@primarydesignco` via a PayPal-based credit-card exchange service and tracked in a private ledger per profile.
-- Profiles own their encryption keys; messages, ledgers, and decrypt routines are only readable by the active user.
+The console can run in a hosted SaaS mode that layers profile management, encryption, and
+credit tracking on top of the core cognition features. Profiles own their encryption keys; messages,
+ledgers, and decrypt routines are readable only by the active user.
 
 Key commands:
 
-- `/signup <handle> [display name]` – Create a new SaaS profile and start the trial.
+- `/signup <handle> [display name]` – Create a new SaaS profile.
 - `/switchuser <handle>` – Swap the active profile.
 - `/plan` – Review subscription status, credit balance, and billing schedule.
 - `/topup <amount>` – Purchase additional LLM API credits using one of the supported tiers.
