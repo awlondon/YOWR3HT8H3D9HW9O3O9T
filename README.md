@@ -60,7 +60,34 @@ Key commands:
 
 ## Remote Database Workflow
 
-Run `python scripts/process_latest_db.py` to generate the chunked adjacency dataset from the latest export. Artifacts are written to `remote-db/` and include `metadata.json`, per-prefix chunks, and a sorted token index.
+The adjacency store now shards tokens into a deterministic 26×26 layout using
+`hlsf_partition.py`. Every shard lives in `remote-db/<A–Z>/<AA–ZZ>.json` so the
+entire matrix is always present, even when a shard is empty.
+
+Typical workflow:
+
+1. Create the layout (idempotent):
+   ```bash
+   python hlsf_partition.py --remote-db ./remote-db --init-layout
+   ```
+2. Optionally sanity-check a source export without writing:
+   ```bash
+   python hlsf_partition.py \
+     --source /mnt/data/HLSF_Database_2025-10-26_INITIATION.json \
+     --remote-db ./remote-db \
+     --dry-run
+   ```
+3. Merge the export into the shard set:
+   ```bash
+   python hlsf_partition.py \
+     --source /mnt/data/HLSF_Database_2025-10-26_INITIATION.json \
+     --remote-db ./remote-db
+   ```
+
+The importer is idempotent: relationship lists are merged by neighbor token,
+retaining the maximum weight and the most recent `cached_at` timestamp. A tiny
+runtime helper (`HLSFShardLoader`) is available for local pre-prompt adjacency
+loads when integrating with the cognition engine.
 
 ## Prompt Workflow Highlights
 
