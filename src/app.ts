@@ -6,6 +6,7 @@ import { buildSessionExport } from './export/session';
 import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './export/modelParams';
 import { initializeVoiceClonePanel, signalVoiceCloneTokensChanged } from './voice/voiceClone';
 import { initializeSaasPlatform, registerSaasCommands } from './saas/platform';
+import { demoGoogleSignIn } from './auth/google';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -13182,6 +13183,14 @@ function setupLandingExperience() {
     login: document.getElementById('landing-login-form'),
     demo: document.getElementById('landing-demo-form'),
   };
+  const googleSigninButton = landingRoot.querySelector('[data-google-signin]');
+  const quickSigninButton = landingRoot.querySelector('[data-quick-signin]');
+  const googleProfilePreview = landingRoot.querySelector('[data-google-profile]');
+  const googleSigninDefaultLabel = googleSigninButton instanceof HTMLButtonElement
+    ? (googleSigninButton.textContent || 'Continue with Google').trim() || 'Continue with Google'
+    : 'Continue with Google';
+  let cachedGoogleProfile = null;
+  let googleSignInInFlight = false;
 
   const paymentScreen = document.getElementById('payment-intake-screen');
   const paymentForm = paymentScreen instanceof HTMLElement
@@ -13215,6 +13224,45 @@ function setupLandingExperience() {
       setTimeout(() => target.focus(), 50);
     }
   }
+
+  function setQuickSigninAvailability(enabled) {
+    if (!(quickSigninButton instanceof HTMLButtonElement)) return;
+    quickSigninButton.disabled = !enabled;
+    quickSigninButton.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+  }
+
+  function renderGoogleProfile(profile, options = {}) {
+    if (!(googleProfilePreview instanceof HTMLElement)) return;
+    const { status = null, isError = false } = options || {};
+    if (status) {
+      const label = sanitize(String(status));
+      const classes = ['quick-signin__status'];
+      if (isError) classes.push('quick-signin__status--error');
+      googleProfilePreview.innerHTML = `<div class="${classes.join(' ')}">${label}</div>`;
+      googleProfilePreview.classList.add('is-visible');
+      return;
+    }
+    if (!profile) {
+      googleProfilePreview.innerHTML = '';
+      googleProfilePreview.classList.remove('is-visible');
+      return;
+    }
+    const avatar = sanitize(profile.picture || '');
+    const name = sanitize(profile.name || 'Google user');
+    const email = sanitize(profile.email || '');
+    const locale = sanitize(profile.locale || '');
+    googleProfilePreview.innerHTML = `
+      <img src="${avatar}" alt="Google avatar for ${name}">
+      <div class="quick-signin__details">
+        <span class="quick-signin__name">${name}</span>
+        <span class="quick-signin__email">${email}</span>
+        <span class="quick-signin__meta">Locale: ${locale || 'unknown'}</span>
+      </div>
+    `;
+    googleProfilePreview.classList.add('is-visible');
+  }
+
+  setQuickSigninAvailability(false);
 
   function setActiveView(view) {
     const activeKey = view && typeof view === 'string' ? view.toLowerCase() : 'signup';
@@ -13338,6 +13386,69 @@ function setupLandingExperience() {
         elements.input.focus();
       }
     }, 180);
+  }
+
+  if (googleSigninButton instanceof HTMLButtonElement) {
+    googleSigninButton.addEventListener('click', async () => {
+      if (googleSignInInFlight) return;
+      googleSignInInFlight = true;
+      const restoreLabel = googleSigninButton.textContent || googleSigninDefaultLabel;
+      googleSigninButton.disabled = true;
+      googleSigninButton.textContent = 'Contacting Google…';
+      cachedGoogleProfile = null;
+      setQuickSigninAvailability(false);
+      renderGoogleProfile(null, { status: 'Contacting Google…' });
+      try {
+        const profile = await demoGoogleSignIn();
+        cachedGoogleProfile = profile;
+        renderGoogleProfile(profile);
+        setQuickSigninAvailability(true);
+        if (forms.login instanceof HTMLFormElement) {
+          const emailInput = forms.login.querySelector('input[name="loginEmail"]');
+          if (emailInput instanceof HTMLInputElement) {
+            emailInput.value = profile.email || '';
+          }
+        }
+        addLog(`
+          <div class="quick-signin-log">
+            Google sign-in demo profile retrieved.<br>
+            <strong>${sanitize(profile.name || 'Google user')}</strong> · ${sanitize(profile.email || '')}
+          </div>
+        `.trim());
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        renderGoogleProfile(null, { status: `Unable to connect: ${message}`, isError: true });
+        logError(`Google sign-in failed: ${message}`);
+      } finally {
+        googleSignInInFlight = false;
+        googleSigninButton.disabled = false;
+        googleSigninButton.textContent = restoreLabel || googleSigninDefaultLabel;
+      }
+    });
+  }
+
+  if (quickSigninButton instanceof HTMLButtonElement) {
+    quickSigninButton.addEventListener('click', () => {
+      if (!cachedGoogleProfile) {
+        logWarning('Fetch a Google profile before using quick sign-in.');
+        renderGoogleProfile(null, { status: 'Connect with Google first.', isError: true });
+        return;
+      }
+      finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
+        email: cachedGoogleProfile.email,
+        name: cachedGoogleProfile.name,
+        plan: 'pro',
+        authProvider: 'google',
+        avatar: cachedGoogleProfile.picture,
+        locale: cachedGoogleProfile.locale,
+        quickSignIn: true,
+      });
+      addLog(`
+        <div class="quick-signin-log quick-signin-log--success">
+          Quick sign-in activated for ${sanitize(cachedGoogleProfile.email || 'member')} via Google.
+        </div>
+      `.trim(), 'success');
+    });
   }
 
   if (paymentBackBtn instanceof HTMLButtonElement) {
