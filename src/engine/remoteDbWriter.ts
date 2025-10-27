@@ -84,12 +84,35 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
 
   const ensureDirectory = async () => {
     if (!state.directoryHandle) return false;
+    const handle = state.directoryHandle as any;
+    const ensurePermissionGranted = async () => {
+      const requestPermission = handle.requestPermission?.bind(handle);
+      let status: string | undefined;
+      if (requestPermission) {
+        status = await requestPermission({ mode: 'readwrite' });
+        if (status && status !== 'granted') {
+          return false;
+        }
+      }
+
+      if (!status && typeof handle.queryPermission === 'function') {
+        const queryStatus = await handle.queryPermission({ mode: 'readwrite' });
+        if (queryStatus && queryStatus !== 'granted') {
+          return false;
+        }
+      }
+
+      return true;
+    };
+
     try {
-      await (state.directoryHandle as any).requestPermission?.({ mode: 'readwrite' });
-    } catch {
-      // ignore
+      return await ensurePermissionGranted();
+    } catch (err: any) {
+      if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) {
+        return false;
+      }
+      throw err;
     }
-    return true;
   };
 
   const ensureChunksDirectory = async () => {
