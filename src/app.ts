@@ -80,7 +80,16 @@ const COMMAND_HELP_ENTRIES = [
   { command: '/decryptmsg', description: 'Decrypt inbox message', requiresMembership: true },
 ];
 
-const DEMO_UNLOCKED_COMMANDS = new Set(['/hlsf', '/visualize']);
+const DEMO_UNLOCKED_COMMANDS = new Set([
+  '/hlsf',
+  '/visualize',
+  '/clear',
+  '/reset',
+  '/stats',
+  '/database',
+  '/db',
+  '/self',
+]);
 
 const COMMAND_RESTRICTIONS = {
   [MEMBERSHIP_LEVELS.DEMO]: new Set(
