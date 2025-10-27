@@ -5,6 +5,7 @@ import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
 import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './export/modelParams';
 import { initializeVoiceClonePanel, signalVoiceCloneTokensChanged } from './voice/voiceClone';
+import { initializeSaasPlatform, registerSaasCommands } from './saas/platform';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -4116,6 +4117,7 @@ const state = {
     totalCacheHits: 0,
     totalCostUsd: 0,
   },
+  saas: null,
   hlsfReady: false,
   tokenSources: new Map(),
   tokenOrder: [],
@@ -4141,6 +4143,9 @@ const state = {
 
 state.hlsfReady = false;
 window.CognitionEngine.state = state;
+const saasPlatform = initializeSaasPlatform();
+state.saas = saasPlatform;
+window.CognitionEngine.saas = saasPlatform;
 const promptReviewStore = state.pendingPromptReviews;
 syncSettings();
 
@@ -12408,6 +12413,21 @@ if (!COMMANDS.__hlsf_bound) {
 }
 registerCommand('/visualize', cmd_hlsf);
 
+registerSaasCommands(saasPlatform, {
+  registerCommand,
+  addLog: html => addLog(html),
+  logError,
+  logSuccess: message => {
+    if (typeof window.logOK === 'function') {
+      window.logOK(message);
+    } else {
+      addLog(`✅ ${sanitize(String(message))}`, 'success');
+    }
+  },
+  sanitize,
+  formatCurrency,
+});
+
 function symbolMetricsSummary() {
   const bucket = state.symbolMetrics;
   if (!bucket || !bucket.last) {
@@ -12505,6 +12525,14 @@ function helpCommandHtml() {
         /encrypt - Encode text into glyphs<br>
         /decrypt - Decode glyph sequences<br>
         /visualize or /hlsf - Render the current HLSF graph<br>
+        /signup &lt;handle&gt; [display name] - Create a SaaS profile<br>
+        /switchuser &lt;handle&gt; - Switch active SaaS profile<br>
+        /plan - View subscription and credit status<br>
+        /topup &lt;amount&gt; - Purchase additional API credits<br>
+        /userlist - List SaaS users<br>
+        /message &lt;handle&gt; &lt;text&gt; - Send an encrypted message<br>
+        /inbox - Show encrypted inbox entries<br>
+        /decryptmsg &lt;messageId&gt; - Decrypt an inbox message<br>
         /maphidden [--min N --limit N --depth N --edges N --concurrency N] - Reveal hidden adjacency tokens<br>
         /scheme &lt;color&gt; - Toggle visual theme<br>
         /spin on|off - Toggle emergent rotation<br>
@@ -14057,6 +14085,7 @@ async function initialize() {
     5. <strong>Symbolic glyph encryption</strong> (complex number encoding)<br>
     6. <strong>HLSF visualization</strong> (hierarchical semantic framework)<br><br>
     <strong>Commands:</strong> /help, /hlsf, /read, /ingest, /glyph, /encrypt, /decrypt<br>
+    <br><strong>SaaS:</strong> 7-day trial then $19.99/mo with $10 LLM API credits. Use /signup to create a profile.<br>
     ${cachedCount > 0 ? `<br>✅ Loaded with ${cachedCount} cached tokens` : ''}
     <br><small>⚠️ Note: Download HTML and run locally for API calls to work.</small>
   `);

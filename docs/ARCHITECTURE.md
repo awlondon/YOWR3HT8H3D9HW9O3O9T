@@ -23,6 +23,25 @@ Static adjacency data is generated from the exported database JSON using the scr
 - **Prettier** (`npm run format`) standardises formatting for TypeScript, JSON, CSS, and Markdown files.
 - **Vite** offers a lightning-fast development server and production build targeting evergreen browsers.
 
+## SaaS platform layer
+
+The `src/saas/` directory introduces a modular software-as-a-service layer that wraps the existing
+interactive shell:
+
+- `platform.ts` composes the SaaS platform, wiring subscription management, user profiles, and
+  messaging features together while exposing helpers for command registration.
+- `subscription.ts` keeps track of the seven-day trial, the recurring $19.99/month plan, the
+  included $10 in LLM API credits, and top-up purchases in $10, $20, $50, $100, or $1,000 blocks.
+- `userDirectory.ts` and `encryption.ts` let users instantiate private profiles with unique
+  encryption keys for their ledgers and messaging history.
+- `messaging.ts` stores only encrypted message payloads while exposing decryption exclusively to the
+  owning profile.
+
+Command handlers are registered through `registerSaasCommands`, allowing the console UI to offer
+`/signup`, `/userlist`, `/plan`, `/topup`, `/message`, `/inbox`, and `/decryptmsg` workflows. Payment
+instructions are standardised so that subscription and credit purchases are routed to
+`@primarydesignco` via the PayPal-based credit-card exchange service.
+
 ## Data flow summary
 
 1. Users interact with the UI rendered from `index.html`.
