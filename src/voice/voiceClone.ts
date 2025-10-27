@@ -773,6 +773,7 @@ let sessionVoiceApplied = false;
 let scheduledTokenRefreshHandle = null;
 let scheduledTokenRefreshMode = null;
 let activePreviewQueue = null;
+let activeSpeechController = null;
 
 function countWords(text) {
   if (!text) return 0;
@@ -1562,6 +1563,17 @@ function playSynthesizedPreview(token) {
     return;
   }
 
+  const suffix = token ? ` for ${token}` : '';
+  const shouldSpeakTokens = segments.some(segment => segment?.usingCloneFallback) && supportsSpeechSynthesis();
+  if (shouldSpeakTokens) {
+    const spoken = playSegmentsWithSpeechSynthesis(entries, prefs);
+    if (spoken) {
+      activePlayback = null;
+      setStatus(`Playing synthesized voice profile preview mapped to selected token${suffix}.`, 'info');
+      return;
+    }
+  }
+
   const queueState = { aborted: false, entries };
   activePreviewQueue = queueState;
 
@@ -1601,7 +1613,6 @@ function playSynthesizedPreview(token) {
   };
 
   playNext(0);
-  const suffix = token ? ` for ${token}` : '';
   if (usedCloneFallback) {
     setStatus(
       `Playing synthesized voice profile preview using cloned audio${suffix} (fallback recording).`,
@@ -1918,6 +1929,7 @@ function stopActivePlayback() {
     activePreviewQueue.aborted = true;
     activePreviewQueue = null;
   }
+  cancelSpeechSynthesisPlayback();
   if (!activePlayback) return;
   try {
     activePlayback.pause();
@@ -1947,6 +1959,93 @@ function playTokenTts(token) {
     return;
   }
   playSynthesizedPreview(token);
+}
+
+function supportsSpeechSynthesis() {
+  if (typeof window === 'undefined') return false;
+  const synth = window.speechSynthesis;
+  const Utterance = window.SpeechSynthesisUtterance;
+  return Boolean(synth && typeof synth.speak === 'function' && typeof synth.cancel === 'function' && typeof Utterance === 'function');
+}
+
+function cancelSpeechSynthesisPlayback() {
+  if (activeSpeechController) {
+    activeSpeechController.aborted = true;
+    activeSpeechController = null;
+  }
+  if (typeof window === 'undefined') return;
+  const synth = window.speechSynthesis;
+  if (!synth || typeof synth.cancel !== 'function') return;
+  try {
+    synth.cancel();
+  } catch {
+    // ignore cancellation errors
+  }
+}
+
+function playSegmentsWithSpeechSynthesis(entries, prefs) {
+  if (!supportsSpeechSynthesis()) return false;
+  if (!Array.isArray(entries) || !entries.length) return false;
+  const Utterance = window.SpeechSynthesisUtterance;
+  if (typeof Utterance !== 'function') return false;
+  const synth = window.speechSynthesis;
+  if (!synth) return false;
+
+  cancelSpeechSynthesisPlayback();
+  activePreviewQueue = null;
+
+  const utterances = [];
+  for (const entry of entries) {
+    const segment = entry?.segment;
+    const text = segment?.text || segment?.transcript || segment?.token;
+    if (!text) continue;
+    const utterance = new Utterance(text);
+    const adjustments = segment?.resolvedAdjustments || entry?.adjustments || {};
+    const baseRate = Number(prefs?.rate) || 1;
+    const baseVolume = Number(prefs?.volume) || 1;
+    const pitchDelta = Number(adjustments.pitchDelta) || 0;
+    const rateDelta = Number(adjustments.rateDelta) || 0;
+    const volumeDelta = Number(adjustments.volumeDelta) || 0;
+    utterance.pitch = clampValue(1 + pitchDelta, 0.1, 2);
+    utterance.rate = clampValue(baseRate + rateDelta, 0.5, 2.5);
+    utterance.volume = clampValue(baseVolume + volumeDelta, 0, 1);
+    utterances.push({ utterance });
+  }
+
+  if (!utterances.length) return false;
+
+  const controller = { aborted: false };
+  activeSpeechController = controller;
+
+  const speakAt = index => {
+    if (controller.aborted) return;
+    if (index >= utterances.length) {
+      activeSpeechController = null;
+      return;
+    }
+    const current = utterances[index];
+    if (!current?.utterance) {
+      speakAt(index + 1);
+      return;
+    }
+    current.utterance.onend = () => {
+      if (controller.aborted) return;
+      speakAt(index + 1);
+    };
+    current.utterance.onerror = () => {
+      if (controller.aborted) return;
+      speakAt(index + 1);
+    };
+    try {
+      synth.speak(current.utterance);
+    } catch (err) {
+      console.warn('Failed to speak synthesized token preview:', err);
+      speakAt(index + 1);
+    }
+  };
+
+  speakAt(0);
+  return true;
 }
 
 function handleTokenListClick(event) {
