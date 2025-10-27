@@ -806,6 +806,8 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
   };
   graph._metrics = metrics;
   logPhase('summary', metrics);
+  markRelationLegendDirty();
+  if (graph && typeof graph === 'object') graph.__legendDirty = true;
   return graph;
 }
 
@@ -1845,9 +1847,11 @@ function drawComposite(graph, opts = {}) {
 
   const hitAreas = new Map();
 
+  const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
+  updateRelationLegend(graph, edges, edgeColorMode);
+
   if (cfg.showEdges !== false) {
     const batches = new Map();
-    const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
     for (const edge of edges) {
       const fromPos = rotatedPositions.get(edge.from) || rotatedPositions.get(edge.to);
       const toPos = rotatedPositions.get(edge.to);
@@ -2676,6 +2680,13 @@ function ensureHLSFCanvas() {
             <option value="weight">Weight</option>
             <option value="relation" selected>Relation</option>
           </select>
+          <details id="hlsf-relation-legend" class="hlsf-legend-container" hidden>
+            <summary>
+              <span>Relation edge colors</span>
+              <span id="hlsf-relation-legend-count" class="hlsf-legend-count"></span>
+            </summary>
+            <div id="hlsf-relation-legend-items" class="hlsf-legend"></div>
+          </details>
         </div>
         <div class="hlsf-control-group">
           <label for="hlsf-relation-cap">Relation types <span id="hlsf-relation-cap-val">${MAX_REL_TYPES}</span></label>
@@ -2969,6 +2980,7 @@ function bindHlsfControls(wrapper) {
       const value = normalizeEdgeColorMode(e.target.value);
       window.HLSF.config.edgeColorMode = value;
       edgeColorSelect.value = value;
+      markRelationLegendDirty();
       debouncedLegacyRender();
     });
   }
@@ -3293,6 +3305,9 @@ function syncHlsfControls(wrapper) {
   const edgeColorSelect = wrapper.querySelector('#hlsf-edge-color-mode');
   const colorMode = normalizeEdgeColorMode(config.edgeColorMode);
   window.HLSF.config.edgeColorMode = colorMode;
+  if (window.HLSF?.rendering?.relationLegendColorMode !== colorMode) {
+    markRelationLegendDirty();
+  }
   if (edgeColorSelect) edgeColorSelect.value = colorMode;
 
   const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
@@ -3437,6 +3452,7 @@ window.HLSF.config.edgesPerType = initialEdgesPerType === Infinity
 window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
 window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
 window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
+markRelationLegendDirty();
 window.HLSF.config.showNodeGlow = window.HLSF.config.showNodeGlow === true;
 window.HLSF.config.showAllAdjacencies = window.HLSF.config.showAllAdjacencies === true;
 window.HLSF.config.layout = normalizeLayout(window.HLSF.config.layout);
@@ -3563,6 +3579,123 @@ function compositeEdgeStrokeColor(edge, mode) {
     return weightToColor(edge.w ?? 0);
   }
   return null;
+}
+
+function markRelationLegendDirty() {
+  window.HLSF = window.HLSF || {};
+  if (!window.HLSF.rendering || typeof window.HLSF.rendering !== 'object') {
+    window.HLSF.rendering = {};
+  }
+  window.HLSF.rendering.relationLegendSignature = null;
+  window.HLSF.rendering.relationLegendGraph = null;
+  window.HLSF.rendering.relationLegendColorMode = null;
+}
+
+function updateRelationLegend(graph, edges, edgeColorMode) {
+  const container = document.getElementById('hlsf-relation-legend');
+  const list = document.getElementById('hlsf-relation-legend-items');
+  if (!container || !list) return;
+  const countEl = document.getElementById('hlsf-relation-legend-count');
+
+  window.HLSF = window.HLSF || {};
+  if (!window.HLSF.rendering || typeof window.HLSF.rendering !== 'object') {
+    window.HLSF.rendering = {};
+  }
+  const state = window.HLSF.rendering;
+
+  if (edgeColorMode !== 'relation') {
+    list.innerHTML = '';
+    container.hidden = true;
+    container.setAttribute('aria-hidden', 'true');
+    if (countEl) countEl.textContent = '';
+    state.relationLegendSignature = null;
+    state.relationLegendGraph = null;
+    state.relationLegendColorMode = edgeColorMode;
+    return;
+  }
+
+  const edgeList = Array.isArray(edges)
+    ? edges
+    : Array.isArray(graph?.links)
+      ? graph.links
+      : Array.isArray(graph?.edges)
+        ? graph.edges
+        : [];
+
+  if (!edgeList.length) {
+    list.innerHTML = '';
+    container.hidden = true;
+    container.setAttribute('aria-hidden', 'true');
+    if (countEl) countEl.textContent = '';
+    state.relationLegendSignature = '';
+    state.relationLegendGraph = graph || null;
+    state.relationLegendColorMode = edgeColorMode;
+    if (graph && typeof graph === 'object') graph.__legendDirty = false;
+    return;
+  }
+
+  const requiresUpdate = graph?.__legendDirty === true
+    || state.relationLegendSignature == null
+    || state.relationLegendGraph !== graph
+    || state.relationLegendColorMode !== edgeColorMode;
+
+  if (!requiresUpdate) {
+    return;
+  }
+
+  const unique = new Map();
+  for (const edge of edgeList) {
+    const rel = typeof edge?.rtype === 'string' ? edge.rtype : null;
+    if (!rel || unique.has(rel)) continue;
+    unique.set(rel, {
+      color: paletteColor(rel),
+      label: relDisplay(rel),
+    });
+  }
+
+  const sorted = [...unique.keys()].sort((a, b) => {
+    const aLabel = unique.get(a)?.label ?? a;
+    const bLabel = unique.get(b)?.label ?? b;
+    return aLabel.localeCompare(bLabel, undefined, { sensitivity: 'base' });
+  });
+  const signature = sorted.join('|');
+
+  if (signature === state.relationLegendSignature && graph?.__legendDirty !== true) {
+    container.hidden = sorted.length === 0;
+    container.setAttribute('aria-hidden', sorted.length === 0 ? 'true' : 'false');
+    if (countEl) countEl.textContent = sorted.length ? `${sorted.length}` : '';
+    state.relationLegendGraph = graph || null;
+    state.relationLegendColorMode = edgeColorMode;
+    if (graph && typeof graph === 'object') graph.__legendDirty = false;
+    return;
+  }
+
+  list.innerHTML = '';
+  for (const key of sorted) {
+    const entry = unique.get(key);
+    if (!entry) continue;
+    const item = document.createElement('div');
+    item.className = 'hlsf-legend-item';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'hlsf-legend-color';
+    swatch.style.background = entry.color;
+
+    const label = document.createElement('span');
+    label.textContent = entry.label;
+
+    item.appendChild(swatch);
+    item.appendChild(label);
+    list.appendChild(item);
+  }
+
+  container.hidden = sorted.length === 0;
+  container.setAttribute('aria-hidden', sorted.length === 0 ? 'true' : 'false');
+  if (countEl) countEl.textContent = sorted.length ? `${sorted.length}` : '';
+  state.relationLegendSignature = signature;
+  state.relationLegendGraph = graph || null;
+  state.relationLegendColorMode = edgeColorMode;
+  if (graph && typeof graph === 'object') graph.__legendDirty = false;
 }
 
 function stepRotation(dt) {
