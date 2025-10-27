@@ -101,6 +101,11 @@ const NEGATIVE_WORDS = new Set([
   'grief',
 ]);
 
+function normalizeTokenKey(token) {
+  if (typeof token !== 'string') return '';
+  return token.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 function canonicalExpressionTag(tag) {
   if (!tag) return '';
   const normalized = String(tag).trim().toLowerCase();
@@ -643,13 +648,31 @@ function makeSegmentForToken(token) {
     return { token: '', text: '', expressionInfo: null, transcript: '' };
   }
   const assignments = store.assignments || {};
+  const normalizedKey = normalizeTokenKey(token);
   let recordingId = assignments[token];
+  if ((!recordingId || typeof recordingId !== 'string') && normalizedKey) {
+    for (const [assignedToken, assignedId] of Object.entries(assignments)) {
+      if (normalizeTokenKey(assignedToken) === normalizedKey && typeof assignedId === 'string') {
+        recordingId = assignedId;
+        break;
+      }
+    }
+  }
   let recording = recordingId ? store.recordings.find(rec => rec.id === recordingId) : null;
   if (!recording) {
-    const candidates = recordingIndex.get(token);
-    if (Array.isArray(candidates) && candidates.length) {
+    const directCandidates = recordingIndex.get(token);
+    if (Array.isArray(directCandidates) && directCandidates.length) {
+      recording = directCandidates[0];
+      recordingId = recording?.id || recordingId;
+    }
+  }
+  if (!recording && normalizedKey) {
+    for (const [recordingToken, candidates] of recordingIndex.entries()) {
+      if (!Array.isArray(candidates) || !candidates.length) continue;
+      if (normalizeTokenKey(recordingToken) !== normalizedKey) continue;
       recording = candidates[0];
       recordingId = recording?.id || recordingId;
+      break;
     }
   }
   const rawTranscript = typeof recording?.transcript === 'string' ? recording.transcript : '';
@@ -1438,12 +1461,16 @@ function buildSynthesizedPreviewSegments(contextToken = null) {
   const assignments = store.assignments || {};
   const segments = [];
   const seenTokens = new Set();
+  const seenNormalized = new Set();
 
   const pushToken = token => {
     if (!token || seenTokens.has(token) || segments.length >= SYNTHESIZED_PREVIEW_TOKEN_LIMIT) return;
+    const normalizedKey = normalizeTokenKey(token);
+    if (normalizedKey && seenNormalized.has(normalizedKey)) return;
     const segment = makeSegmentForToken(token);
     if (!segment?.text) return;
     seenTokens.add(token);
+    if (normalizedKey) seenNormalized.add(normalizedKey);
     segments.push(segment);
   };
 
