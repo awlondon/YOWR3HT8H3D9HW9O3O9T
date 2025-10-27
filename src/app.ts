@@ -61,6 +61,7 @@ const COMMAND_HELP_ENTRIES = [
   { command: '/read', description: 'Ingest document for adjacency mapping', requiresMembership: true },
   { command: '/ingest', description: 'Alias for /read', requiresMembership: true },
   { command: '/loaddb', description: 'Load remote database manifest', requiresMembership: true },
+  { command: '/remotedir', description: 'Connect remote DB save directory', requiresMembership: false },
   { command: '/hlsf', description: 'Render HLSF visualization', requiresMembership: true },
   { command: '/visualize', description: 'Alias for /hlsf', requiresMembership: true },
   { command: '/scheme', description: 'Toggle visual theme', requiresMembership: true },
@@ -6623,13 +6624,12 @@ const RemoteDbRecorder = (() => {
     return { chunks, totalTokens, totalRelationships, tokenIndex };
   };
 
-  const manifest = (options = {}) => {
+  const buildManifestPayload = (stats, options = {}) => {
     const { includeTokenIndex = false, generatedAt = null } = options || {};
-    const stats = computeStats();
     const timestamp = generatedAt || lastGeneratedAt || new Date().toISOString();
-    if (!generatedAt) lastGeneratedAt = timestamp;
+    lastGeneratedAt = timestamp;
     const manifestPayload = {
-      version: '1.0',
+      version: '2.1',
       generated_at: timestamp,
       source: 'session-cache',
       total_tokens: stats.totalTokens,
@@ -6648,21 +6648,127 @@ const RemoteDbRecorder = (() => {
     return manifestPayload;
   };
 
+  const manifest = (options = {}) => buildManifestPayload(computeStats(), options);
+
   const tokenIndex = () => computeStats().tokenIndex;
 
-  const persist = () => {
+  const PERSIST_DEBOUNCE_MS = 250;
+  let persistSchedule = null;
+  let persistPromise = null;
+  let persistResolver = null;
+  let lastPersistPayload = null;
+
+  const cancelScheduledPersist = () => {
+    if (!persistSchedule) return;
+    const { type, id } = persistSchedule;
+    if (type === 'idle') {
+      const cancelIdle = typeof window !== 'undefined' ? window.cancelIdleCallback : null;
+      if (typeof cancelIdle === 'function') {
+        try { cancelIdle(id); }
+        catch (err) { console.warn('Failed to cancel idle persist callback:', err); }
+      }
+    } else {
+      clearTimeout(id);
+    }
+    persistSchedule = null;
+  };
+
+  const broadcastPersistResult = (payload) => {
+    lastPersistPayload = payload;
+    try {
+      const writer = window?.HLSF?.remoteDbFileWriter;
+      if (writer && typeof writer.handlePersist === 'function') {
+        writer.handlePersist(payload);
+      }
+    } catch (err) {
+      console.warn('Remote DB writer notification failed:', err);
+    }
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+      try {
+        const event = new window.CustomEvent('hlsf:remote-db-updated', { detail: payload });
+        window.dispatchEvent(event);
+      } catch (err) {
+        console.warn('Failed to dispatch remote DB update event:', err);
+      }
+    }
+  };
+
+  const persistNow = () => {
+    cancelScheduledPersist();
     if (!hasDataInternal()) {
       safeStorageRemove(STORAGE_KEY);
       safeStorageRemove(META_KEY);
       lastGeneratedAt = null;
-      return;
+      const emptyPayload = { metadata: null, chunks: [], tokenIndex: [] };
+      broadcastPersistResult(emptyPayload);
+      return emptyPayload;
     }
+
+    const stats = computeStats();
     const generatedAt = new Date().toISOString();
-    const chunksPayload = serialize();
+    const manifestPayload = buildManifestPayload(stats, { includeTokenIndex: true, generatedAt });
+    const chunksPayload = stats.chunks;
     safeStorageSet(STORAGE_KEY, JSON.stringify(chunksPayload));
-    const metaPayload = manifest({ includeTokenIndex: true, generatedAt });
-    safeStorageSet(META_KEY, JSON.stringify(metaPayload));
-    lastGeneratedAt = generatedAt;
+    safeStorageSet(META_KEY, JSON.stringify(manifestPayload));
+    const payload = { metadata: manifestPayload, chunks: chunksPayload, tokenIndex: stats.tokenIndex };
+    broadcastPersistResult(payload);
+    return payload;
+  };
+
+  const schedulePersist = () => {
+    if (persistPromise) return persistPromise;
+    persistPromise = new Promise(resolve => { persistResolver = resolve; });
+
+    const run = () => {
+      persistSchedule = null;
+      let result = null;
+      try {
+        result = persistNow();
+      } catch (err) {
+        console.warn('Remote DB persist failed:', err);
+        result = lastPersistPayload || { metadata: null, chunks: [], tokenIndex: [] };
+      }
+      const resolve = persistResolver;
+      persistPromise = null;
+      persistResolver = null;
+      if (typeof resolve === 'function') {
+        try { resolve(result); }
+        catch (resolveErr) { console.warn('Persist promise resolution failed:', resolveErr); }
+      }
+    };
+
+    const useIdle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function';
+    if (useIdle) {
+      try {
+        const id = window.requestIdleCallback(run, { timeout: 1000 });
+        persistSchedule = { type: 'idle', id };
+        return persistPromise;
+      } catch (err) {
+        console.warn('requestIdleCallback unavailable, falling back to timeout:', err);
+      }
+    }
+
+    const id = setTimeout(run, PERSIST_DEBOUNCE_MS);
+    persistSchedule = { type: 'timeout', id };
+    return persistPromise;
+  };
+
+  const flush = () => {
+    if (persistResolver && !persistPromise) {
+      // Should not happen, but guard against inconsistent state.
+      persistResolver = null;
+    }
+    if (persistSchedule) {
+      cancelScheduledPersist();
+    }
+    const result = persistNow();
+    if (persistResolver) {
+      try { persistResolver(result); }
+      catch (err) { console.warn('Persist flush resolution failed:', err); }
+      persistResolver = null;
+    }
+    persistPromise = null;
+    return result;
   };
 
   const remove = (token, options = {}) => {
@@ -6678,7 +6784,7 @@ const RemoteDbRecorder = (() => {
         break;
       }
     }
-    if (removed && !deferPersist) persist();
+    if (removed && !deferPersist) schedulePersist();
     return removed;
   };
 
@@ -6688,7 +6794,7 @@ const RemoteDbRecorder = (() => {
     for (const token of tokens) {
       if (remove(token, { deferPersist: true })) removed += 1;
     }
-    if (removed > 0) persist();
+    if (removed > 0) schedulePersist();
     return removed;
   };
 
@@ -6721,7 +6827,7 @@ const RemoteDbRecorder = (() => {
     }
     if (!sanitized.cached_at) sanitized.cached_at = new Date().toISOString();
     bucket.set(key, sanitized);
-    if (!deferPersist && changed) persist();
+    if (!deferPersist && changed) schedulePersist();
     return changed;
   };
 
@@ -6731,7 +6837,7 @@ const RemoteDbRecorder = (() => {
     for (const record of records) {
       if (ingest(record, { deferPersist: true })) changed += 1;
     }
-    if (changed > 0) persist();
+    if (changed > 0) schedulePersist();
     return changed;
   };
 
@@ -6775,19 +6881,53 @@ const RemoteDbRecorder = (() => {
   const reset = () => {
     chunkMap.clear();
     lastGeneratedAt = null;
+    cancelScheduledPersist();
+    persistPromise = null;
+    persistResolver = null;
     safeStorageRemove(STORAGE_KEY);
     safeStorageRemove(META_KEY);
+    broadcastPersistResult({ metadata: null, chunks: [], tokenIndex: [] });
   };
 
   const hasData = () => hasDataInternal();
 
   hydrateFromStorage();
 
-  return { ingest, ingestMany, listChunks, manifest, tokenIndex, hasData, reset, remove, removeMany };
+  return { ingest, ingestMany, listChunks, manifest, tokenIndex, hasData, reset, remove, removeMany, flush, schedulePersist };
 })();
 
 window.HLSF = window.HLSF || {};
 window.HLSF.remoteDbRecorder = RemoteDbRecorder;
+
+const remoteDbFileWriter = createRemoteDbFileWriter({
+  onMissingDirectory(reason) {
+    if (reason === 'unsupported') {
+      logWarning('Remote DB auto-save requires a Chromium browser with the File System Access API. Updates will remain in the session cache.');
+      return;
+    }
+    if (reason === 'permission') {
+      logWarning('Remote DB directory access was denied. Run /remotedir to reconnect and grant write permission.');
+      return;
+    }
+    addLog(`
+      <div class="adjacency-insight">
+        💾 Remote DB updates are ready to sync.<br>
+        <button class="inline-command" data-command="/remotedir">Select save directory</button>
+        or run <code>/remotedir</code> to choose where chunk files should be written automatically.
+      </div>
+    `);
+  },
+  onSyncSuccess(info) {
+    const count = info?.chunkCount ?? 0;
+    const suffix = count === 1 ? 'chunk' : 'chunks';
+    logOK(`Remote DB files updated (${count} ${suffix}).`);
+  },
+  onSyncError(message) {
+    logWarning(message);
+  },
+});
+
+window.HLSF.remoteDbFileWriter = remoteDbFileWriter;
 
 function updateCachedTokenDisplay(baseCount) {
   const normalizedBase = Number.isFinite(baseCount) ? Math.max(0, Math.floor(baseCount)) : 0;
@@ -7212,6 +7352,16 @@ function togglePromptReviewEditor(review) {
 }
 
 function handlePromptReviewClick(event) {
+  const quickCommand = event.target.closest('button[data-command]');
+  if (quickCommand) {
+    const command = quickCommand.getAttribute('data-command');
+    if (command) {
+      event.preventDefault();
+      handleCommand(command);
+      return;
+    }
+  }
+
   const button = event.target.closest('button[data-prompt-action]');
   if (!button) return;
   const container = button.closest('.prompt-review');
@@ -7923,6 +8073,25 @@ function normalizeAdjacencyInputs(tokens) {
   return Array.from(unique.values());
 }
 
+function resolveAdjacencyConcurrency(base = CONFIG.MAX_CONCURRENCY) {
+  if (Number.isFinite(base) && base <= 0) base = 1;
+  const configured = window?.HLSF?.config?.adjacencyConcurrency;
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(1, Math.floor(configured));
+  }
+  const hardware = typeof navigator !== 'undefined'
+    && navigator
+    && typeof navigator.hardwareConcurrency === 'number'
+      ? navigator.hardwareConcurrency
+      : 0;
+  if (Number.isFinite(hardware) && hardware > 0) {
+    const derived = Math.max(1, Math.round(hardware * 0.75));
+    const clamped = Math.min(12, derived);
+    return Math.max(Math.floor(base), clamped);
+  }
+  return Math.max(1, Math.floor(base));
+}
+
 async function batchFetchAdjacencies(tokens, context, label) {
   CacheBatch.begin();
   try {
@@ -7955,14 +8124,15 @@ async function batchFetchAdjacencies(tokens, context, label) {
 
     const progress = new ProgressTracker(remoteTargets.length, label);
 
+    const concurrency = resolveAdjacencyConcurrency(CONFIG.MAX_CONCURRENCY);
     let processed = 0;
-    for (let i = 0; i < remoteTargets.length; i += CONFIG.MAX_CONCURRENCY) {
+    for (let i = 0; i < remoteTargets.length; i += concurrency) {
       if (currentAbortController?.signal.aborted) {
         progress.complete(`${label} cancelled (${processed}/${remoteTargets.length})`);
         break;
       }
 
-      const batch = remoteTargets.slice(i, i + CONFIG.MAX_CONCURRENCY);
+      const batch = remoteTargets.slice(i, i + concurrency);
       const settled = await Promise.allSettled(batch.map(entry => fetchAdjacency(entry, context)));
 
       settled.forEach((result, idx) => {
@@ -8073,7 +8243,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
     const concurrency = Number.isFinite(options.concurrency) && options.concurrency > 0
       ? Math.max(1, Math.floor(options.concurrency))
-      : CONFIG.MAX_CONCURRENCY;
+      : resolveAdjacencyConcurrency(CONFIG.MAX_CONCURRENCY);
     const onTokenLoaded = typeof options.onTokenLoaded === 'function' ? options.onTokenLoaded : null;
     const preferDb = options.preferDb === true;
     const dbRecordIndex = preferDb && options.dbRecordIndex instanceof Map
@@ -12508,6 +12678,23 @@ async function cmd_loaddb(args) {
   await cmdLoadDb(joined);
 }
 
+async function cmd_remotedir() {
+  const writer = remoteDbFileWriter;
+  if (!writer || typeof writer.isSupported !== 'function' || !writer.isSupported()) {
+    logWarning('Remote DB auto-save is unavailable in this browser. Use /export to capture updates manually.');
+    return;
+  }
+  try {
+    const connected = await writer.chooseDirectory();
+    if (connected) {
+      logOK('Remote DB save directory connected. Future adjacency updates will sync automatically.');
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarning(`Remote DB directory selection failed: ${sanitize(message)}`);
+  }
+}
+
 function parseHiddenSweepArgs(args = []) {
   const options = {
     minAdjacencies: 2,
@@ -13090,6 +13277,7 @@ registerCommand('/import', cmd_import);
 registerCommand('/read', () => cmdRead());
 registerCommand('/ingest', () => cmdRead());
 registerCommand('/loaddb', cmd_loaddb);
+registerCommand('/remotedir', cmd_remotedir);
 registerCommand('/maphidden', cmd_hidden);
 registerCommand('/hidden', cmd_hidden);
 window.COMMANDS = COMMANDS;
