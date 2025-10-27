@@ -1452,8 +1452,8 @@ function buildSynthesizedPreviewSegments(contextToken = null) {
 
 function playSynthesizedPreview(token) {
   const baseSegments = token ? [makeSegmentForToken(token)] : buildSynthesizedPreviewSegments(token);
-  const segments = Array.isArray(baseSegments) ? baseSegments.filter(Boolean) : [];
-  if (!segments.length) {
+  const initialSegments = Array.isArray(baseSegments) ? baseSegments.filter(Boolean) : [];
+  if (!initialSegments.length) {
     setStatus('No mapped tokens are available for synthesized preview.', 'warning');
     return;
   }
@@ -1461,14 +1461,44 @@ function playSynthesizedPreview(token) {
   stopActivePlayback();
 
   const prefs = store.voicePreferences || defaultVoicePreferences();
-  const entries = [];
   const recordingMap = new Map((store.recordings || []).map(rec => [rec.id, rec]));
+  const playableSegments = [];
+  const segments = [];
 
-  segments.forEach((segment, index) => {
+  initialSegments.forEach(segment => {
+    if (!segment || !segment.text) return;
+    const clone = { ...segment };
+    segments.push(clone);
+    if (clone.recordingId && recordingMap.has(clone.recordingId)) {
+      playableSegments.push(clone);
+    }
+  });
+
+  let usedCloneFallback = false;
+  if (!playableSegments.length) {
+    const clone = getValidProfileClone();
+    if (clone && recordingMap.has(clone.recordingId)) {
+      segments.forEach(segment => {
+        segment.recordingId = clone.recordingId;
+        segment.usingCloneFallback = true;
+      });
+      playableSegments.push(...segments);
+      usedCloneFallback = playableSegments.length > 0;
+    }
+  }
+
+  if (!playableSegments.length) {
+    setStatus('No mapped tokens are available for synthesized preview.', 'warning');
+    return;
+  }
+
+  const entries = [];
+
+  playableSegments.forEach((segment, index) => {
     if (!segment?.recordingId) return;
     const recording = recordingMap.get(segment.recordingId);
     if (!recording) return;
-    const resolved = resolveSegmentAdjustments(segment, segments, index);
+    const resolved = resolveSegmentAdjustments(segment, playableSegments, index);
     segment.resolvedAdjustments = resolved.adjustments;
     segment.resolvedIntensity = resolved.intensity;
     segment.resolvedTag = resolved.tag;
@@ -1524,7 +1554,14 @@ function playSynthesizedPreview(token) {
 
   playNext(0);
   const suffix = token ? ` for ${token}` : '';
-  setStatus(`Playing synthesized voice profile preview using cloned audio${suffix}.`, 'info');
+  if (usedCloneFallback) {
+    setStatus(
+      `Playing synthesized voice profile preview using cloned audio${suffix} (fallback recording).`,
+      'info'
+    );
+  } else {
+    setStatus(`Playing synthesized voice profile preview using cloned audio${suffix}.`, 'info');
+  }
 }
 
 function getProfileCloneExportPayload(options = {}) {
