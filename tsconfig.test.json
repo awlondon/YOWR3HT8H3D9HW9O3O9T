@@ -10,6 +10,8 @@
     "src/export/modelParams.ts",
     "src/export/modelParams.test.ts",
     "src/export/modelParams.js.d.ts",
+    "src/onboarding/loginFlow.ts",
+    "src/onboarding/loginFlow.test.ts",
     "types/node-test.d.ts"
   ]
 }
