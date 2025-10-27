@@ -12776,6 +12776,31 @@ function setupLandingExperience() {
     demo: document.getElementById('landing-demo-form'),
   };
 
+  const paymentScreen = document.getElementById('payment-intake-screen');
+  const paymentForm = paymentScreen instanceof HTMLElement
+    ? paymentScreen.querySelector('#payment-intake-form')
+    : null;
+  const paymentBackBtn = paymentScreen instanceof HTMLElement
+    ? paymentScreen.querySelector('[data-payment-action="back"]')
+    : null;
+  const paymentName = paymentScreen instanceof HTMLElement
+    ? paymentScreen.querySelector('[data-payment-name]')
+    : null;
+  const paymentPlan = paymentScreen instanceof HTMLElement
+    ? paymentScreen.querySelector('[data-payment-plan]')
+    : null;
+  const paymentTrialDays = paymentScreen instanceof HTMLElement
+    ? paymentScreen.querySelector('[data-payment-trial-days]')
+    : null;
+  const paymentPrice = paymentScreen instanceof HTMLElement
+    ? paymentScreen.querySelector('[data-payment-price]')
+    : null;
+  const DEFAULT_TRIAL_DAYS = Number.parseInt(paymentTrialDays?.textContent || '7', 10) || 7;
+  const DEFAULT_PLAN_NAME = (paymentPlan?.textContent || 'Pro').trim();
+  const DEFAULT_PRICE = (paymentPrice?.textContent || '$19.99/mo').trim();
+  let pendingMembershipLevel = MEMBERSHIP_LEVELS.DEMO;
+  let pendingMembershipDetails = null;
+
   function focusFirstInput(form) {
     if (!form) return;
     const target = form.querySelector('input, select, textarea');
@@ -12799,13 +12824,77 @@ function setupLandingExperience() {
     focusFirstInput(forms[activeKey]);
   }
 
+  function resetPendingMembership() {
+    pendingMembershipLevel = MEMBERSHIP_LEVELS.DEMO;
+    pendingMembershipDetails = null;
+  }
+
+  function closePaymentIntake(options = {}) {
+    const { reopenLanding = false, resetPending = true } = options || {};
+    document.body.classList.remove('payment-active');
+    if (paymentScreen instanceof HTMLElement) {
+      paymentScreen.setAttribute('aria-hidden', 'true');
+    }
+    if (paymentForm instanceof HTMLFormElement) {
+      paymentForm.reset();
+    }
+    if (resetPending) {
+      resetPendingMembership();
+    }
+    if (reopenLanding) {
+      document.body.classList.add('onboarding-active');
+      landingRoot.removeAttribute('aria-hidden');
+      setActiveView('signup');
+      focusFirstInput(forms.signup);
+    }
+  }
+
+  function openPaymentIntake(level, details = {}) {
+    pendingMembershipLevel = level;
+    pendingMembershipDetails = details;
+    if (paymentName instanceof HTMLElement) {
+      const label = (details.name || details.email || 'your team').trim() || 'your team';
+      paymentName.textContent = label;
+    }
+    if (paymentPlan instanceof HTMLElement) {
+      const rawPlan = typeof details.plan === 'string' ? details.plan.trim() : '';
+      const planLabel = rawPlan
+        ? `${rawPlan.charAt(0).toUpperCase()}${rawPlan.slice(1)}`
+        : DEFAULT_PLAN_NAME;
+      paymentPlan.textContent = planLabel;
+    }
+    if (paymentTrialDays instanceof HTMLElement) {
+      const trialProvided = details.trialDays;
+      const parsedTrial = Number.isFinite(Number(trialProvided)) ? Number(trialProvided) : DEFAULT_TRIAL_DAYS;
+      const trialValue = parsedTrial > 0 ? parsedTrial : DEFAULT_TRIAL_DAYS;
+      paymentTrialDays.textContent = String(trialValue);
+    }
+    if (paymentPrice instanceof HTMLElement) {
+      paymentPrice.textContent = details.price || DEFAULT_PRICE;
+    }
+    if (paymentForm instanceof HTMLFormElement) {
+      const cardNameInput = paymentForm.querySelector('input[name="cardName"]');
+      if (cardNameInput instanceof HTMLInputElement) {
+        cardNameInput.value = (details.name || details.email || '').trim();
+      }
+    }
+    document.body.classList.add('payment-active');
+    if (paymentScreen instanceof HTMLElement) {
+      paymentScreen.removeAttribute('aria-hidden');
+    }
+    landingRoot.setAttribute('aria-hidden', 'true');
+    focusFirstInput(paymentForm instanceof HTMLFormElement ? paymentForm : null);
+  }
+
   function openLanding(view = 'signup') {
+    closePaymentIntake({ resetPending: true });
     document.body.classList.add('onboarding-active');
     landingRoot.removeAttribute('aria-hidden');
     setActiveView(view);
   }
 
   function finalizeOnboarding(level, details = {}) {
+    closePaymentIntake({ resetPending: true });
     const nextMembership = Object.assign({}, state.membership || {}, details, { level });
     if (level === MEMBERSHIP_LEVELS.MEMBER) {
       nextMembership.plan = details.plan || nextMembership.plan || 'pro';
@@ -12844,6 +12933,34 @@ function setupLandingExperience() {
     }, 180);
   }
 
+  if (paymentBackBtn instanceof HTMLButtonElement) {
+    paymentBackBtn.addEventListener('click', () => {
+      closePaymentIntake({ reopenLanding: true });
+    });
+  }
+
+  if (paymentForm instanceof HTMLFormElement) {
+    paymentForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!paymentForm.reportValidity()) return;
+      const data = new FormData(paymentForm);
+      const rawNumber = String(data.get('cardNumber') || '');
+      const digitsOnly = rawNumber.replace(/\D+/g, '');
+      const last4 = digitsOnly.slice(-4);
+      const cardholder = String(data.get('cardName') || '').trim();
+      if (last4) {
+        logOK(`Payment method saved ••••${last4}. Free trial ready.`);
+      } else {
+        logOK('Payment method saved. Free trial ready.');
+      }
+      const membershipDetails = Object.assign({}, pendingMembershipDetails || {}, {
+        paymentMethod: last4 ? `card-${last4}` : 'card',
+        cardholder,
+      });
+      finalizeOnboarding(pendingMembershipLevel, membershipDetails);
+    });
+  }
+
   tabButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const view = btn.dataset.view || 'signup';
@@ -12856,12 +12973,14 @@ function setupLandingExperience() {
       event.preventDefault();
       if (!forms.signup.reportValidity()) return;
       const data = new FormData(forms.signup);
-      finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
+      openPaymentIntake(MEMBERSHIP_LEVELS.MEMBER, {
         name: String(data.get('fullName') || '').trim(),
         email: String(data.get('email') || '').trim(),
         company: String(data.get('company') || '').trim(),
         role: String(data.get('role') || '').trim(),
         plan: 'pro',
+        trialDays: DEFAULT_TRIAL_DAYS,
+        price: DEFAULT_PRICE,
       });
     });
   }

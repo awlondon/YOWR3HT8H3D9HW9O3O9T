@@ -125,6 +125,58 @@
     </div>
   </div>
 
+  <div id="payment-intake-screen" class="payment-screen" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="payment-container">
+      <div class="payment-header">
+        <span class="payment-kicker">Secure checkout</span>
+        <h2 class="payment-title">Add a payment method to start your trial</h2>
+        <p class="payment-subtitle">
+          You're moments away from unlocking the full HLSF Cognition Engine. Confirm your card to secure the
+          <span data-payment-plan>Pro</span> plan trial for <span data-payment-name>your team</span>.
+        </p>
+      </div>
+      <dl class="payment-summary">
+        <div>
+          <dt>Trial length</dt>
+          <dd><span data-payment-trial-days>7</span> days</dd>
+        </div>
+        <div>
+          <dt>Billing begins</dt>
+          <dd>After the trial ends</dd>
+        </div>
+        <div>
+          <dt>Recurring price</dt>
+          <dd><span data-payment-price>$19.99/mo</span></dd>
+        </div>
+      </dl>
+      <form id="payment-intake-form" class="payment-form">
+        <div class="form-row">
+          <label>Cardholder name
+            <input type="text" name="cardName" placeholder="Name on card" autocomplete="cc-name" required />
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Card number
+            <input type="text" name="cardNumber" inputmode="numeric" placeholder="1234 5678 9012 3456" autocomplete="cc-number" required />
+          </label>
+        </div>
+        <div class="payment-form__row">
+          <label>Expiry
+            <input type="text" name="expiry" placeholder="MM/YY" autocomplete="cc-exp" required />
+          </label>
+          <label>CVC
+            <input type="text" name="cvc" placeholder="123" autocomplete="cc-csc" required />
+          </label>
+        </div>
+        <div class="payment-actions">
+          <button type="button" class="pill-button secondary" data-payment-action="back">Back</button>
+          <button type="submit" class="landing-primary-button">Authorize &amp; start trial</button>
+        </div>
+        <p class="payment-footnote">You can cancel anytime before the trial ends to avoid charges.</p>
+      </form>
+    </div>
+  </div>
+
   <div id="api-modal" class="modal hidden">
     <div class="modal-content" role="dialog" aria-modal="true">
       <h2>Enter OpenAI API Key</h2>
