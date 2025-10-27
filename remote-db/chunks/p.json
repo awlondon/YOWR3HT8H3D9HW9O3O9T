@@ -1,0 +1,1160 @@
+{
+  "prefix": "p",
+  "token_count": 5,
+  "tokens": [
+    {
+      "token": "policy decisions",
+      "relationships": {
+        "≡": [
+          {
+            "token": "decision-making",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "government actions",
+            "weight": 0.85
+          }
+        ],
+        "⊃": [
+          {
+            "token": "national security strategies",
+            "weight": 0.8
+          }
+        ],
+        "∈": [
+          {
+            "token": "political frameworks",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "intelligence analysis",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "public opinion",
+            "weight": 0.65
+          }
+        ],
+        "⇝": [
+          {
+            "token": "outcomes of governance",
+            "weight": 0.6
+          }
+        ],
+        "⇄": [
+          {
+            "token": "strategic planning",
+            "weight": 0.55
+          }
+        ],
+        "⊕": [
+          {
+            "token": "regulatory frameworks",
+            "weight": 0.5
+          }
+        ],
+        "∼": [
+          {
+            "token": "cia",
+            "weight": 0.05
+          },
+          {
+            "token": "FBI",
+            "weight": 0.05
+          },
+          {
+            "token": "defense",
+            "weight": 0.05
+          },
+          {
+            "token": "national security",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence agency",
+            "weight": 0.05
+          },
+          {
+            "token": "foreign intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. government",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency (CIA)",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Justice",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Defense",
+            "weight": 0.05
+          },
+          {
+            "token": "government agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "United States government",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence gathering",
+            "weight": 0.05
+          },
+          {
+            "token": "federal bureau",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence community",
+            "weight": 0.05
+          },
+          {
+            "token": "national defense",
+            "weight": 0.05
+          },
+          {
+            "token": "law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "spy agency",
+            "weight": 0.05
+          },
+          {
+            "token": "NSA",
+            "weight": 0.05
+          },
+          {
+            "token": "government organization",
+            "weight": 0.05
+          },
+          {
+            "token": "safety",
+            "weight": 0.05
+          },
+          {
+            "token": "protective measures",
+            "weight": 0.05
+          },
+          {
+            "token": "national intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "government policy",
+            "weight": 0.05
+          },
+          {
+            "token": "national security agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence operations",
+            "weight": 0.05
+          },
+          {
+            "token": "homeland security",
+            "weight": 0.05
+          },
+          {
+            "token": "counterterrorism",
+            "weight": 0.05
+          },
+          {
+            "token": "surveillance",
+            "weight": 0.05
+          },
+          {
+            "token": "security",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. federal authority",
+            "weight": 0.05
+          },
+          {
+            "token": "political stability",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "executive branch",
+            "weight": 0.05
+          },
+          {
+            "token": "government entity",
+            "weight": 0.05
+          },
+          {
+            "token": "civil liberties",
+            "weight": 0.05
+          },
+          {
+            "token": "espionage",
+            "weight": 0.05
+          },
+          {
+            "token": "government",
+            "weight": 0.05
+          },
+          {
+            "token": "federal government",
+            "weight": 0.05
+          },
+          {
+            "token": "covert operations",
+            "weight": 0.05
+          },
+          {
+            "token": "political authority",
+            "weight": 0.05
+          }
+        ]
+      },
+      "cached_at": "2025-10-27T20:58:47.781Z",
+      "attention_score": 0.128,
+      "total_relationships": 50
+    },
+    {
+      "token": "political authority",
+      "relationships": {
+        "≡": [
+          {
+            "token": "government authority",
+            "weight": 0.9
+          }
+        ],
+        "⊃": [
+          {
+            "token": "state authority",
+            "weight": 0.85
+          },
+          {
+            "token": "legal authority",
+            "weight": 0.8
+          }
+        ],
+        "⊂": [
+          {
+            "token": "sovereignty",
+            "weight": 0.75
+          }
+        ],
+        "∈": [
+          {
+            "token": "authority",
+            "weight": 0.65
+          }
+        ],
+        "⊤": [
+          {
+            "token": "type of governance",
+            "weight": 0.6
+          }
+        ],
+        "⊛": [
+          {
+            "token": "civil authority",
+            "weight": 0.55
+          }
+        ],
+        "∝": [
+          {
+            "token": "legitimacy",
+            "weight": 0.5
+          }
+        ],
+        "⇝": [
+          {
+            "token": "political legitimacy",
+            "weight": 0.45
+          }
+        ],
+        "∼": [
+          {
+            "token": "political influence",
+            "weight": 0.4
+          },
+          {
+            "token": "cia",
+            "weight": 0.05
+          },
+          {
+            "token": "FBI",
+            "weight": 0.05
+          },
+          {
+            "token": "defense",
+            "weight": 0.05
+          },
+          {
+            "token": "national security",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence agency",
+            "weight": 0.05
+          },
+          {
+            "token": "foreign intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. government",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency (CIA)",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Justice",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Defense",
+            "weight": 0.05
+          },
+          {
+            "token": "government agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "United States government",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence gathering",
+            "weight": 0.05
+          },
+          {
+            "token": "federal bureau",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence community",
+            "weight": 0.05
+          },
+          {
+            "token": "national defense",
+            "weight": 0.05
+          },
+          {
+            "token": "law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "spy agency",
+            "weight": 0.05
+          },
+          {
+            "token": "NSA",
+            "weight": 0.05
+          },
+          {
+            "token": "government organization",
+            "weight": 0.05
+          },
+          {
+            "token": "safety",
+            "weight": 0.05
+          },
+          {
+            "token": "protective measures",
+            "weight": 0.05
+          },
+          {
+            "token": "national intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "government policy",
+            "weight": 0.05
+          },
+          {
+            "token": "national security agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence operations",
+            "weight": 0.05
+          },
+          {
+            "token": "homeland security",
+            "weight": 0.05
+          },
+          {
+            "token": "counterterrorism",
+            "weight": 0.05
+          },
+          {
+            "token": "surveillance",
+            "weight": 0.05
+          },
+          {
+            "token": "security",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. federal authority",
+            "weight": 0.05
+          },
+          {
+            "token": "political stability",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "executive branch",
+            "weight": 0.05
+          },
+          {
+            "token": "government entity",
+            "weight": 0.05
+          },
+          {
+            "token": "civil liberties",
+            "weight": 0.05
+          },
+          {
+            "token": "espionage",
+            "weight": 0.05
+          },
+          {
+            "token": "government",
+            "weight": 0.05
+          },
+          {
+            "token": "federal government",
+            "weight": 0.05
+          },
+          {
+            "token": "covert operations",
+            "weight": 0.05
+          }
+        ],
+        "×": [
+          {
+            "token": "anarchy",
+            "weight": 0.35
+          }
+        ],
+        "⊕": [
+          {
+            "token": "social authority",
+            "weight": 0.3
+          }
+        ]
+      },
+      "cached_at": "2025-10-27T20:58:47.779Z",
+      "attention_score": 0.143,
+      "total_relationships": 50
+    },
+    {
+      "token": "political stability",
+      "relationships": {
+        "≡": [
+          {
+            "token": "government stability",
+            "weight": 0.95
+          }
+        ],
+        "⊕": [
+          {
+            "token": "economic growth",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "social order",
+            "weight": 0.7
+          },
+          {
+            "token": "national security",
+            "weight": 0.65
+          }
+        ],
+        "∝": [
+          {
+            "token": "citizen trust",
+            "weight": 0.6
+          }
+        ],
+        "⇝": [
+          {
+            "token": "peace",
+            "weight": 0.55
+          }
+        ],
+        "⇐": [
+          {
+            "token": "political unrest",
+            "weight": 0.5
+          }
+        ],
+        "⇄": [
+          {
+            "token": "international relations",
+            "weight": 0.45
+          }
+        ],
+        "⊗": [
+          {
+            "token": "democratic governance",
+            "weight": 0.4
+          }
+        ],
+        "∼": [
+          {
+            "token": "cia",
+            "weight": 0.05
+          },
+          {
+            "token": "FBI",
+            "weight": 0.05
+          },
+          {
+            "token": "defense",
+            "weight": 0.05
+          },
+          {
+            "token": "national security",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence agency",
+            "weight": 0.05
+          },
+          {
+            "token": "foreign intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. government",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency (CIA)",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Justice",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Defense",
+            "weight": 0.05
+          },
+          {
+            "token": "government agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "United States government",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence gathering",
+            "weight": 0.05
+          },
+          {
+            "token": "federal bureau",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence community",
+            "weight": 0.05
+          },
+          {
+            "token": "national defense",
+            "weight": 0.05
+          },
+          {
+            "token": "law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "spy agency",
+            "weight": 0.05
+          },
+          {
+            "token": "NSA",
+            "weight": 0.05
+          },
+          {
+            "token": "government organization",
+            "weight": 0.05
+          },
+          {
+            "token": "safety",
+            "weight": 0.05
+          },
+          {
+            "token": "protective measures",
+            "weight": 0.05
+          },
+          {
+            "token": "national intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "government policy",
+            "weight": 0.05
+          },
+          {
+            "token": "national security agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence operations",
+            "weight": 0.05
+          },
+          {
+            "token": "homeland security",
+            "weight": 0.05
+          },
+          {
+            "token": "counterterrorism",
+            "weight": 0.05
+          },
+          {
+            "token": "surveillance",
+            "weight": 0.05
+          },
+          {
+            "token": "security",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. federal authority",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "executive branch",
+            "weight": 0.05
+          },
+          {
+            "token": "government entity",
+            "weight": 0.05
+          },
+          {
+            "token": "civil liberties",
+            "weight": 0.05
+          },
+          {
+            "token": "espionage",
+            "weight": 0.05
+          },
+          {
+            "token": "government",
+            "weight": 0.05
+          },
+          {
+            "token": "federal government",
+            "weight": 0.05
+          }
+        ]
+      },
+      "cached_at": "2025-10-27T20:58:47.769Z",
+      "attention_score": 0.107,
+      "total_relationships": 50
+    },
+    {
+      "token": "protection",
+      "relationships": {
+        "≡": [
+          {
+            "token": "security",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "national security",
+            "weight": 0.88
+          },
+          {
+            "token": "intelligence",
+            "weight": 0.8
+          }
+        ],
+        "⊕": [
+          {
+            "token": "safety",
+            "weight": 0.75
+          }
+        ],
+        "⊛": [
+          {
+            "token": "defense",
+            "weight": 0.7
+          }
+        ],
+        "∝": [
+          {
+            "token": "surveillance",
+            "weight": 0.65
+          }
+        ],
+        "⇌": [
+          {
+            "token": "privacy",
+            "weight": 0.6
+          }
+        ],
+        "∼": [
+          {
+            "token": "risk management",
+            "weight": 0.55
+          },
+          {
+            "token": "cia",
+            "weight": 0.05
+          },
+          {
+            "token": "FBI",
+            "weight": 0.05
+          },
+          {
+            "token": "defense",
+            "weight": 0.05
+          },
+          {
+            "token": "national security",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence agency",
+            "weight": 0.05
+          },
+          {
+            "token": "foreign intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. government",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency (CIA)",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Justice",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Defense",
+            "weight": 0.05
+          },
+          {
+            "token": "government agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "United States government",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence gathering",
+            "weight": 0.05
+          },
+          {
+            "token": "federal bureau",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence community",
+            "weight": 0.05
+          },
+          {
+            "token": "national defense",
+            "weight": 0.05
+          },
+          {
+            "token": "law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "spy agency",
+            "weight": 0.05
+          },
+          {
+            "token": "NSA",
+            "weight": 0.05
+          },
+          {
+            "token": "government organization",
+            "weight": 0.05
+          },
+          {
+            "token": "safety",
+            "weight": 0.05
+          },
+          {
+            "token": "protective measures",
+            "weight": 0.05
+          },
+          {
+            "token": "national intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "government policy",
+            "weight": 0.05
+          },
+          {
+            "token": "national security agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence operations",
+            "weight": 0.05
+          },
+          {
+            "token": "homeland security",
+            "weight": 0.05
+          },
+          {
+            "token": "counterterrorism",
+            "weight": 0.05
+          },
+          {
+            "token": "surveillance",
+            "weight": 0.05
+          },
+          {
+            "token": "security",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. federal authority",
+            "weight": 0.05
+          },
+          {
+            "token": "political stability",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "executive branch",
+            "weight": 0.05
+          },
+          {
+            "token": "government entity",
+            "weight": 0.05
+          },
+          {
+            "token": "civil liberties",
+            "weight": 0.05
+          },
+          {
+            "token": "espionage",
+            "weight": 0.05
+          },
+          {
+            "token": "government",
+            "weight": 0.05
+          },
+          {
+            "token": "federal government",
+            "weight": 0.05
+          },
+          {
+            "token": "covert operations",
+            "weight": 0.05
+          },
+          {
+            "token": "political authority",
+            "weight": 0.05
+          },
+          {
+            "token": "policy decisions",
+            "weight": 0.05
+          },
+          {
+            "token": "counterintelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "strategy",
+            "weight": 0.05
+          }
+        ],
+        "⊏": [
+          {
+            "token": "policy",
+            "weight": 0.5
+          }
+        ],
+        "→": [
+          {
+            "token": "counterintelligence",
+            "weight": 0.45
+          }
+        ]
+      },
+      "cached_at": "2025-10-27T20:58:47.786Z",
+      "attention_score": 0.123,
+      "total_relationships": 50
+    },
+    {
+      "token": "protective measures",
+      "relationships": {
+        "≡": [
+          {
+            "token": "safety protocols",
+            "weight": 0.95
+          }
+        ],
+        "⊂": [
+          {
+            "token": "security strategies",
+            "weight": 0.85
+          }
+        ],
+        "⊕": [
+          {
+            "token": "defensive tactics",
+            "weight": 0.8
+          }
+        ],
+        "⊛": [
+          {
+            "token": "risk management",
+            "weight": 0.75
+          }
+        ],
+        "∼": [
+          {
+            "token": "preventive measures",
+            "weight": 0.7
+          },
+          {
+            "token": "cia",
+            "weight": 0.05
+          },
+          {
+            "token": "FBI",
+            "weight": 0.05
+          },
+          {
+            "token": "defense",
+            "weight": 0.05
+          },
+          {
+            "token": "national security",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence agency",
+            "weight": 0.05
+          },
+          {
+            "token": "foreign intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "U.S. government",
+            "weight": 0.05
+          },
+          {
+            "token": "Central Intelligence Agency (CIA)",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Justice",
+            "weight": 0.05
+          },
+          {
+            "token": "Department of Defense",
+            "weight": 0.05
+          },
+          {
+            "token": "government agency",
+            "weight": 0.05
+          },
+          {
+            "token": "federal law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "United States government",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence gathering",
+            "weight": 0.05
+          },
+          {
+            "token": "federal bureau",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence community",
+            "weight": 0.05
+          },
+          {
+            "token": "national defense",
+            "weight": 0.05
+          },
+          {
+            "token": "law enforcement",
+            "weight": 0.05
+          },
+          {
+            "token": "spy agency",
+            "weight": 0.05
+          },
+          {
+            "token": "NSA",
+            "weight": 0.05
+          },
+          {
+            "token": "government organization",
+            "weight": 0.05
+          },
+          {
+            "token": "safety",
+            "weight": 0.05
+          },
+          {
+            "token": "national intelligence",
+            "weight": 0.05
+          },
+          {
+            "token": "government policy",
+            "weight": 0.05
+          },
+          {
+            "token": "national security agency",
+            "weight": 0.05
+          },
+          {
+            "token": "intelligence operations",
+            "weight": 0.05
+          },
+          {
+            "token": "homeland security",
+            "weight": 0.05
+          },
+          {
+            "token": "counterterrorism",
+            "weight": 0.05
+          },
+          {
+            "token": "surveillance",
+            "weight": 0.05
+          },
+          {
+            "token": "security",
+            "weight": 0.05
+          }
+        ],
+        "⇝": [
+          {
+            "token": "national security",
+            "weight": 0.65
+          }
+        ],
+        "⊤": [
+          {
+            "token": "policy frameworks",
+            "weight": 0.6
+          }
+        ],
+        "∈": [
+          {
+            "token": "emergency protocols",
+            "weight": 0.55
+          }
+        ]
+      },
+      "cached_at": "2025-10-27T20:58:47.762Z",
+      "attention_score": 0.141,
+      "total_relationships": 40
+    }
+  ]
+}

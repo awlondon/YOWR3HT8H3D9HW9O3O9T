@@ -1,15 +1,90 @@
 {
   "version": "2.1",
-  "generated_at": null,
-  "source": null,
-  "total_tokens": 0,
-  "total_relationships": 0,
+  "generated_at": "2025-10-27T20:58:47.880Z",
+  "source": "session-cache",
+  "total_tokens": 61,
+  "total_relationships": 2852,
   "chunk_prefix_length": 1,
   "chunks": [
     {
-      "prefix": "symbols",
-      "href": "chunks/symbols.json",
-      "token_count": 43
+      "prefix": "a",
+      "href": "chunks/a.json",
+      "token_count": 1
+    },
+    {
+      "prefix": "c",
+      "href": "chunks/c.json",
+      "token_count": 9
+    },
+    {
+      "prefix": "d",
+      "href": "chunks/d.json",
+      "token_count": 3
+    },
+    {
+      "prefix": "e",
+      "href": "chunks/e.json",
+      "token_count": 2
+    },
+    {
+      "prefix": "f",
+      "href": "chunks/f.json",
+      "token_count": 8
+    },
+    {
+      "prefix": "g",
+      "href": "chunks/g.json",
+      "token_count": 6
+    },
+    {
+      "prefix": "h",
+      "href": "chunks/h.json",
+      "token_count": 1
+    },
+    {
+      "prefix": "i",
+      "href": "chunks/i.json",
+      "token_count": 5
+    },
+    {
+      "prefix": "l",
+      "href": "chunks/l.json",
+      "token_count": 2
+    },
+    {
+      "prefix": "m",
+      "href": "chunks/m.json",
+      "token_count": 2
+    },
+    {
+      "prefix": "n",
+      "href": "chunks/n.json",
+      "token_count": 5
+    },
+    {
+      "prefix": "o",
+      "href": "chunks/o.json",
+      "token_count": 1
+    },
+    {
+      "prefix": "p",
+      "href": "chunks/p.json",
+      "token_count": 5
+    },
+    {
+      "prefix": "s",
+      "href": "chunks/s.json",
+      "token_count": 7
+    },
+    {
+      "prefix": "t",
+      "href": "chunks/t.json",
+      "token_count": 1
+    },
+    {
+      "prefix": "u",
+      "href": "chunks/u.json",
+      "token_count": 3
     }
   ],
   "token_index_href": "token-index.json"
