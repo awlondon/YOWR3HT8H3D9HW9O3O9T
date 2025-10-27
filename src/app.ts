@@ -80,10 +80,16 @@ const COMMAND_HELP_ENTRIES = [
   { command: '/decryptmsg', description: 'Decrypt inbox message', requiresMembership: true },
 ];
 
+const DEMO_UNLOCKED_COMMANDS = new Set(['/hlsf', '/visualize']);
+
 const COMMAND_RESTRICTIONS = {
   [MEMBERSHIP_LEVELS.DEMO]: new Set(
     COMMAND_HELP_ENTRIES
-      .filter(entry => entry.requiresMembership)
+      .filter(entry => {
+        if (!entry.requiresMembership) return false;
+        const normalized = entry.command.toLowerCase();
+        return !DEMO_UNLOCKED_COMMANDS.has(normalized);
+      })
       .map(entry => entry.command.toLowerCase()),
   ),
 };
@@ -5466,6 +5472,8 @@ function listCachedTokens(limit = CONFIG.CACHE_SEED_LIMIT || 0) {
 
 let pendingHlsfReloadTimer = null;
 let hlsfReloadInFlight = false;
+let pendingHlsfReloadAfterFlight = false;
+let lastQueuedHlsfReason = '';
 
 function markHlsfDataDirty() {
   window.HLSF = window.HLSF || {};
@@ -5478,14 +5486,29 @@ function markHlsfDataDirty() {
 
 function scheduleHlsfReload(reason = 'cache-update', options = {}) {
   const { immediate = false, debounceMs = 400 } = options || {};
+  if (reason) {
+    lastQueuedHlsfReason = reason;
+  }
 
   const trigger = () => {
     pendingHlsfReloadTimer = null;
-    if (hlsfReloadInFlight) return;
+    if (hlsfReloadInFlight) {
+      pendingHlsfReloadAfterFlight = true;
+      if (reason) lastQueuedHlsfReason = reason;
+      return;
+    }
 
     const finalize = () => {
       hlsfReloadInFlight = false;
       HlsfLoading.hide(0);
+      if (pendingHlsfReloadAfterFlight) {
+        pendingHlsfReloadAfterFlight = false;
+        const queuedReason = lastQueuedHlsfReason || reason || 'queued-refresh';
+        lastQueuedHlsfReason = '';
+        scheduleHlsfReload(queuedReason, { immediate: true });
+        return;
+      }
+      lastQueuedHlsfReason = '';
     };
 
     try {
@@ -5549,19 +5572,33 @@ function scheduleHlsfReload(reason = 'cache-update', options = {}) {
   }
 }
 
+function shouldForceHlsfReload(reason) {
+  const label = typeof reason === 'string' ? reason.toLowerCase() : '';
+  if (!label) return false;
+  if (label.startsWith('prompt')) return true;
+  if (label.includes('mental-state')) return true;
+  if (label.includes('database') || label.includes('db')) return true;
+  if (label.includes('document')) return true;
+  if (label === 'cache-update' || label === 'manual-cache' || label === 'hidden-token-sweep') return true;
+  return false;
+}
+
 function notifyHlsfAdjacencyChange(reason = 'cache-update', options = {}) {
   markHlsfDataDirty();
-  const shouldAutoReload = window.HLSF?.config?.autoHlsfOnChange === true;
+  const normalizedReason = typeof reason === 'string' ? reason.toLowerCase() : '';
+  const forceReload = shouldForceHlsfReload(normalizedReason);
+  const shouldAutoReload = forceReload || window.HLSF?.config?.autoHlsfOnChange === true;
   if (shouldAutoReload) {
-    scheduleHlsfReload(reason, options);
+    const reloadOptions = forceReload ? { ...options, immediate: true } : options;
+    scheduleHlsfReload(reason, reloadOptions);
     return;
   }
-  if (reason && typeof reason === 'string') {
-    if (reason.startsWith('prompt')) {
+  if (normalizedReason) {
+    if (normalizedReason.startsWith('prompt')) {
       queueLiveGraphUpdate(60);
       return;
     }
-    if (reason === 'cache-update' || reason === 'manual-cache') {
+    if (normalizedReason === 'cache-update' || normalizedReason === 'manual-cache') {
       queueLiveGraphUpdate(180);
       return;
     }
@@ -12620,7 +12657,7 @@ function helpCommandHtml() {
   const level = getMembershipLevel();
   const restrictions = COMMAND_RESTRICTIONS[level] || new Set();
   const intro = level === MEMBERSHIP_LEVELS.DEMO
-    ? 'Demo mode active: upgrade to unlock slash commands and ingestion.'
+    ? 'Demo mode active: upgrade to unlock ingestion and advanced slash commands. The /hlsf visualization remains available.'
     : 'Full membership active: all commands available.';
 
   const rows = COMMAND_HELP_ENTRIES.map(entry => {
