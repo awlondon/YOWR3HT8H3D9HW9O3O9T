@@ -137,6 +137,72 @@ const RELKEY_ALIASES = (() => {
   return map;
 })();
 
+const EDGE_LABEL_DENSITY_THRESHOLD = 160;
+
+function resolveEdgeRelationDescriptor(edge) {
+  if (!edge || typeof edge !== 'object') return null;
+  const rawRtype = typeof edge.rtype === 'string' ? edge.rtype.trim() : '';
+  const rawRelationship = typeof edge.relationship === 'string' ? edge.relationship.trim() : '';
+  const rawType = typeof edge.type === 'string' ? edge.type.trim() : '';
+  const glyph = normRelKey(rawRtype) || normRelKey(rawRelationship) || normRelKey(rawType);
+  if (!glyph) return null;
+  const english = REL_EN[glyph] || '';
+  const label = english ? `${glyph} ${english}` : glyph;
+  if (!label) return null;
+  return {
+    glyph,
+    english,
+    label,
+  };
+}
+
+function renderEdgeRelationLabels(ctx, entries, options) {
+  if (!Array.isArray(entries) || !entries.length) return;
+  const theme = options?.theme || { fg: '#fff', bg: '#000' };
+  const fontScale = Math.max(0.35, Math.min(3, Number(options?.fontScale) || 1));
+  const baseAlphaValue = Math.max(0.1, Math.min(0.99, Number(options?.alpha) || 0.6));
+  const fontSize = Math.max(9, Math.round(10 * fontScale));
+
+  ctx.save();
+  ctx.font = `${fontSize}px 'Fira Code', monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (const entry of entries) {
+    if (!entry || !entry.label || !entry.from || !entry.to) continue;
+    const dx = entry.to.x - entry.from.x;
+    const dy = entry.to.y - entry.from.y;
+    const length = Math.hypot(dx, dy);
+    if (!Number.isFinite(length) || length < fontSize * 1.8) continue;
+
+    const midX = entry.from.x + dx / 2;
+    const midY = entry.from.y + dy / 2;
+    ctx.save();
+    const angle = Math.atan2(dy, dx);
+    ctx.translate(midX, midY);
+    ctx.rotate(angle);
+    if (angle > Math.PI / 2 || angle < -Math.PI / 2) ctx.rotate(Math.PI);
+
+    const metrics = ctx.measureText(entry.label);
+    const textWidth = metrics.width || entry.label.length * fontSize * 0.6;
+    if (!Number.isFinite(textWidth) || textWidth > length * 0.92) {
+      ctx.restore();
+      continue;
+    }
+
+    const focusAlpha = Math.min(0.85, baseAlphaValue * 0.95);
+    const defaultAlpha = Math.min(0.6, baseAlphaValue * 0.7);
+    const colorSource = entry.relKey ? paletteColor(entry.relKey) : theme.fg;
+    const color = colorWithAlpha(colorSource, entry.focus ? focusAlpha : defaultAlpha);
+
+    ctx.fillStyle = color;
+    ctx.fillText(entry.label, 0, 0);
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
 const BatchLog = (() => {
   const buf = [];
   let lastFlush = 0;
@@ -1858,6 +1924,13 @@ function drawComposite(graph, opts = {}) {
 
   const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
   updateRelationLegend(graph, edges, edgeColorMode);
+  const renderState = window.HLSF.rendering && typeof window.HLSF.rendering === 'object'
+    ? window.HLSF.rendering
+    : (window.HLSF.rendering = {});
+
+  const labelEntries = [];
+  let visibleEdgeCount = 0;
+  const labelEnabled = cfg.showRelationLabels !== false;
 
   if (cfg.showEdges !== false) {
     const batches = new Map();
@@ -1865,13 +1938,28 @@ function drawComposite(graph, opts = {}) {
       const fromPos = rotatedPositions.get(edge.from) || rotatedPositions.get(edge.to);
       const toPos = rotatedPositions.get(edge.to);
       if (!fromPos || !toPos) continue;
+      const dxWorld = toPos.x - fromPos.x;
+      const dyWorld = toPos.y - fromPos.y;
       const viewScale = window.HLSF?.view?.scale ?? zoom;
-      const dx = (toPos.x - fromPos.x) * viewScale;
-      const dy = (toPos.y - fromPos.y) * viewScale;
+      const dx = dxWorld * viewScale;
+      const dy = dyWorld * viewScale;
       if ((dx * dx + dy * dy) < 0.25) continue;
+      visibleEdgeCount++;
       const fromFocus = focusSet && focusSet.has((edge.from || '').toLowerCase());
       const toFocus = focusSet && focusSet.has((edge.to || '').toLowerCase());
       const edgeFocus = fromFocus && toFocus;
+      if (labelEnabled) {
+        const descriptor = resolveEdgeRelationDescriptor(edge);
+        if (descriptor) {
+          labelEntries.push({
+            from: fromPos,
+            to: toPos,
+            label: descriptor.label,
+            relKey: descriptor.glyph,
+            focus: edgeFocus,
+          });
+        }
+      }
       const strokeColor = edgeFocus ? '#00ffcc' : compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
       if (!batches.has(strokeColor)) batches.set(strokeColor, []);
       batches.get(strokeColor).push({ from: fromPos, to: toPos, edge, edgeFocus });
@@ -1890,6 +1978,33 @@ function drawComposite(graph, opts = {}) {
     ctx.globalAlpha = 1.0;
     ctx.strokeStyle = theme.fg;
     ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
+  } else {
+    visibleEdgeCount = 0;
+  }
+
+  const labelThreshold = Number.isFinite(cfg.edgeLabelDensityThreshold)
+    ? Math.max(1, Math.round(cfg.edgeLabelDensityThreshold))
+    : EDGE_LABEL_DENSITY_THRESHOLD;
+  const highDensity = visibleEdgeCount > labelThreshold;
+  const canRenderEdgeLabels = cfg.showEdges !== false
+    && labelEnabled
+    && !highDensity
+    && labelEntries.length > 0;
+
+  if (renderState) {
+    renderState.edgeLabelSuppressed = cfg.showEdges === false || !labelEnabled || highDensity;
+    renderState.edgeLabelCount = labelEntries.length;
+    renderState.edgeCount = visibleEdgeCount;
+    renderState.edgeLabelThreshold = labelThreshold;
+    renderState.edgeLabelDense = highDensity;
+  }
+
+  if (canRenderEdgeLabels) {
+    renderEdgeRelationLabels(ctx, labelEntries, {
+      theme,
+      fontScale,
+      alpha: baseAlpha(),
+    });
   }
 
   for (const [token, data] of graph.nodes.entries()) {
@@ -1934,9 +2049,9 @@ function drawComposite(graph, opts = {}) {
     hitAreas.set(token, { x: position.x, y: position.y, radius });
   }
 
-  window.HLSF.rendering = window.HLSF.rendering || {};
-  window.HLSF.rendering.nodeHitAreas = hitAreas;
-  window.HLSF.rendering.nodePositions = rotatedPositions;
+  const state = renderState || (window.HLSF.rendering = window.HLSF.rendering || {});
+  state.nodeHitAreas = hitAreas;
+  state.nodePositions = rotatedPositions;
 
   ctx.restore();
 }
@@ -2690,7 +2805,9 @@ function ensureHLSFCanvas() {
             <option value="weight">Weight</option>
             <option value="relation" selected>Relation</option>
           </select>
-          <details id="hlsf-relation-legend" class="hlsf-legend-container" hidden>
+        </div>
+        <div class="hlsf-control-group hlsf-control-legend">
+          <details id="hlsf-relation-legend" class="hlsf-legend-container" open>
             <summary>
               <span>Relation edge colors</span>
               <span id="hlsf-relation-legend-count" class="hlsf-legend-count"></span>
@@ -2995,6 +3112,15 @@ function bindHlsfControls(wrapper) {
       markRelationLegendDirty();
       debouncedLegacyRender();
     });
+  }
+
+  const relationLegend = wrapper.querySelector('#hlsf-relation-legend');
+  if (relationLegend && !relationLegend.dataset.bound) {
+    relationLegend.dataset.userCollapsed = relationLegend.open ? 'false' : 'true';
+    relationLegend.addEventListener('toggle', () => {
+      relationLegend.dataset.userCollapsed = relationLegend.open ? 'false' : 'true';
+    });
+    relationLegend.dataset.bound = 'true';
   }
 
   const zoomIn = wrapper.querySelector('#hlsf-zoom-in');
@@ -3448,6 +3574,10 @@ window.HLSF.config = Object.assign({
   edgeWidth: 0.2,
   nodeSize: 1,
   edgeColorMode: 'relation',
+  showRelationLabels: existingConfig.showRelationLabels !== false,
+  edgeLabelDensityThreshold: Number.isFinite(existingConfig.edgeLabelDensityThreshold)
+    ? existingConfig.edgeLabelDensityThreshold
+    : EDGE_LABEL_DENSITY_THRESHOLD,
   showNodeGlow: false,
   autoHlsfOnChange: existingConfig.autoHlsfOnChange === true,
   showAllAdjacencies: existingConfig.showAllAdjacencies === true,
@@ -3465,6 +3595,11 @@ window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
 window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
 window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
 markRelationLegendDirty();
+window.HLSF.config.showRelationLabels = window.HLSF.config.showRelationLabels !== false;
+const rawEdgeLabelThreshold = Number(window.HLSF.config.edgeLabelDensityThreshold);
+window.HLSF.config.edgeLabelDensityThreshold = Number.isFinite(rawEdgeLabelThreshold) && rawEdgeLabelThreshold > 0
+  ? Math.round(rawEdgeLabelThreshold)
+  : EDGE_LABEL_DENSITY_THRESHOLD;
 window.HLSF.config.showNodeGlow = window.HLSF.config.showNodeGlow === true;
 window.HLSF.config.showAllAdjacencies = window.HLSF.config.showAllAdjacencies === true;
 window.HLSF.config.layout = normalizeLayout(window.HLSF.config.layout);
@@ -3601,6 +3736,7 @@ function markRelationLegendDirty() {
   window.HLSF.rendering.relationLegendSignature = null;
   window.HLSF.rendering.relationLegendGraph = null;
   window.HLSF.rendering.relationLegendColorMode = null;
+  window.HLSF.rendering.relationLegendInitialized = false;
 }
 
 function updateRelationLegend(graph, edges, edgeColorMode) {
@@ -3608,6 +3744,7 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
   const list = document.getElementById('hlsf-relation-legend-items');
   if (!container || !list) return;
   const countEl = document.getElementById('hlsf-relation-legend-count');
+  const group = container.closest('.hlsf-control-group');
 
   window.HLSF = window.HLSF || {};
   if (!window.HLSF.rendering || typeof window.HLSF.rendering !== 'object') {
@@ -3619,10 +3756,15 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
     list.innerHTML = '';
     container.hidden = true;
     container.setAttribute('aria-hidden', 'true');
+    if (group) {
+      group.hidden = true;
+      group.setAttribute('aria-hidden', 'true');
+    }
     if (countEl) countEl.textContent = '';
     state.relationLegendSignature = null;
     state.relationLegendGraph = null;
     state.relationLegendColorMode = edgeColorMode;
+    state.relationLegendInitialized = false;
     return;
   }
 
@@ -3638,10 +3780,15 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
     list.innerHTML = '';
     container.hidden = true;
     container.setAttribute('aria-hidden', 'true');
+    if (group) {
+      group.hidden = true;
+      group.setAttribute('aria-hidden', 'true');
+    }
     if (countEl) countEl.textContent = '';
     state.relationLegendSignature = '';
     state.relationLegendGraph = graph || null;
     state.relationLegendColorMode = edgeColorMode;
+    state.relationLegendInitialized = false;
     if (graph && typeof graph === 'object') graph.__legendDirty = false;
     return;
   }
@@ -3673,9 +3820,21 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
   const signature = sorted.join('|');
 
   if (signature === state.relationLegendSignature && graph?.__legendDirty !== true) {
-    container.hidden = sorted.length === 0;
-    container.setAttribute('aria-hidden', sorted.length === 0 ? 'true' : 'false');
+    const isEmpty = sorted.length === 0;
+    container.hidden = isEmpty;
+    container.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
+    if (!isEmpty) container.removeAttribute('hidden');
+    if (group) {
+      group.hidden = isEmpty;
+      if (!isEmpty) group.removeAttribute('hidden');
+      group.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
+    }
     if (countEl) countEl.textContent = sorted.length ? `${sorted.length}` : '';
+    if (!isEmpty && container.dataset.userCollapsed !== 'true' && state.relationLegendInitialized !== true) {
+      container.open = true;
+      container.dataset.userCollapsed = 'false';
+    }
+    state.relationLegendInitialized = !isEmpty;
     state.relationLegendGraph = graph || null;
     state.relationLegendColorMode = edgeColorMode;
     if (graph && typeof graph === 'object') graph.__legendDirty = false;
@@ -3701,9 +3860,21 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
     list.appendChild(item);
   }
 
-  container.hidden = sorted.length === 0;
-  container.setAttribute('aria-hidden', sorted.length === 0 ? 'true' : 'false');
+  const isEmpty = sorted.length === 0;
+  container.hidden = isEmpty;
+  container.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
+  if (!isEmpty) container.removeAttribute('hidden');
+  if (group) {
+    group.hidden = isEmpty;
+    if (!isEmpty) group.removeAttribute('hidden');
+    group.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
+  }
   if (countEl) countEl.textContent = sorted.length ? `${sorted.length}` : '';
+  if (!isEmpty && container.dataset.userCollapsed !== 'true') {
+    container.open = true;
+    container.dataset.userCollapsed = 'false';
+  }
+  state.relationLegendInitialized = !isEmpty;
   state.relationLegendSignature = signature;
   state.relationLegendGraph = graph || null;
   state.relationLegendColorMode = edgeColorMode;
