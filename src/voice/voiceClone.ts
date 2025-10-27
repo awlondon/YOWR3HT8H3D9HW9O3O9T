@@ -1475,6 +1475,18 @@ function playSynthesizedPreview(token) {
     return;
   }
 
+  if (token) {
+    const segment = makeSegmentForToken(token);
+    const previewText = segment?.text || segment?.token || '';
+    if (!previewText) {
+      setStatus('No mapped tokens are available for synthesized preview.', 'warning');
+      return;
+    }
+    speakSegments([segment]);
+    setStatus('Playing synthesized voice profile preview using speech synthesis.', 'info');
+    return;
+  }
+
   const segments = buildSynthesizedPreviewSegments(token);
   if (!segments.length) {
     setStatus('No mapped tokens are available for synthesized preview.', 'warning');
