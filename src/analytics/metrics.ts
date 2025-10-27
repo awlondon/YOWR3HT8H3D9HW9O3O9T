@@ -1,4 +1,4 @@
-import { SETTINGS } from '../settings';
+import { SETTINGS } from '../settings.js';
 
 export interface GraphEdge {
   type: string;

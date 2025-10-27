@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeModelParameters, MODEL_PARAM_DEFAULTS } from './modelParams.js';
+import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './modelParams.js';
 
 test('computeModelParameters counts only node embeddings when other components disabled', () => {
   const stats = {
@@ -138,4 +138,36 @@ test('model parameter report serializes without data loss', () => {
   const report = computeModelParameters(stats, config);
   const roundTrip = JSON.parse(JSON.stringify(report));
   assert.deepEqual(roundTrip, report);
+});
+
+test('resolveModelParamConfig applies presets and fallbacks', () => {
+  const result = resolveModelParamConfig(MODEL_PARAM_DEFAULTS, ['--preset', 'rich'], {
+    relationTypeCount: 12,
+  });
+  assert.equal(result.preset, 'rich');
+  assert.equal(result.config.relation_param_mode, 'types');
+  assert.equal(result.config.num_relation_types, 12);
+  assert.equal(
+    result.assumptions.includes('relation types (T) = 12; derived from export statistics'),
+    true
+  );
+});
+
+test('model parameter history tracks diffs between runs', () => {
+  const stats = {
+    graph_nodes: 4,
+    anchors: 2,
+    edge_types_enumerated: 3,
+    total_relationships: 10,
+  };
+  const first = computeModelParameters(stats, MODEL_PARAM_DEFAULTS);
+  assert.equal(Boolean(first.history_entry), true);
+  const updatedConfig = { ...MODEL_PARAM_DEFAULTS, D: MODEL_PARAM_DEFAULTS.D + 16 };
+  const second = computeModelParameters(stats, updatedConfig);
+  assert.equal(Boolean(second.history_entry), true);
+  const diff = second.history_entry?.diff || {};
+  assert.deepEqual(diff.D, {
+    previous: first.config.D,
+    current: second.config.D,
+  });
 });

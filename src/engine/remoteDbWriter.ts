@@ -24,11 +24,32 @@ function isFsSupported(): boolean {
   return typeof window !== 'undefined' && typeof (window as any).showDirectoryPicker === 'function';
 }
 
+const encoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+
+function cloneData<T>(data: T): T {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(data);
+  }
+  return JSON.parse(JSON.stringify(data)) as T;
+}
+
+async function writeJsonToWritable(writable: any, data: unknown) {
+  const serialized = JSON.stringify(cloneData(data));
+  if (encoder) {
+    await writable.write(encoder.encode(serialized));
+  } else {
+    await writable.write(serialized);
+  }
+}
+
 async function writeJsonFile(directory: any, name: string, data: unknown) {
   const fileHandle = await directory.getFileHandle(name, { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(data, null, 2));
-  await writable.close();
+  try {
+    await writeJsonToWritable(writable, data);
+  } finally {
+    await writable.close();
+  }
 }
 
 async function pruneMissingChunks(directory: any, keep: Set<string>) {
@@ -69,17 +90,19 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
   const state: {
     directoryHandle: any;
     chunksHandle: any;
-    pendingUpdate: RemoteDbUpdate | null;
+    pendingUpdates: RemoteDbUpdate[];
     writing: boolean;
     lastSuccessAt: number;
     missingNotified: boolean;
+    flushRequested: boolean;
   } = {
     directoryHandle: null,
     chunksHandle: null,
-    pendingUpdate: null,
+    pendingUpdates: [],
     writing: false,
     lastSuccessAt: 0,
     missingNotified: false,
+    flushRequested: false,
   };
 
   const ensureDirectory = async () => {
@@ -178,22 +201,32 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       keep.add(fileName);
       const fileHandle = await chunksDirectory.getFileHandle(fileName, { create: true });
       const writable = await fileHandle.createWritable();
-      await writable.write(JSON.stringify(payload, null, 2));
-      await writable.close();
+      try {
+        await writeJsonToWritable(writable, payload);
+      } finally {
+        await writable.close();
+      }
     }
 
     await pruneMissingChunks(chunksDirectory, keep);
   };
 
   const processQueue = async () => {
-    if (!state.pendingUpdate || state.writing) return;
+    if (state.writing) return;
+
+    const nextUpdate = state.pendingUpdates[0];
+    if (!nextUpdate) {
+      state.flushRequested = false;
+      return;
+    }
 
     if (!supported) {
       if (!state.missingNotified) {
         state.missingNotified = true;
         logger.onMissingDirectory?.('unsupported');
       }
-      state.pendingUpdate = null;
+      state.pendingUpdates = [];
+      state.flushRequested = false;
       return;
     }
 
@@ -213,11 +246,11 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       return;
     }
 
-    const update = normalizeUpdate(state.pendingUpdate);
-    state.pendingUpdate = null;
+    const update = normalizeUpdate(nextUpdate);
     state.writing = true;
     try {
       await writeUpdate(update);
+      state.pendingUpdates.shift();
       state.missingNotified = false;
       const now = Date.now();
       if (now - state.lastSuccessAt > MAX_SUCCESS_LOG_INTERVAL_MS) {
@@ -227,17 +260,20 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.onSyncError?.(`Remote DB sync failed: ${message}`);
-      state.pendingUpdate = state.pendingUpdate || update;
     } finally {
       state.writing = false;
-      if (state.pendingUpdate) {
+      if (state.pendingUpdates.length || state.flushRequested) {
         setTimeout(() => { processQueue().catch(() => {}); }, 200);
       }
     }
   };
 
   const handlePersist = (update: RemoteDbUpdate | null) => {
-    state.pendingUpdate = update;
+    if (update) {
+      state.pendingUpdates.push(update);
+    } else {
+      state.flushRequested = true;
+    }
     processQueue().catch(() => {});
   };
 
@@ -252,7 +288,7 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       state.chunksHandle = null;
       state.missingNotified = false;
       await ensureChunksDirectory();
-      if (state.pendingUpdate) {
+      if (state.pendingUpdates.length) {
         await processQueue();
       }
       return true;

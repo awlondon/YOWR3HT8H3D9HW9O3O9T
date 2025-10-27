@@ -43,6 +43,22 @@ export interface ModelParamDerivedCounts {
   N_relation_types: number | null;
 }
 
+export type ModelParamHistoryDiff = {
+  [K in keyof ModelParamConfigSnapshot]?: {
+    previous: ModelParamConfigSnapshot[K] | null;
+    current: ModelParamConfigSnapshot[K];
+  };
+};
+
+export interface ModelParamHistoryEntry {
+  timestamp: string;
+  config: ModelParamConfigSnapshot;
+  derived_counts: ModelParamDerivedCounts;
+  total_parameters: number;
+  assumptions: string[];
+  diff: ModelParamHistoryDiff;
+}
+
 export interface ModelParamReport {
   config: ModelParamConfigSnapshot;
   derived_counts: ModelParamDerivedCounts;
@@ -50,6 +66,7 @@ export interface ModelParamReport {
   total_parameters: number;
   assumptions: string[];
   formula_version: '1.0';
+  history_entry?: ModelParamHistoryEntry;
 }
 
 export type ModelParamConfigSnapshot = Omit<ModelParamConfig, 'num_relation_types'> & {
@@ -105,6 +122,60 @@ export interface FlagParseResult {
 
 export interface ResolveModelParamOptions {
   relationTypeCount?: number | null;
+}
+
+const MODEL_PARAM_HISTORY_MAX = 100;
+const modelParamHistory: ModelParamHistoryEntry[] = [];
+
+function getGlobalModelParamStore(): Record<string, unknown> | null {
+  if (typeof window === 'undefined') return null;
+  const root = ((window as any).CognitionEngine = (window as any).CognitionEngine || {});
+  root.modelParams = root.modelParams || {};
+  return root.modelParams as Record<string, unknown>;
+}
+
+function diffModelParamSnapshot(
+  previous: ModelParamConfigSnapshot | null,
+  current: ModelParamConfigSnapshot,
+): ModelParamHistoryDiff {
+  const diff: ModelParamHistoryDiff = {};
+  (Object.keys(current) as Array<keyof ModelParamConfigSnapshot>).forEach(key => {
+    const prevValue = previous ? previous[key] : null;
+    const currValue = current[key];
+    if (previous && prevValue === currValue) return;
+    const target = diff as Record<string, { previous: unknown; current: unknown }>;
+    target[key as string] = { previous: prevValue ?? null, current: currValue };
+  });
+  return diff;
+}
+
+function recordModelParamHistoryEntry(report: ModelParamReport): ModelParamHistoryEntry {
+  const previous = modelParamHistory.length ? modelParamHistory[modelParamHistory.length - 1].config : null;
+  const entry: ModelParamHistoryEntry = {
+    timestamp: new Date().toISOString(),
+    config: report.config,
+    derived_counts: report.derived_counts,
+    total_parameters: report.total_parameters,
+    assumptions: report.assumptions,
+    diff: diffModelParamSnapshot(previous, report.config),
+  };
+
+  modelParamHistory.push(entry);
+  while (modelParamHistory.length > MODEL_PARAM_HISTORY_MAX) {
+    modelParamHistory.shift();
+  }
+
+  const globalStore = getGlobalModelParamStore();
+  if (globalStore) {
+    (globalStore as any).history = modelParamHistory.slice();
+    (globalStore as any).last = entry;
+  }
+
+  return entry;
+}
+
+export function getModelParamHistory(): ModelParamHistoryEntry[] {
+  return modelParamHistory.slice();
 }
 
 export function resolveModelParamConfig(
@@ -410,7 +481,7 @@ export function computeModelParameters(
     N_relation_types: snapshot.num_relation_types,
   };
 
-  return {
+  const report: ModelParamReport = {
     config: snapshot,
     derived_counts: derived,
     components: {
@@ -425,6 +496,9 @@ export function computeModelParameters(
     assumptions: Array.from(assumptions.values()),
     formula_version: '1.0',
   };
+
+  report.history_entry = recordModelParamHistoryEntry(report);
+  return report;
 }
 
 function normalizeModelParamConfig(config: ModelParamConfig): ModelParamConfig {
