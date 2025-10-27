@@ -640,7 +640,7 @@ function resolveSegmentAdjustments(segment, segments, index) {
 
 function makeSegmentForToken(token) {
   if (!token) {
-    return { token: '', text: '', expressionInfo: null };
+    return { token: '', text: '', expressionInfo: null, transcript: '' };
   }
   const assignments = store.assignments || {};
   let recordingId = assignments[token];
@@ -652,12 +652,20 @@ function makeSegmentForToken(token) {
       recordingId = recording?.id || recordingId;
     }
   }
-  const textSource = recording?.transcript || recording?.token || token;
+  const rawTranscript = typeof recording?.transcript === 'string' ? recording.transcript : '';
+  const transcript = rawTranscript.replace(/\s+/g, ' ').trim();
+  const recordingToken = typeof recording?.token === 'string' ? recording.token.replace(/\s+/g, ' ').trim() : '';
+  const normalizedToken = typeof token === 'string' ? token.replace(/\s+/g, ' ').trim() : '';
+  let playbackText = normalizedToken || '';
+  if (!playbackText) {
+    playbackText = transcript || recordingToken || '';
+  }
   const expressionInfo =
     getTokenExpressionInfo(token) || (recording ? getRecordingExpression(recording.id) : null);
   return {
     token,
-    text: typeof textSource === 'string' ? textSource.replace(/\s+/g, ' ').trim() || token : token,
+    text: playbackText || token,
+    transcript,
     expressionInfo,
     recordingId: recording?.id || null,
   };
@@ -1249,6 +1257,16 @@ function renderProfileCloneSection(contextToken = null) {
   `;
 }
 
+function renderBulkRecordingActions() {
+  const total = Array.isArray(store.recordings) ? store.recordings.length : 0;
+  const disabled = total ? '' : 'disabled';
+  return `
+    <div class="voice-bulk-actions">
+      <button type="button" data-action="delete-all-recordings" ${disabled}>Delete all recordings</button>
+    </div>
+  `;
+}
+
 function renderTokenDetail() {
   if (!elements.detail) return;
   const token = panelState.selectedToken;
@@ -1257,6 +1275,7 @@ function renderTokenDetail() {
     elements.detail.innerHTML = `
       <p class="voice-detail-placeholder">Select a cache token to begin recording and mapping your voice profile.</p>
       ${profileSection}
+      ${renderBulkRecordingActions()}
     `;
     setStatus('', 'info');
     return;
@@ -1287,6 +1306,7 @@ function renderTokenDetail() {
   const ttsButtonLabel = 'Play synthesized preview';
 
   const profileSection = renderProfileCloneSection(token);
+  const bulkActions = renderBulkRecordingActions();
   elements.detail.innerHTML = `
     <div class="voice-detail-header">
       <h3>${escapeHtml(token)}</h3>
@@ -1313,6 +1333,7 @@ function renderTokenDetail() {
     ${profileSection}
     ${assignedMarkup}
     ${recordingsMarkup}
+    ${bulkActions}
   `;
   setStatus(panelState.status?.message || '', panelState.status?.type || 'info');
 }
@@ -1951,6 +1972,9 @@ function handleDetailClick(event) {
     case 'delete-recording':
       deleteRecording(recordingId);
       break;
+    case 'delete-all-recordings':
+      deleteAllRecordings();
+      break;
     case 'save-tags': {
       const input = elements.detail?.querySelector(`.voice-tag-input[data-recording-id="${cssEscape(recordingId)}"]`);
       if (input) updateRecordingTags(recordingId, input.value);
@@ -2112,13 +2136,15 @@ async function finalizeRecording(session) {
   setStatus('Processing recording…', 'info');
   try {
     const base64 = await blobToBase64(blob);
+    const transcriptText = transcriptParts.join(' ').trim();
+    const finalTranscript = transcriptText || token;
     const newRecording = {
       id: generateRecordingId(),
       token,
       createdAt: new Date().toISOString(),
       audioBase64: base64,
       audioType: blob.type || 'audio/webm',
-      transcript: transcriptParts.join(' ').trim() || token,
+      transcript: finalTranscript,
       tags: [],
       iteration: (recordingIndex.get(token)?.[0]?.iteration || recordingIndex.get(token)?.length || 0) + 1,
       sourceToken: token,
@@ -2132,7 +2158,14 @@ async function finalizeRecording(session) {
     saveVoiceStore();
     recordingIndex = buildRecordingIndex();
     voiceExpressionModel = buildVoiceExpressionModel();
-    setStatus('Recording saved and mapped to token.', 'success');
+    if (!transcriptText) {
+      setStatus(
+        'Recording saved, but speech recognition did not capture your words. Update the transcript before synthesizing.',
+        'warning'
+      );
+    } else {
+      setStatus('Recording saved and mapped to token.', 'success');
+    }
     selectToken(token);
     signalVoiceCloneTokensChanged('recording-added');
   } catch (err) {
@@ -2243,6 +2276,30 @@ function deleteRecording(recordingId) {
   setStatus(message, 'warning');
   renderTokenDetail();
   renderTokenList();
+}
+
+function deleteAllRecordings() {
+  const total = Array.isArray(store.recordings) ? store.recordings.length : 0;
+  if (!total) {
+    setStatus('There are no recordings to delete.', 'info');
+    return;
+  }
+  if (!window.confirm('Delete all recordings? This action cannot be undone.')) return;
+  stopActivePlayback();
+  store.recordings = [];
+  store.assignments = {};
+  store.profileRecordingId = null;
+  store.profileClone = null;
+  store.profileSynthesis = defaultProfileSynthesis();
+  panelState.selectedRecordingId = null;
+  refreshVoiceProfileClone(false);
+  saveVoiceStore();
+  recordingIndex = buildRecordingIndex();
+  voiceExpressionModel = buildVoiceExpressionModel();
+  setStatus('All recordings removed. Voice profile reset.', 'warning');
+  renderTokenList();
+  renderTokenDetail();
+  signalVoiceCloneTokensChanged('recordings-cleared');
 }
 
 function handleSearchInput(event) {
