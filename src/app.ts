@@ -4350,102 +4350,106 @@ async function loadDbObject(dbLike, options = {}) {
     if (!records.length) throw new Error('No valid token records');
 
     const opts = options || {};
-    const replace = opts.replace === true;
-    const skipVisualization = opts.skipVisualization === true;
     const now = new Date().toISOString();
-
-    const existingDb = replace ? { full_token_data: [] } : (getDb() || { full_token_data: [] });
-    const existingRecords = Array.isArray(existingDb.full_token_data)
-      ? existingDb.full_token_data.map(normalizeRecord).filter(Boolean)
-      : [];
-
-    const indexSeed = replace ? [] : safeStorageGet(DB_INDEX_KEY, []);
+    const recorder = window.HLSF?.remoteDbRecorder;
+    const indexSeed = safeStorageGet(DB_INDEX_KEY, []);
     const indexSet = new Set(Array.isArray(indexSeed) ? indexSeed : []);
-    const mergedMap = new Map();
+    const chunkBuckets = new Map();
+    const concurrency = resolveDbImportConcurrency();
+    const chunkSize = Math.max(1, resolveDbImportChunkSize(records.length, concurrency));
+    let normalizedCount = 0;
 
-    if (!replace) {
-      for (const record of existingRecords) {
-        if (!record?.token) continue;
-        if (!record.cached_at) record.cached_at = now;
-        mergedMap.set(record.token, Object.assign({}, record));
-        indexSet.add(record.token);
-      }
+    if (opts.replace === true) {
+      purgeTokenCache();
+      safeStorageRemove(DB_INDEX_KEY);
+      safeStorageRemove(DB_RAW_KEY);
+      indexSet.clear();
+      window.HLSF.dbCache = { full_token_data: [] };
     }
 
-    const totalRecords = records.length;
-    const concurrency = resolveDbImportConcurrency();
-    const chunkSize = resolveDbImportChunkSize(totalRecords, concurrency);
-    const recorder = window.HLSF?.remoteDbRecorder;
-    let normalizedCount = 0;
-    const newTokenSet = new Set();
-
-    const ingestRemoteBatch = (batch) => {
-      if (!batch.length) return;
-      if (!recorder || typeof recorder.ingestMany !== 'function') return;
-      try {
-        recorder.ingestMany(batch);
-      } catch (err) {
-        console.warn('Remote DB recorder bulk ingest failed:', err);
-      }
+    const normalizePrefix = (token) => {
+      const lower = typeof token === 'string' ? token.toLowerCase() : '';
+      if (!lower) return '_';
+      const first = lower.charAt(0);
+      if (first >= 'a' && first <= 'z') return first;
+      if (first >= '0' && first <= '9') return first;
+      return '_';
     };
 
-    for (let start = 0; start < totalRecords; start += chunkSize) {
-      const end = Math.min(totalRecords, start + chunkSize);
-      const remoteBatch = [];
-      for (let i = start; i < end; i++) {
-        const normalized = normalizeRecord(records[i]);
+    const flushChunk = async (prefix) => {
+      const batch = chunkBuckets.get(prefix);
+      if (!batch || !batch.length) return;
+      if (recorder && typeof recorder.ingestMany === 'function') {
+        try {
+          recorder.ingestMany(batch);
+        } catch (err) {
+          console.warn('Remote DB recorder bulk ingest failed:', err);
+        }
+      }
+
+      for (const normalized of batch) {
         if (!normalized?.token) continue;
         normalizedCount++;
-        remoteBatch.push(normalized);
+        if (!normalized.cached_at) normalized.cached_at = now;
+        indexSet.add(normalized.token);
         const cacheKey = getCacheKey(normalized.token);
         const wasCached = isTokenCached(normalized.token);
-        const previous = mergedMap.get(normalized.token) || null;
-        const merged = Object.assign({}, previous || {}, normalized);
-        if (!merged.cached_at) merged.cached_at = previous?.cached_at || now;
-        mergedMap.set(normalized.token, merged);
-        indexSet.add(normalized.token);
-        const persisted = safeStorageSet(cacheKey, JSON.stringify(merged));
-        const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
-        if ((persisted || fallbackStored) && !wasCached) {
+        const stub = Object.assign({}, normalized, { relationships: {} });
+        const payload = JSON.stringify(stub);
+        const persisted = safeStorageSet(cacheKey, payload);
+        if (!persisted) memoryStorageFallback.set(cacheKey, payload);
+        if (!wasCached) {
           CacheBatch.record(normalized.token);
         }
-        newTokenSet.add(normalized.token);
       }
 
-      ingestRemoteBatch(remoteBatch);
+      batch.length = 0;
+      await yieldDbImport();
+    };
 
-      if (end < totalRecords) {
-        await yieldDbImport();
+    for (const rawRecord of records) {
+      const normalized = normalizeRecord(rawRecord);
+      if (!normalized?.token) continue;
+      const prefix = normalizePrefix(normalized.token);
+      if (!chunkBuckets.has(prefix)) {
+        chunkBuckets.set(prefix, []);
+      }
+      const bucket = chunkBuckets.get(prefix);
+      bucket.push(normalized);
+      if (bucket.length >= chunkSize) {
+        await flushChunk(prefix);
       }
     }
 
-    const mergedArray = Array.from(mergedMap.values());
-    const globalChanged = applyGlobalConnectionRule(mergedArray, newTokenSet);
-    if (globalChanged.size) {
-      persistChangedTokenCaches(mergedArray, globalChanged);
+    const remainingPrefixes = Array.from(chunkBuckets.keys());
+    for (const prefix of remainingPrefixes) {
+      await flushChunk(prefix);
     }
+    chunkBuckets.clear();
 
-    const out = Object.assign({}, replace ? db : existingDb, db, { full_token_data: mergedArray });
-    const rawPayload = JSON.stringify(out);
+    records.length = 0;
+    db.full_token_data = [];
+    window.HLSF.dbCache = { full_token_data: [] };
     const indexPayload = JSON.stringify(Array.from(indexSet));
+    const rawPayload = JSON.stringify(window.HLSF.dbCache);
     const rawPersisted = safeStorageSet(DB_RAW_KEY, rawPayload);
     const indexPersisted = safeStorageSet(DB_INDEX_KEY, indexPayload);
     if (!rawPersisted || !indexPersisted) {
       logWarning('Local storage quota reached. Database available for this session only — use /export to back up data.');
     }
-    window.HLSF.dbCache = out;
+
+    if (recorder && typeof recorder.schedulePersist === 'function') {
+      try { recorder.schedulePersist(); }
+      catch (err) { console.warn('Remote DB recorder persist scheduling failed:', err); }
+    }
+
+    if (recorder && window.HLSF?.remoteDb && typeof window.HLSF.remoteDb.attachRecorder === 'function') {
+      try { window.HLSF.remoteDb.attachRecorder(recorder); }
+      catch (err) { console.warn('Remote DB attachment failed:', err); }
+    }
+
     state.liveGraphMode = false;
     markHlsfDataDirty();
-    if (!skipVisualization) {
-      if (typeof buildHLSFMatrices === 'function') {
-        try {
-          buildHLSFMatrices(out);
-        } catch (err) {
-          console.warn('Failed to rebuild HLSF matrices:', err);
-        }
-      }
-      scheduleHlsfReload('load-db');
-    }
     updateHeaderCounts();
     announceDatabaseReady('load-db');
     return normalizedCount;
@@ -6729,6 +6733,13 @@ const RemoteDbRecorder = (() => {
     return entries;
   };
 
+  const getChunkTokens = (prefix) => {
+    const key = typeof prefix === 'string' && prefix ? prefix.toLowerCase() : '_';
+    const bucket = chunkMap.get(key) || chunkMap.get('_');
+    if (!bucket) return [];
+    return Array.from(bucket.values()).map(cloneRecord).filter(Boolean);
+  };
+
   const computeStats = () => {
     const chunks = serialize();
     let totalTokens = 0;
@@ -7025,7 +7036,20 @@ const RemoteDbRecorder = (() => {
 
   hydrateFromStorage();
 
-  return { ingest, ingestMany, listChunks, manifest, tokenIndex, hasData, reset, remove, removeMany, flush, schedulePersist };
+  return {
+    ingest,
+    ingestMany,
+    listChunks,
+    manifest,
+    tokenIndex,
+    hasData,
+    reset,
+    remove,
+    removeMany,
+    flush,
+    schedulePersist,
+    getChunkTokens,
+  };
 })();
 
 window.HLSF = window.HLSF || {};
@@ -7536,6 +7560,7 @@ const RemoteDbStore = (() => {
   const chunkCache = new Map();
   const tokenCache = new Map();
   let tokenIndex = [];
+  let recorderSource = null;
 
   const resolveChunkConcurrency = () => {
     const configured = Number(window.HLSF?.config?.remoteChunkConcurrency);
@@ -7556,7 +7581,7 @@ const RemoteDbStore = (() => {
 
   const normalizeToken = (token) => (token == null ? '' : String(token)).toLowerCase();
 
-  const hasMetadata = () => metadata != null;
+  const hasMetadata = () => metadata != null || recorderSource != null;
 
   const fallbackPrefix = () => {
     if (chunkMap.has('_')) return '_';
@@ -7602,6 +7627,20 @@ const RemoteDbStore = (() => {
       chunkCache.set(key, empty);
       return empty;
     }
+    if (info.recorder === true && recorderSource && typeof recorderSource.getChunkTokens === 'function') {
+      const entries = new Map();
+      const list = recorderSource.getChunkTokens(info.prefix) || [];
+      for (const entry of list) {
+        const normalized = normalizeRecord(entry);
+        if (!normalized) continue;
+        const tokenKey = normalizeToken(normalized.token);
+        if (!tokenKey) continue;
+        entries.set(tokenKey, normalized);
+      }
+      chunkCache.set(key, entries);
+      return entries;
+    }
+
     const url = resolveChunkUrl(info);
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -7623,30 +7662,56 @@ const RemoteDbStore = (() => {
     if (!record || !record.token) return false;
     const cacheKey = getCacheKey(record.token);
     const alreadyCached = isTokenCached(record.token);
+    let changed = false;
+
     if (!alreadyCached) {
-      memoryStorageFallback.set(cacheKey, JSON.stringify(record));
+      const payload = JSON.stringify(record);
+      const persisted = safeStorageSet(cacheKey, payload);
+      if (!persisted) memoryStorageFallback.set(cacheKey, payload);
       CacheBatch.record(record.token);
+      updateTokenIndex(record.token);
+      changed = true;
+    } else {
+      const existing = getCachedRecordForToken(record.token);
+      const hasAdjacency = existing && existing.relationships && Object.keys(existing.relationships).length > 0;
+      if (!hasAdjacency) {
+        const payload = JSON.stringify(record);
+        const persisted = safeStorageSet(cacheKey, payload);
+        if (!persisted) memoryStorageFallback.set(cacheKey, payload);
+        updateTokenIndex(record.token);
+        changed = true;
+      }
     }
+
     refreshDbReference(record, { deferReload: true, persist: false });
-    return !alreadyCached;
+    return changed;
   };
 
   const preloadTokens = async (tokens) => {
     if (!hasMetadata()) return { loaded: 0, hits: 0 };
     const stats = { loaded: 0, hits: 0 };
     const normalizedTokens = Array.from(new Set((tokens || []).map(normalizeToken).filter(Boolean)));
+    const loadedTokens = new Set();
     if (!normalizedTokens.length) return stats;
 
     const pending = new Map();
     for (const token of normalizedTokens) {
       if (isTokenCached(token)) {
-        stats.hits++;
-        continue;
+        const existing = getCachedRecordForToken(token);
+        const hasAdjacency = existing && existing.relationships && Object.keys(existing.relationships).length > 0;
+        if (hasAdjacency) {
+          stats.hits++;
+          continue;
+        }
       }
       const cached = tokenCache.get(token);
       if (cached) {
-        if (ingestRecord(cached)) stats.loaded++;
-        else stats.hits++;
+        if (ingestRecord(cached)) {
+          stats.loaded++;
+          loadedTokens.add(cached.token);
+        } else {
+          stats.hits++;
+        }
         continue;
       }
       const prefix = chunkKeyFor(token);
@@ -7679,14 +7744,22 @@ const RemoteDbStore = (() => {
             const record = chunk.get(token);
             if (!record) continue;
             tokenCache.set(token, record);
-            if (ingestRecord(record)) stats.loaded++;
-            else stats.hits++;
+            if (ingestRecord(record)) {
+              stats.loaded++;
+              loadedTokens.add(record.token);
+            } else {
+              stats.hits++;
+            }
           }
         }
       }
     }
 
-    if (stats.loaded > 0) updateHeaderCounts();
+    if (stats.loaded > 0) {
+      updateHeaderCounts();
+      const targetToken = normalizedTokens[normalizedTokens.length - 1] || Array.from(loadedTokens)[0];
+      onAdjacencyPreloadComplete(targetToken, Array.from(loadedTokens));
+    }
     return stats;
   };
 
@@ -7718,12 +7791,56 @@ const RemoteDbStore = (() => {
 
     chunkCache.clear();
     tokenCache.clear();
+    recorderSource = null;
     await loadTokenIndex(data.token_index_href);
 
     window.HLSF.dbCache = { full_token_data: [] };
     window.HLSF.dbMeta = metadata;
     updateHeaderCounts();
     return metadata;
+  };
+
+  const attachRecorder = (recorder) => {
+    if (!recorder || typeof recorder.manifest !== 'function') {
+      throw new Error('Recorder with manifest() required');
+    }
+    const manifest = recorder.manifest({ includeTokenIndex: true });
+    if (!manifest || typeof manifest !== 'object' || !Array.isArray(manifest.chunks)) {
+      throw new Error('Recorder manifest missing chunk data');
+    }
+
+    metadata = manifest;
+    metadataUrl = location.href;
+    chunkPrefixLength = Math.max(1, Number(manifest.chunk_prefix_length) || 1);
+    chunkMap = new Map();
+    for (const chunk of manifest.chunks) {
+      if (!chunk || typeof chunk !== 'object') continue;
+      const rawPrefix = chunk.prefix == null ? '' : String(chunk.prefix);
+      const prefixKey = normalizeToken(rawPrefix) || rawPrefix || '_';
+      chunkMap.set(prefixKey, {
+        prefix: prefixKey,
+        href: chunk.href || '',
+        token_count: Number(chunk.token_count) || 0,
+        recorder: true,
+      });
+    }
+
+    recorderSource = recorder;
+    chunkCache.clear();
+    tokenCache.clear();
+    if (Array.isArray(manifest.token_index)) {
+      tokenIndex = manifest.token_index.map(tok => String(tok));
+    } else if (typeof recorder.tokenIndex === 'function') {
+      tokenIndex = recorder.tokenIndex();
+    } else {
+      tokenIndex = [];
+    }
+
+    if (window.HLSF) {
+      window.HLSF.dbMeta = manifest;
+    }
+    updateHeaderCounts();
+    return manifest;
   };
 
   const listTokens = () => Array.isArray(tokenIndex) ? [...tokenIndex] : [];
@@ -7735,10 +7852,29 @@ const RemoteDbStore = (() => {
     listTokens,
     metadata: () => metadata,
     chunkForToken: chunkKeyFor,
+    attachRecorder,
   };
 })();
 
 window.HLSF.remoteDb = RemoteDbStore;
+
+function onAdjacencyPreloadComplete(triggerToken, loadedTokens = []) {
+  const normalizedTrigger = typeof triggerToken === 'string' ? triggerToken.toLowerCase() : '';
+  const candidates = Array.isArray(loadedTokens) ? loadedTokens.filter(token => typeof token === 'string' && token.trim()) : [];
+  let focusToken = null;
+  if (normalizedTrigger) {
+    focusToken = candidates.find(token => token.toLowerCase() === normalizedTrigger) || null;
+  }
+  if (!focusToken && candidates.length) {
+    focusToken = candidates[candidates.length - 1];
+  }
+  if (!focusToken && normalizedTrigger) {
+    focusToken = normalizedTrigger;
+  }
+  if (!focusToken) return;
+  setDocumentFocusTokens([focusToken]);
+  notifyHlsfAdjacencyChange('prompt-preload', { immediate: true });
+}
 
 function getCachedRecordForToken(token) {
   if (!token) return null;
