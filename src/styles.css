@@ -1337,6 +1337,7 @@
     body.onboarding-active #app { display: none; }
     body.onboarding-active #api-modal { display: none !important; }
     body:not(.onboarding-active) .landing-screen { display: none; }
+    body.payment-active .landing-screen { display: none; }
 
     .landing-screen {
       position: fixed;
@@ -1417,6 +1418,132 @@
       color: var(--accent);
       margin-right: 0.65rem;
       font-size: 0.9rem;
+    }
+
+    body:not(.payment-active) .payment-screen { display: none; }
+    .payment-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 1100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 1.5rem;
+      background: rgba(0, 0, 0, 0.85);
+      color: #f9fdfb;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    .payment-container {
+      width: min(520px, 100%);
+      background: rgba(6, 30, 18, 0.94);
+      border: 1px solid rgba(0, 255, 136, 0.4);
+      border-radius: 24px;
+      box-shadow: 0 40px 80px rgba(0, 0, 0, 0.7);
+      padding: 2.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.75rem;
+    }
+
+    .payment-header { display: flex; flex-direction: column; gap: 0.75rem; }
+    .payment-kicker {
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: rgba(0, 255, 136, 0.75);
+    }
+
+    .payment-title {
+      margin: 0;
+      font-size: clamp(1.6rem, 2.1vw, 2rem);
+      line-height: 1.2;
+    }
+
+    .payment-subtitle {
+      margin: 0;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      color: rgba(249, 253, 251, 0.82);
+    }
+
+    .payment-summary {
+      margin: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      padding: 1.25rem;
+      border-radius: 16px;
+      background: rgba(0, 0, 0, 0.35);
+    }
+
+    .payment-summary dt {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(249, 253, 251, 0.55);
+      margin-bottom: 0.25rem;
+    }
+
+    .payment-summary dd {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .payment-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .payment-form__row {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    }
+
+    .payment-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      font-size: 0.9rem;
+    }
+
+    .payment-form input {
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      border: 1px solid rgba(0, 255, 136, 0.25);
+      background: rgba(1, 11, 7, 0.85);
+      color: #f4fdf8;
+      font-size: 1rem;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .payment-form input:focus {
+      outline: none;
+      border-color: rgba(0, 255, 136, 0.7);
+      box-shadow: 0 0 0 3px rgba(0, 255, 136, 0.2);
+    }
+
+    .payment-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .payment-actions .pill-button.secondary {
+      padding: 0.75rem 1.5rem;
+    }
+
+    .payment-footnote {
+      margin: 0;
+      font-size: 0.85rem;
+      color: rgba(249, 253, 251, 0.65);
+      text-align: center;
     }
 
     .landing-trust {
