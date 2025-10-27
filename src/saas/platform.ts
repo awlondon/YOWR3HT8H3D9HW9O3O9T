@@ -1,6 +1,6 @@
 import { createMessagingService, MessagingService } from './messaging';
 import { SubscriptionManager } from './subscription';
-import { SaasPlatformConfig, SubscriptionSummary } from './types';
+import { SaasPlatformConfig, SubscriptionSummary, UserProfile } from './types';
 import { formatCurrency, formatDate } from './utils';
 import { createUserDirectory, UserDirectory } from './userDirectory';
 
@@ -72,6 +72,77 @@ function formatSummaryHtml(summary: SubscriptionSummary, currencyFormatter: (val
   return `<div class="saas-summary">${lines.join('<br>')}</div>`;
 }
 
+function renderRegistrationPage(
+  user: UserProfile,
+  summary: SubscriptionSummary,
+  platform: SaasPlatform,
+  sanitize: (value: string) => string,
+  currencyFormatter: (value: number) => string,
+): string {
+  const summaryHtml = formatSummaryHtml(summary, currencyFormatter);
+  const sanitizedHandle = sanitize(user.handle);
+  const sanitizedDisplayName = sanitize(user.displayName || user.handle);
+  const productName = sanitize(platform.config.productName);
+  const trialEnds = sanitize(formatDate(summary.trialEndsAt));
+  const nextBilling = sanitize(formatDate(summary.nextBillingAt));
+  const monthlyPrice = currencyFormatter(platform.config.monthlyPriceUsd);
+  const includedCredits = currencyFormatter(platform.config.includedCreditsUsd);
+  const paymentProcessor = sanitize(platform.config.paymentProcessor);
+  const recipientHandle = sanitize(platform.config.paymentRecipientHandle);
+  const trialDays = platform.config.trialDays;
+  const trialStatus = summary.status === 'trial'
+    ? `Your trial ends on ${trialEnds} (${summary.trialDaysRemaining} days remaining).`
+    : `Next billing on ${nextBilling}.`;
+
+  return `<div class="saas-registration">
+    <h2 class="saas-registration__title">Welcome, ${sanitizedDisplayName} (@${sanitizedHandle})</h2>
+    <p class="saas-registration__intro">
+      Start your ${trialDays}-day trial of ${productName}. ${trialStatus}
+    </p>
+    ${summaryHtml}
+    <div class="saas-registration__methods">
+      <section class="saas-registration__method">
+        <h3>Connect PayPal</h3>
+        <p>Link your PayPal account to authorize recurring billing to ${recipientHandle}.</p>
+        <button type="button" class="saas-registration__button saas-registration__button--paypal" data-provider="paypal">
+          Connect PayPal
+        </button>
+        <p class="saas-registration__note">You'll be redirected to PayPal to confirm the subscription.</p>
+      </section>
+      <section class="saas-registration__method">
+        <h3>Credit Card</h3>
+        <form class="saas-registration__card-form">
+          <label>
+            Cardholder Name
+            <input type="text" name="cardName" placeholder="Full name on card" autocomplete="cc-name">
+          </label>
+          <label>
+            Card Number
+            <input type="text" name="cardNumber" inputmode="numeric" placeholder="1234 5678 9012 3456" autocomplete="cc-number">
+          </label>
+          <div class="saas-registration__card-row">
+            <label>
+              Expiry
+              <input type="text" name="expiry" placeholder="MM/YY" autocomplete="cc-exp">
+            </label>
+            <label>
+              CVC
+              <input type="text" name="cvc" placeholder="123" autocomplete="cc-csc">
+            </label>
+          </div>
+          <button type="submit" class="saas-registration__button saas-registration__button--primary">
+            Authorize ${monthlyPrice}/mo
+          </button>
+        </form>
+        <p class="saas-registration__note">Includes ${includedCredits} in monthly API credits.</p>
+      </section>
+    </div>
+    <p class="saas-registration__footnote">
+      After your trial we will charge ${monthlyPrice} via ${paymentProcessor}. Funds are settled with ${recipientHandle}.
+    </p>
+  </div>`;
+}
+
 export function registerSaasCommands(platform: SaasPlatform, context: SaasCommandContext): void {
   const { registerCommand, addLog, logError, logSuccess, sanitize, formatCurrency: formatCurrencyFn } = context;
 
@@ -85,8 +156,8 @@ export function registerSaasCommands(platform: SaasPlatform, context: SaasComman
       const displayName = rest.join(' ');
       const user = await platform.users.createUser(handle, displayName);
       const summary = platform.summarizeUser(user.id);
-      const html = `Welcome, <strong>@${sanitize(user.handle)}</strong>!<br>${formatSummaryHtml(summary, formatCurrencyFn)}`;
-      addLog(html);
+      const registrationHtml = renderRegistrationPage(user, summary, platform, sanitize, formatCurrencyFn);
+      addLog(registrationHtml);
     } catch (err) {
       logError(err instanceof Error ? err.message : String(err));
     }
