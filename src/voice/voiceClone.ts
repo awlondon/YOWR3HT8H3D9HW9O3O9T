@@ -585,7 +585,7 @@ function resolveSegmentAdjustments(segment, segments, index) {
     : null;
 
   const heuristics = analyzeTranscriptDynamics(segment?.text || segment?.token || '');
-  let resolved = baseInfo || {
+  const resolved = baseInfo || {
     tag: heuristics.tag,
     adjustments: {
       pitchDelta: heuristics.pitchDelta,
@@ -663,48 +663,34 @@ function makeSegmentForToken(token) {
   };
 }
 
-function speakSegments(segments) {
-  if (!Array.isArray(segments) || !segments.length) return;
-  stopActivePlayback();
-  if (typeof window.speechSynthesis === 'undefined') {
-    setStatus('Speech synthesis is not available in this browser.', 'error');
-    return;
-  }
-  window.speechSynthesis.cancel();
-  const prefs = store.voicePreferences || defaultVoicePreferences();
-  const voices = window.speechSynthesis.getVoices();
-  let selectedVoice = null;
-  if (prefs.voiceURI && Array.isArray(voices) && voices.length) {
-    selectedVoice = voices.find(v => v.voiceURI === prefs.voiceURI) || null;
-  }
-
-  segments.forEach((segment, index) => {
-    const text = segment?.text || segment?.token || '';
-    if (!text) return;
-    const resolved = resolveSegmentAdjustments(segment, segments, index);
-    segment.resolvedAdjustments = resolved.adjustments;
-    segment.resolvedIntensity = resolved.intensity;
-    segment.resolvedTag = resolved.tag;
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    const pitch = clampValue(prefs.pitch + resolved.adjustments.pitchDelta, 0.5, 2);
-    const rate = clampValue(prefs.rate + resolved.adjustments.rateDelta, 0.5, 2.5);
-    const volume = clampValue(prefs.volume + resolved.adjustments.volumeDelta, 0, 1);
-    utterance.pitch = pitch;
-    utterance.rate = rate;
-    utterance.volume = volume;
-    if (selectedVoice) utterance.voice = selectedVoice;
-    window.speechSynthesis.speak(utterance);
-  });
-}
-
 function defaultVoicePreferences() {
   return {
-    voiceURI: '',
     rate: 1,
-    pitch: 1,
     volume: 1,
   };
+}
+
+function normalizeVoicePreferences(entry) {
+  const prefs = defaultVoicePreferences();
+  if (!entry || typeof entry !== 'object') return prefs;
+  const rateValue = Number(entry.rate);
+  if (Number.isFinite(rateValue)) {
+    prefs.rate = clampValue(rateValue, 0.5, 2.5);
+  }
+  const volumeValue = Number(entry.volume);
+  if (Number.isFinite(volumeValue)) {
+    prefs.volume = clampValue(volumeValue, 0, 1);
+  }
+  // Support legacy payloads that stored the value under different keys.
+  const legacyRate = Number(entry.playbackRate);
+  if (Number.isFinite(legacyRate)) {
+    prefs.rate = clampValue(legacyRate, 0.5, 2.5);
+  }
+  const legacyVolume = Number(entry.voiceVolume);
+  if (Number.isFinite(legacyVolume)) {
+    prefs.volume = clampValue(legacyVolume, 0, 1);
+  }
+  return prefs;
 }
 
 function defaultProfileSynthesis() {
@@ -749,13 +735,13 @@ const elements = {
 
 let panelReady = false;
 let pendingTokenRefresh = false;
-let voiceOptionsBound = false;
 let activePlayback = null;
 let activeRecorder = null;
 const audioUrlCache = new Map();
 let sessionVoiceApplied = false;
 let scheduledTokenRefreshHandle = null;
 let scheduledTokenRefreshMode = null;
+let activePreviewQueue = null;
 
 function countWords(text) {
   if (!text) return 0;
@@ -862,7 +848,7 @@ function loadVoiceStore() {
     }
     normalized.profileSynthesis = normalizeProfileSynthesis(parsed?.profileSynthesis);
     if (parsed?.voicePreferences && typeof parsed.voicePreferences === 'object') {
-      normalized.voicePreferences = Object.assign(defaultVoicePreferences(), parsed.voicePreferences);
+      normalized.voicePreferences = normalizeVoicePreferences(parsed.voicePreferences);
     }
     return normalized;
   } catch (err) {
@@ -1126,7 +1112,7 @@ function renderTokenList() {
           ? 'Cloned profile available'
           : 'No voice data';
     const disabledAssigned = hasAssigned || usingClone ? '' : 'disabled';
-    const disabledTts = !usingSynthesizedPreview && typeof window.speechSynthesis === 'undefined' ? 'disabled' : '';
+    const disabledTts = usingSynthesizedPreview ? '' : 'disabled';
     const selectedClass = panelState.selectedToken === token ? 'selected' : '';
     items.push(`
       <li class="voice-token-item ${selectedClass}">
@@ -1282,7 +1268,8 @@ function renderTokenDetail() {
   const recCount = recordings.length;
   const recordingLabel = recCount === 1 ? '1 recording' : `${recCount} recordings`;
   const usingSynthPreview = hasSynthesizedVoiceProfile();
-  const ttsDisabled = !usingSynthPreview && typeof window.speechSynthesis === 'undefined';
+  const ttsDisabled = usingSynthPreview ? '' : 'disabled';
+  const adjustmentsDisabled = usingSynthPreview ? '' : 'disabled';
   const assignedMarkup = assignedRecording
     ? renderAssignedBlock(assignedRecording)
     : '<div class="voice-assigned-block"><em>No voice mapped to this token yet.</em></div>';
@@ -1291,10 +1278,13 @@ function renderTokenDetail() {
     : '<div class="voice-recordings-list"><div class="voice-recording-card"><em>No recordings captured for this token yet.</em></div></div>';
 
   const voicePrefs = store.voicePreferences || defaultVoicePreferences();
+  const adjustmentsNote = usingSynthPreview
+    ? 'Synthesized previews use your cloned voice profile with optional playback adjustments.'
+    : 'Synthesize your cloned voice profile to unlock playback adjustments.';
   const recordBtnLabel = panelState.isRecording ? 'Recording…' : 'Record new iteration';
   const stopButton = panelState.isRecording ? '<button type="button" data-action="stop-recording">Stop recording</button>' : '';
   const assignedButtonLabel = assignedRecording ? 'Play assigned voice' : clone ? 'Play cloned voice' : 'Play assigned voice';
-  const ttsButtonLabel = usingSynthPreview ? 'Play synthesized preview' : 'Play TTS preview';
+  const ttsButtonLabel = 'Play synthesized preview';
 
   const profileSection = renderProfileCloneSection(token);
   elements.detail.innerHTML = `
@@ -1306,33 +1296,24 @@ function renderTokenDetail() {
       <button type="button" data-action="start-recording" ${panelState.isRecording ? 'disabled' : ''}>${escapeHtml(recordBtnLabel)}</button>
       ${stopButton}
       <button type="button" data-action="play-assigned" ${assignedRecording || clone ? '' : 'disabled'} data-recording-id="${assignedRecording ? escapeAttr(assignedRecording.id) : ''}">${escapeHtml(assignedButtonLabel)}</button>
-      <button type="button" data-action="play-tts" ${ttsDisabled ? 'disabled' : ''}>${escapeHtml(ttsButtonLabel)}</button>
+      <button type="button" data-action="play-tts" ${ttsDisabled}>${escapeHtml(ttsButtonLabel)}</button>
     </div>
     ${panelState.isRecording ? `<div class="voice-live-transcript" data-role="live-transcript">${escapeHtml(panelState.activeTranscript || 'Listening…')}</div>` : ''}
     <div class="voice-voice-settings">
+      <p class="voice-clone-summary">${escapeHtml(adjustmentsNote)}</p>
       <label>
-        Speech synthesis voice
-        <select data-role="voice-select" ${ttsDisabled ? 'disabled' : ''}></select>
-      </label>
-      <label>
-        Pitch <span data-role="voice-pitch-display">${voicePrefs.pitch.toFixed(2)}</span>
-        <input type="range" min="0.5" max="2" step="0.05" value="${voicePrefs.pitch}" data-role="voice-pitch">
-      </label>
-      <label>
-        Rate <span data-role="voice-rate-display">${voicePrefs.rate.toFixed(2)}</span>
-        <input type="range" min="0.5" max="2.5" step="0.05" value="${voicePrefs.rate}" data-role="voice-rate">
+        Playback speed <span data-role="voice-rate-display">${voicePrefs.rate.toFixed(2)}</span>
+        <input type="range" min="0.5" max="2.5" step="0.05" value="${voicePrefs.rate}" data-role="voice-rate" ${adjustmentsDisabled}>
       </label>
       <label>
         Volume <span data-role="voice-volume-display">${voicePrefs.volume.toFixed(2)}</span>
-        <input type="range" min="0" max="1" step="0.05" value="${voicePrefs.volume}" data-role="voice-volume">
+        <input type="range" min="0" max="1" step="0.05" value="${voicePrefs.volume}" data-role="voice-volume" ${adjustmentsDisabled}>
       </label>
     </div>
     ${profileSection}
     ${assignedMarkup}
     ${recordingsMarkup}
   `;
-
-  populateVoiceSelect();
   setStatus(panelState.status?.message || '', panelState.status?.type || 'info');
 }
 
@@ -1387,7 +1368,7 @@ function synthesizeVoiceProfile() {
     tokenCount: mappedTokens,
   };
   saveVoiceStore();
-  setStatus('Voice profile synthesized. TTS preview now uses the generated voice.', 'success');
+  setStatus('Voice profile synthesized. Previews now use your cloned voice audio.', 'success');
   renderTokenList();
   renderTokenDetail();
 }
@@ -1470,31 +1451,80 @@ function buildSynthesizedPreviewSegments(contextToken = null) {
 }
 
 function playSynthesizedPreview(token) {
-  if (typeof window.speechSynthesis === 'undefined') {
-    setStatus('Speech synthesis is not available in this browser.', 'error');
-    return;
-  }
-
-  if (token) {
-    const segment = makeSegmentForToken(token);
-    const previewText = segment?.text || segment?.token || '';
-    if (!previewText) {
-      setStatus('No mapped tokens are available for synthesized preview.', 'warning');
-      return;
-    }
-    speakSegments([segment]);
-    setStatus('Playing synthesized voice profile preview using speech synthesis.', 'info');
-    return;
-  }
-
-  const segments = buildSynthesizedPreviewSegments(token);
+  const baseSegments = token ? [makeSegmentForToken(token)] : buildSynthesizedPreviewSegments(token);
+  const segments = Array.isArray(baseSegments) ? baseSegments.filter(Boolean) : [];
   if (!segments.length) {
     setStatus('No mapped tokens are available for synthesized preview.', 'warning');
     return;
   }
 
-  speakSegments(segments);
-  setStatus('Playing synthesized voice profile preview using speech synthesis.', 'info');
+  stopActivePlayback();
+
+  const prefs = store.voicePreferences || defaultVoicePreferences();
+  const entries = [];
+  const recordingMap = new Map((store.recordings || []).map(rec => [rec.id, rec]));
+
+  segments.forEach((segment, index) => {
+    if (!segment?.recordingId) return;
+    const recording = recordingMap.get(segment.recordingId);
+    if (!recording) return;
+    const resolved = resolveSegmentAdjustments(segment, segments, index);
+    segment.resolvedAdjustments = resolved.adjustments;
+    segment.resolvedIntensity = resolved.intensity;
+    segment.resolvedTag = resolved.tag;
+    entries.push({
+      segment,
+      recording,
+      adjustments: resolved.adjustments || { rateDelta: 0, volumeDelta: 0 },
+    });
+  });
+
+  if (!entries.length) {
+    setStatus('No mapped tokens are available for synthesized preview.', 'warning');
+    return;
+  }
+
+  const queueState = { aborted: false, entries };
+  activePreviewQueue = queueState;
+
+  const playNext = index => {
+    if (!activePreviewQueue || activePreviewQueue !== queueState || queueState.aborted) {
+      return;
+    }
+    if (index >= entries.length) {
+      activePreviewQueue = null;
+      activePlayback = null;
+      return;
+    }
+
+    const entry = entries[index];
+    const url = getRecordingUrl(entry.recording);
+    const audio = new Audio(url);
+    const rate = clampValue((prefs.rate || 1) + (entry.adjustments.rateDelta || 0), 0.5, 2.5);
+    const volume = clampValue((prefs.volume || 1) + (entry.adjustments.volumeDelta || 0), 0, 1);
+    audio.playbackRate = rate;
+    audio.volume = volume;
+    activePlayback = audio;
+
+    const next = () => playNext(index + 1);
+    audio.onended = next;
+    audio.onerror = err => {
+      console.warn('Failed to play synthesized segment:', err);
+      next();
+    };
+
+    const start = audio.play();
+    if (start && typeof start.catch === 'function') {
+      start.catch(err => {
+        console.warn('Failed to start synthesized playback:', err);
+        next();
+      });
+    }
+  };
+
+  playNext(0);
+  const suffix = token ? ` for ${token}` : '';
+  setStatus(`Playing synthesized voice profile preview using cloned audio${suffix}.`, 'info');
 }
 
 function getProfileCloneExportPayload(options = {}) {
@@ -1557,7 +1587,7 @@ function getVoiceProfileExportPayload() {
   }
 
   const clonePayload = getProfileCloneExportPayload({ requireAttachment: false });
-  const voicePreferences = Object.assign(defaultVoicePreferences(), store.voicePreferences || {});
+  const voicePreferences = normalizeVoicePreferences(store.voicePreferences || {});
 
   const preferredProfileId = recordingIds.has(store.profileRecordingId)
     ? store.profileRecordingId
@@ -1636,10 +1666,7 @@ function normalizeVoiceProfilePayload(payload) {
   normalizedStore.assignments = assignments;
 
   if (payload.voicePreferences && typeof payload.voicePreferences === 'object') {
-    normalizedStore.voicePreferences = Object.assign(
-      defaultVoicePreferences(),
-      payload.voicePreferences,
-    );
+    normalizedStore.voicePreferences = normalizeVoicePreferences(payload.voicePreferences);
   }
 
   let profileRecordingId = typeof payload.profileRecordingId === 'string'
@@ -1802,6 +1829,10 @@ function playAssignedForToken(token) {
 }
 
 function stopActivePlayback() {
+  if (activePreviewQueue) {
+    activePreviewQueue.aborted = true;
+    activePreviewQueue = null;
+  }
   if (!activePlayback) return;
   try {
     activePlayback.pause();
@@ -1826,52 +1857,11 @@ function playRecordingById(recordingId) {
 }
 
 function playTokenTts(token) {
-  if (hasSynthesizedVoiceProfile()) {
-    playSynthesizedPreview(token);
+  if (!hasSynthesizedVoiceProfile()) {
+    setStatus('Clone and synthesize your voice profile to enable this preview.', 'warning');
     return;
   }
-  if (typeof window.speechSynthesis === 'undefined') {
-    setStatus('Speech synthesis is not available in this browser.', 'error');
-    return;
-  }
-  if (!token) return;
-  const segment = makeSegmentForToken(token);
-  segment.text = segment.text || token;
-  speakSegments([segment]);
-  setStatus('Playing token using speech synthesis voice profile.', 'info');
-}
-
-function populateVoiceSelect() {
-  if (!elements.detail) return;
-  const select = elements.detail.querySelector('select[data-role="voice-select"]');
-  if (!select) return;
-  if (typeof window.speechSynthesis === 'undefined') {
-    select.innerHTML = '<option value="">Speech synthesis unavailable</option>';
-    return;
-  }
-  const voices = window.speechSynthesis.getVoices();
-  if (!voices.length) {
-    select.innerHTML = '<option value="">Loading voices…</option>';
-    if (!voiceOptionsBound) {
-      voiceOptionsBound = true;
-      const rebinder = () => populateVoiceSelect();
-      try {
-        window.speechSynthesis.addEventListener('voiceschanged', rebinder);
-      } catch {
-        window.speechSynthesis.onvoiceschanged = rebinder;
-      }
-    }
-    return;
-  }
-  const options = ['<option value="">System default</option>'];
-  for (const voice of voices) {
-    options.push(`<option value="${escapeAttr(voice.voiceURI)}">${escapeHtml(`${voice.name} (${voice.lang})`)}</option>`);
-  }
-  select.innerHTML = options.join('');
-  const prefs = store.voicePreferences || defaultVoicePreferences();
-  if (prefs.voiceURI) {
-    select.value = prefs.voiceURI;
-  }
+  playSynthesizedPreview(token);
 }
 
 function handleTokenListClick(event) {
@@ -1959,25 +1949,19 @@ function handleDetailInput(event) {
   if (!target?.dataset) return;
   const role = target.dataset.role;
   if (!role) return;
+  if (!store.voicePreferences) {
+    store.voicePreferences = defaultVoicePreferences();
+  }
   const value = Number(target.value);
   switch (role) {
-    case 'voice-pitch':
-      store.voicePreferences.pitch = Number.isFinite(value) ? Math.max(0.5, Math.min(2, value)) : 1;
-      updateVoicePreferenceDisplay('pitch', store.voicePreferences.pitch);
-      saveVoiceStore();
-      break;
     case 'voice-rate':
-      store.voicePreferences.rate = Number.isFinite(value) ? Math.max(0.5, Math.min(2.5, value)) : 1;
+      store.voicePreferences.rate = Number.isFinite(value) ? clampValue(value, 0.5, 2.5) : 1;
       updateVoicePreferenceDisplay('rate', store.voicePreferences.rate);
       saveVoiceStore();
       break;
     case 'voice-volume':
-      store.voicePreferences.volume = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;
+      store.voicePreferences.volume = Number.isFinite(value) ? clampValue(value, 0, 1) : 1;
       updateVoicePreferenceDisplay('volume', store.voicePreferences.volume);
-      saveVoiceStore();
-      break;
-    case 'voice-select':
-      store.voicePreferences.voiceURI = target.value || '';
       saveVoiceStore();
       break;
     default:
