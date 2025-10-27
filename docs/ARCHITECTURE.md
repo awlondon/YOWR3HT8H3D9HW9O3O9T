@@ -30,8 +30,8 @@ interactive shell:
 
 - `platform.ts` composes the SaaS platform, wiring subscription management, user profiles, and
   messaging features together while exposing helpers for command registration.
-- `subscription.ts` keeps track of the seven-day trial, the recurring $19.99/month plan, the
-  included $10 in LLM API credits, and top-up purchases in $10, $20, $50, $100, or $1,000 blocks.
+- `subscription.ts` tracks subscription lifecycle events, recurring billing, LLM API credit
+  balances, and top-up purchases in $10, $20, $50, $100, or $1,000 blocks.
 - `userDirectory.ts` and `encryption.ts` let users instantiate private profiles with unique
   encryption keys for their ledgers and messaging history.
 - `messaging.ts` stores only encrypted message payloads while exposing decryption exclusively to the

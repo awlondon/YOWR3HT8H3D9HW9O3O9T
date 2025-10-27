@@ -62,9 +62,9 @@ export interface SaasCommandContext {
 }
 
 function formatSummaryHtml(summary: SubscriptionSummary, currencyFormatter: (value: number) => string): string {
+  const formattedStatus = summary.status === 'trial' ? 'evaluation' : summary.status;
   const lines = [
-    `<strong>Status:</strong> ${summary.status}`,
-    `<strong>Trial ends:</strong> ${formatDate(summary.trialEndsAt)} (${summary.trialDaysRemaining} days remaining)`,
+    `<strong>Status:</strong> ${formattedStatus}`,
     `<strong>Next billing:</strong> ${formatDate(summary.nextBillingAt)}`,
     `<strong>Credits balance:</strong> ${currencyFormatter(summary.creditsBalanceUsd)}`,
     `<strong>Total purchased:</strong> ${currencyFormatter(summary.totalCreditsPurchasedUsd)}`,
@@ -83,21 +83,17 @@ function renderRegistrationPage(
   const sanitizedHandle = sanitize(user.handle);
   const sanitizedDisplayName = sanitize(user.displayName || user.handle);
   const productName = sanitize(platform.config.productName);
-  const trialEnds = sanitize(formatDate(summary.trialEndsAt));
   const nextBilling = sanitize(formatDate(summary.nextBillingAt));
-  const monthlyPrice = currencyFormatter(platform.config.monthlyPriceUsd);
-  const includedCredits = currencyFormatter(platform.config.includedCreditsUsd);
   const paymentProcessor = sanitize(platform.config.paymentProcessor);
   const recipientHandle = sanitize(platform.config.paymentRecipientHandle);
-  const trialDays = platform.config.trialDays;
-  const trialStatus = summary.status === 'trial'
-    ? `Your trial ends on ${trialEnds} (${summary.trialDaysRemaining} days remaining).`
+  const membershipStatus = summary.status === 'trial'
+    ? 'Workspace access is currently in evaluation mode.'
     : `Next billing on ${nextBilling}.`;
 
   return `<div class="saas-registration">
     <h2 class="saas-registration__title">Welcome, ${sanitizedDisplayName} (@${sanitizedHandle})</h2>
     <p class="saas-registration__intro">
-      Start your ${trialDays}-day trial of ${productName}. ${trialStatus}
+      Provision your hosted workspace for ${productName}. ${membershipStatus}
     </p>
     ${summaryHtml}
     <div class="saas-registration__methods">
@@ -131,14 +127,14 @@ function renderRegistrationPage(
             </label>
           </div>
           <button type="submit" class="saas-registration__button saas-registration__button--primary">
-            Authorize ${monthlyPrice}/mo
+            Authorize membership
           </button>
         </form>
-        <p class="saas-registration__note">Includes ${includedCredits} in monthly API credits.</p>
+        <p class="saas-registration__note">Usage-based LLM API credits are reconciled after each cycle.</p>
       </section>
     </div>
     <p class="saas-registration__footnote">
-      After your trial we will charge ${monthlyPrice} via ${paymentProcessor}. Funds are settled with ${recipientHandle}.
+      Billing is processed via ${paymentProcessor}. Funds are settled with ${recipientHandle}.
     </p>
   </div>`;
 }

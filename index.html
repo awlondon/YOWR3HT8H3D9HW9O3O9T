@@ -24,12 +24,11 @@
           <li>Built for serious operators: research labs modeling discovery pipelines, founders automating expertise, and operations teams mapping institutional knowledge</li>
           <li>Scales from curiosity to full technical deployment with caching, export options, and API-ready architecture</li>
         </ul>
-        <div class="landing-trust">7-day free trial. $19.99 per month. Cancel anytime.</div>
-        <p class="landing-note">If your brain refuses to stay inside a box, your software shouldn’t either.</p>
+        <div class="landing-trust">Hosted workspace orchestration with encrypted messaging</div>
       </section>
       <section class="landing-panel">
         <div class="landing-tabs" role="tablist">
-          <button type="button" class="landing-tab is-active" data-view="signup" role="tab" aria-selected="true">Start trial</button>
+          <button type="button" class="landing-tab is-active" data-view="signup" role="tab" aria-selected="true">Create account</button>
           <button type="button" class="landing-tab" data-view="login" role="tab" aria-selected="false">Log in</button>
           <button type="button" class="landing-tab" data-view="demo" role="tab" aria-selected="false">Try demo</button>
         </div>
@@ -60,8 +59,8 @@
             <label class="plan-card">
               <input type="radio" name="plan" value="pro" checked />
               <div class="plan-card__content">
-                <div class="plan-card__price">$19.99<span>/mo</span></div>
-                <div class="plan-card__trial">7-day free trial · Full engine capabilities (non-admin)</div>
+                <div class="plan-card__price">Hosted workspace</div>
+                <div class="plan-card__trial">Full engine capabilities for provisioned members (non-admin)</div>
                 <ul class="plan-card__benefits">
                   <li>Unlimited adjacency mapping &amp; visualization</li>
                   <li>Remote GitHub database hydration &amp; export</li>
@@ -70,8 +69,8 @@
               </div>
             </label>
           </fieldset>
-          <button type="submit" class="landing-primary-button">Start free trial</button>
-          <p class="landing-footnote">You won’t be charged until the trial ends. Cancel anytime.</p>
+          <button type="submit" class="landing-primary-button">Create workspace account</button>
+          <p class="landing-footnote">Provisioned members receive billing instructions separately.</p>
         </form>
 
         <form id="landing-login-form" class="landing-form" autocomplete="on">
@@ -127,6 +126,58 @@
           <p class="landing-footnote">Upgrade to activate commands, ingestion, visualization, and SaaS automations.</p>
         </form>
       </section>
+    </div>
+  </div>
+
+  <div id="payment-intake-screen" class="payment-screen" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="payment-container">
+      <div class="payment-header">
+        <span class="payment-kicker">Secure checkout</span>
+        <h2 class="payment-title">Add a payment method to start your trial</h2>
+        <p class="payment-subtitle">
+          You're moments away from unlocking the full HLSF Cognition Engine. Confirm your card to secure the
+          <span data-payment-plan>Pro</span> plan trial for <span data-payment-name>your team</span>.
+        </p>
+      </div>
+      <dl class="payment-summary">
+        <div>
+          <dt>Trial length</dt>
+          <dd><span data-payment-trial-days>7</span> days</dd>
+        </div>
+        <div>
+          <dt>Billing begins</dt>
+          <dd>After the trial ends</dd>
+        </div>
+        <div>
+          <dt>Recurring price</dt>
+          <dd><span data-payment-price>$19.99/mo</span></dd>
+        </div>
+      </dl>
+      <form id="payment-intake-form" class="payment-form">
+        <div class="form-row">
+          <label>Cardholder name
+            <input type="text" name="cardName" placeholder="Name on card" autocomplete="cc-name" required />
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Card number
+            <input type="text" name="cardNumber" inputmode="numeric" placeholder="1234 5678 9012 3456" autocomplete="cc-number" required />
+          </label>
+        </div>
+        <div class="payment-form__row">
+          <label>Expiry
+            <input type="text" name="expiry" placeholder="MM/YY" autocomplete="cc-exp" required />
+          </label>
+          <label>CVC
+            <input type="text" name="cvc" placeholder="123" autocomplete="cc-csc" required />
+          </label>
+        </div>
+        <div class="payment-actions">
+          <button type="button" class="pill-button secondary" data-payment-action="back">Back</button>
+          <button type="submit" class="landing-primary-button">Authorize &amp; start trial</button>
+        </div>
+        <p class="payment-footnote">You can cancel anytime before the trial ends to avoid charges.</p>
+      </form>
     </div>
   </div>
 
