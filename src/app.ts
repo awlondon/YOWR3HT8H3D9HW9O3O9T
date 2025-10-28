@@ -3620,7 +3620,7 @@ window.HLSF.config = Object.assign({
     : EDGE_LABEL_DENSITY_THRESHOLD,
   showNodeGlow: false,
   autoHlsfOnChange: existingConfig.autoHlsfOnChange === true,
-  showAllAdjacencies: existingConfig.showAllAdjacencies === true,
+  showAllAdjacencies: existingConfig.showAllAdjacencies !== false,
   affinity: { threshold: 0.35, iterations: 8 },
 }, existingConfig);
 const initialRelationCap = window.HLSF.config.relationTypeCap;
@@ -3641,7 +3641,7 @@ window.HLSF.config.edgeLabelDensityThreshold = Number.isFinite(rawEdgeLabelThres
   ? Math.round(rawEdgeLabelThreshold)
   : EDGE_LABEL_DENSITY_THRESHOLD;
 window.HLSF.config.showNodeGlow = window.HLSF.config.showNodeGlow === true;
-window.HLSF.config.showAllAdjacencies = window.HLSF.config.showAllAdjacencies === true;
+window.HLSF.config.showAllAdjacencies = window.HLSF.config.showAllAdjacencies !== false;
 window.HLSF.config.layout = normalizeLayout(window.HLSF.config.layout);
 window.HLSF.config.batchLogging = window.HLSF.config.batchLogging !== false;
 window.HLSF.config.deferredRender = window.HLSF.config.deferredRender !== false;
