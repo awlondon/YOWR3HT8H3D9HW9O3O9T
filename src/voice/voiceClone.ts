@@ -769,11 +769,6 @@ const panelState = {
   popupToken: '',
   popupMappedTokens: [],
   popupLastRecordingId: null,
-  popupPrompt: '',
-  popupResponse: '',
-  popupResponseSegments: [],
-  popupLastPrompt: '',
-  popupIsRequesting: false,
   status: { message: '', type: 'info' },
 };
 
@@ -799,8 +794,6 @@ const elements = {
   popupTranscript: null,
   popupTokenInput: null,
   popupTokens: null,
-  popupPromptInput: null,
-  popupResponse: null,
   popupPitch: null,
   popupPitchDisplay: null,
   popupRate: null,
@@ -1260,22 +1253,10 @@ function autoMapRecordingTokens(recording, transcript, options = {}) {
 function updateVoicePopupControls() {
   if (!elements.popup) return;
   const isRecording = panelState.isRecording;
-  const isRequesting = panelState.popupIsRequesting;
-  if (elements.popupRecord) elements.popupRecord.disabled = isRecording || isRequesting;
+  if (elements.popupRecord) elements.popupRecord.disabled = isRecording;
   if (elements.popupStop) elements.popupStop.disabled = !isRecording;
   if (elements.popupPlay) elements.popupPlay.disabled = !panelState.popupLastRecordingId;
-  if (elements.popupSynth) {
-    const promptValue = (panelState.popupPrompt || '').trim();
-    const canReplay =
-      Array.isArray(panelState.popupResponseSegments) &&
-      panelState.popupResponseSegments.length > 0 &&
-      panelState.popupLastPrompt === promptValue;
-    const disableSynth =
-      !hasSynthesizedVoiceProfile() ||
-      isRequesting ||
-      (!promptValue && !canReplay);
-    elements.popupSynth.disabled = disableSynth;
-  }
+  if (elements.popupSynth) elements.popupSynth.disabled = !hasSynthesizedVoiceProfile();
 }
 
 function updateVoicePopupTranscript() {
@@ -1293,12 +1274,6 @@ function updateVoicePopupTokens() {
   if (!elements.popupTokens) return;
   const mapped = Array.isArray(panelState.popupMappedTokens) ? panelState.popupMappedTokens : [];
   elements.popupTokens.textContent = mapped.length ? mapped.join(', ') : 'None yet.';
-}
-
-function updateVoicePopupResponse() {
-  if (!elements.popupResponse) return;
-  const response = typeof panelState.popupResponse === 'string' ? panelState.popupResponse.trim() : '';
-  elements.popupResponse.textContent = response || 'No response yet.';
 }
 
 function updateVoicePopupTweaksDisplay() {
@@ -1319,16 +1294,11 @@ function renderVoicePopup() {
   updateVoicePopupStatus();
   updateVoicePopupTranscript();
   updateVoicePopupTokens();
-  updateVoicePopupResponse();
   updateVoicePopupTweaksDisplay();
   const tokenInput = elements.popupTokenInput;
   if (tokenInput && document.activeElement !== tokenInput) {
     const preferred = panelState.popupToken || panelState.selectedToken || '';
     tokenInput.value = preferred;
-  }
-  const promptInput = elements.popupPromptInput;
-  if (promptInput && document.activeElement !== promptInput) {
-    promptInput.value = panelState.popupPrompt || '';
   }
   updateVoicePopupControls();
 }
@@ -1406,115 +1376,29 @@ function handleVoicePopupPlay() {
   renderVoicePopup();
 }
 
-async function handleVoicePopupSynth() {
+function handleVoicePopupSynth() {
   if (!hasSynthesizedVoiceProfile()) {
     setStatus('Synthesize your voice profile before requesting AGI playback.', 'warning');
     panelState.popupStatus = 'Synthesis required.';
     renderVoicePopup();
     return;
   }
-
-  if (panelState.popupIsRequesting) {
-    return;
-  }
-
-  const promptValue = elements.popupPromptInput?.value ?? panelState.popupPrompt ?? '';
-  const trimmedPrompt = (promptValue || '').trim();
-  panelState.popupPrompt = promptValue;
-
-  const canReplayExisting =
-    Array.isArray(panelState.popupResponseSegments) &&
-    panelState.popupResponseSegments.length > 0 &&
-    panelState.popupLastPrompt === trimmedPrompt &&
-    trimmedPrompt.length > 0;
-
-  if (!trimmedPrompt && !canReplayExisting) {
-    setStatus('Enter a prompt before requesting AGI playback.', 'warning');
-    panelState.popupStatus = 'Prompt required.';
+  const contextToken =
+    (panelState.popupMappedTokens && panelState.popupMappedTokens[0]) || panelState.popupToken || panelState.selectedToken || '';
+  if (!contextToken) {
+    setStatus('Map tokens to your recording before previewing synthesized output.', 'warning');
+    panelState.popupStatus = 'Awaiting mapped tokens.';
     renderVoicePopup();
     return;
   }
-
-  if (canReplayExisting) {
-    const played = playAgiResponseSegments(panelState.popupResponseSegments || []);
-    if (played) {
-      panelState.popupStatus = 'Playing AGI response…';
-      renderVoicePopup();
-      setStatus('Replaying the latest AGI response in audio.', 'info');
-    }
-    return;
-  }
-
-  const callOpenAI = window.CognitionEngine?.api?.callOpenAI;
-  if (typeof callOpenAI !== 'function') {
-    setStatus('AGI playback is unavailable in this environment.', 'error');
-    panelState.popupStatus = 'AGI playback unavailable.';
-    renderVoicePopup();
-    return;
-  }
-
-  panelState.popupIsRequesting = true;
-  panelState.popupStatus = 'Contacting AGI…';
-  panelState.popupResponse = '';
+  playSynthesizedPreview(contextToken);
+  panelState.popupStatus = `Playing synthesized output for ${contextToken}.`;
   renderVoicePopup();
-  updateVoicePopupControls();
-
-  try {
-    const contextTokens = collectVoiceConsoleContextTokens();
-    const contextLabel =
-      contextTokens.length > 0
-        ? `Relevant voice tokens: ${contextTokens.join(', ')}.`
-        : 'No mapped voice tokens available; respond conversationally.';
-    const systemPrompt =
-      'You are the HLSF voice console. Compose a concise, spoken-style response (2-3 sentences) that can be read aloud without markdown.';
-    const messages = [
-      { role: 'system', content: `${systemPrompt} ${contextLabel}`.trim() },
-      { role: 'user', content: trimmedPrompt },
-    ];
-
-    const responseText = await callOpenAI(messages, { temperature: 0.55, max_tokens: 220 });
-    const normalizedResponse = (responseText || '').trim();
-    if (!normalizedResponse) {
-      throw new Error('AGI response was empty.');
-    }
-
-    panelState.popupResponse = normalizedResponse;
-    panelState.popupLastPrompt = trimmedPrompt;
-    panelState.popupStatus = 'Preparing AGI playback…';
-    renderVoicePopup();
-
-    const segments = buildSegmentsForAgiResponse(normalizedResponse);
-    panelState.popupResponseSegments = segments;
-
-    const played = playAgiResponseSegments(segments);
-    if (played) {
-      panelState.popupStatus = 'Playing AGI response…';
-      setStatus('Playing AGI response in your synthesized voice.', 'success');
-    } else {
-      panelState.popupStatus = 'AGI response ready.';
-      setStatus('AGI response ready, but no playable audio was generated.', 'warning');
-    }
-    renderVoicePopup();
-  } catch (err) {
-    const message = err?.message || 'Unable to retrieve AGI output.';
-    console.warn('Voice console AGI playback failed:', err);
-    panelState.popupStatus = message;
-    setStatus(message, 'error');
-    renderVoicePopup();
-  } finally {
-    panelState.popupIsRequesting = false;
-    updateVoicePopupControls();
-  }
 }
 
 function handleVoicePopupTokenInput(event) {
   const value = event?.target?.value || '';
   panelState.popupToken = value.trim();
-}
-
-function handleVoicePopupPromptInput(event) {
-  panelState.popupPrompt = event?.target?.value || '';
-  updateVoicePopupControls();
 }
 
 function handleVoicePopupTweakInput(type, event) {
@@ -1935,234 +1819,6 @@ function buildSynthesizedPreviewSegments(contextToken = null) {
   }
 
   return segments;
-}
-
-function collectVoiceConsoleContextTokens(limit = 32) {
-  const max = Math.max(1, limit || 32);
-  const seen = new Set();
-  const tokens = [];
-  const pushToken = token => {
-    if (!token) return;
-    const normalized = normalizeTokenKey(token);
-    if (!normalized || seen.has(normalized)) return;
-    seen.add(normalized);
-    tokens.push(token);
-  };
-
-  (panelState.popupMappedTokens || []).forEach(pushToken);
-  pushToken(panelState.popupToken);
-  pushToken(panelState.selectedToken);
-
-  const assignments = store.assignments || {};
-  Object.keys(assignments)
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
-    .forEach(pushToken);
-
-  (store.recordings || [])
-    .map(rec => rec?.token)
-    .filter(Boolean)
-    .forEach(pushToken);
-
-  return tokens.slice(0, max);
-}
-
-function buildSegmentsForAgiResponse(text) {
-  if (!text) return [];
-  const segments = [];
-  const dictionary = buildKnownTokenDictionary();
-  const normalizedText = String(text);
-  const regex = /[\p{L}\p{N}][\p{L}\p{N}'-]*/gu;
-  let match;
-  let cursor = 0;
-
-  const pushTextSegment = value => {
-    if (!value) return;
-    const cleaned = String(value).replace(/\s+/g, ' ').trim();
-    if (!cleaned) return;
-    segments.push({ text: cleaned, recordingId: null });
-  };
-
-  while ((match = regex.exec(normalizedText))) {
-    const start = match.index;
-    const end = start + match[0].length;
-    const prefix = normalizedText.slice(cursor, start);
-    if (prefix) pushTextSegment(prefix);
-
-    const rawWord = match[0];
-    const normalized = normalizeTokenKey(rawWord);
-    let lookupToken = rawWord;
-    if (normalized && dictionary.has(normalized)) {
-      lookupToken = dictionary.get(normalized) || rawWord;
-    }
-    const segment = makeSegmentForToken(lookupToken);
-    if (segment && segment.recordingId) {
-      segments.push({ ...segment, text: rawWord });
-    } else {
-      pushTextSegment(rawWord);
-    }
-    cursor = end;
-  }
-
-  if (cursor < normalizedText.length) {
-    const suffix = normalizedText.slice(cursor);
-    if (suffix) pushTextSegment(suffix);
-  }
-
-  return segments;
-}
-
-function playAgiResponseSegments(segments) {
-  const inputSegments = Array.isArray(segments) ? segments.filter(Boolean) : [];
-  if (!inputSegments.length) return false;
-
-  const prefs = store.voicePreferences || defaultVoicePreferences();
-  const tweaks = getProfileTweaks();
-  const previewPrefs = {
-    rate: clampValue((prefs.rate || 1) + (Number(tweaks.rate) || 0), 0.5, 2.5),
-    volume: clampValue((prefs.volume || 1) + (Number(tweaks.resonance) || 0), 0, 1),
-    pitch: clampValue(1 + (Number(tweaks.pitch) || 0), 0.1, 2),
-  };
-
-  const recordingMap = new Map((store.recordings || []).map(rec => [rec.id, rec]));
-  const recordedSegments = [];
-  const queue = [];
-  let playbackStarted = false;
-
-  const pushSpeechEntry = text => {
-    const cleaned = String(text || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!cleaned) return;
-    const last = queue[queue.length - 1];
-    if (last && last.type === 'speech') {
-      last.text = `${last.text} ${cleaned}`.replace(/\s+/g, ' ').trim();
-    } else {
-      queue.push({ type: 'speech', text: cleaned });
-    }
-  };
-
-  inputSegments.forEach(segment => {
-    if (!segment) return;
-    const recordingId = segment.recordingId;
-    if (recordingId && recordingMap.has(recordingId)) {
-      const clone = { ...segment };
-      recordedSegments.push(clone);
-      queue.push({ type: 'audio', segment: clone, recording: recordingMap.get(recordingId) });
-    } else if (segment.text) {
-      pushSpeechEntry(segment.text);
-    }
-  });
-
-  if (!queue.length) return false;
-
-  recordedSegments.forEach((segment, index) => {
-    const resolved = resolveSegmentAdjustments(segment, recordedSegments, index);
-    segment.resolvedAdjustments = resolved.adjustments;
-  });
-
-  stopActivePlayback();
-  cancelSpeechSynthesisPlayback();
-
-  const controller = { aborted: false, queue, currentUtterance: null };
-  activePreviewQueue = controller;
-
-  const speakEntry = (entryText, onComplete) => {
-    if (!supportsSpeechSynthesis()) return false;
-    const synth = window.speechSynthesis;
-    const Utterance = window.SpeechSynthesisUtterance;
-    if (!synth || typeof Utterance !== 'function') return false;
-    const utterance = new Utterance(entryText);
-    utterance.rate = clampValue(previewPrefs.rate, 0.5, 2.5);
-    utterance.pitch = clampValue(previewPrefs.pitch, 0.1, 2);
-    utterance.volume = clampValue(previewPrefs.volume, 0, 1);
-    controller.currentUtterance = utterance;
-    activeSpeechController = controller;
-    utterance.onend = () => {
-      if (controller.aborted) return;
-      controller.currentUtterance = null;
-      onComplete();
-    };
-    utterance.onerror = () => {
-      if (controller.aborted) return;
-      controller.currentUtterance = null;
-      onComplete();
-    };
-    try {
-      synth.speak(utterance);
-      return true;
-    } catch (err) {
-      console.warn('Failed to speak AGI response segment:', err);
-      controller.currentUtterance = null;
-      return false;
-    }
-  };
-
-  const playNext = index => {
-    if (controller.aborted) return;
-    if (index >= queue.length) {
-      activePreviewQueue = null;
-      activePlayback = null;
-      controller.currentUtterance = null;
-      panelState.popupStatus = 'AGI response ready.';
-      renderVoicePopup();
-      return;
-    }
-
-    const entry = queue[index];
-    if (!entry) {
-      playNext(index + 1);
-      return;
-    }
-
-    if (entry.type === 'audio') {
-      const recording = entry.recording;
-      if (!recording) {
-        playNext(index + 1);
-        return;
-      }
-      const audio = new Audio(getRecordingUrl(recording));
-      const adjustments = entry.segment?.resolvedAdjustments || {};
-      const rate = clampValue(previewPrefs.rate + (adjustments.rateDelta || 0), 0.5, 2.5);
-      const volume = clampValue(previewPrefs.volume + (adjustments.volumeDelta || 0), 0, 1);
-      audio.playbackRate = rate;
-      audio.volume = volume;
-      activePlayback = audio;
-      playbackStarted = true;
-      audio.onended = () => {
-        if (controller.aborted) return;
-        activePlayback = null;
-        playNext(index + 1);
-      };
-      audio.onerror = err => {
-        console.warn('Failed to play AGI response recording segment:', err);
-        if (controller.aborted) return;
-        activePlayback = null;
-        playNext(index + 1);
-      };
-      const start = audio.play();
-      if (start && typeof start.catch === 'function') {
-        start.catch(err => {
-          console.warn('Failed to start AGI response playback:', err);
-          if (controller.aborted) return;
-          activePlayback = null;
-          playNext(index + 1);
-        });
-      }
-    } else if (entry.type === 'speech') {
-      const spoken = speakEntry(entry.text, () => playNext(index + 1));
-      if (spoken) {
-        playbackStarted = true;
-      } else {
-        playNext(index + 1);
-      }
-    } else {
-      playNext(index + 1);
-    }
-  };
-
-  playNext(0);
-  return playbackStarted;
 }
 
 function playSynthesizedPreview(token) {
@@ -3228,11 +2884,6 @@ function deleteAllRecordings() {
   panelState.popupLastRecordingId = null;
   panelState.popupTranscript = '';
   panelState.popupStatus = 'Idle';
-  panelState.popupPrompt = '';
-  panelState.popupResponse = '';
-  panelState.popupResponseSegments = [];
-  panelState.popupLastPrompt = '';
-  panelState.popupIsRequesting = false;
   renderVoicePopup();
 }
 
@@ -3307,8 +2958,6 @@ function initializeVoiceClonePanel() {
   elements.popupTranscript = document.querySelector('[data-role="voice-popup-transcript"]');
   elements.popupTokenInput = document.getElementById('voice-popup-token');
   elements.popupTokens = document.querySelector('[data-role="voice-popup-mapped"]');
-  elements.popupPromptInput = document.getElementById('voice-popup-prompt');
-  elements.popupResponse = document.querySelector('[data-role="voice-popup-response"]');
   elements.popupPitch = document.getElementById('voice-popup-pitch');
   elements.popupPitchDisplay = document.querySelector('[data-role="voice-popup-pitch-display"]');
   elements.popupRate = document.getElementById('voice-popup-rate');
@@ -3334,7 +2983,6 @@ function initializeVoiceClonePanel() {
   elements.popupPlay?.addEventListener('click', handleVoicePopupPlay);
   elements.popupSynth?.addEventListener('click', handleVoicePopupSynth);
   elements.popupTokenInput?.addEventListener('input', handleVoicePopupTokenInput);
-  elements.popupPromptInput?.addEventListener('input', handleVoicePopupPromptInput);
   elements.popupPitch?.addEventListener('input', event => handleVoicePopupTweakInput('pitch', event));
   elements.popupRate?.addEventListener('input', event => handleVoicePopupTweakInput('rate', event));
   elements.popupResonance?.addEventListener('input', event => handleVoicePopupTweakInput('resonance', event));
