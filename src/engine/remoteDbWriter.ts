@@ -1,4 +1,19 @@
 const MAX_SUCCESS_LOG_INTERVAL_MS = 1500;
+const DEFAULT_AVERAGE_WORK_MS = 250;
+
+interface RemoteDbSyncProgress {
+  queueLength: number;
+  pendingWorkUnits: number;
+  pendingChunks: number;
+  averageMsPerUnit: number;
+  activeStart: number | null;
+  activeWorkUnits: number;
+}
+
+interface RemoteDbSyncSuccessInfo {
+  chunkCount: number;
+  durationMs: number;
+}
 
 interface RemoteDbUpdate {
   metadata: any;
@@ -8,8 +23,10 @@ interface RemoteDbUpdate {
 
 interface RemoteDbWriterLogger {
   onMissingDirectory?: (reason?: 'unsupported' | 'permission') => void;
-  onSyncStart?: () => void;
-  onSyncSuccess?: (info: { chunkCount: number }) => void;
+  onSyncStart?: (info: RemoteDbSyncProgress) => void;
+  onSyncProgress?: (info: RemoteDbSyncProgress) => void;
+  onSyncSuccess?: (info: RemoteDbSyncSuccessInfo) => void;
+  onSyncIdle?: (info: RemoteDbSyncSuccessInfo) => void;
   onSyncError?: (message: string) => void;
 }
 
@@ -25,6 +42,10 @@ function isFsSupported(): boolean {
 }
 
 const encoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+
+const nowMs = () => (typeof performance !== 'undefined' && typeof performance.now === 'function'
+  ? performance.now()
+  : Date.now());
 
 function cloneData<T>(data: T): T {
   if (typeof structuredClone === 'function') {
@@ -95,6 +116,15 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
     lastSuccessAt: number;
     missingNotified: boolean;
     flushRequested: boolean;
+    metrics: {
+      totalDurationMs: number;
+      totalWorkUnits: number;
+      activeStart: number;
+      activeWorkUnits: number;
+      lastChunkCount: number;
+      lastDurationMs: number;
+    };
+    wasIdleNotified: boolean;
   } = {
     directoryHandle: null,
     chunksHandle: null,
@@ -103,6 +133,65 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
     lastSuccessAt: 0,
     missingNotified: false,
     flushRequested: false,
+    metrics: {
+      totalDurationMs: 0,
+      totalWorkUnits: 0,
+      activeStart: 0,
+      activeWorkUnits: 0,
+      lastChunkCount: 0,
+      lastDurationMs: 0,
+    },
+    wasIdleNotified: false,
+  };
+
+  const computeChunkCount = (update: RemoteDbUpdate | null) => {
+    if (!update) return 0;
+    const chunks = Array.isArray(update.chunks) ? update.chunks : [];
+    return chunks.length;
+  };
+
+  const computeWorkUnits = (update: RemoteDbUpdate | null) => {
+    const chunkCount = computeChunkCount(update);
+    return Math.max(1, chunkCount + 1);
+  };
+
+  const buildProgressInfo = (): RemoteDbSyncProgress => {
+    let pendingChunks = 0;
+    let pendingWorkUnits = 0;
+    for (const update of state.pendingUpdates) {
+      pendingChunks += computeChunkCount(update);
+      pendingWorkUnits += computeWorkUnits(update);
+    }
+
+    const derivedAverage = state.metrics.totalWorkUnits > 0
+      ? state.metrics.totalDurationMs / state.metrics.totalWorkUnits
+      : (pendingWorkUnits > 0 ? DEFAULT_AVERAGE_WORK_MS : 0);
+
+    return {
+      queueLength: state.pendingUpdates.length,
+      pendingWorkUnits,
+      pendingChunks,
+      averageMsPerUnit: derivedAverage,
+      activeStart: state.writing ? state.metrics.activeStart : null,
+      activeWorkUnits: state.writing ? state.metrics.activeWorkUnits : 0,
+    };
+  };
+
+  const notifyProgress = () => {
+    const info = buildProgressInfo();
+    logger.onSyncProgress?.(info);
+
+    if (info.queueLength === 0 && !state.writing) {
+      if (!state.wasIdleNotified) {
+        state.wasIdleNotified = true;
+        logger.onSyncIdle?.({
+          chunkCount: state.metrics.lastChunkCount,
+          durationMs: state.metrics.lastDurationMs,
+        });
+      }
+    } else {
+      state.wasIdleNotified = false;
+    }
   };
 
   const ensureDirectory = async () => {
@@ -217,6 +306,7 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
     const nextUpdate = state.pendingUpdates[0];
     if (!nextUpdate) {
       state.flushRequested = false;
+      notifyProgress();
       return;
     }
 
@@ -227,6 +317,7 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       }
       state.pendingUpdates = [];
       state.flushRequested = false;
+      notifyProgress();
       return;
     }
 
@@ -235,6 +326,7 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
         state.missingNotified = true;
         logger.onMissingDirectory?.();
       }
+      notifyProgress();
       return;
     }
 
@@ -243,18 +335,36 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
         state.missingNotified = true;
         logger.onMissingDirectory?.('permission');
       }
+      notifyProgress();
       return;
     }
 
     const update = normalizeUpdate(nextUpdate);
+    state.pendingUpdates[0] = update;
     state.writing = true;
+    state.metrics.activeStart = nowMs();
+    state.metrics.activeWorkUnits = computeWorkUnits(update);
+    state.wasIdleNotified = false;
+    const startInfo = buildProgressInfo();
+    logger.onSyncStart?.(startInfo);
+    logger.onSyncProgress?.(startInfo);
     try {
       await writeUpdate(update);
       state.pendingUpdates.shift();
       state.missingNotified = false;
+      const duration = Math.max(0, nowMs() - state.metrics.activeStart);
+      const workUnits = Math.max(1, state.metrics.activeWorkUnits || computeWorkUnits(update));
+      state.metrics.totalDurationMs += duration;
+      state.metrics.totalWorkUnits += workUnits;
+      state.metrics.lastChunkCount = Array.isArray(update.chunks) ? update.chunks.length : 0;
+      state.metrics.lastDurationMs = duration;
       const now = Date.now();
-      if (now - state.lastSuccessAt > MAX_SUCCESS_LOG_INTERVAL_MS) {
-        logger.onSyncSuccess?.({ chunkCount: update.chunks ? update.chunks.length : 0 });
+      const queueEmpty = state.pendingUpdates.length === 0;
+      if (queueEmpty || now - state.lastSuccessAt > MAX_SUCCESS_LOG_INTERVAL_MS) {
+        logger.onSyncSuccess?.({
+          chunkCount: state.metrics.lastChunkCount,
+          durationMs: state.metrics.lastDurationMs,
+        });
         state.lastSuccessAt = now;
       }
     } catch (err) {
@@ -262,6 +372,9 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       logger.onSyncError?.(`Remote DB sync failed: ${message}`);
     } finally {
       state.writing = false;
+      state.metrics.activeStart = 0;
+      state.metrics.activeWorkUnits = 0;
+      notifyProgress();
       if (state.pendingUpdates.length || state.flushRequested) {
         setTimeout(() => { processQueue().catch(() => {}); }, 200);
       }
@@ -274,6 +387,8 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
     } else {
       state.flushRequested = true;
     }
+    state.wasIdleNotified = false;
+    notifyProgress();
     processQueue().catch(() => {});
   };
 

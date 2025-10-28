@@ -4607,6 +4607,10 @@ const RELATIONSHIP_PRIORITIES = new Map([
 const state = {
   apiKey: '',
   isProcessing: false,
+  processingStatus: null,
+  processingStart: 0,
+  processingAverageMs: 0,
+  processingSamples: 0,
   sessionStats: {
     totalApiCalls: 0,
     totalCacheHits: 0,
@@ -6525,6 +6529,188 @@ window.logOK = (msg) => addLog(`✅ ${sanitize(String(msg))}`, 'success');
 function logWarning(msg) { return appendLog(`⚠️ ${sanitize(msg)}`, 'warning'); }
 function logFinal(msg) { return appendLog(`✅ ${sanitize(msg)}`, 'success'); }
 
+const nowMs = () => (typeof performance !== 'undefined' && typeof performance.now === 'function'
+  ? performance.now()
+  : Date.now());
+
+const RealtimeStatus = (() => {
+  const activeStatuses = new Set();
+  let intervalId = null;
+
+  const scheduleTick = () => {
+    if (intervalId != null) return;
+    intervalId = setInterval(() => {
+      const current = nowMs();
+      activeStatuses.forEach((status: any) => {
+        try {
+          if (typeof status.render === 'function') status.render(current);
+        } catch (err) {
+          console.warn('Realtime status render failed:', err);
+        }
+      });
+      if (activeStatuses.size === 0 && intervalId != null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    }, 500);
+  };
+
+  const register = (status: any) => {
+    activeStatuses.add(status);
+    scheduleTick();
+  };
+
+  const unregister = (status: any) => {
+    activeStatuses.delete(status);
+    if (activeStatuses.size === 0 && intervalId != null) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+  };
+
+  const create = (label: string, options: Record<string, unknown> = {}) => {
+    const resolvedLabel = typeof label === 'string' && label.trim() ? label.trim() : 'Processing';
+    const icon = typeof options.icon === 'string' && options.icon.trim() ? options.icon.trim() : '⏳';
+    const entry = logStatus(`${resolvedLabel}…`);
+    const indicator = entry?.querySelector?.('.processing-indicator');
+    if (!(indicator instanceof HTMLElement)) {
+      return {
+        element: entry,
+        update() {},
+        render() {},
+        complete() {},
+        fail(message?: string) { if (message) logWarning(message); },
+        cancel(message?: string) { if (message) logWarning(message); },
+        isActive: () => false,
+      };
+    }
+
+    const statusState = {
+      entry,
+      indicator,
+      label: resolvedLabel,
+      icon,
+      createdAt: nowMs(),
+      info: {
+        queueLength: 0,
+        pendingWorkUnits: 0,
+        pendingChunks: 0,
+        averageMsPerUnit: 0,
+        activeStart: null as number | null,
+        activeWorkUnits: 0,
+        extraDetails: '',
+      },
+      completed: false,
+    };
+
+    const render = (current = nowMs()) => {
+      if (statusState.completed) return;
+      const elapsed = Math.max(0, current - statusState.createdAt);
+
+      let etaMs: number | null = null;
+      if (statusState.info.averageMsPerUnit > 0 && statusState.info.pendingWorkUnits > 0) {
+        const activeStart = typeof statusState.info.activeStart === 'number' ? statusState.info.activeStart : null;
+        const activeWork = Math.max(0, statusState.info.activeWorkUnits || 0);
+        let consumedWork = 0;
+        if (activeStart != null && activeWork > 0) {
+          const activeElapsed = Math.max(0, current - activeStart);
+          consumedWork = Math.min(activeWork, activeElapsed / statusState.info.averageMsPerUnit);
+        }
+        const remainingWork = Math.max(0, statusState.info.pendingWorkUnits - consumedWork);
+        etaMs = remainingWork * statusState.info.averageMsPerUnit;
+      }
+
+      const parts: string[] = [`${statusState.icon} ${statusState.label}`];
+      if (statusState.info.queueLength > 0) {
+        const queueLabel = statusState.info.queueLength === 1 ? 'update' : 'updates';
+        parts.push(`${statusState.info.queueLength} ${queueLabel}`);
+      }
+      if (statusState.info.pendingChunks > 0) {
+        const chunkLabel = statusState.info.pendingChunks === 1 ? 'chunk' : 'chunks';
+        parts.push(`${statusState.info.pendingChunks} ${chunkLabel}`);
+      }
+      if (etaMs != null && etaMs > 0) {
+        parts.push(`ETA ${formatDuration(etaMs)}`);
+      }
+      parts.push(`elapsed ${formatDuration(elapsed)}`);
+      if (statusState.info.extraDetails) parts.push(statusState.info.extraDetails);
+
+      statusState.indicator.innerHTML = `<span class="spinner"></span>${sanitize(parts.join(' • '))}`;
+    };
+
+    const status = {
+      element: entry,
+      update(info: Record<string, unknown> = {}) {
+        const normalizeNumber = (value: unknown, fallback: number) => (
+          Number.isFinite(value)
+            ? Math.max(0, Number(value))
+            : fallback
+        );
+
+        statusState.info.queueLength = normalizeNumber(info.queueLength, statusState.info.queueLength);
+        statusState.info.pendingWorkUnits = normalizeNumber(info.pendingWorkUnits, statusState.info.pendingWorkUnits);
+        statusState.info.pendingChunks = normalizeNumber(info.pendingChunks, statusState.info.pendingChunks);
+        if (Number.isFinite(info.averageMsPerUnit)) {
+          statusState.info.averageMsPerUnit = Math.max(0, Number(info.averageMsPerUnit));
+        }
+        if (info.activeStart == null) {
+          statusState.info.activeStart = null;
+        } else if (Number.isFinite(info.activeStart)) {
+          statusState.info.activeStart = Number(info.activeStart);
+        }
+        statusState.info.activeWorkUnits = normalizeNumber(info.activeWorkUnits, statusState.info.activeWorkUnits);
+        if (typeof info.extraDetails === 'string' && info.extraDetails.trim()) {
+          statusState.info.extraDetails = info.extraDetails.trim();
+        }
+        render();
+      },
+      render,
+      complete(opts: { summary?: string } = {}) {
+        if (statusState.completed) return;
+        statusState.completed = true;
+        unregister(status);
+        const totalElapsed = Math.max(0, nowMs() - statusState.createdAt);
+        const summary = typeof opts.summary === 'string' && opts.summary.trim()
+          ? opts.summary.trim()
+          : `${statusState.label} complete`;
+        statusState.entry.classList.remove('status');
+        statusState.entry.classList.add('success');
+        statusState.indicator.classList.remove('processing-indicator');
+        statusState.indicator.innerHTML = sanitize(`✅ ${summary} (${formatDuration(totalElapsed)}).`);
+      },
+      fail(message?: string) {
+        if (statusState.completed) return;
+        statusState.completed = true;
+        unregister(status);
+        const totalElapsed = Math.max(0, nowMs() - statusState.createdAt);
+        const summary = message && String(message).trim() ? String(message).trim() : `${statusState.label} failed`;
+        statusState.entry.classList.remove('status');
+        statusState.entry.classList.add('error');
+        statusState.indicator.classList.remove('processing-indicator');
+        statusState.indicator.innerHTML = sanitize(`🔴 ${summary} (${formatDuration(totalElapsed)}).`);
+      },
+      cancel(message?: string) {
+        if (statusState.completed) return;
+        statusState.completed = true;
+        unregister(status);
+        const totalElapsed = Math.max(0, nowMs() - statusState.createdAt);
+        const summary = message && String(message).trim() ? String(message).trim() : `${statusState.label} cancelled`;
+        statusState.entry.classList.remove('status');
+        statusState.entry.classList.add('warning');
+        statusState.indicator.classList.remove('processing-indicator');
+        statusState.indicator.innerHTML = sanitize(`⚠️ ${summary} (${formatDuration(totalElapsed)}).`);
+      },
+      isActive: () => !statusState.completed,
+    };
+
+    register(status);
+    render();
+    return status;
+  };
+
+  return { create };
+})();
+
 function debounce(fn, delay) {
   let timeout;
   return function debounced(...args) {
@@ -7055,6 +7241,32 @@ const RemoteDbRecorder = (() => {
 window.HLSF = window.HLSF || {};
 window.HLSF.remoteDbRecorder = RemoteDbRecorder;
 
+let remoteDbSyncStatus = null;
+
+const ensureRemoteDbSyncStatus = () => {
+  if (!remoteDbSyncStatus || typeof remoteDbSyncStatus.isActive !== 'function' || !remoteDbSyncStatus.isActive()) {
+    remoteDbSyncStatus = RealtimeStatus.create('Remote DB sync', { icon: '💾' });
+  }
+  return remoteDbSyncStatus;
+};
+
+const updateRemoteDbSyncStatus = (info: Record<string, unknown> = {}) => {
+  const queueLength = Number.isFinite(info.queueLength) ? Number(info.queueLength) : 0;
+  const pendingWorkUnits = Number.isFinite(info.pendingWorkUnits) ? Number(info.pendingWorkUnits) : 0;
+  const activeWorkUnits = Number.isFinite(info.activeWorkUnits) ? Number(info.activeWorkUnits) : 0;
+  const hasActivity = queueLength > 0 || pendingWorkUnits > 0 || (typeof info.activeStart === 'number' && activeWorkUnits > 0);
+  if (!remoteDbSyncStatus && !hasActivity) return;
+  const status = ensureRemoteDbSyncStatus();
+  status.update({
+    queueLength,
+    pendingWorkUnits,
+    pendingChunks: Number.isFinite(info.pendingChunks) ? Number(info.pendingChunks) : undefined,
+    averageMsPerUnit: Number.isFinite(info.averageMsPerUnit) ? Number(info.averageMsPerUnit) : undefined,
+    activeStart: typeof info.activeStart === 'number' ? Number(info.activeStart) : null,
+    activeWorkUnits,
+  });
+};
+
 const remoteDbFileWriter = createRemoteDbFileWriter({
   onMissingDirectory(reason) {
     if (reason === 'unsupported') {
@@ -7073,13 +7285,39 @@ const remoteDbFileWriter = createRemoteDbFileWriter({
       </div>
     `);
   },
+  onSyncStart(info) {
+    updateRemoteDbSyncStatus(info || {});
+  },
+  onSyncProgress(info) {
+    updateRemoteDbSyncStatus(info || {});
+  },
   onSyncSuccess(info) {
-    const count = info?.chunkCount ?? 0;
+    const status = ensureRemoteDbSyncStatus();
+    const count = Number.isFinite(info?.chunkCount) ? Number(info?.chunkCount) : 0;
     const suffix = count === 1 ? 'chunk' : 'chunks';
-    logOK(`Remote DB files updated (${count} ${suffix}).`);
+    const summary = count > 0
+      ? `Remote DB files updated (${count} ${suffix})`
+      : 'Remote DB files synchronized';
+    status.complete({ summary });
+    remoteDbSyncStatus = null;
+  },
+  onSyncIdle(info) {
+    if (!remoteDbSyncStatus || (typeof remoteDbSyncStatus.isActive === 'function' && !remoteDbSyncStatus.isActive())) return;
+    const count = Number.isFinite(info?.chunkCount) ? Number(info?.chunkCount) : 0;
+    const suffix = count === 1 ? 'chunk' : 'chunks';
+    const summary = count > 0
+      ? `Remote DB files updated (${count} ${suffix})`
+      : 'Remote DB files up to date';
+    remoteDbSyncStatus.complete({ summary });
+    remoteDbSyncStatus = null;
   },
   onSyncError(message) {
-    logWarning(message);
+    if (!remoteDbSyncStatus || (typeof remoteDbSyncStatus.isActive === 'function' && !remoteDbSyncStatus.isActive())) {
+      remoteDbSyncStatus = RealtimeStatus.create('Remote DB sync', { icon: '💾' });
+    }
+    remoteDbSyncStatus.fail(message || 'Remote DB sync failed');
+    remoteDbSyncStatus = null;
+    if (message) logWarning(message);
   },
 });
 
@@ -14108,6 +14346,22 @@ function enterProcessingState() {
   if (elements.sendBtn) elements.sendBtn.disabled = true;
   if (elements.cancelBtn) elements.cancelBtn.style.display = 'inline-block';
   if (elements.input) elements.input.disabled = true;
+  state.processingStart = nowMs();
+  if (!state.processingStatus || typeof state.processingStatus.isActive !== 'function' || !state.processingStatus.isActive()) {
+    state.processingStatus = RealtimeStatus.create('Processing request', { icon: '⚙️' });
+  }
+  const average = Number.isFinite(state.processingAverageMs) && state.processingAverageMs > 0
+    ? state.processingAverageMs
+    : 0;
+  if (state.processingStatus && typeof state.processingStatus.update === 'function') {
+    state.processingStatus.update({
+      queueLength: 1,
+      pendingWorkUnits: 1,
+      activeWorkUnits: 1,
+      activeStart: state.processingStart,
+      averageMsPerUnit: average,
+    });
+  }
   return true;
 }
 
@@ -14469,7 +14723,52 @@ function setupLandingExperience() {
 }
 
 function exitProcessingState(options = {}) {
-  const { preserveInput = false } = options || {};
+  const {
+    preserveInput = false,
+    statusMessage = null,
+    status = null,
+    cancelled = false,
+  } = options || {};
+
+  const resolvedStatus = typeof status === 'string' && status.trim()
+    ? status.trim().toLowerCase()
+    : (cancelled ? 'cancelled' : 'success');
+
+  const hasActiveStatus = state.processingStatus
+    && typeof state.processingStatus.isActive === 'function'
+    && state.processingStatus.isActive();
+
+  if (state.processingStart) {
+    const elapsed = Math.max(0, nowMs() - state.processingStart);
+    if (elapsed > 0) {
+      const samples = Number.isFinite(state.processingSamples) ? state.processingSamples : 0;
+      const average = Number.isFinite(state.processingAverageMs) ? state.processingAverageMs : 0;
+      const nextSamples = samples + 1;
+      state.processingAverageMs = ((average * samples) + elapsed) / nextSamples;
+      state.processingSamples = nextSamples;
+    }
+  }
+
+  if (hasActiveStatus) {
+    const summary = typeof statusMessage === 'string' && statusMessage.trim()
+      ? statusMessage.trim()
+      : resolvedStatus === 'failed'
+        ? 'Processing failed'
+        : resolvedStatus === 'cancelled'
+          ? 'Processing cancelled'
+          : 'Processing complete';
+
+    if (resolvedStatus === 'failed' && typeof state.processingStatus.fail === 'function') {
+      state.processingStatus.fail(summary);
+    } else if (resolvedStatus === 'cancelled' && typeof state.processingStatus.cancel === 'function') {
+      state.processingStatus.cancel(summary);
+    } else if (typeof state.processingStatus.complete === 'function') {
+      state.processingStatus.complete({ summary });
+    }
+  }
+
+  state.processingStatus = null;
+  state.processingStart = 0;
   state.isProcessing = false;
   currentAbortController = null;
   if (elements.sendBtn) elements.sendBtn.disabled = false;
@@ -15636,6 +15935,7 @@ async function processDocumentFile(file) {
   if (!enterProcessingState()) return;
   let estimator = null;
   let wasCancelled = false;
+  let exitStatus: 'success' | 'cancelled' | 'failed' = 'success';
   try {
     let hasDatabase = !!getDb();
     if (!hasDatabase) {
@@ -15654,13 +15954,13 @@ async function processDocumentFile(file) {
 
     if (!rawTokenCount) {
       logError('Document contained no readable tokens.');
-      exitProcessingState({ preserveInput: true });
+      exitProcessingState({ preserveInput: true, status: 'failed', statusMessage: 'Processing halted' });
       return;
     }
 
     if (!chunks.length || !totalTokens) {
       logError('Unable to align document tokens with cached database vocabulary.');
-      exitProcessingState({ preserveInput: true });
+      exitProcessingState({ preserveInput: true, status: 'failed', statusMessage: 'Processing halted' });
       return;
     }
 
@@ -15690,6 +15990,7 @@ async function processDocumentFile(file) {
       if (currentAbortController?.signal.aborted) {
         logWarning('Document processing cancelled.');
         cancelledMidway = true;
+        exitStatus = 'cancelled';
         break;
       }
       const chunk = chunks[i];
@@ -15710,16 +16011,19 @@ async function processDocumentFile(file) {
 
     if (cancelledMidway) {
       wasCancelled = true;
+      exitStatus = 'cancelled';
       estimator?.markCancelled();
     }
 
     if (!cancelledMidway && currentAbortController?.signal.aborted) {
       wasCancelled = true;
+      exitStatus = 'cancelled';
       estimator?.markCancelled();
     }
 
     if (!chunkResults.length) {
-      exitProcessingState({ preserveInput: true });
+      exitStatus = 'failed';
+      exitProcessingState({ preserveInput: true, status: 'failed', statusMessage: 'Processing halted' });
       return;
     }
 
@@ -15739,9 +16043,11 @@ async function processDocumentFile(file) {
   } catch (err) {
     if (err?.name === 'AbortError' || err?.message === 'AbortError') {
       wasCancelled = true;
+      exitStatus = 'cancelled';
       logWarning('Document ingestion cancelled');
     } else {
       wasCancelled = true;
+      exitStatus = 'failed';
       logError(err?.message || 'Document ingestion failed');
       console.error(err);
     }
@@ -15758,7 +16064,12 @@ async function processDocumentFile(file) {
       setDocumentCacheBaseline(existingBaseline);
     }
     updateStats();
-    exitProcessingState({ preserveInput: true });
+    const summary = exitStatus === 'failed'
+      ? 'Processing failed'
+      : exitStatus === 'cancelled'
+        ? 'Processing cancelled'
+        : 'Processing complete';
+    exitProcessingState({ preserveInput: true, status: exitStatus, statusMessage: summary });
   }
 }
 
