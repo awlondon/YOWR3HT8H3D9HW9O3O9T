@@ -395,6 +395,20 @@
               <div id="voice-model-transcript-tokens" class="voice-model-transcript__tokens"></div>
               <div id="voice-model-transcript-interim" class="voice-model-transcript__interim"></div>
             </div>
+            <div id="voice-model-editor" class="voice-model-editor" hidden>
+              <label for="voice-model-editor-input" class="voice-model-editor__label">Edit transcript before sending</label>
+              <textarea
+                id="voice-model-editor-input"
+                class="voice-model-editor__input"
+                rows="4"
+                spellcheck="false"
+                placeholder="Review and correct the captured transcript before sending"
+              ></textarea>
+              <div class="voice-model-editor__actions">
+                <button id="voice-model-editor-clear" class="btn btn-tertiary" type="button">Clear</button>
+                <button id="voice-model-editor-send" class="btn btn-primary" type="button">Send prompt</button>
+              </div>
+            </div>
             <div id="voice-model-loading" class="voice-model-loading" role="status" aria-live="polite" hidden>
               <div class="voice-model-loading-bar">
                 <div id="voice-model-loading-progress" class="voice-model-loading-progress"></div>

@@ -131,6 +131,10 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   const transcriptTokens = root.querySelector<HTMLElement>('#voice-model-transcript-tokens');
   const transcriptInterim = root.querySelector<HTMLElement>('#voice-model-transcript-interim');
   const transcriptPlaceholder = root.querySelector<HTMLElement>('#voice-model-transcript-placeholder');
+  const transcriptEditorContainer = root.querySelector<HTMLElement>('#voice-model-editor');
+  const transcriptEditor = root.querySelector<HTMLTextAreaElement>('#voice-model-editor-input');
+  const transcriptSendButton = root.querySelector<HTMLButtonElement>('#voice-model-editor-send');
+  const transcriptClearButton = root.querySelector<HTMLButtonElement>('#voice-model-editor-clear');
   const loadingEl = root.querySelector<HTMLElement>('#voice-model-loading');
   const loadingProgress = root.querySelector<HTMLElement>('#voice-model-loading-progress');
   const loadingLabel = root.querySelector<HTMLElement>('#voice-model-loading-label');
@@ -145,7 +149,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   let transcriptParts: string[] = [];
   let interimTranscript = '';
   let previousTokenCount = 0;
-  let pendingTranscript: string | null = null;
+  let resumeListeningAfterSend = false;
   let loadingTimer: number | null = null;
   let lastPlaybackText = '';
   let settings = readSettings();
@@ -191,6 +195,41 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     micButton.disabled = inFlight;
     micButton.textContent = listeningRequested ? 'Stop listening' : 'Start listening';
     micButton.setAttribute('aria-pressed', listeningRequested ? 'true' : 'false');
+    updateEditorState();
+  }
+
+  function updateEditorState(): void {
+    if (!transcriptEditor || !transcriptSendButton) return;
+    const value = transcriptEditor.value ?? '';
+    const hasContent = value.trim().length > 0;
+    transcriptSendButton.disabled = !hasContent || inFlight;
+    if (transcriptClearButton) {
+      transcriptClearButton.disabled = value.length === 0 || inFlight;
+    }
+  }
+
+  function hideTranscriptEditor(): void {
+    if (transcriptEditor) {
+      transcriptEditor.value = '';
+    }
+    if (transcriptEditorContainer) {
+      transcriptEditorContainer.hidden = true;
+    }
+    updateEditorState();
+  }
+
+  function showTranscriptEditor(transcript: string): void {
+    if (transcriptEditorContainer) {
+      transcriptEditorContainer.hidden = false;
+    }
+    if (transcriptEditor) {
+      transcriptEditor.value = transcript;
+      if (typeof transcriptEditor.focus === 'function') {
+        transcriptEditor.focus();
+      }
+    }
+    updateTranscriptTokens(transcript, '');
+    updateEditorState();
   }
 
   function updateTranscriptTokens(finalText: string, interimText: string): void {
@@ -283,6 +322,8 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       updateMicButtonState();
       return;
     }
+    hideTranscriptEditor();
+    resumeListeningAfterSend = false;
     try {
       recognition = new ctor();
       recognition.continuous = true;
@@ -404,52 +445,19 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       }
       return;
     }
-    if (inFlight || pendingTranscript) {
+    if (inFlight) {
       return;
     }
-    pendingTranscript = finalTranscript;
-    handleTranscriptComplete(finalTranscript)
-      .catch(error => {
-        console.error('Voice model processing failed:', error);
-      })
-      .finally(() => {
-        pendingTranscript = null;
-      });
-  }
-
-  async function handleTranscriptComplete(transcript: string): Promise<void> {
-    if (!transcript) {
-      if (listeningRequested && !inFlight) {
-        if (typeof window !== 'undefined') {
-          window.setTimeout(() => {
-            if (listeningRequested && !inFlight) {
-              startRecognition();
-            }
-          }, 300);
-        } else {
-          startRecognition();
-        }
-      }
-      return;
+    transcriptParts = [];
+    interimTranscript = '';
+    previousTokenCount = finalTranscript ? finalTranscript.split(/\s+/).filter(Boolean).length : 0;
+    if (listeningRequested) {
+      resumeListeningAfterSend = true;
+      listeningRequested = false;
+      updateMicButtonState();
     }
-    try {
-      await processTranscript(transcript);
-    } finally {
-      transcriptParts = [];
-      interimTranscript = '';
-      previousTokenCount = 0;
-      if (listeningRequested && !inFlight) {
-        if (typeof window !== 'undefined') {
-          window.setTimeout(() => {
-            if (listeningRequested && !inFlight) {
-              startRecognition();
-            }
-          }, 350);
-        } else {
-          startRecognition();
-        }
-      }
-    }
+    updateStatus('Transcript captured. Review, edit, and send when ready.');
+    showTranscriptEditor(finalTranscript);
   }
 
   function setListening(active: boolean): void {
@@ -467,6 +475,44 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     micButton.addEventListener('click', () => {
       if (inFlight) return;
       setListening(!listeningRequested);
+    });
+  }
+
+  if (transcriptEditor) {
+    transcriptEditor.addEventListener('input', () => {
+      const value = transcriptEditor.value ?? '';
+      updateTranscriptTokens(value, '');
+      updateEditorState();
+    });
+  }
+
+  if (transcriptSendButton && transcriptEditor) {
+    transcriptSendButton.addEventListener('click', () => {
+      if (inFlight) return;
+      const value = transcriptEditor.value ?? '';
+      const trimmed = value.trim();
+      if (!trimmed) {
+        updateStatus('Transcript is empty. Speak again or edit before sending.');
+        return;
+      }
+      updateTranscriptTokens(trimmed, '');
+      hideTranscriptEditor();
+      processTranscript(trimmed);
+    });
+  }
+
+  if (transcriptClearButton) {
+    transcriptClearButton.addEventListener('click', () => {
+      if (inFlight) return;
+      hideTranscriptEditor();
+      updateTranscriptTokens('', '');
+      previousTokenCount = 0;
+      updateStatus('Transcript cleared. Ready to capture new input.');
+      const shouldResume = resumeListeningAfterSend;
+      resumeListeningAfterSend = false;
+      if (shouldResume && !listeningRequested) {
+        setListening(true);
+      }
     });
   }
 
@@ -582,6 +628,10 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       if (speakerButton) {
         speakerButton.disabled = false;
       }
+      if (result.kind !== 'command' && lastPlaybackText) {
+        updateStatus('Playing synthesized response profile.');
+        speakText(lastPlaybackText);
+      }
     } else if (speakerButton) {
       speakerButton.disabled = true;
     }
@@ -627,7 +677,11 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       inFlight = false;
       currentInteractionId = null;
       updateMicButtonState();
-      if (listeningRequested) {
+      const shouldResume = resumeListeningAfterSend;
+      resumeListeningAfterSend = false;
+      if (shouldResume) {
+        setListening(true);
+      } else if (listeningRequested) {
         updateStatus('Ready for the next utterance.');
       } else {
         updateStatus('Listening paused');
@@ -647,6 +701,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     });
   }
 
+  hideTranscriptEditor();
   updateTranscriptTokens('', '');
   updateMicButtonState();
 
