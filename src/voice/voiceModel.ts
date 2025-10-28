@@ -1,5 +1,18 @@
 import type { AvatarInteraction, UserAvatarStore } from '../userAvatar/index';
 
+type GenericSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  start(): void;
+  stop(): void;
+  abort?: () => void;
+  onresult: ((event: any) => void) | null;
+  onend: ((event: any) => void) | null;
+  onerror: ((event: any) => void) | null;
+};
+
+type GenericSpeechRecognitionConstructor = new () => GenericSpeechRecognition;
+
 type SubmitPromptFn = (input: string, options?: { annotateLog?: boolean }) => Promise<{
   success: boolean;
   tokens: string[];
@@ -114,14 +127,26 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   const micButton = root.querySelector<HTMLButtonElement>('#voice-model-mic');
   const speakerButton = root.querySelector<HTMLButtonElement>('#voice-model-speaker');
   const statusEl = root.querySelector<HTMLElement>('#voice-model-status');
-  const processButton = root.querySelector<HTMLButtonElement>('#voice-model-process');
-  const transcriptInput = root.querySelector<HTMLTextAreaElement>('#voice-model-manual-transcript');
+  const transcriptContainer = root.querySelector<HTMLElement>('#voice-model-transcript');
+  const transcriptTokens = root.querySelector<HTMLElement>('#voice-model-transcript-tokens');
+  const transcriptInterim = root.querySelector<HTMLElement>('#voice-model-transcript-interim');
+  const transcriptPlaceholder = root.querySelector<HTMLElement>('#voice-model-transcript-placeholder');
+  const loadingEl = root.querySelector<HTMLElement>('#voice-model-loading');
+  const loadingProgress = root.querySelector<HTMLElement>('#voice-model-loading-progress');
+  const loadingLabel = root.querySelector<HTMLElement>('#voice-model-loading-label');
   const latencyInput = root.querySelector<HTMLInputElement>('#voice-model-latency');
   const fftInput = root.querySelector<HTMLInputElement>('#voice-model-fft');
   const logContainer = root.querySelector<HTMLElement>('#voice-model-log');
   const metricsContainer = root.querySelector<HTMLElement>('#voice-avatar-metrics');
 
-  let isListening = false;
+  let listeningRequested = false;
+  let recognition: GenericSpeechRecognition | null = null;
+  let recognitionActive = false;
+  let transcriptParts: string[] = [];
+  let interimTranscript = '';
+  let previousTokenCount = 0;
+  let pendingTranscript: string | null = null;
+  let loadingTimer: number | null = null;
   let lastPlaybackText = '';
   let settings = readSettings();
   let currentInteractionId: string | null = null;
@@ -145,23 +170,303 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     orb.classList.toggle('is-active', active);
   }
 
-  function setListening(active: boolean): void {
-    isListening = active;
-    updateOrbActive(active);
-    if (micButton) {
-      micButton.textContent = active ? 'Stop listening' : 'Start listening';
-      micButton.setAttribute('aria-pressed', active ? 'true' : 'false');
+  function getSpeechRecognitionConstructor(): GenericSpeechRecognitionConstructor | null {
+    if (typeof window === 'undefined') return null;
+    const global = window as unknown as {
+      SpeechRecognition?: GenericSpeechRecognitionConstructor;
+      webkitSpeechRecognition?: GenericSpeechRecognitionConstructor;
+    };
+    return global.SpeechRecognition || global.webkitSpeechRecognition || null;
+  }
+
+  function updateMicButtonState(): void {
+    if (!micButton) return;
+    const ctor = getSpeechRecognitionConstructor();
+    if (!ctor) {
+      micButton.disabled = true;
+      micButton.textContent = 'Speech recognition unavailable';
+      micButton.removeAttribute('aria-pressed');
+      return;
     }
-    updateStatus(active ? 'Listening… capturing FFT stream.' : 'Awaiting input');
-    if (!active && transcriptInput) {
-      transcriptInput.focus();
+    micButton.disabled = inFlight;
+    micButton.textContent = listeningRequested ? 'Stop listening' : 'Start listening';
+    micButton.setAttribute('aria-pressed', listeningRequested ? 'true' : 'false');
+  }
+
+  function updateTranscriptTokens(finalText: string, interimText: string): void {
+    const tokens = finalText ? finalText.split(/\s+/).filter(Boolean) : [];
+    if (transcriptTokens) {
+      if (tokens.length) {
+        const fragment = document.createDocumentFragment();
+        const previousCount = previousTokenCount;
+        tokens.forEach((token, index) => {
+          const span = document.createElement('span');
+          span.className = 'voice-model-token';
+          if (index >= previousCount) {
+            span.classList.add('voice-model-token--new');
+            if (typeof window !== 'undefined') {
+              window.setTimeout(() => span.classList.remove('voice-model-token--new'), 600);
+            } else {
+              span.classList.remove('voice-model-token--new');
+            }
+          }
+          span.textContent = token;
+          fragment.appendChild(span);
+        });
+        transcriptTokens.innerHTML = '';
+        transcriptTokens.appendChild(fragment);
+      } else {
+        transcriptTokens.innerHTML = '';
+      }
+    }
+    if (transcriptPlaceholder) {
+      transcriptPlaceholder.classList.toggle('is-hidden', tokens.length > 0 || Boolean(interimText));
+    }
+    if (transcriptInterim) {
+      transcriptInterim.textContent = interimText;
+      transcriptInterim.classList.toggle('is-visible', Boolean(interimText));
+    }
+    if (transcriptContainer) {
+      transcriptContainer.classList.toggle('voice-model-transcript--active', tokens.length > 0 || Boolean(interimText));
+    }
+    previousTokenCount = tokens.length;
+  }
+
+  function startLoadingBar(targetLatency: number): void {
+    if (!loadingEl || !loadingProgress) return;
+    if (loadingTimer !== null && typeof window !== 'undefined') {
+      window.clearInterval(loadingTimer);
+      loadingTimer = null;
+    }
+    loadingEl.hidden = false;
+    loadingProgress.style.width = '0%';
+    if (loadingLabel) {
+      loadingLabel.textContent = 'Synthesizing response…';
+    }
+    const duration = Math.max(900, Number.isFinite(targetLatency) ? targetLatency : 1200);
+    const stepMs = 120;
+    const steps = Math.max(1, Math.round(duration / stepMs));
+    const increment = 95 / steps;
+    let progress = 0;
+    if (typeof window !== 'undefined') {
+      loadingTimer = window.setInterval(() => {
+        progress = Math.min(95, progress + increment);
+        loadingProgress.style.width = `${progress}%`;
+      }, stepMs);
+    }
+  }
+
+  function stopLoadingBar(): void {
+    if (!loadingEl || !loadingProgress) return;
+    if (loadingTimer !== null && typeof window !== 'undefined') {
+      window.clearInterval(loadingTimer);
+      loadingTimer = null;
+    }
+    loadingProgress.style.width = '100%';
+    const hide = () => {
+      loadingEl.hidden = true;
+      loadingProgress.style.width = '0%';
+    };
+    if (typeof window !== 'undefined') {
+      window.setTimeout(hide, 400);
+    } else {
+      hide();
+    }
+  }
+
+  function startRecognition(): void {
+    if (inFlight || recognitionActive) return;
+    const ctor = getSpeechRecognitionConstructor();
+    if (!ctor) {
+      updateStatus('Speech recognition is not supported in this browser.');
+      listeningRequested = false;
+      updateMicButtonState();
+      return;
+    }
+    try {
+      recognition = new ctor();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.onresult = handleRecognitionResult;
+      recognition.onerror = handleRecognitionError;
+      recognition.onend = handleRecognitionEnd;
+      transcriptParts = [];
+      interimTranscript = '';
+      previousTokenCount = 0;
+      updateTranscriptTokens('', '');
+      recognition.start();
+      recognitionActive = true;
+      updateOrbActive(true);
+      updateStatus('Listening… blooming adjacency tokens in real time.');
+      if (speakerButton) {
+        speakerButton.disabled = true;
+      }
+    } catch (error) {
+      console.warn('Unable to start speech recognition:', error);
+      updateStatus('Microphone access denied or unavailable.');
+      listeningRequested = false;
+      updateMicButtonState();
+      recognition = null;
+      recognitionActive = false;
+    }
+  }
+
+  function stopRecognition(): void {
+    if (!recognition) {
+      recognitionActive = false;
+      updateOrbActive(false);
+      return;
+    }
+    recognitionActive = false;
+    try {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.stop();
+    } catch {
+      try {
+        recognition.abort?.();
+      } catch {}
+    }
+    recognition = null;
+    updateOrbActive(false);
+  }
+
+  function handleRecognitionResult(event: any): void {
+    if (!event) return;
+    let finalChanged = false;
+    let interimValue = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      if (!result || !result[0]) continue;
+      const value = typeof result[0].transcript === 'string' ? result[0].transcript.trim() : '';
+      if (!value) continue;
+      if (result.isFinal) {
+        transcriptParts.push(value);
+        finalChanged = true;
+      } else {
+        interimValue = value;
+      }
+    }
+    interimTranscript = interimValue;
+    const finalText = transcriptParts.join(' ').trim();
+    if (finalChanged && finalText) {
+      updateStatus('Blooming adjacency tokens from captured speech…');
+    } else if (interimValue) {
+      updateStatus('Listening… capturing live transcript.');
+    }
+    updateTranscriptTokens(finalText, interimTranscript);
+  }
+
+  function handleRecognitionError(event: any): void {
+    if (event && (event.error === 'not-allowed' || event.error === 'service-not-allowed')) {
+      updateStatus('Microphone access denied. Enable permissions to use voice capture.');
+      listeningRequested = false;
+      stopRecognition();
+      updateMicButtonState();
+      return;
+    }
+    console.warn('Speech recognition error:', event);
+    if (!listeningRequested || inFlight) return;
+    updateStatus('Speech recognition interrupted. Attempting to recover…');
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        if (listeningRequested && !inFlight) {
+          startRecognition();
+        }
+      }, 1000);
+    }
+  }
+
+  function handleRecognitionEnd(): void {
+    recognitionActive = false;
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition = null;
+    }
+    updateOrbActive(false);
+    const finalTranscript = transcriptParts.join(' ').trim();
+    if (!finalTranscript) {
+      if (listeningRequested && !inFlight) {
+        if (typeof window !== 'undefined') {
+          window.setTimeout(() => {
+            if (listeningRequested && !inFlight) {
+              startRecognition();
+            }
+          }, 250);
+        } else {
+          startRecognition();
+        }
+      } else if (!listeningRequested) {
+        updateStatus('Listening paused');
+      }
+      return;
+    }
+    if (inFlight || pendingTranscript) {
+      return;
+    }
+    pendingTranscript = finalTranscript;
+    handleTranscriptComplete(finalTranscript)
+      .catch(error => {
+        console.error('Voice model processing failed:', error);
+      })
+      .finally(() => {
+        pendingTranscript = null;
+      });
+  }
+
+  async function handleTranscriptComplete(transcript: string): Promise<void> {
+    if (!transcript) {
+      if (listeningRequested && !inFlight) {
+        if (typeof window !== 'undefined') {
+          window.setTimeout(() => {
+            if (listeningRequested && !inFlight) {
+              startRecognition();
+            }
+          }, 300);
+        } else {
+          startRecognition();
+        }
+      }
+      return;
+    }
+    try {
+      await processTranscript(transcript);
+    } finally {
+      transcriptParts = [];
+      interimTranscript = '';
+      previousTokenCount = 0;
+      if (listeningRequested && !inFlight) {
+        if (typeof window !== 'undefined') {
+          window.setTimeout(() => {
+            if (listeningRequested && !inFlight) {
+              startRecognition();
+            }
+          }, 350);
+        } else {
+          startRecognition();
+        }
+      }
+    }
+  }
+
+  function setListening(active: boolean): void {
+    listeningRequested = active;
+    updateMicButtonState();
+    if (active) {
+      startRecognition();
+    } else {
+      stopRecognition();
+      updateStatus('Listening paused');
     }
   }
 
   if (micButton) {
     micButton.addEventListener('click', () => {
       if (inFlight) return;
-      setListening(!isListening);
+      setListening(!listeningRequested);
     });
   }
 
@@ -282,52 +587,52 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     }
   }
 
-  async function processTranscript(): Promise<void> {
+  async function processTranscript(transcript: string): Promise<void> {
     if (inFlight) return;
-    const transcript = transcriptInput?.value?.trim() || '';
-    if (!transcript) {
-      updateStatus('Provide a transcript to bloom adjacencies.');
+    const trimmed = typeof transcript === 'string' ? transcript.trim() : '';
+    if (!trimmed) {
+      updateStatus(listeningRequested ? 'Listening… awaiting speech.' : 'Awaiting input');
       return;
     }
 
     inFlight = true;
-    updateStatus('Blooming transcript into HLSF memory…');
-    currentInteractionId = options.userAvatar.recordInteraction({
-      prompt: transcript,
+    updateMicButtonState();
+    updateStatus('Blooming captured speech into HLSF memory…');
+    updateOrbActive(false);
+    startLoadingBar(settings.latency);
+
+    const interaction = options.userAvatar.recordInteraction({
+      prompt: trimmed,
       status: 'processing',
-    }).id;
+    });
+    currentInteractionId = interaction.id;
+
+    if (speakerButton) {
+      speakerButton.disabled = true;
+    }
 
     try {
-      const result = await options.submitPrompt(transcript, { annotateLog: true });
-      finalizeInteraction(currentInteractionId, result, transcript);
-      if (transcriptInput) transcriptInput.value = '';
+      const result = await options.submitPrompt(trimmed, { annotateLog: true });
+      finalizeInteraction(currentInteractionId, result, trimmed);
     } catch (error) {
-      options.userAvatar.updateInteraction(currentInteractionId, {
-        status: 'failed',
-        responseSummary: error instanceof Error ? error.message : 'Voice processing failed',
-      });
+      if (currentInteractionId) {
+        options.userAvatar.updateInteraction(currentInteractionId, {
+          status: 'failed',
+          responseSummary: error instanceof Error ? error.message : 'Voice processing failed',
+        });
+      }
       console.error('Voice model processing failed:', error);
     } finally {
+      stopLoadingBar();
       inFlight = false;
       currentInteractionId = null;
-      setListening(false);
-      updateStatus('Awaiting input');
-    }
-  }
-
-  if (processButton) {
-    processButton.addEventListener('click', () => {
-      processTranscript().catch(error => console.error(error));
-    });
-  }
-
-  if (transcriptInput) {
-    transcriptInput.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        processTranscript().catch(error => console.error(error));
+      updateMicButtonState();
+      if (listeningRequested) {
+        updateStatus('Ready for the next utterance.');
+      } else {
+        updateStatus('Listening paused');
       }
-    });
+    }
   }
 
   if (speakerButton) {
@@ -342,6 +647,24 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     });
   }
 
+  updateTranscriptTokens('', '');
+  updateMicButtonState();
+
+  const recognitionCtor = getSpeechRecognitionConstructor();
+  if (recognitionCtor) {
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        if (!listeningRequested && !inFlight) {
+          setListening(true);
+        }
+      }, 300);
+    } else if (!listeningRequested) {
+      setListening(true);
+    }
+  } else {
+    updateStatus('Speech recognition is not supported in this browser.');
+  }
+
   function cleanup(): void {
     unsubscribe();
   }
@@ -351,7 +674,9 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   return {
     focus() {
       root.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (transcriptInput) transcriptInput.focus();
+      if (micButton) {
+        micButton.focus();
+      }
     },
   };
 }
