@@ -13514,7 +13514,11 @@ async function cmd_remotedir(): Promise<boolean> {
   return hasDirectory;
 }
 
-async function cmd_load(args: string[] | string = []): Promise<boolean> {
+async function cmd_load(
+  args: string[] | string = [],
+  options: { interactive?: boolean } = {},
+): Promise<boolean> {
+  const interactive = options.interactive !== false;
   const rawArgs = Array.isArray(args)
     ? args
     : typeof args === 'string'
@@ -13541,7 +13545,11 @@ async function cmd_load(args: string[] | string = []): Promise<boolean> {
       setRemotedirFlag(true);
     }
     if (!remotedir) {
-      await cmd_remotedir();
+      if (interactive) {
+        await cmd_remotedir();
+      } else {
+        logWarning('Remote DB auto-save directory not connected. Run /remotedir to select a location when ready.');
+      }
     }
   }
 
@@ -16264,7 +16272,7 @@ async function initialize() {
     safeStorageRemove(API_KEY_STORAGE_KEY);
   }
 
-  const bootstrapped = await cmd_load(['-remotedir']);
+  const bootstrapped = await cmd_load(['-remotedir'], { interactive: false });
   const dbAvailable = bootstrapped || !!getDb();
   scheduleRemoteCacheWarmup({ reason: 'initialize' });
 
