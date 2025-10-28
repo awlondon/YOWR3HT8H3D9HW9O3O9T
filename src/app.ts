@@ -4,7 +4,7 @@ import { createRemoteDbFileWriter } from './engine/remoteDbWriter';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
 import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './export/modelParams';
-import { initializeVoiceClonePanel, signalVoiceCloneTokensChanged } from './voice/voiceClone';
+import { initializeVoiceClonePanel, resetVoiceCloneStore, signalVoiceCloneTokensChanged } from './voice/voiceClone';
 import { initializeVoiceModelDock } from './voice/voiceModel';
 import { initializeUserAvatarStore } from './userAvatar';
 import { initializeSaasPlatform, registerSaasCommands } from './saas/platform';
@@ -11352,6 +11352,119 @@ function analyzeDatabaseMetadata() {
   };
 }
 
+function snapshotConversationLog() {
+  const logElement = elements?.log;
+  if (!(logElement instanceof HTMLElement)) {
+    return { html: '', entries: [] };
+  }
+  const entries = Array.from(logElement.querySelectorAll('.log-entry')).map((node: Element) => ({
+    className: typeof (node as HTMLElement).className === 'string' ? (node as HTMLElement).className : '',
+    html: (node as HTMLElement).innerHTML || '',
+  }));
+  return {
+    html: logElement.innerHTML || '',
+    entries,
+  };
+}
+
+function restoreConversationLog(snapshot) {
+  const logElement = elements?.log;
+  if (!(logElement instanceof HTMLElement)) return;
+  const html = snapshot && typeof snapshot.html === 'string' ? snapshot.html : '';
+  if (html) {
+    logElement.innerHTML = html;
+  } else if (Array.isArray(snapshot?.entries) && snapshot.entries.length) {
+    logElement.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    for (const entry of snapshot.entries) {
+      if (!entry || typeof entry.html !== 'string') continue;
+      const div = document.createElement('div');
+      div.className = typeof entry.className === 'string' ? entry.className : 'log-entry';
+      div.innerHTML = entry.html;
+      fragment.appendChild(div);
+    }
+    logElement.appendChild(fragment);
+  } else {
+    logElement.innerHTML = '';
+  }
+  logElement.scrollTop = logElement.scrollHeight;
+}
+
+function snapshotLocalHlsfMemory() {
+  const memory = ensureLocalHlsfMemory();
+  if (!memory) return null;
+
+  const prompts = Array.isArray(memory.prompts)
+    ? memory.prompts.map(entry => {
+        if (!entry || typeof entry !== 'object') return null;
+        const clone = Object.assign({}, entry);
+        if (Array.isArray(clone.tokens)) clone.tokens = clone.tokens.filter(Boolean);
+        if (Array.isArray(clone.adjacencySeeds)) clone.adjacencySeeds = clone.adjacencySeeds.filter(Boolean);
+        return clone;
+      }).filter(Boolean)
+    : [];
+
+  const adjacencySummaries = memory.adjacencySummaries instanceof Map
+    ? Array.from(memory.adjacencySummaries.entries()).map(([key, value]) => [key, value])
+    : [];
+
+  return {
+    prompts,
+    adjacencySummaries,
+    lastPrompt: memory.lastPrompt || null,
+    lastAdjacency: memory.lastAdjacency || null,
+  };
+}
+
+function restoreLocalHlsfMemory(snapshot) {
+  const memory = ensureLocalHlsfMemory();
+  if (!memory) return;
+
+  const resolvedPrompts = Array.isArray(snapshot?.prompts)
+    ? snapshot.prompts
+        .map(entry => {
+          if (!entry || typeof entry !== 'object') return null;
+          const text = typeof entry.text === 'string' ? entry.text : '';
+          if (!text) return null;
+          const normalized = {
+            id: typeof entry.id === 'string' ? entry.id : (entry.id != null ? String(entry.id) : undefined),
+            text,
+            tokens: Array.isArray(entry.tokens) ? entry.tokens.filter(Boolean) : [],
+            adjacencySeeds: Array.isArray(entry.adjacencySeeds) ? entry.adjacencySeeds.filter(Boolean) : [],
+            timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : new Date().toISOString(),
+          } as any;
+          if (normalized.id == null || normalized.id === '') {
+            normalized.id = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+          }
+          if (entry.meta && typeof entry.meta === 'object') {
+            normalized.meta = Object.assign({}, entry.meta);
+          }
+          return normalized;
+        })
+        .filter(Boolean)
+    : [];
+
+  const adjacency = new Map();
+  if (Array.isArray(snapshot?.adjacencySummaries)) {
+    for (const entry of snapshot.adjacencySummaries) {
+      if (!Array.isArray(entry) || entry.length < 2) continue;
+      const [key, value] = entry;
+      if (typeof key !== 'string' || !key) continue;
+      if (!value || typeof value !== 'object') continue;
+      adjacency.set(key, value);
+    }
+  }
+
+  memory.prompts = resolvedPrompts;
+  memory.adjacencySummaries = adjacency;
+  memory.lastPrompt = snapshot?.lastPrompt && typeof snapshot.lastPrompt === 'object'
+    ? snapshot.lastPrompt
+    : null;
+  memory.lastAdjacency = snapshot?.lastAdjacency && typeof snapshot.lastAdjacency === 'object'
+    ? snapshot.lastAdjacency
+    : null;
+}
+
 function showDatabaseMetadata() {
   const metadata = analyzeDatabaseMetadata();
   const dbStats = Object.assign({
@@ -11613,6 +11726,34 @@ function exportDatabaseMetadata(args = []) {
     })
     .filter(Boolean);
 
+  const sessionTokens = Session?.tokens instanceof Set
+    ? Array.from(Session.tokens).filter(token => typeof token === 'string' && token.trim())
+    : [];
+  const tokenOrderSnapshot = Array.isArray(state?.tokenOrder)
+    ? state.tokenOrder.filter(token => typeof token === 'string' && token.trim())
+    : [];
+  const conversationSnapshot = snapshotConversationLog();
+  const localMemorySnapshot = snapshotLocalHlsfMemory();
+
+  let voiceProfileSnapshot = null;
+  let voiceStoreSnapshot = null;
+  try {
+    const voiceApi = window.CognitionEngine?.voice;
+    if (voiceApi) {
+      if (typeof voiceApi.getProfileExport === 'function') {
+        voiceProfileSnapshot = voiceApi.getProfileExport();
+      }
+      if (typeof voiceApi.getStore === 'function') {
+        const storeSnapshot = voiceApi.getStore();
+        if (storeSnapshot && typeof storeSnapshot === 'object') {
+          voiceStoreSnapshot = storeSnapshot;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Unable to capture voice profile snapshot for export:', err);
+  }
+
   const relationTypeCount = Array.isArray(metadata.relHistogramRows) ? metadata.relHistogramRows.length : null;
   const cliArgs = Array.isArray(args) ? args : [];
   const parseResult = resolveModelParamConfig(window.HLSF?.modelParamConfig || MODEL_PARAM_DEFAULTS, cliArgs, {
@@ -11732,7 +11873,13 @@ function exportDatabaseMetadata(args = []) {
         Math.ceil((new Date(metadata.newestToken.cached_at) - new Date(metadata.oldestToken.cached_at)) / (1000 * 60 * 60 * 24)) : 0
     },
     full_token_data: metadata.rawData,
-    user_prompts: promptsForExport
+    user_prompts: promptsForExport,
+    session_tokens: sessionTokens,
+    token_order: tokenOrderSnapshot,
+    conversation_log: conversationSnapshot,
+    local_memory: localMemorySnapshot,
+    voice_profile: voiceProfileSnapshot,
+    voice_store: voiceStoreSnapshot,
   };
 
   exportData.model_params = modelParams;
@@ -11869,19 +12016,23 @@ async function importHLSFDBFromFile(file) {
   try {
     const txt = await file.text();
     const payload = await decodeDatabaseExportPayload(txt);
-    const count = await loadDbObject(payload);
-    const db = getDb();
-    if (!db) return;
-    const seen = [];
-    for (const rec of db.full_token_data || []) {
-      safeStorageSet(TOKEN_CACHE_PREFIX + rec.token, JSON.stringify(rec));
-      seen.push(rec.token);
+    if (payload && typeof payload === 'object') {
+      await importDatabaseData(payload, 'file');
+    } else {
+      const count = await loadDbObject(txt);
+      const db = getDb();
+      if (!db) return;
+      const seen = [];
+      for (const rec of db.full_token_data || []) {
+        safeStorageSet(TOKEN_CACHE_PREFIX + rec.token, JSON.stringify(rec));
+        seen.push(rec.token);
+      }
+      safeStorageSet(DB_INDEX_KEY, JSON.stringify(seen));
+      window.HLSF_GRAPH = null;
+      updateStats();
+      addLog(`📊 Import: ${seen.length} tokens (${count} normalized).`);
+      updateHeaderCounts();
     }
-    safeStorageSet(DB_INDEX_KEY, JSON.stringify(seen));
-    window.HLSF_GRAPH = null;
-    updateStats();
-    addLog(`📊 Import: ${seen.length} tokens (${count} normalized).`);
-    updateHeaderCounts();
   } catch (err) {
     logError(`Import failed: ${err?.message || err}`);
   }
@@ -11950,7 +12101,83 @@ async function importDatabaseData(data, source = 'file') {
     if (skipped > 0) summary.push(`${skipped} existing tokens kept`);
     if (!summary.length) summary.push('no cache changes');
 
+    if (Array.isArray(data?.session_tokens)) {
+      if (!(Session.tokens instanceof Set)) {
+        Session.tokens = new Set();
+      } else {
+        Session.tokens.clear();
+      }
+      for (const token of data.session_tokens) {
+        if (typeof token !== 'string') continue;
+        const trimmed = token.trim();
+        if (!trimmed) continue;
+        Session.tokens.add(trimmed);
+      }
+    }
+
+    if (Array.isArray(data?.user_prompts)) {
+      const promptLog = getSessionPromptLog();
+      promptLog.length = 0;
+      for (const record of data.user_prompts) {
+        if (!record || typeof record !== 'object') continue;
+        const text = typeof record.text === 'string' ? record.text : '';
+        if (!text.trim()) continue;
+        const entry: any = {
+          text,
+          timestamp: typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
+        };
+        if (record.meta && typeof record.meta === 'object') {
+          entry.meta = { ...record.meta };
+        }
+        promptLog.push(entry);
+      }
+    }
+
+    if (data?.conversation_log) {
+      restoreConversationLog(data.conversation_log);
+    } else if (elements?.log instanceof HTMLElement) {
+      elements.log.innerHTML = '';
+    }
+
+    if (data?.local_memory) {
+      restoreLocalHlsfMemory(data.local_memory);
+    } else {
+      restoreLocalHlsfMemory({});
+    }
+
+    try {
+      const voicePayload = data?.voice_store || data?.voice_profile;
+      const voiceApi = window.CognitionEngine?.voice;
+      if (voicePayload && voiceApi?.importProfile) {
+        voiceApi.importProfile(voicePayload, { source: 'import', persist: true });
+      } else if (voiceApi?.resetStore) {
+        voiceApi.resetStore({ persist: true, notify: false });
+      }
+      if (voicePayload && window.Session && typeof window.Session === 'object') {
+        if (data?.voice_profile) {
+          window.Session.voiceProfile = data.voice_profile;
+        } else if (voicePayload && typeof voicePayload === 'object') {
+          window.Session.voiceProfile = voicePayload;
+        }
+        if (window.Session.voiceProfile && window.Session.voiceProfile.profileClone) {
+          window.Session.voiceProfileClone = window.Session.voiceProfile.profileClone;
+        } else if (voicePayload?.profileClone) {
+          window.Session.voiceProfileClone = voicePayload.profileClone;
+        } else {
+          delete window.Session.voiceProfileClone;
+        }
+      } else if (window.Session && typeof window.Session === 'object') {
+        delete window.Session.voiceProfile;
+        delete window.Session.voiceProfileClone;
+      }
+    } catch (err) {
+      console.warn('Voice profile import failed:', err);
+    }
+
+    updateStats();
+
     logOK(`Database imported from ${source}: ${summary.join(', ')}, normalized ${normalizedCount} tokens`);
+    updateHeaderCounts();
 
     if (data?.database_stats) {
       addLog(`<div class="adjacency-insight">
@@ -12495,8 +12722,20 @@ async function cmdImport() {
       const f = e.target.files?.[0];
       if (!f) return;
       const text = await f.text();
-      const n = await loadDbObject(text, { skipVisualization: true });
-      logFinal(`DB loaded. Tokens: ${n}`);
+      let payload;
+      try {
+        payload = await decodeDatabaseExportPayload(text);
+      } catch (err) {
+        logError(err?.message || String(err));
+        return;
+      }
+
+      if (payload && typeof payload === 'object') {
+        await importDatabaseData(payload, 'file');
+      } else {
+        const normalized = await loadDbObject(text, { skipVisualization: true });
+        logFinal(`DB loaded. Tokens: ${normalized}`);
+      }
       await handleCommand('/db');
     } catch (err) {
       logError(String(err.message || err));
@@ -14596,12 +14835,47 @@ async function handleCommand(cmd) {
           Session.prompts.length = 0;
         }
         try {
+          const promptLog = getSessionPromptLog();
+          promptLog.length = 0;
+        } catch {
+          // ignore errors clearing prompt log
+        }
+        try {
           const recorder = window.HLSF?.remoteDbRecorder;
           if (recorder && typeof recorder.reset === 'function') {
             recorder.reset();
           }
         } catch (err) {
           console.warn('Remote DB recorder reset failed:', err);
+        }
+        try {
+          resetVoiceCloneStore({ persist: true, notify: false });
+        } catch (err) {
+          console.warn('Voice clone reset failed:', err);
+        }
+        if (window.Session && typeof window.Session === 'object') {
+          delete window.Session.voiceProfile;
+          delete window.Session.voiceProfileClone;
+        }
+        if (BatchLog && typeof BatchLog.clear === 'function') {
+          try { BatchLog.clear(); } catch {}
+        }
+        restoreConversationLog({ html: '' });
+        restoreLocalHlsfMemory({});
+        if (state?.tokenSources instanceof Map) {
+          state.tokenSources.clear();
+        }
+        if (Array.isArray(state?.tokenOrder)) {
+          state.tokenOrder.length = 0;
+        }
+        if (state?.liveGraph?.nodes instanceof Map) {
+          state.liveGraph.nodes.clear();
+        }
+        if (state?.liveGraph) {
+          state.liveGraph.links = [];
+        }
+        if (state?.pendingPromptReviews instanceof Map) {
+          state.pendingPromptReviews.clear();
         }
         setDocumentCacheBaseline(0, { manual: true });
         updateStats();

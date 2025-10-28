@@ -3100,6 +3100,38 @@ function deleteAllRecordings() {
   renderVoicePopup();
 }
 
+function resetVoiceCloneStore(options = {}) {
+  const { persist = true, notify = false } = options || {};
+  stopActivePlayback();
+  store = defaultVoiceStore();
+  voiceStoreLoaded = true;
+  pendingVoiceData.length = 0;
+  audioUrlCache.clear();
+  recordingIndex = buildRecordingIndex();
+  voiceExpressionModel = buildVoiceExpressionModel();
+  refreshVoiceProfileClone(false);
+  if (persist) saveVoiceStore();
+  panelState.selectedRecordingId = null;
+  panelState.tokens = [];
+  panelState.filter = '';
+  panelState.popupMappedTokens = [];
+  panelState.popupLastRecordingId = null;
+  panelState.popupTranscript = '';
+  panelState.popupStatus = 'Idle';
+  clearScheduledTokenRefresh();
+  scheduleTokenRefresh('voice-store-reset', { priority: 'high' });
+  if (panelReady) {
+    renderTokenList();
+    renderTokenDetail();
+    renderVoicePopup();
+  }
+  signalVoiceCloneTokensChanged('voice-store-reset');
+  if (notify && panelReady) {
+    setStatus('Voice profile cleared.', 'warning');
+  }
+  return JSON.parse(JSON.stringify(store));
+}
+
 function handleSearchInput(event) {
   panelState.filter = event.target.value || '';
   renderTokenList();
@@ -3232,6 +3264,7 @@ function initializeVoiceClonePanel() {
     getProfileClone: getProfileCloneExportPayload,
     getProfileExport: getVoiceProfileExportPayload,
     importProfile: importVoiceProfileExportPayload,
+    resetStore: resetVoiceCloneStore,
     getVoiceData: () => JSON.parse(JSON.stringify(store.voiceData || [])),
     openConsole: () => setVoicePopupVisible(true),
     closeConsole: () => setVoicePopupVisible(false),
@@ -3241,4 +3274,4 @@ function initializeVoiceClonePanel() {
   renderVoicePopup();
 }
 
-export { initializeVoiceClonePanel, signalVoiceCloneTokensChanged };
+export { initializeVoiceClonePanel, signalVoiceCloneTokensChanged, resetVoiceCloneStore };
