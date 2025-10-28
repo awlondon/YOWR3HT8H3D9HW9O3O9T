@@ -135,6 +135,8 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   const transcriptTokens = root.querySelector<HTMLElement>('#voice-model-transcript-tokens');
   const transcriptInterim = root.querySelector<HTMLElement>('#voice-model-transcript-interim');
   const transcriptPlaceholder = root.querySelector<HTMLElement>('#voice-model-transcript-placeholder');
+  const transcriptActions = root.querySelector<HTMLElement>('#voice-model-transcript-actions');
+  const transcriptSendCapturedButton = root.querySelector<HTMLButtonElement>('#voice-model-transcript-send');
   const transcriptEditorContainer = root.querySelector<HTMLElement>('#voice-model-editor');
   const transcriptEditor = root.querySelector<HTMLTextAreaElement>('#voice-model-editor-input');
   const transcriptSendButton = root.querySelector<HTMLButtonElement>('#voice-model-editor-send');
@@ -153,6 +155,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   let transcriptParts: string[] = [];
   let interimTranscript = '';
   let previousTokenCount = 0;
+  let capturedTranscript = '';
   let resumeListeningAfterSend = false;
   let loadingTimer: number | null = null;
   let lastPlaybackText = '';
@@ -189,6 +192,45 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     return global.SpeechRecognition || global.webkitSpeechRecognition || null;
   }
 
+  const defaultTranscriptSendLabel = transcriptSendCapturedButton?.textContent?.trim() || 'Send captured prompt';
+
+  function updateTranscriptSendButtonState(tokenCount?: number): void {
+    if (!transcriptSendCapturedButton) return;
+    const normalized = capturedTranscript.trim();
+    const count =
+      typeof tokenCount === 'number'
+        ? tokenCount
+        : normalized
+            .split(/\s+/)
+            .filter(Boolean)
+            .length;
+    const hasTranscript = normalized.length > 0 && count >= 0;
+
+    if (count > 0) {
+      transcriptSendCapturedButton.textContent =
+        count === 1
+          ? 'Send captured prompt (1 token)'
+          : `Send captured prompt (${count} tokens)`;
+    } else {
+      transcriptSendCapturedButton.textContent = defaultTranscriptSendLabel;
+    }
+
+    transcriptSendCapturedButton.hidden = !hasTranscript;
+    transcriptSendCapturedButton.disabled = !hasTranscript || inFlight;
+
+    if (hasTranscript) {
+      const label =
+        count > 0 ? `Send captured prompt with ${count} ${count === 1 ? 'token' : 'tokens'}` : 'Send captured prompt';
+      transcriptSendCapturedButton.setAttribute('aria-label', label);
+    } else {
+      transcriptSendCapturedButton.removeAttribute('aria-label');
+    }
+
+    if (transcriptActions) {
+      transcriptActions.hidden = !hasTranscript;
+    }
+  }
+
   function updateMicButtonState(): void {
     if (!micButton) return;
     const ctor = getSpeechRecognitionConstructor();
@@ -202,6 +244,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     micButton.textContent = listeningRequested ? 'Stop listening' : 'Start listening';
     micButton.setAttribute('aria-pressed', listeningRequested ? 'true' : 'false');
     updateEditorState();
+    updateTranscriptSendButtonState();
   }
 
   function updateEditorState(): void {
@@ -239,7 +282,9 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   }
 
   function updateTranscriptTokens(finalText: string, interimText: string): void {
-    const tokens = finalText ? finalText.split(/\s+/).filter(Boolean) : [];
+    const normalizedFinal = typeof finalText === 'string' ? finalText.trim() : '';
+    const tokens = normalizedFinal ? normalizedFinal.split(/\s+/).filter(Boolean) : [];
+    capturedTranscript = normalizedFinal;
     if (transcriptTokens) {
       if (tokens.length) {
         const fragment = document.createDocumentFragment();
@@ -275,6 +320,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       transcriptContainer.classList.toggle('voice-model-transcript--active', tokens.length > 0 || Boolean(interimText));
     }
     previousTokenCount = tokens.length;
+    updateTranscriptSendButtonState(tokens.length);
   }
 
   function startLoadingBar(targetLatency: number): void {
@@ -492,31 +538,41 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     });
   }
 
+  function sendCapturedTranscript(rawValue: string): void {
+    if (inFlight) return;
+    const trimmed = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!trimmed) {
+      updateStatus('Transcript is empty. Speak again or edit before sending.');
+      return;
+    }
+    capturedTranscript = trimmed;
+    updateTranscriptTokens(trimmed, '');
+    if (promptInput) {
+      promptInputPreviousValue = promptInput.value;
+      promptInputPopulatedByVoice = true;
+      promptInput.value = trimmed;
+      if (typeof promptInput.focus === 'function') {
+        promptInput.focus();
+      }
+      promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      promptInputPreviousValue = null;
+      promptInputPopulatedByVoice = false;
+      console.warn('Voice model prompt input not found; sending without mirroring command field.');
+    }
+    hideTranscriptEditor();
+    processTranscript(trimmed);
+  }
+
   if (transcriptSendButton && transcriptEditor) {
     transcriptSendButton.addEventListener('click', () => {
-      if (inFlight) return;
-      const value = transcriptEditor.value ?? '';
-      const trimmed = value.trim();
-      if (!trimmed) {
-        updateStatus('Transcript is empty. Speak again or edit before sending.');
-        return;
-      }
-      updateTranscriptTokens(trimmed, '');
-      if (promptInput) {
-        promptInputPreviousValue = promptInput.value;
-        promptInputPopulatedByVoice = true;
-        promptInput.value = trimmed;
-        if (typeof promptInput.focus === 'function') {
-          promptInput.focus();
-        }
-        promptInput.dispatchEvent(new Event('input', { bubbles: true }));
-      } else {
-        promptInputPreviousValue = null;
-        promptInputPopulatedByVoice = false;
-        console.warn('Voice model prompt input not found; sending without mirroring command field.');
-      }
-      hideTranscriptEditor();
-      processTranscript(trimmed);
+      sendCapturedTranscript(transcriptEditor.value ?? '');
+    });
+  }
+
+  if (transcriptSendCapturedButton) {
+    transcriptSendCapturedButton.addEventListener('click', () => {
+      sendCapturedTranscript(capturedTranscript);
     });
   }
 
