@@ -3,19 +3,30 @@ export interface LoginFormOptions {
   membershipLevels: { MEMBER: string } & Record<string, string>;
 }
 
-function readControlValue(form: HTMLFormElement, name: string): string {
+interface ReadControlOptions {
+  trim?: boolean;
+}
+
+function readControlValue(
+  form: HTMLFormElement,
+  name: string,
+  options: ReadControlOptions = {}
+): string {
+  const { trim = true } = options;
   if (!form || !name) return '';
   const elements = form.elements;
   if (elements && typeof elements.namedItem === 'function') {
     const control = elements.namedItem(name);
     if (control && typeof (control as HTMLInputElement).value === 'string') {
-      return ((control as HTMLInputElement).value || '').trim();
+      const value = (control as HTMLInputElement).value || '';
+      return trim ? value.trim() : value;
     }
   }
   if (typeof form.querySelector === 'function') {
     const fallback = form.querySelector(`[name="${name}"]`);
     if (fallback && typeof (fallback as HTMLInputElement).value === 'string') {
-      return ((fallback as HTMLInputElement).value || '').trim();
+      const value = (fallback as HTMLInputElement).value || '';
+      return trim ? value.trim() : value;
     }
   }
   return '';
@@ -40,10 +51,12 @@ export function initializeLoginForm(
       return;
     }
     const email = readControlValue(form, 'loginEmail');
+    const password = readControlValue(form, 'loginPassword', { trim: false });
     finalize(membershipLevels.MEMBER, {
       email,
       name: email,
       plan: 'pro',
+      password,
     });
   };
 

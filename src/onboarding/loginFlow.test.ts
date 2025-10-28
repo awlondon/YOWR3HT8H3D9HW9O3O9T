@@ -35,7 +35,7 @@ class MockForm extends EventTarget {
 test('initializeLoginForm routes valid submissions to finalizeOnboarding', () => {
   const mock = new MockForm();
   mock.setControl('loginEmail', ' user@example.com ');
-  mock.setControl('loginPassword', 'super-secret');
+  mock.setControl('loginPassword', '  super-secret  ');
   const form = mock as unknown as HTMLFormElement;
 
   let capturedLevel: string | null = null;
@@ -59,6 +59,7 @@ test('initializeLoginForm routes valid submissions to finalizeOnboarding', () =>
     email: 'user@example.com',
     name: 'user@example.com',
     plan: 'pro',
+    password: '  super-secret  ',
   });
 });
 
