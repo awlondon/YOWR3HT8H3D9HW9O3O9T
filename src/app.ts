@@ -8361,6 +8361,67 @@ let remoteCacheWarmPromise = null;
 let remoteCacheWarmActiveKey = '';
 let remoteCacheWarmCompletedKey = '';
 
+function handleRemoteDbUpdatedEvent(event) {
+  if (typeof window === 'undefined') return;
+
+  const detail = event && typeof event === 'object' ? event.detail : null;
+  if (detail && typeof detail === 'object') {
+    try {
+      if (detail.metadata && typeof detail.metadata === 'object') {
+        window.HLSF = window.HLSF || {};
+        window.HLSF.dbMeta = detail.metadata;
+      }
+      if (Array.isArray(detail.tokenIndex)) {
+        window.HLSF = window.HLSF || {};
+        window.HLSF.dbIndex = detail.tokenIndex.slice();
+      }
+    } catch (err) {
+      console.warn('Failed to apply remote DB manifest update:', err);
+    }
+  }
+
+  let warmupPromise = null;
+  try {
+    const recorder = window.HLSF?.remoteDbRecorder;
+    const remote = window.HLSF?.remoteDb;
+    if (remote && recorder && typeof remote.attachRecorder === 'function') {
+      remote.attachRecorder(recorder);
+      warmupPromise = remoteCacheWarmPromise;
+    }
+  } catch (err) {
+    console.warn('Remote DB attachment after update failed:', err);
+  }
+
+  try {
+    updateHeaderCounts();
+  } catch (err) {
+    console.warn('Failed to refresh header counts after remote DB update:', err);
+  }
+
+  const triggerReload = () => {
+    try {
+      notifyHlsfAdjacencyChange('remote-db-update', { immediate: true });
+    } catch (err) {
+      console.warn('Failed to notify HLSF after remote DB update:', err);
+    }
+  };
+
+  if (warmupPromise && typeof warmupPromise.then === 'function') {
+    warmupPromise
+      .then(triggerReload)
+      .catch(err => {
+        console.warn('Remote cache warmup after update failed:', err);
+        triggerReload();
+      });
+  } else {
+    triggerReload();
+  }
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('hlsf:remote-db-updated', handleRemoteDbUpdatedEvent);
+}
+
 function computeRemoteDatasetKey(tokens, metadata) {
   const metaPart = (() => {
     if (!metadata || typeof metadata !== 'object') return '';
