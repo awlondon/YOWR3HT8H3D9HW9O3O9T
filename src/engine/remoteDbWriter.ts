@@ -73,28 +73,89 @@ async function writeJsonFile(directory: any, name: string, data: unknown) {
   }
 }
 
-async function pruneMissingChunks(directory: any, keep: Set<string>) {
-  if (!directory) return;
+async function readJsonFromHandle(handle: any) {
+  if (!handle || typeof handle.getFile !== 'function') return null;
   try {
-    for await (const [name, handle] of (directory as any).entries() as AsyncIterable<[string, any]>) {
-      if ((handle as any).kind === 'file' && !keep.has(name)) {
-        try {
-          await directory.removeEntry(name);
-        } catch (err: any) {
-          if (!err || (err.name !== 'NotFoundError' && err.name !== 'NotAllowedError')) {
-            throw err;
-          }
-        }
-      }
+    const file = await handle.getFile();
+    if (!file || typeof file.text !== 'function') return null;
+    const text = await file.text();
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
     }
   } catch (err: any) {
-    if (err && err.name === 'TypeError') {
-      // Some browsers do not yet support async iteration on directory handles.
-      // Ignore and skip pruning in that case.
-      return;
+    if (err && (err.name === 'NotFoundError' || err.name === 'NotAllowedError')) {
+      return null;
     }
     throw err;
   }
+}
+
+async function readJsonFileFromDirectory(directory: any, name: string) {
+  if (!directory || typeof directory.getFileHandle !== 'function') return null;
+  try {
+    const fileHandle = await directory.getFileHandle(name);
+    return await readJsonFromHandle(fileHandle);
+  } catch (err: any) {
+    if (err && (err.name === 'NotFoundError' || err.name === 'NotAllowedError')) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+function parseTokenIndexPayload(payload: any): string[] {
+  if (!payload) return [];
+  const list = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload.tokens)
+      ? payload.tokens
+      : [];
+  return list
+    .map(token => (typeof token === 'string' ? token.trim() : ''))
+    .filter(Boolean);
+}
+
+function mergeChunkTokens(existing: any[], incoming: any[]) {
+  const order: string[] = [];
+  const map = new Map<string, any>();
+
+  const addRecords = (records: any[], preferNew: boolean) => {
+    if (!Array.isArray(records)) return;
+    for (const record of records) {
+      if (!record || typeof record !== 'object') continue;
+      const rawToken = typeof record.token === 'string' ? record.token : '';
+      const token = rawToken.trim();
+      if (!token) continue;
+      const key = token.toLowerCase();
+      if (!map.has(key)) {
+        order.push(key);
+        map.set(key, cloneData(record));
+      } else if (preferNew) {
+        map.set(key, cloneData(record));
+      }
+    }
+  };
+
+  addRecords(existing, false);
+  addRecords(incoming, true);
+
+  return order
+    .map(key => map.get(key))
+    .filter((entry): entry is any => Boolean(entry));
+}
+
+function countRelationships(record: any): number {
+  if (!record || typeof record !== 'object') return 0;
+  const relationships = (record as any).relationships;
+  if (!relationships || typeof relationships !== 'object') return 0;
+  let total = 0;
+  for (const value of Object.values(relationships)) {
+    if (Array.isArray(value)) total += value.length;
+  }
+  return total;
 }
 
 export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): RemoteDbWriter {
@@ -272,32 +333,209 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
     }
 
     logger.onSyncStart?.();
+    const existingMetadata = await readJsonFileFromDirectory(directory, 'metadata.json');
+    const existingTokenIndex = parseTokenIndexPayload(
+      await readJsonFileFromDirectory(directory, 'token-index.json'),
+    );
 
-    await writeJsonFile(directory, 'metadata.json', metadata);
-    await writeJsonFile(directory, 'token-index.json', Array.isArray(update.tokenIndex) ? update.tokenIndex : []);
+    const parsePrefix = (raw: unknown): { key: string; label: string } => {
+      if (typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (trimmed) {
+          return { key: trimmed.toLowerCase(), label: trimmed };
+        }
+      }
+      return { key: '_', label: '_' };
+    };
 
-    const keep = new Set<string>();
-    for (const chunk of update.chunks || []) {
-      if (!chunk || !chunk.prefix) continue;
-      const payload = {
-        prefix: chunk.prefix,
-        token_count: Number.isFinite(chunk.token_count)
-          ? chunk.token_count
-          : Array.isArray(chunk.tokens) ? chunk.tokens.length : 0,
-        tokens: Array.isArray(chunk.tokens) ? chunk.tokens : [],
-      };
-      const fileName = `${chunk.prefix}.json`;
-      keep.add(fileName);
-      const fileHandle = await chunksDirectory.getFileHandle(fileName, { create: true });
-      const writable = await fileHandle.createWritable();
-      try {
-        await writeJsonToWritable(writable, payload);
-      } finally {
-        await writable.close();
+    type ChunkEntryInfo = { prefix: string; href: string; token_count: number };
+    const chunkEntries = new Map<string, ChunkEntryInfo>();
+    const existingChunkInfo = new Map<string, { prefix: string; href: string }>();
+    const incomingChunkInfo = new Map<string, { prefix: string; href: string }>();
+
+    const registerChunkMetadata = (
+      target: Map<string, { prefix: string; href: string }>,
+      raw: any,
+    ) => {
+      if (!raw || typeof raw !== 'object') return;
+      const { key, label } = parsePrefix((raw as any).prefix);
+      const hrefValue = typeof raw.href === 'string' && raw.href.trim()
+        ? raw.href.trim()
+        : `chunks/${label}.json`;
+      target.set(key, { prefix: label, href: hrefValue });
+      const existing = chunkEntries.get(key);
+      const tokenCount = Number.isFinite(raw.token_count)
+        ? Number(raw.token_count)
+        : existing?.token_count ?? 0;
+      chunkEntries.set(key, {
+        prefix: label,
+        href: hrefValue || existing?.href || `chunks/${label}.json`,
+        token_count: tokenCount,
+      });
+    };
+
+    if (Array.isArray(existingMetadata?.chunks)) {
+      for (const chunk of existingMetadata.chunks) {
+        registerChunkMetadata(existingChunkInfo, chunk);
       }
     }
 
-    await pruneMissingChunks(chunksDirectory, keep);
+    if (Array.isArray(metadata?.chunks)) {
+      for (const chunk of metadata.chunks) {
+        registerChunkMetadata(incomingChunkInfo, chunk);
+      }
+    }
+
+    const chunkDataCache = new Map<string, { prefix: string; tokens: any[] }>();
+
+    const resolveChunkFileName = (entry: ChunkEntryInfo) => {
+      const href = typeof entry.href === 'string' ? entry.href.trim() : '';
+      if (href) {
+        const parts = href.split(/[\\/]/);
+        const last = parts[parts.length - 1];
+        if (last) return last;
+      }
+      const safePrefix = entry.prefix || '_';
+      return `${safePrefix}.json`;
+    };
+
+    const chunkUpdates = Array.isArray(update.chunks) ? update.chunks : [];
+    for (const chunk of chunkUpdates) {
+      if (!chunk) continue;
+      const { key, label } = parsePrefix(chunk.prefix);
+      const metaInfo = incomingChunkInfo.get(key) || existingChunkInfo.get(key) || null;
+      const href = metaInfo?.href || `chunks/${metaInfo?.prefix || label}.json`;
+      const entryPrefix = metaInfo?.prefix || label;
+      const fileName = (() => {
+        if (metaInfo?.href) {
+          const parts = metaInfo.href.split(/[\\/]/);
+          const last = parts[parts.length - 1];
+          if (last) return last;
+        }
+        return `${entryPrefix}.json`;
+      })();
+
+      const fileHandle = await chunksDirectory.getFileHandle(fileName, { create: true });
+      const existingPayload = await readJsonFromHandle(fileHandle);
+      const existingTokens = Array.isArray(existingPayload?.tokens) ? existingPayload.tokens : [];
+      const incomingTokens = Array.isArray(chunk.tokens) ? chunk.tokens : [];
+      const mergedTokens = mergeChunkTokens(existingTokens, incomingTokens);
+
+      const writable = await fileHandle.createWritable();
+      try {
+        await writeJsonToWritable(writable, {
+          prefix: entryPrefix,
+          token_count: mergedTokens.length,
+          tokens: mergedTokens,
+        });
+      } finally {
+        await writable.close();
+      }
+
+      chunkEntries.set(key, {
+        prefix: entryPrefix,
+        href,
+        token_count: mergedTokens.length,
+      });
+      chunkDataCache.set(key, { prefix: entryPrefix, tokens: mergedTokens });
+    }
+
+    const tokenSet = new Map<string, string>();
+    const addTokens = (tokens: string[] | undefined | null, preferNew = false) => {
+      if (!Array.isArray(tokens)) return;
+      for (const token of tokens) {
+        if (typeof token !== 'string') continue;
+        const trimmed = token.trim();
+        if (!trimmed) continue;
+        const key = trimmed.toLowerCase();
+        if (!key) continue;
+        if (!tokenSet.has(key) || preferNew) {
+          tokenSet.set(key, trimmed);
+        }
+      }
+    };
+
+    addTokens(existingTokenIndex, false);
+
+    const chunkTotals: ChunkEntryInfo[] = [];
+    let totalTokens = 0;
+    let totalRelationships = 0;
+
+    for (const [key, entry] of chunkEntries.entries()) {
+      let cached = chunkDataCache.get(key);
+      if (!cached) {
+        const fileName = resolveChunkFileName(entry);
+        try {
+          const fileHandle = await chunksDirectory.getFileHandle(fileName);
+          const payload = await readJsonFromHandle(fileHandle);
+          const tokens = Array.isArray(payload?.tokens) ? payload.tokens : [];
+          cached = { prefix: entry.prefix, tokens };
+        } catch (err: any) {
+          if (err && (err.name === 'NotFoundError' || err.name === 'NotAllowedError')) {
+            cached = { prefix: entry.prefix, tokens: [] };
+          } else {
+            throw err;
+          }
+        }
+        chunkDataCache.set(key, cached);
+      }
+
+      const tokens = Array.isArray(cached?.tokens) ? cached.tokens : [];
+      const tokenCount = tokens.length;
+      entry.token_count = tokenCount;
+      chunkTotals.push({ prefix: entry.prefix, href: entry.href, token_count: tokenCount });
+      totalTokens += tokenCount;
+
+      for (const record of tokens) {
+        if (record && typeof record.token === 'string') {
+          addTokens([record.token], true);
+        }
+        totalRelationships += countRelationships(record);
+      }
+    }
+
+    const updateTokenIndex = Array.isArray(update.tokenIndex) ? update.tokenIndex : [];
+    addTokens(updateTokenIndex, true);
+
+    const mergedTokenIndex = Array.from(tokenSet.values())
+      .filter(token => typeof token === 'string' && token.trim())
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+    chunkTotals.sort((a, b) => (a.prefix || '_').localeCompare(b.prefix || '_', undefined, { sensitivity: 'base' }));
+
+    const baseMetadata = existingMetadata && typeof existingMetadata === 'object'
+      ? cloneData(existingMetadata)
+      : {};
+    const incomingMetadata = metadata && typeof metadata === 'object'
+      ? cloneData(metadata)
+      : {};
+
+    const mergedMetadata = Object.assign(baseMetadata, incomingMetadata, {
+      chunks: chunkTotals,
+      total_tokens: totalTokens,
+      total_relationships: totalRelationships,
+    });
+
+    const prefixLengthCandidates = [
+      Number((incomingMetadata as any).chunk_prefix_length),
+      Number((existingMetadata as any)?.chunk_prefix_length),
+    ].filter(value => Number.isFinite(value) && value > 0) as number[];
+    mergedMetadata.chunk_prefix_length = prefixLengthCandidates.length
+      ? Math.max(1, Math.floor(prefixLengthCandidates[0]))
+      : 1;
+
+    if (!mergedMetadata.generated_at) {
+      mergedMetadata.generated_at = new Date().toISOString();
+    }
+    if (!mergedMetadata.token_index_href) {
+      mergedMetadata.token_index_href = 'token-index.json';
+    }
+    if ('token_index' in mergedMetadata) {
+      delete (mergedMetadata as any).token_index;
+    }
+
+    await writeJsonFile(directory, 'metadata.json', mergedMetadata);
+    await writeJsonFile(directory, 'token-index.json', mergedTokenIndex);
   };
 
   const processQueue = async () => {

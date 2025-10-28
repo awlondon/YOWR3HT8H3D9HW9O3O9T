@@ -36,7 +36,10 @@ ALPHABET = [chr(c) for c in range(ord('A'), ord('Z')+1)]
 BIGRAMS = [a+b for a in ALPHABET for b in ALPHABET]
 
 # Defaults (override via CLI/env)
-DEFAULT_REMOTE_DB = os.environ.get("HLSF_REMOTE_DB", "./remote-db")
+DEFAULT_REMOTE_DB = os.environ.get(
+    "HLSF_REMOTE_DB",
+    ".\\remote-db" if os.name == "nt" else "./remote-db",
+)
 DEFAULT_LOCAL_CACHE = os.environ.get("HLSF_LOCAL_CACHE", "./cache")
 DEFAULT_SOURCE = os.environ.get("HLSF_SOURCE_JSON", "./HLSF_Database.json")
 
