@@ -7,6 +7,7 @@ const DATABASE_READY_EVENT = 'hlsf:database-ready';
 const MAX_RENDERED_TOKENS = 800;
 const PROFILE_SYNTHESIS_TOKEN_THRESHOLD = 100;
 const SYNTHESIZED_PREVIEW_TOKEN_LIMIT = 120;
+const AUTO_MAP_TOKEN_LIMIT = 32;
 
 const TAG_SYNONYMS = {
   neutral: ['neutral', 'baseline', 'plain'],
@@ -724,11 +725,20 @@ function normalizeVoicePreferences(entry) {
   return prefs;
 }
 
+function defaultProfileTweaks() {
+  return {
+    pitch: 0,
+    rate: 0,
+    resonance: 0,
+  };
+}
+
 function defaultProfileSynthesis() {
   return {
     available: false,
     synthesizedAt: null,
     tokenCount: 0,
+    tweaks: defaultProfileTweaks(),
   };
 }
 
@@ -753,6 +763,12 @@ const panelState = {
   isRecording: false,
   isCollapsed: false,
   activeTranscript: '',
+  popupVisible: false,
+  popupStatus: 'Idle',
+  popupTranscript: '',
+  popupToken: '',
+  popupMappedTokens: [],
+  popupLastRecordingId: null,
   status: { message: '', type: 'info' },
 };
 
@@ -765,6 +781,25 @@ const elements = {
   status: null,
   content: null,
   toggle: null,
+  popup: null,
+  popupDialog: null,
+  popupBackdrop: null,
+  popupOpen: null,
+  popupClose: null,
+  popupRecord: null,
+  popupStop: null,
+  popupPlay: null,
+  popupSynth: null,
+  popupStatus: null,
+  popupTranscript: null,
+  popupTokenInput: null,
+  popupTokens: null,
+  popupPitch: null,
+  popupPitchDisplay: null,
+  popupRate: null,
+  popupRateDisplay: null,
+  popupResonance: null,
+  popupResonanceDisplay: null,
 };
 
 let panelReady = false;
@@ -792,6 +827,23 @@ function getTotalTranscriptWords() {
     total += countWords(recording?.transcript || recording?.token || '');
   }
   return total;
+}
+
+function getProfileTweaks() {
+  if (!store.profileSynthesis) {
+    store.profileSynthesis = defaultProfileSynthesis();
+  }
+  if (!store.profileSynthesis.tweaks) {
+    store.profileSynthesis.tweaks = defaultProfileTweaks();
+  }
+  return store.profileSynthesis.tweaks;
+}
+
+function updateProfileTweak(type, value) {
+  const tweaks = getProfileTweaks();
+  if (!(type in tweaks)) return;
+  tweaks[type] = clampValue(Number(value) || 0, -0.5, 0.5);
+  saveVoiceStore();
 }
 
 function buildCloneDivergence() {
@@ -947,12 +999,23 @@ function normalizeProfileClone(entry) {
   };
 }
 
+function normalizeProfileTweaks(entry) {
+  const defaults = defaultProfileTweaks();
+  if (!entry || typeof entry !== 'object') return defaults;
+  return {
+    pitch: clampValue(Number(entry.pitch) || 0, -0.5, 0.5),
+    rate: clampValue(Number(entry.rate) || 0, -0.5, 0.5),
+    resonance: clampValue(Number(entry.resonance) || 0, -0.5, 0.5),
+  };
+}
+
 function normalizeProfileSynthesis(entry) {
   const state = defaultProfileSynthesis();
   if (!entry || typeof entry !== 'object') return state;
   state.available = entry.available === true;
   state.tokenCount = Number.isFinite(entry.tokenCount) ? Math.max(0, Math.floor(entry.tokenCount)) : 0;
   state.synthesizedAt = typeof entry.synthesizedAt === 'string' ? entry.synthesizedAt : null;
+  state.tweaks = normalizeProfileTweaks(entry.tweaks);
   return state;
 }
 
@@ -1097,6 +1160,259 @@ function setStatus(message, type = 'info') {
   if (elements.status) {
     elements.status.textContent = message || '';
     elements.status.className = `voice-status-message ${type || ''}`.trim();
+  }
+}
+
+function buildKnownTokenDictionary() {
+  const map = new Map();
+  const addToken = token => {
+    if (!token) return;
+    const normalized = normalizeTokenKey(token);
+    if (!normalized || map.has(normalized)) return;
+    map.set(normalized, token);
+  };
+  (panelState.tokens || []).forEach(addToken);
+  for (const rec of store.recordings || []) {
+    if (rec?.token) addToken(rec.token);
+  }
+  Object.keys(store.assignments || {}).forEach(addToken);
+  const gathered = gatherTokens();
+  gathered.forEach(addToken);
+  return map;
+}
+
+function extractTranscriptTokens(transcript, limit = AUTO_MAP_TOKEN_LIMIT) {
+  if (!transcript) return [];
+  const tokens = [];
+  const seen = new Set();
+  const text = String(transcript);
+  const regex = /[\p{L}\p{N}][\p{L}\p{N}'-]*/gu;
+  let match;
+  while ((match = regex.exec(text))) {
+    const normalized = normalizeTokenKey(match[0]);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    tokens.push(normalized);
+    if (tokens.length >= limit) break;
+  }
+  return tokens;
+}
+
+function autoMapRecordingTokens(recording, transcript, options = {}) {
+  if (!recording?.id) return [];
+  const assignments = store.assignments || (store.assignments = {});
+  const baseToken = typeof options.baseToken === 'string' ? options.baseToken.trim() : '';
+  const includeDerived = options.includeDerived !== false;
+  const overrideBase = options.overrideBase !== false;
+
+  const normalizedAssignments = new Map();
+  for (const [tokenKey, recId] of Object.entries(assignments)) {
+    const normalized = normalizeTokenKey(tokenKey);
+    if (!normalized || normalizedAssignments.has(normalized)) continue;
+    normalizedAssignments.set(normalized, { token: tokenKey, recordingId: recId });
+  }
+
+  const knownTokens = buildKnownTokenDictionary();
+  const queue = [];
+  if (baseToken) {
+    queue.push({ token: baseToken, override: overrideBase });
+  }
+  if (includeDerived) {
+    const derived = extractTranscriptTokens(transcript, AUTO_MAP_TOKEN_LIMIT);
+    for (const token of derived) {
+      queue.push({ token, override: false, normalizedSource: true });
+    }
+  }
+
+  const mapped = [];
+  const seen = new Set();
+
+  for (const item of queue) {
+    const normalized = normalizeTokenKey(item.token);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+
+    const existingEntry = normalizedAssignments.get(normalized);
+    const knownToken = knownTokens.get(normalized);
+    let tokenKey = existingEntry?.token || knownToken || (item.normalizedSource ? item.token : item.token.trim());
+    if (!tokenKey) tokenKey = normalized;
+
+    const existingRecording = assignments[tokenKey];
+    if (existingRecording && existingRecording !== recording.id && !item.override) {
+      continue;
+    }
+
+    assignments[tokenKey] = recording.id;
+    normalizedAssignments.set(normalized, { token: tokenKey, recordingId: recording.id });
+    if (!mapped.includes(tokenKey)) mapped.push(tokenKey);
+  }
+
+  return mapped;
+}
+
+function updateVoicePopupControls() {
+  if (!elements.popup) return;
+  const isRecording = panelState.isRecording;
+  if (elements.popupRecord) elements.popupRecord.disabled = isRecording;
+  if (elements.popupStop) elements.popupStop.disabled = !isRecording;
+  if (elements.popupPlay) elements.popupPlay.disabled = !panelState.popupLastRecordingId;
+  if (elements.popupSynth) elements.popupSynth.disabled = !hasSynthesizedVoiceProfile();
+}
+
+function updateVoicePopupTranscript() {
+  if (!elements.popupTranscript) return;
+  const text = panelState.popupTranscript || (panelState.isRecording ? panelState.activeTranscript : '') || 'No transcript yet.';
+  elements.popupTranscript.textContent = text || 'No transcript yet.';
+}
+
+function updateVoicePopupStatus() {
+  if (!elements.popupStatus) return;
+  elements.popupStatus.textContent = panelState.popupStatus || 'Idle';
+}
+
+function updateVoicePopupTokens() {
+  if (!elements.popupTokens) return;
+  const mapped = Array.isArray(panelState.popupMappedTokens) ? panelState.popupMappedTokens : [];
+  elements.popupTokens.textContent = mapped.length ? mapped.join(', ') : 'None yet.';
+}
+
+function updateVoicePopupTweaksDisplay() {
+  const tweaks = getProfileTweaks();
+  const pitch = Number(tweaks.pitch) || 0;
+  const rate = Number(tweaks.rate) || 0;
+  const resonance = Number(tweaks.resonance) || 0;
+  if (elements.popupPitch) elements.popupPitch.value = String(pitch);
+  if (elements.popupPitchDisplay) elements.popupPitchDisplay.textContent = pitch.toFixed(2);
+  if (elements.popupRate) elements.popupRate.value = String(rate);
+  if (elements.popupRateDisplay) elements.popupRateDisplay.textContent = rate.toFixed(2);
+  if (elements.popupResonance) elements.popupResonance.value = String(resonance);
+  if (elements.popupResonanceDisplay) elements.popupResonanceDisplay.textContent = resonance.toFixed(2);
+}
+
+function renderVoicePopup() {
+  if (!elements.popup) return;
+  updateVoicePopupStatus();
+  updateVoicePopupTranscript();
+  updateVoicePopupTokens();
+  updateVoicePopupTweaksDisplay();
+  const tokenInput = elements.popupTokenInput;
+  if (tokenInput && document.activeElement !== tokenInput) {
+    const preferred = panelState.popupToken || panelState.selectedToken || '';
+    tokenInput.value = preferred;
+  }
+  updateVoicePopupControls();
+}
+
+function setVoicePopupVisible(visible) {
+  if (!elements.popup) return;
+  const show = Boolean(visible);
+  const wasVisible = panelState.popupVisible;
+  if (!show && wasVisible && panelState.isRecording && activeRecorder?.source === 'popup') {
+    stopActiveRecording();
+  }
+  panelState.popupVisible = show;
+  elements.popup.classList.toggle('is-visible', show);
+  elements.popup.setAttribute('aria-hidden', show ? 'false' : 'true');
+  if (show) {
+    document.body.classList.add('voice-popup-open');
+    if (!panelState.popupToken) {
+      panelState.popupToken = panelState.selectedToken || '';
+    }
+    renderVoicePopup();
+    window.setTimeout(() => {
+      if (elements.popupTokenInput) {
+        if (!elements.popupTokenInput.value) {
+          elements.popupTokenInput.value = panelState.popupToken || panelState.selectedToken || '';
+        }
+        try {
+          elements.popupTokenInput.focus();
+        } catch {
+          /* ignore focus errors */
+        }
+      } else if (elements.popupClose) {
+        try {
+          elements.popupClose.focus();
+        } catch {
+          /* ignore focus errors */
+        }
+      }
+    }, 0);
+  } else {
+    document.body.classList.remove('voice-popup-open');
+  }
+  updateVoicePopupControls();
+}
+
+function handleVoicePopupRecord() {
+  const tokenValue = elements.popupTokenInput?.value?.trim() || '';
+  panelState.popupToken = tokenValue;
+  panelState.popupTranscript = '';
+  panelState.popupMappedTokens = [];
+  panelState.popupStatus = 'Listening…';
+  renderVoicePopup();
+  startRecordingForToken(tokenValue, { allowEmptyToken: true, source: 'popup' }).catch(() => {
+    panelState.popupStatus = 'Microphone access unavailable.';
+    updateVoicePopupStatus();
+    updateVoicePopupControls();
+  });
+}
+
+function handleVoicePopupStop() {
+  if (!panelState.isRecording) return;
+  panelState.popupStatus = 'Processing recording…';
+  updateVoicePopupStatus();
+  stopActiveRecording();
+}
+
+function handleVoicePopupPlay() {
+  if (!panelState.popupLastRecordingId) {
+    setStatus('Record a voice sample before playback.', 'info');
+    panelState.popupStatus = 'No recording available yet.';
+    renderVoicePopup();
+    return;
+  }
+  playRecordingById(panelState.popupLastRecordingId);
+  panelState.popupStatus = 'Playing captured sample…';
+  renderVoicePopup();
+}
+
+function handleVoicePopupSynth() {
+  if (!hasSynthesizedVoiceProfile()) {
+    setStatus('Synthesize your voice profile before requesting AGI playback.', 'warning');
+    panelState.popupStatus = 'Synthesis required.';
+    renderVoicePopup();
+    return;
+  }
+  const contextToken =
+    (panelState.popupMappedTokens && panelState.popupMappedTokens[0]) || panelState.popupToken || panelState.selectedToken || '';
+  if (!contextToken) {
+    setStatus('Map tokens to your recording before previewing synthesized output.', 'warning');
+    panelState.popupStatus = 'Awaiting mapped tokens.';
+    renderVoicePopup();
+    return;
+  }
+  playSynthesizedPreview(contextToken);
+  panelState.popupStatus = `Playing synthesized output for ${contextToken}.`;
+  renderVoicePopup();
+}
+
+function handleVoicePopupTokenInput(event) {
+  const value = event?.target?.value || '';
+  panelState.popupToken = value.trim();
+}
+
+function handleVoicePopupTweakInput(type, event) {
+  const value = Number(event?.target?.value);
+  if (!Number.isFinite(value)) return;
+  updateProfileTweak(type, value);
+  updateVoicePopupTweaksDisplay();
+}
+
+function handleVoicePopupKeydown(event) {
+  if (!panelState.popupVisible) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    setVoicePopupVisible(false);
   }
 }
 
@@ -1410,15 +1726,18 @@ function synthesizeVoiceProfile() {
     setStatus('Clone your voice profile before synthesizing it.', 'warning');
     return;
   }
+  const tweaks = Object.assign({}, getProfileTweaks());
   store.profileSynthesis = {
     available: true,
     synthesizedAt: new Date().toISOString(),
     tokenCount: mappedTokens,
+    tweaks,
   };
   saveVoiceStore();
   setStatus('Voice profile synthesized. Previews now use your cloned voice audio.', 'success');
   renderTokenList();
   renderTokenDetail();
+  renderVoicePopup();
 }
 
 function toggleProfileCloneAttachment() {
@@ -1513,6 +1832,12 @@ function playSynthesizedPreview(token) {
   stopActivePlayback();
 
   const prefs = store.voicePreferences || defaultVoicePreferences();
+  const tweaks = getProfileTweaks();
+  const previewPrefs = {
+    rate: clampValue((prefs.rate || 1) + (Number(tweaks.rate) || 0), 0.5, 2.5),
+    volume: clampValue((prefs.volume || 1) + (Number(tweaks.resonance) || 0), 0, 1),
+    pitch: clampValue(1 + (Number(tweaks.pitch) || 0), 0.1, 2),
+  };
   const recordingMap = new Map((store.recordings || []).map(rec => [rec.id, rec]));
   const playableSegments = [];
   const segments = [];
@@ -1571,7 +1896,7 @@ function playSynthesizedPreview(token) {
     segments.some(segment => segment?.usingCloneFallback && (!segment.recordingId || !recordingMap.has(segment.recordingId))) &&
     supportsSpeechSynthesis();
   if (shouldSpeakTokens) {
-    const spoken = playSegmentsWithSpeechSynthesis(entries, prefs);
+    const spoken = playSegmentsWithSpeechSynthesis(entries, previewPrefs);
     if (spoken) {
       activePlayback = null;
       setStatus(`Playing synthesized voice profile preview mapped to selected token${suffix}.`, 'info');
@@ -1595,8 +1920,8 @@ function playSynthesizedPreview(token) {
     const entry = entries[index];
     const url = getRecordingUrl(entry.recording);
     const audio = new Audio(url);
-    const rate = clampValue((prefs.rate || 1) + (entry.adjustments.rateDelta || 0), 0.5, 2.5);
-    const volume = clampValue((prefs.volume || 1) + (entry.adjustments.volumeDelta || 0), 0, 1);
+    const rate = clampValue(previewPrefs.rate + (entry.adjustments.rateDelta || 0), 0.5, 2.5);
+    const volume = clampValue(previewPrefs.volume + (entry.adjustments.volumeDelta || 0), 0, 1);
     audio.playbackRate = rate;
     audio.volume = volume;
     activePlayback = audio;
@@ -1703,6 +2028,7 @@ function getVoiceProfileExportPayload() {
     profileRecordingId: preferredProfileId,
     voicePreferences,
     profileClone: clonePayload,
+    profileSynthesis: normalizeProfileSynthesis(store.profileSynthesis || {}),
   };
 }
 
@@ -1784,6 +2110,10 @@ function normalizeVoiceProfilePayload(payload) {
 
   if (normalizedClone && recordingMap.has(normalizedClone.recordingId)) {
     normalizedStore.profileClone = Object.assign({}, normalizedClone, { attached: normalizedClone.attached !== false });
+  }
+
+  if (payload.profileSynthesis && typeof payload.profileSynthesis === 'object') {
+    normalizedStore.profileSynthesis = normalizeProfileSynthesis(payload.profileSynthesis);
   }
 
   return normalizedStore;
@@ -2008,10 +2338,11 @@ function playSegmentsWithSpeechSynthesis(entries, prefs) {
     const adjustments = segment?.resolvedAdjustments || entry?.adjustments || {};
     const baseRate = Number(prefs?.rate) || 1;
     const baseVolume = Number(prefs?.volume) || 1;
+    const basePitch = Number(prefs?.pitch) || 1;
     const pitchDelta = Number(adjustments.pitchDelta) || 0;
     const rateDelta = Number(adjustments.rateDelta) || 0;
     const volumeDelta = Number(adjustments.volumeDelta) || 0;
-    utterance.pitch = clampValue(1 + pitchDelta, 0.1, 2);
+    utterance.pitch = clampValue(basePitch + pitchDelta, 0.1, 2);
     utterance.rate = clampValue(baseRate + rateDelta, 0.5, 2.5);
     utterance.volume = clampValue(baseVolume + volumeDelta, 0, 1);
     utterances.push({ utterance });
@@ -2167,18 +2498,29 @@ function updateVoicePreferenceDisplay(type, value) {
   if (span) span.textContent = Number(value).toFixed(2);
 }
 
-async function startRecordingForToken(token) {
-  if (!token) {
+async function startRecordingForToken(token, options = {}) {
+  const opts = options || {};
+  const trimmedToken = typeof token === 'string' ? token.trim() : '';
+  const allowEmptyToken = opts.allowEmptyToken === true;
+  const effectiveToken = trimmedToken || '';
+  const autoAssign = opts.autoAssign !== false;
+  const source = opts.source || 'panel';
+
+  if (!effectiveToken && !allowEmptyToken) {
     setStatus('Select a token before recording.', 'warning');
-    return;
+    return false;
   }
   if (panelState.isRecording) {
     setStatus('Recording already in progress.', 'warning');
-    return;
+    return false;
   }
   if (!navigator.mediaDevices?.getUserMedia) {
     setStatus('Microphone access is not supported in this browser.', 'error');
-    return;
+    if (source === 'popup') {
+      panelState.popupStatus = 'Microphone access unavailable.';
+      renderVoicePopup();
+    }
+    return false;
   }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -2188,7 +2530,26 @@ async function startRecordingForToken(token) {
     const recognition = startSpeechRecognition(transcriptParts);
     panelState.isRecording = true;
     panelState.activeTranscript = '';
-    activeRecorder = { recorder, stream, chunks, token, transcriptParts, recognition };
+    if (source === 'popup') {
+      panelState.popupStatus = 'Listening…';
+      panelState.popupTranscript = '';
+      panelState.popupMappedTokens = [];
+      panelState.popupLastRecordingId = null;
+      renderVoicePopup();
+    }
+    updateVoicePopupControls();
+    activeRecorder = {
+      recorder,
+      stream,
+      chunks,
+      token: effectiveToken,
+      baseToken: trimmedToken,
+      transcriptParts,
+      recognition,
+      autoAssign,
+      source,
+      allowEmptyToken,
+    };
     recorder.ondataavailable = evt => {
       if (evt.data?.size > 0) chunks.push(evt.data);
     };
@@ -2196,9 +2557,17 @@ async function startRecordingForToken(token) {
     recorder.start();
     setStatus('Recording started. Speak the token and any expressive samples you want captured.', 'info');
     renderTokenDetail();
+    return true;
   } catch (err) {
     console.warn('Unable to start microphone recording:', err);
     setStatus('Microphone access denied or unavailable.', 'error');
+    panelState.isRecording = false;
+    if (source === 'popup') {
+      panelState.popupStatus = 'Microphone access denied.';
+      renderVoicePopup();
+    }
+    updateVoicePopupControls();
+    return false;
   }
 }
 
@@ -2221,6 +2590,10 @@ function startSpeechRecognition(parts) {
       if (changed) {
         panelState.activeTranscript = parts.join(' ');
         updateLiveTranscript();
+        if (activeRecorder?.source === 'popup') {
+          panelState.popupTranscript = panelState.activeTranscript;
+          updateVoicePopupTranscript();
+        }
       }
     };
     recognition.onerror = err => {
@@ -2238,6 +2611,7 @@ function updateLiveTranscript() {
   if (!elements.detail) return;
   const el = elements.detail.querySelector('[data-role="live-transcript"]');
   if (el) el.textContent = panelState.activeTranscript || 'Listening…';
+  updateVoicePopupTranscript();
 }
 
 function stopActiveRecording() {
@@ -2251,7 +2625,8 @@ function stopActiveRecording() {
 async function finalizeRecording(session) {
   if (!session) return;
   panelState.isRecording = false;
-  const { recorder, stream, chunks, token, transcriptParts } = session;
+  updateVoicePopupControls();
+  const { recorder, stream, chunks, token, transcriptParts, baseToken, autoAssign, source } = session;
   activeRecorder = null;
   if (stream) {
     try {
@@ -2260,6 +2635,11 @@ async function finalizeRecording(session) {
   }
   if (!chunks.length) {
     setStatus('Recording ended but no audio was captured.', 'warning');
+    if (source === 'popup') {
+      panelState.popupStatus = 'No audio captured.';
+      panelState.popupTranscript = '';
+      renderVoicePopup();
+    }
     renderTokenDetail();
     return;
   }
@@ -2268,20 +2648,51 @@ async function finalizeRecording(session) {
   try {
     const base64 = await blobToBase64(blob);
     const transcriptText = transcriptParts.join(' ').trim();
-    const finalTranscript = transcriptText || token;
+    const trimmedToken = typeof token === 'string' ? token.trim() : '';
+    const trimmedBase = typeof baseToken === 'string' ? baseToken.trim() : '';
+    const finalTranscript = transcriptText || trimmedBase || trimmedToken;
     const newRecording = {
       id: generateRecordingId(),
-      token,
+      token: trimmedToken,
       createdAt: new Date().toISOString(),
       audioBase64: base64,
       audioType: blob.type || 'audio/webm',
       transcript: finalTranscript,
       tags: [],
-      iteration: (recordingIndex.get(token)?.[0]?.iteration || recordingIndex.get(token)?.length || 0) + 1,
-      sourceToken: token,
+      iteration: (recordingIndex.get(trimmedToken)?.[0]?.iteration || recordingIndex.get(trimmedToken)?.length || 0) + 1,
+      sourceToken: trimmedBase || trimmedToken,
     };
     store.recordings.push(newRecording);
-    store.assignments[token] = newRecording.id;
+    let mappedTokens = [];
+    if (autoAssign !== false) {
+      mappedTokens = autoMapRecordingTokens(newRecording, finalTranscript, {
+        baseToken: trimmedBase || trimmedToken,
+        includeDerived: true,
+        overrideBase: true,
+      });
+    }
+    if (!mappedTokens.length && trimmedToken) {
+      store.assignments[trimmedToken] = newRecording.id;
+      mappedTokens.push(trimmedToken);
+    }
+    if (!newRecording.token && mappedTokens.length) {
+      newRecording.token = mappedTokens[0];
+    }
+    const iterationToken = mappedTokens[0] || trimmedToken;
+    if (iterationToken) {
+      const existing = recordingIndex.get(iterationToken);
+      if (existing?.length) {
+        const latest = existing[0];
+        const nextIteration = Number.isFinite(latest?.iteration)
+          ? Number(latest.iteration) + 1
+          : existing.length + 1;
+        newRecording.iteration = nextIteration;
+      } else {
+        newRecording.iteration = 1;
+      }
+    } else {
+      newRecording.iteration = 1;
+    }
     if (!store.profileRecordingId) {
       store.profileRecordingId = newRecording.id;
     }
@@ -2289,19 +2700,57 @@ async function finalizeRecording(session) {
     saveVoiceStore();
     recordingIndex = buildRecordingIndex();
     voiceExpressionModel = buildVoiceExpressionModel();
+    let statusMessage = 'Recording saved and mapped to token.';
+    let statusType = 'success';
     if (!transcriptText) {
-      setStatus(
-        'Recording saved, but speech recognition did not capture your words. Update the transcript before synthesizing.',
-        'warning'
-      );
-    } else {
-      setStatus('Recording saved and mapped to token.', 'success');
+      statusMessage =
+        'Recording saved, but speech recognition did not capture your words. Update the transcript before synthesizing.';
+      statusType = 'warning';
+    } else if (mappedTokens.length > 1) {
+      statusMessage = `Recording saved and mapped to ${mappedTokens.length} tokens.`;
+    } else if (!mappedTokens.length) {
+      statusMessage = 'Recording saved. Use manual mapping to attach additional tokens.';
+      statusType = 'info';
+    } else if (mappedTokens.length === 1) {
+      statusMessage = `Recording saved and mapped to ${mappedTokens[0]}.`;
     }
-    selectToken(token);
+    setStatus(statusMessage, statusType);
+    panelState.tokens = gatherTokens();
+    panelState.activeTranscript = '';
+    updateLiveTranscript();
+    const nextToken = mappedTokens[0] || trimmedBase || trimmedToken || null;
+    if (nextToken) {
+      selectToken(nextToken);
+    } else {
+      renderTokenList();
+      renderTokenDetail();
+    }
+    if (source === 'popup') {
+      panelState.popupTranscript = finalTranscript || '';
+      panelState.popupMappedTokens = mappedTokens;
+      panelState.popupLastRecordingId = newRecording.id;
+      if (mappedTokens.length) {
+        panelState.popupToken = mappedTokens[0];
+      }
+      if (statusType === 'warning') {
+        panelState.popupStatus = 'Transcript not captured – update manually.';
+      } else if (mappedTokens.length > 1) {
+        panelState.popupStatus = `Mapped ${mappedTokens.length} tokens.`;
+      } else if (mappedTokens.length === 1) {
+        panelState.popupStatus = `Mapped token ${mappedTokens[0]}.`;
+      } else {
+        panelState.popupStatus = 'Recording saved. Map tokens when ready.';
+      }
+      renderVoicePopup();
+    }
     signalVoiceCloneTokensChanged('recording-added');
   } catch (err) {
     console.warn('Failed to process recording:', err);
     setStatus('Unable to save the recording. Try again.', 'error');
+    if (source === 'popup') {
+      panelState.popupStatus = 'Unable to save the recording.';
+      renderVoicePopup();
+    }
   }
 }
 
@@ -2431,6 +2880,11 @@ function deleteAllRecordings() {
   renderTokenList();
   renderTokenDetail();
   signalVoiceCloneTokensChanged('recordings-cleared');
+  panelState.popupMappedTokens = [];
+  panelState.popupLastRecordingId = null;
+  panelState.popupTranscript = '';
+  panelState.popupStatus = 'Idle';
+  renderVoicePopup();
 }
 
 function handleSearchInput(event) {
@@ -2491,6 +2945,25 @@ function initializeVoiceClonePanel() {
   elements.status = document.getElementById('voice-clone-status');
   elements.content = document.getElementById('voice-clone-content');
   elements.toggle = document.getElementById('voice-panel-toggle');
+  elements.popup = document.getElementById('voice-popup');
+  elements.popupDialog = document.getElementById('voice-popup-dialog');
+  elements.popupBackdrop = document.getElementById('voice-popup-backdrop');
+  elements.popupOpen = document.getElementById('voice-popup-open');
+  elements.popupClose = document.getElementById('voice-popup-close');
+  elements.popupRecord = document.getElementById('voice-popup-record');
+  elements.popupStop = document.getElementById('voice-popup-stop');
+  elements.popupPlay = document.getElementById('voice-popup-play');
+  elements.popupSynth = document.getElementById('voice-popup-synth');
+  elements.popupStatus = document.querySelector('[data-role="voice-popup-status"]');
+  elements.popupTranscript = document.querySelector('[data-role="voice-popup-transcript"]');
+  elements.popupTokenInput = document.getElementById('voice-popup-token');
+  elements.popupTokens = document.querySelector('[data-role="voice-popup-mapped"]');
+  elements.popupPitch = document.getElementById('voice-popup-pitch');
+  elements.popupPitchDisplay = document.querySelector('[data-role="voice-popup-pitch-display"]');
+  elements.popupRate = document.getElementById('voice-popup-rate');
+  elements.popupRateDisplay = document.querySelector('[data-role="voice-popup-rate-display"]');
+  elements.popupResonance = document.getElementById('voice-popup-resonance');
+  elements.popupResonanceDisplay = document.querySelector('[data-role="voice-popup-resonance-display"]');
   if (!elements.panel) return;
 
   panelReady = true;
@@ -2502,12 +2975,26 @@ function initializeVoiceClonePanel() {
   elements.detail?.addEventListener('click', handleDetailClick);
   elements.detail?.addEventListener('input', handleDetailInput);
   elements.toggle?.addEventListener('click', handleVoicePanelToggle);
+  elements.popupOpen?.addEventListener('click', () => setVoicePopupVisible(true));
+  elements.popupClose?.addEventListener('click', () => setVoicePopupVisible(false));
+  elements.popupBackdrop?.addEventListener('click', () => setVoicePopupVisible(false));
+  elements.popupRecord?.addEventListener('click', handleVoicePopupRecord);
+  elements.popupStop?.addEventListener('click', handleVoicePopupStop);
+  elements.popupPlay?.addEventListener('click', handleVoicePopupPlay);
+  elements.popupSynth?.addEventListener('click', handleVoicePopupSynth);
+  elements.popupTokenInput?.addEventListener('input', handleVoicePopupTokenInput);
+  elements.popupPitch?.addEventListener('input', event => handleVoicePopupTweakInput('pitch', event));
+  elements.popupRate?.addEventListener('input', event => handleVoicePopupTweakInput('rate', event));
+  elements.popupResonance?.addEventListener('input', event => handleVoicePopupTweakInput('resonance', event));
 
   setVoicePanelCollapsed(panelState.isCollapsed);
 
   if (typeof window.addEventListener === 'function') {
     window.addEventListener(TOKENS_CHANGED_EVENT, handleTokensChanged);
     window.addEventListener(DATABASE_READY_EVENT, handleTokensChanged);
+  }
+  if (typeof document?.addEventListener === 'function') {
+    document.addEventListener('keydown', handleVoicePopupKeydown);
   }
 
   clearScheduledTokenRefresh();
@@ -2528,7 +3015,12 @@ function initializeVoiceClonePanel() {
     getProfileClone: getProfileCloneExportPayload,
     getProfileExport: getVoiceProfileExportPayload,
     importProfile: importVoiceProfileExportPayload,
+    openConsole: () => setVoicePopupVisible(true),
+    closeConsole: () => setVoicePopupVisible(false),
+    isConsoleOpen: () => panelState.popupVisible,
   });
+
+  renderVoicePopup();
 }
 
 export { initializeVoiceClonePanel, signalVoiceCloneTokensChanged };

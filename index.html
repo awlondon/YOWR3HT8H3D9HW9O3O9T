@@ -252,6 +252,9 @@
     <section id="voice-clone-panel" class="voice-panel">
       <div class="voice-panel-header">
         <div class="section-title">🎙️ Voice Clone Studio</div>
+        <button id="voice-popup-open" class="btn btn-secondary btn-compact" type="button" aria-haspopup="dialog">
+          Voice console
+        </button>
         <button
           id="voice-panel-toggle"
           class="btn btn-secondary btn-compact voice-panel-toggle"
@@ -283,6 +286,83 @@
         </div>
       </div>
     </section>
+    <div id="voice-popup" class="voice-popup" aria-hidden="true">
+      <div id="voice-popup-backdrop" class="voice-popup__backdrop" role="presentation"></div>
+      <div
+        id="voice-popup-dialog"
+        class="voice-popup__dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="voice-popup-title"
+      >
+        <header class="voice-popup__header">
+          <div>
+            <p class="voice-popup__eyebrow">Live prompt capture</p>
+            <h2 id="voice-popup-title" class="voice-popup__title">Voice Prompt Console</h2>
+          </div>
+          <button id="voice-popup-close" type="button" class="voice-popup__close" aria-label="Close voice console">✕</button>
+        </header>
+        <div class="voice-popup__body">
+          <p class="voice-popup__helper">
+            Capture a prompt with your microphone, automatically map new tokens, and preview the synthesized AGI response in your
+            cloned voice.
+          </p>
+          <div class="voice-popup__token">
+            <label for="voice-popup-token">Primary token (optional)</label>
+            <input
+              id="voice-popup-token"
+              type="text"
+              placeholder="Leave blank for automatic detection"
+              autocomplete="off"
+            />
+          </div>
+          <div
+            class="voice-popup__status"
+            data-role="voice-popup-status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            Idle
+          </div>
+          <div
+            class="voice-popup__transcript"
+            data-role="voice-popup-transcript"
+            role="log"
+            aria-live="polite"
+            aria-atomic="false"
+          >
+            No transcript yet.
+          </div>
+          <div class="voice-popup__controls">
+            <button id="voice-popup-record" class="btn btn-primary" type="button">Start recording</button>
+            <button id="voice-popup-stop" class="btn btn-secondary" type="button" disabled>Stop</button>
+            <button id="voice-popup-play" class="btn btn-secondary" type="button" disabled>Play latest sample</button>
+            <button id="voice-popup-synth" class="btn btn-secondary" type="button">Play synthesized output</button>
+          </div>
+          <div class="voice-popup__mapped">
+            <strong>Mapped tokens:</strong>
+            <span data-role="voice-popup-mapped">None yet.</span>
+          </div>
+          <section class="voice-popup__tweaks" aria-labelledby="voice-popup-tweaks-title">
+            <h3 id="voice-popup-tweaks-title">Synthesized voice tweaks</h3>
+            <p class="voice-popup__helper">Fine-tune how the AGI renders your cloned voice when generating output.</p>
+            <div class="voice-popup__slider">
+              <label for="voice-popup-pitch">Pitch contour <span data-role="voice-popup-pitch-display">0.00</span></label>
+              <input id="voice-popup-pitch" type="range" min="-0.5" max="0.5" step="0.05" value="0" />
+            </div>
+            <div class="voice-popup__slider">
+              <label for="voice-popup-rate">Pace <span data-role="voice-popup-rate-display">0.00</span></label>
+              <input id="voice-popup-rate" type="range" min="-0.5" max="0.5" step="0.05" value="0" />
+            </div>
+            <div class="voice-popup__slider">
+              <label for="voice-popup-resonance">Resonance <span data-role="voice-popup-resonance-display">0.00</span></label>
+              <input id="voice-popup-resonance" type="range" min="-0.5" max="0.5" step="0.05" value="0" />
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
     <input id="db-file" type="file" accept=".json,application/json" style="display:none">
     <input id="read-file" type="file" accept=".txt,text/plain,.pdf,application/pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none">
     <div class="hlsf-canvas-container" id="hlsf-canvas-container">
