@@ -14379,8 +14379,13 @@ function buildHLSF() {
   return { nodes, edges, meta: { nodeCount: nodes.length, edgeCount: edges.length } };
 }
 
-async function cmd_hlsf() {
-  await runHlsfSafely('');
+async function cmd_hlsf(arg = '') {
+  const raw = typeof arg === 'string' ? arg : '';
+  if (!raw.trim()) {
+    const refreshed = await rebuildHlsfFromLastCommand(true);
+    if (refreshed) return;
+  }
+  await runHlsfSafely(raw);
 }
 
 registerCommand('/self', cmd_self);
@@ -14491,7 +14496,15 @@ async function dispatchCommand(input) {
   if (command === '/import') { trackCommandExecution(command, rest, 'dispatch'); await cmdImport(); return true; }
   if (command === '/read' || command === '/ingest') { trackCommandExecution(command, rest, 'dispatch'); await cmdRead(); return true; }
   if (command === '/loaddb') { trackCommandExecution(command, rest, 'dispatch'); await cmdLoadDb(arg); return true; }
-  if (command === '/hlsf') { trackCommandExecution(command, rest, 'dispatch'); await runHlsfSafely(arg); return true; }
+  if (command === '/hlsf') {
+    trackCommandExecution(command, rest, 'dispatch');
+    if (!arg) {
+      const refreshed = await rebuildHlsfFromLastCommand(true);
+      if (refreshed) return true;
+    }
+    await runHlsfSafely(arg);
+    return true;
+  }
   if (command === '/scheme') { trackCommandExecution(command, rest, 'dispatch'); cmdScheme(arg || 'black'); return true; }
   if (command === '/spin') { trackCommandExecution(command, rest, 'dispatch'); cmdSpin(arg || 'on'); return true; }
   if (command === '/omega') { trackCommandExecution(command, rest, 'dispatch'); cmdOmega(arg); return true; }
