@@ -8,6 +8,8 @@ const MAX_RENDERED_TOKENS = 800;
 const PROFILE_SYNTHESIS_TOKEN_THRESHOLD = 100;
 const SYNTHESIZED_PREVIEW_TOKEN_LIMIT = 120;
 const AUTO_MAP_TOKEN_LIMIT = 32;
+const MAX_VOICE_DATA_ENTRIES = 200;
+const VOICE_DATA_DISPLAY_LIMIT = 8;
 
 const TAG_SYNONYMS = {
   neutral: ['neutral', 'baseline', 'plain'],
@@ -750,10 +752,13 @@ function defaultVoiceStore() {
     voicePreferences: defaultVoicePreferences(),
     profileClone: null,
     profileSynthesis: defaultProfileSynthesis(),
+    voiceData: [],
   };
 }
 
 let store = defaultVoiceStore();
+let voiceStoreLoaded = false;
+const pendingVoiceData = [];
 
 const panelState = {
   tokens: [],
@@ -925,6 +930,9 @@ function loadVoiceStore() {
     const normalized = defaultVoiceStore();
     if (Array.isArray(parsed?.recordings)) normalized.recordings = parsed.recordings.map(normalizeRecording).filter(Boolean);
     if (parsed?.assignments && typeof parsed.assignments === 'object') normalized.assignments = { ...parsed.assignments };
+    if (Array.isArray(parsed?.voiceData)) {
+      normalized.voiceData = parsed.voiceData.map(normalizeVoiceDataEntry).filter(Boolean);
+    }
     if (typeof parsed?.profileRecordingId === 'string') normalized.profileRecordingId = parsed.profileRecordingId;
     if (parsed?.profileClone && typeof parsed.profileClone === 'object') {
       normalized.profileClone = normalizeProfileClone(parsed.profileClone);
@@ -1017,6 +1025,114 @@ function normalizeProfileSynthesis(entry) {
   state.synthesizedAt = typeof entry.synthesizedAt === 'string' ? entry.synthesizedAt : null;
   state.tweaks = normalizeProfileTweaks(entry.tweaks);
   return state;
+}
+
+function generateVoiceDataId() {
+  return `voice_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeVoiceDataEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const tokens = Array.isArray(entry.tokens)
+    ? entry.tokens
+        .map(token => (typeof token === 'string' ? token.trim() : ''))
+        .filter(Boolean)
+    : [];
+  const prompt = typeof entry.prompt === 'string' ? entry.prompt.trim() : '';
+  if (!tokens.length && !prompt) return null;
+  const capturedAt = typeof entry.capturedAt === 'string' ? entry.capturedAt : new Date().toISOString();
+  const tokenCount = Number.isFinite(entry.tokenCount)
+    ? Math.max(0, Math.floor(entry.tokenCount))
+    : tokens.length;
+  const source = typeof entry.source === 'string' && entry.source.trim() ? entry.source.trim() : 'voice-model';
+  const id = typeof entry.id === 'string' && entry.id ? entry.id : generateVoiceDataId();
+  return { id, tokens, prompt, capturedAt, tokenCount, source };
+}
+
+function ensureVoiceDataStore() {
+  if (!Array.isArray(store.voiceData)) {
+    store.voiceData = [];
+  }
+  return store.voiceData;
+}
+
+function pruneVoiceDataLimit() {
+  const list = ensureVoiceDataStore();
+  if (list.length > MAX_VOICE_DATA_ENTRIES) {
+    list.splice(0, list.length - MAX_VOICE_DATA_ENTRIES);
+  }
+}
+
+function applyVoiceDataEntry(entry, options = {}) {
+  const normalized = normalizeVoiceDataEntry(entry);
+  if (!normalized) return null;
+  const list = ensureVoiceDataStore();
+  if (list.some(item => item.id === normalized.id)) return normalized;
+  list.push(normalized);
+  pruneVoiceDataLimit();
+  if (options.persist !== false && voiceStoreLoaded) {
+    saveVoiceStore();
+  }
+  if (panelReady && options.render !== false) {
+    panelState.tokens = gatherTokens();
+    renderTokenList();
+    if (panelState.selectedToken) renderTokenDetail();
+  } else if (!panelReady && options.schedule !== false) {
+    scheduleTokenRefresh('voice-data', { priority: 'normal' });
+  }
+  return normalized;
+}
+
+function recordVoiceDataTokens(tokens, options = {}) {
+  const sourceTokens = Array.isArray(tokens) ? tokens : [];
+  const normalizedTokens = [];
+  const seen = new Set();
+  for (const rawToken of sourceTokens) {
+    if (typeof rawToken !== 'string') continue;
+    const trimmed = rawToken.trim();
+    if (!trimmed) continue;
+    const key = normalizeTokenKey(trimmed);
+    if (!key || seen.has(key)) continue;
+    normalizedTokens.push(trimmed);
+    seen.add(key);
+  }
+  let prompt = typeof options.prompt === 'string' ? options.prompt.trim() : '';
+  if (!normalizedTokens.length && prompt) {
+    for (const raw of prompt.split(/\s+/)) {
+      if (!raw) continue;
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const key = normalizeTokenKey(trimmed);
+      if (!key || seen.has(key)) continue;
+      normalizedTokens.push(trimmed);
+      seen.add(key);
+    }
+  }
+  if (!normalizedTokens.length && !prompt) return null;
+  const entry = {
+    id: typeof options.id === 'string' && options.id ? options.id : generateVoiceDataId(),
+    tokens: normalizedTokens,
+    prompt,
+    capturedAt: typeof options.capturedAt === 'string' ? options.capturedAt : new Date().toISOString(),
+    tokenCount: normalizedTokens.length,
+    source: typeof options.source === 'string' && options.source ? options.source : 'voice-model',
+  };
+  if (!voiceStoreLoaded) {
+    pendingVoiceData.push(entry);
+    return entry;
+  }
+  return applyVoiceDataEntry(entry);
+}
+
+function flushPendingVoiceData() {
+  if (!pendingVoiceData.length) return;
+  const entries = pendingVoiceData.splice(0);
+  for (const entry of entries) {
+    applyVoiceDataEntry(entry, { render: false, persist: false, schedule: false });
+  }
+  if (voiceStoreLoaded) {
+    saveVoiceStore();
+  }
 }
 
 function saveVoiceStore() {
@@ -1121,6 +1237,16 @@ function gatherTokens() {
       }
     } catch (err) {
       console.warn('Unable to list cached tokens for voice panel:', err);
+    }
+  }
+  if (Array.isArray(store.voiceData)) {
+    for (const entry of store.voiceData) {
+      if (!entry || !Array.isArray(entry.tokens)) continue;
+      for (const token of entry.tokens) {
+        if (token) tokenSet.add(token);
+        if (tokenSet.size >= MAX_RENDERED_TOKENS * 2) break;
+      }
+      if (tokenSet.size >= MAX_RENDERED_TOKENS * 2) break;
     }
   }
   const db = window.HLSF?.dbCache;
@@ -1435,6 +1561,86 @@ function refreshTokens() {
   pendingTokenRefresh = false;
 }
 
+function getVoiceDataEntriesForToken(token) {
+  const normalized = normalizeTokenKey(token);
+  if (!normalized || !Array.isArray(store.voiceData)) return [];
+  return store.voiceData.filter(entry => {
+    if (!entry || !Array.isArray(entry.tokens)) return false;
+    return entry.tokens.some(item => normalizeTokenKey(item) === normalized);
+  });
+}
+
+function getVoiceDataTokenCounts() {
+  const counts = new Map();
+  if (!Array.isArray(store.voiceData)) return counts;
+  for (const entry of store.voiceData) {
+    if (!entry || !Array.isArray(entry.tokens)) continue;
+    for (const token of entry.tokens) {
+      const key = normalizeTokenKey(token);
+      if (!key) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function formatVoiceDataTimestamp(value) {
+  if (!value) return '—';
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(value));
+  } catch {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return '—';
+    return date.toLocaleString();
+  }
+}
+
+function renderVoiceDataSection(token) {
+  const heading = '<section class="voice-data-section"><h4>Voice data captures</h4>';
+  const entries = getVoiceDataEntriesForToken(token);
+  if (!entries.length) {
+    return `${heading}<p class="voice-data-empty"><em>No voice data captured for this token yet.</em></p></section>`;
+  }
+  const sorted = entries
+    .slice()
+    .sort((a, b) => {
+      const timeA = Date.parse(a?.capturedAt || '') || 0;
+      const timeB = Date.parse(b?.capturedAt || '') || 0;
+      return timeB - timeA;
+    });
+  const limited = sorted.slice(0, VOICE_DATA_DISPLAY_LIMIT);
+  const items = limited
+    .map(entry => {
+      const tokenCount = entry.tokenCount || (Array.isArray(entry.tokens) ? entry.tokens.length : 0);
+      const metaParts = [];
+      if (tokenCount) metaParts.push(`${tokenCount} token${tokenCount === 1 ? '' : 's'}`);
+      if (entry.capturedAt) metaParts.push(formatVoiceDataTimestamp(entry.capturedAt));
+      const meta = metaParts.length
+        ? `<div class="voice-data-entry__meta">${escapeHtml(metaParts.join(' · '))}</div>`
+        : '';
+      const promptMarkup = entry.prompt
+        ? `<div class="voice-data-entry__prompt">${escapeHtml(entry.prompt)}</div>`
+        : '';
+      const tokensMarkup = Array.isArray(entry.tokens) && entry.tokens.length
+        ? `<div class="voice-data-entry__tokens">${entry.tokens
+            .map(sample => `<span class="voice-data-token">${escapeHtml(sample)}</span>`)
+            .join('')}</div>`
+        : '';
+      return `<li class="voice-data-entry">${meta}${promptMarkup}${tokensMarkup}</li>`;
+    })
+    .join('');
+  const remaining = sorted.length - limited.length;
+  const remainder = remaining > 0
+    ? `<p class="voice-data-more">+${remaining} additional capture${remaining === 1 ? '' : 's'} stored</p>`
+    : '';
+  return `${heading}<ul class="voice-data-list">${items}</ul>${remainder}</section>`;
+}
+
 function renderTokenList() {
   if (!elements.tokenList) return;
   refreshVoiceProfileClone(false);
@@ -1443,6 +1649,7 @@ function renderTokenList() {
   for (const [token, list] of recordingIndex) {
     tokenStats.set(token, list.length);
   }
+  const voiceDataCounts = getVoiceDataTokenCounts();
   const clone = getValidProfileClone();
   const usingSynthesizedPreview = hasSynthesizedVoiceProfile();
   const items = [];
@@ -1454,14 +1661,18 @@ function renderTokenList() {
     const assignedId = store.assignments?.[token] || null;
     const recordings = tokenStats.get(token) || 0;
     const hasAssigned = Boolean(assignedId);
+    const normalizedKey = normalizeTokenKey(token);
+    const voiceDataCount = normalizedKey ? voiceDataCounts.get(normalizedKey) || 0 : 0;
     const usingClone = !hasAssigned && Boolean(clone);
     const statusLabel = hasAssigned
       ? 'Voice mapped'
       : recordings > 0
         ? `${recordings} recording${recordings === 1 ? '' : 's'}`
-        : usingClone
-          ? 'Cloned profile available'
-          : 'No voice data';
+        : voiceDataCount > 0
+          ? `${voiceDataCount} voice capture${voiceDataCount === 1 ? '' : 's'}`
+          : usingClone
+            ? 'Cloned profile available'
+            : 'No voice data';
     const disabledAssigned = hasAssigned || usingClone ? '' : 'disabled';
     const disabledTts = usingSynthesizedPreview ? '' : 'disabled';
     const selectedClass = panelState.selectedToken === token ? 'selected' : '';
@@ -1650,6 +1861,7 @@ function renderTokenDetail() {
 
   const profileSection = renderProfileCloneSection(token);
   const bulkActions = renderBulkRecordingActions();
+  const voiceDataSection = renderVoiceDataSection(token);
   elements.detail.innerHTML = `
     <div class="voice-detail-header">
       <h3>${escapeHtml(token)}</h3>
@@ -1674,6 +1886,7 @@ function renderTokenDetail() {
       </label>
     </div>
     ${profileSection}
+    ${voiceDataSection}
     ${assignedMarkup}
     ${recordingsMarkup}
     ${bulkActions}
@@ -2935,6 +3148,8 @@ function handleVoicePanelToggle() {
 function initializeVoiceClonePanel() {
   if (panelReady) return;
   store = loadVoiceStore();
+  voiceStoreLoaded = true;
+  ensureVoiceDataStore();
   maybeImportVoiceProfileFromSession();
   refreshVoiceProfileClone(false);
   elements.panel = document.getElementById('voice-clone-panel');
@@ -2968,6 +3183,7 @@ function initializeVoiceClonePanel() {
 
   panelReady = true;
   recordingIndex = buildRecordingIndex();
+  flushPendingVoiceData();
 
   elements.search?.addEventListener('input', handleSearchInput);
   elements.refresh?.addEventListener('click', () => scheduleTokenRefresh('manual-refresh', { priority: 'high' }));
@@ -3011,10 +3227,12 @@ function initializeVoiceClonePanel() {
     refreshTokens: () => scheduleTokenRefresh('external-refresh', { priority: 'high' }),
     playToken: playAssignedForToken,
     playTts: playTokenTts,
+    recordVoiceTokens: (tokens, options) => recordVoiceDataTokens(tokens, options),
     signalTokensChanged: signalVoiceCloneTokensChanged,
     getProfileClone: getProfileCloneExportPayload,
     getProfileExport: getVoiceProfileExportPayload,
     importProfile: importVoiceProfileExportPayload,
+    getVoiceData: () => JSON.parse(JSON.stringify(store.voiceData || [])),
     openConsole: () => setVoicePopupVisible(true),
     closeConsole: () => setVoicePopupVisible(false),
     isConsoleOpen: () => panelState.popupVisible,

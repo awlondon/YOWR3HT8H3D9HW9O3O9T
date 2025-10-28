@@ -16593,13 +16593,25 @@ async function initialize() {
   voiceDockController = initializeVoiceModelDock({
     submitPrompt: (text, opts) => submitVoiceModelPrompt(text, opts),
     userAvatar: userAvatarStore,
-    onTokensCommitted: tokens => {
-      if (Array.isArray(tokens) && tokens.length) {
-        try {
-          signalVoiceCloneTokensChanged('voice-model');
-        } catch (err) {
-          console.warn('Voice model token signal failed:', err);
+    onTokensCommitted: (tokens, context) => {
+      try {
+        const voiceApi = window.CognitionEngine?.voice;
+        if (voiceApi?.recordVoiceTokens) {
+          const payloadTokens = Array.isArray(tokens) ? tokens : [];
+          voiceApi.recordVoiceTokens(payloadTokens, {
+            source: 'voice-model',
+            prompt: context?.prompt || '',
+            capturedAt: new Date().toISOString(),
+            kind: context?.kind,
+          });
         }
+      } catch (err) {
+        console.warn('Voice data capture from voice model failed:', err);
+      }
+      try {
+        signalVoiceCloneTokensChanged('voice-model');
+      } catch (err) {
+        console.warn('Voice model token signal failed:', err);
       }
     },
   });
