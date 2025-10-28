@@ -3962,6 +3962,8 @@ function loadGlyphMaps(db) {
   });
 }
 
+const userAvatarStore = initializeUserAvatarStore();
+
 window.CognitionEngine = window.CognitionEngine || {
   state: {},
   cache: {},
@@ -4655,7 +4657,6 @@ const state = {
 state.hlsfReady = false;
 let remotedir = false;
 
-const userAvatarStore = initializeUserAvatarStore();
 let voiceDockController: ReturnType<typeof initializeVoiceModelDock> | null = null;
 
 function setRemotedirFlag(value: boolean) {
