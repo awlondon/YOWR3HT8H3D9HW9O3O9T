@@ -7692,6 +7692,12 @@ const RemoteDbStore = (() => {
     const stats = { loaded: 0, hits: 0 };
     const normalizedTokens = Array.from(new Set((tokens || []).map(normalizeToken).filter(Boolean)));
     const loadedTokens = new Set();
+    const recordLoadedToken = (value) => {
+      if (!value) return;
+      const normalized = typeof value === 'string' ? value.trim() : '';
+      if (!normalized) return;
+      loadedTokens.add(normalized);
+    };
     if (!normalizedTokens.length) return stats;
 
     const pending = new Map();
@@ -7701,6 +7707,7 @@ const RemoteDbStore = (() => {
         const hasAdjacency = existing && existing.relationships && Object.keys(existing.relationships).length > 0;
         if (hasAdjacency) {
           stats.hits++;
+          recordLoadedToken(existing?.token || token);
           continue;
         }
       }
@@ -7708,9 +7715,10 @@ const RemoteDbStore = (() => {
       if (cached) {
         if (ingestRecord(cached)) {
           stats.loaded++;
-          loadedTokens.add(cached.token);
+          recordLoadedToken(cached.token);
         } else {
           stats.hits++;
+          recordLoadedToken(cached.token || token);
         }
         continue;
       }
@@ -7746,9 +7754,10 @@ const RemoteDbStore = (() => {
             tokenCache.set(token, record);
             if (ingestRecord(record)) {
               stats.loaded++;
-              loadedTokens.add(record.token);
+              recordLoadedToken(record.token);
             } else {
               stats.hits++;
+              recordLoadedToken(record.token || token);
             }
           }
         }
@@ -7757,8 +7766,11 @@ const RemoteDbStore = (() => {
 
     if (stats.loaded > 0) {
       updateHeaderCounts();
-      const targetToken = normalizedTokens[normalizedTokens.length - 1] || Array.from(loadedTokens)[0];
-      onAdjacencyPreloadComplete(targetToken, Array.from(loadedTokens));
+    }
+    if (loadedTokens.size > 0) {
+      const orderedLoaded = Array.from(loadedTokens);
+      const targetToken = normalizedTokens[normalizedTokens.length - 1] || orderedLoaded[0];
+      onAdjacencyPreloadComplete(targetToken, orderedLoaded);
     }
     return stats;
   };
@@ -7797,6 +7809,7 @@ const RemoteDbStore = (() => {
     window.HLSF.dbCache = { full_token_data: [] };
     window.HLSF.dbMeta = metadata;
     updateHeaderCounts();
+    scheduleRemoteCacheWarmup({ remote: RemoteDbStore, limit: CONFIG.CACHE_SEED_LIMIT, reason: 'configure' });
     return metadata;
   };
 
@@ -7840,6 +7853,7 @@ const RemoteDbStore = (() => {
       window.HLSF.dbMeta = manifest;
     }
     updateHeaderCounts();
+    scheduleRemoteCacheWarmup({ remote: RemoteDbStore, limit: CONFIG.CACHE_SEED_LIMIT, reason: 'recorder', force: true });
     return manifest;
   };
 
@@ -7855,6 +7869,137 @@ const RemoteDbStore = (() => {
     attachRecorder,
   };
 })();
+
+let remoteCacheWarmPromise = null;
+let remoteCacheWarmActiveKey = '';
+let remoteCacheWarmCompletedKey = '';
+
+function computeRemoteDatasetKey(tokens, metadata) {
+  const metaPart = (() => {
+    if (!metadata || typeof metadata !== 'object') return '';
+    const version = metadata.version || metadata.db_version || '';
+    const generated = metadata.generated_at || metadata.generatedAt || '';
+    const total = Number.isFinite(metadata.total_tokens)
+      ? metadata.total_tokens
+      : (Number.isFinite(metadata.totalTokens) ? metadata.totalTokens : '');
+    const chunkCount = Array.isArray(metadata.chunks) ? metadata.chunks.length : '';
+    return `meta:${version}|${generated}|${total}|${chunkCount}`;
+  })();
+
+  if (typeof window !== 'undefined' && window?.HLSF?.config) {
+    const bootstrap = window.HLSF.config.bootstrapDbUrl;
+    if (typeof bootstrap === 'string' && bootstrap.trim()) {
+      return `url:${bootstrap.trim()}|${metaPart || 'default'}`;
+    }
+  }
+  if (metaPart) return metaPart;
+  if (Array.isArray(tokens) && tokens.length) {
+    const first = tokens[0];
+    const last = tokens[tokens.length - 1];
+    return `tokens:${tokens.length}|${first}|${last}`;
+  }
+  return 'remote:unknown';
+}
+
+function scheduleRemoteCacheWarmup(options = {}) {
+  const remote = options.remote || (typeof window !== 'undefined' ? window?.HLSF?.remoteDb : null);
+  if (!remote || typeof remote.isReady !== 'function' || !remote.isReady()) return null;
+  if (typeof remote.listTokens !== 'function' || typeof remote.preloadTokens !== 'function') return null;
+
+  const metadata = typeof remote.metadata === 'function' ? remote.metadata() : null;
+  let tokens = remote.listTokens();
+  if (!Array.isArray(tokens) || tokens.length === 0) return null;
+  tokens = tokens
+    .map(token => (typeof token === 'string' ? token.trim() : ''))
+    .filter(Boolean);
+  if (!tokens.length) return null;
+
+  const datasetKey = computeRemoteDatasetKey(tokens, metadata);
+  const force = options.force === true;
+
+  if (!force) {
+    if (remoteCacheWarmPromise && remoteCacheWarmActiveKey === datasetKey) {
+      return remoteCacheWarmPromise;
+    }
+    if (!remoteCacheWarmPromise && remoteCacheWarmCompletedKey === datasetKey) {
+      return Promise.resolve({ warmed: 0, total: 0, skipped: true });
+    }
+  }
+
+  const limitOption = Number.isFinite(options.limit) && options.limit > 0
+    ? Math.floor(options.limit)
+    : 0;
+  const limit = limitOption > 0 ? Math.min(tokens.length, limitOption) : tokens.length;
+  if (limit <= 0) return null;
+
+  const subset = tokens.slice(0, limit);
+  if (!subset.length) return null;
+
+  const batchSize = (() => {
+    if (Number.isFinite(options.batchSize) && options.batchSize > 0) {
+      return Math.max(1, Math.floor(options.batchSize));
+    }
+    const derived = Math.ceil(subset.length / 12);
+    return Math.max(8, Math.min(200, derived));
+  })();
+
+  const run = async () => {
+    let warmed = 0;
+    for (let i = 0; i < subset.length; i += batchSize) {
+      const batch = subset.slice(i, i + batchSize);
+      if (!batch.length) continue;
+      try {
+        const stats = await remote.preloadTokens(batch);
+        if (stats && typeof stats.loaded === 'number') {
+          warmed += stats.loaded;
+        } else if (stats && typeof stats.hits === 'number' && (stats.loaded == null || stats.loaded === undefined)) {
+          warmed += stats.hits;
+        } else {
+          warmed += batch.length;
+        }
+      } catch (err) {
+        console.warn('Remote token cache warmup failed for batch:', err);
+      }
+    }
+    return { warmed, total: subset.length };
+  };
+
+  remoteCacheWarmActiveKey = datasetKey;
+
+  const schedule = (invoke) => {
+    const idle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback.bind(window)
+      : null;
+    if (idle) {
+      idle(invoke, { timeout: 2000 });
+    } else {
+      setTimeout(invoke, 150);
+    }
+  };
+
+  let currentPromise;
+  const startWarmup = () => run().catch(err => {
+    console.warn('Remote token cache warmup failed:', err);
+    return { warmed: 0, total: subset.length, error: err };
+  }).then(result => {
+    remoteCacheWarmCompletedKey = datasetKey;
+    return result;
+  }).finally(() => {
+    if (remoteCacheWarmPromise === currentPromise) {
+      remoteCacheWarmPromise = null;
+      remoteCacheWarmActiveKey = '';
+    }
+  });
+
+  currentPromise = new Promise(resolve => {
+    schedule(() => {
+      startWarmup().then(resolve);
+    });
+  });
+
+  remoteCacheWarmPromise = currentPromise;
+  return currentPromise;
+}
 
 window.HLSF.remoteDb = RemoteDbStore;
 
@@ -15750,6 +15895,7 @@ async function initialize() {
 
   const bootstrapped = await tryBootstrapDb();
   const dbAvailable = bootstrapped || !!getDb();
+  scheduleRemoteCacheWarmup({ reason: 'initialize' });
 
   cachedCount = getCachedTokenCount();
   if (Number.isFinite(cachedCount)) {
