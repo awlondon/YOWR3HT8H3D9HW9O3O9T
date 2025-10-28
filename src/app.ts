@@ -8541,6 +8541,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       ? Math.floor(options.spawnLimit)
       : 2;
     const stopWhenConnected = options.stopWhenConnected !== false;
+    const requireCompleteGraph = options.requireCompleteGraph !== false;
     const remoteDbStore = window.HLSF?.remoteDb;
     const remoteDb = preferDb ? remoteDbStore : null;
 
@@ -8743,26 +8744,34 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
 
         progress.increment(1);
 
-        if (checkConnectivity && results.size && results.size !== lastConnectivitySize) {
+        const resultsSize = results.size;
+        if (checkConnectivity && resultsSize && resultsSize !== lastConnectivitySize) {
           lastConnectivitySnapshot = analyzeAdjacencyConnectivity(results, normalized);
-          lastConnectivitySize = results.size;
-          if (lastConnectivitySnapshot?.allSeedsConnected) {
+          lastConnectivitySize = resultsSize;
+        }
+
+        if (requireCompleteGraph && resultsSize) {
+          if (isCompleteAdjacencyGraph(results)) {
             connectivitySatisfied = true;
             break;
           }
+        } else if (!requireCompleteGraph && lastConnectivitySnapshot?.allSeedsConnected) {
+          connectivitySatisfied = true;
+          break;
         }
       }
 
       if (connectivitySatisfied) break;
     }
 
-    if (connectivitySatisfied && lastConnectivitySnapshot?.allSeedsConnected) {
+    const finalConnectivity = lastConnectivitySnapshot || analyzeAdjacencyConnectivity(results, normalized);
+    const finalCompleteGraph = isCompleteAdjacencyGraph(results);
+
+    if (connectivitySatisfied && (finalCompleteGraph || finalConnectivity?.allSeedsConnected)) {
       progress.complete(`${label || 'adjacency recursion'}: connected ${normalized.length} seed${normalized.length === 1 ? '' : 's'} across ${visited.size} token${visited.size === 1 ? '' : 's'}`);
     } else {
       progress.complete(`${label || 'adjacency recursion'}: explored ${visited.size} token${visited.size === 1 ? '' : 's'} to depth ${depth}`);
     }
-
-    const connectivity = lastConnectivitySnapshot || analyzeAdjacencyConnectivity(results, normalized);
 
     return {
       matrices: results,
@@ -8774,9 +8783,11 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
         apiCalls: stats.apiCalls,
         fetchCount: stats.fetchCount,
         visitedTokens: visited.size,
-        connectivity,
+        connectivity: finalConnectivity,
+        completeGraph: finalCompleteGraph,
       },
-      connectivity,
+      connectivity: finalConnectivity,
+      completeGraph: finalCompleteGraph,
       provenance: {
         cacheHits: Array.from(cacheHitTokens),
         llmGenerated: Array.from(llmGeneratedTokens),
@@ -8891,6 +8902,71 @@ function collectHiddenAdjacencyTokens(options = {}) {
     unmapped,
     neighborSources,
   };
+}
+
+function isCompleteAdjacencyGraph(matrices) {
+  if (!(matrices instanceof Map)) {
+    return false;
+  }
+
+  const adjacencyMap = new Map();
+  const nodes = [];
+
+  for (const [tokenKey, entry] of matrices.entries()) {
+    const rawToken = entry?.token || tokenKey;
+    const token = (rawToken == null ? '' : String(rawToken)).trim();
+    if (!token) continue;
+    const key = token.toLowerCase();
+    if (!adjacencyMap.has(key)) {
+      adjacencyMap.set(key, new Set());
+      nodes.push(key);
+    }
+  }
+
+  if (nodes.length <= 1) {
+    return nodes.length === 1;
+  }
+
+  for (const [tokenKey, entry] of matrices.entries()) {
+    const rawToken = entry?.token || tokenKey;
+    const token = (rawToken == null ? '' : String(rawToken)).trim();
+    if (!token) continue;
+    const key = token.toLowerCase();
+    const neighbors = adjacencyMap.get(key);
+    if (!neighbors) continue;
+
+    const relationships = entry?.relationships && typeof entry.relationships === 'object'
+      ? entry.relationships
+      : {};
+
+    for (const edges of Object.values(relationships)) {
+      if (!Array.isArray(edges)) continue;
+      for (const edge of edges) {
+        if (!edge || !edge.token) continue;
+        const neighborToken = String(edge.token).trim();
+        if (!neighborToken) continue;
+        const neighborKey = neighborToken.toLowerCase();
+        if (neighborKey === key) continue;
+        if (adjacencyMap.has(neighborKey)) {
+          neighbors.add(neighborKey);
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < nodes.length; i += 1) {
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      const a = nodes[i];
+      const b = nodes[j];
+      const aNeighbors = adjacencyMap.get(a) || new Set();
+      const bNeighbors = adjacencyMap.get(b) || new Set();
+      if (!(aNeighbors.has(b) || bNeighbors.has(a))) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 function analyzeAdjacencyConnectivity(matrices, seeds) {
