@@ -6029,10 +6029,61 @@ function handleLiveInputChange(text) {
   schedulePreviewTokenPreload(previewTokens);
 }
 
-function commitInputTokensFromText(text) {
+function integrateCommittedTokens(tokens, options = {}) {
+  const normalized = normalizeTokenList(tokens);
+  if (!normalized.length) return;
+
+  addConversationTokens(normalized);
+
+  const opts = typeof options === 'object' && options !== null ? options : {};
+  const render = opts.render === true;
+  const immediate = opts.immediate === true;
+  const reason = typeof opts.reason === 'string' && opts.reason.trim()
+    ? opts.reason.trim()
+    : (opts.source === 'voice' ? 'prompt-voice' : 'prompt-preload');
+
+  if (render) {
+    queueLiveGraphUpdate(immediate ? 32 : 96);
+  }
+
+  if (typeof window === 'undefined') return;
+
+  const remote = window?.HLSF?.remoteDb;
+  if (!remote
+    || typeof remote.isReady !== 'function'
+    || !remote.isReady()
+    || typeof remote.preloadTokens !== 'function') {
+    return;
+  }
+
+  try {
+    const preloadResult = remote.preloadTokens(normalized);
+    if (!preloadResult || typeof preloadResult.then !== 'function') return;
+    preloadResult
+      .then(stats => {
+        const loaded = Number(stats?.loaded) || 0;
+        const hits = Number(stats?.hits) || 0;
+        if (loaded + hits > 0) {
+          notifyHlsfAdjacencyChange(reason, { immediate: true });
+        } else if (render) {
+          queueLiveGraphUpdate(immediate ? 32 : 120);
+        }
+      })
+      .catch(err => {
+        console.warn('Remote adjacency preload failed for committed tokens:', err);
+      });
+  } catch (err) {
+    console.warn('Unable to schedule remote adjacency preload:', err);
+  }
+}
+
+function commitInputTokensFromText(text, options = {}) {
   const committedTokens = tokenize(text || '');
   if (!committedTokens.length) return committedTokens;
-  commitTokens(committedTokens, { render: false });
+  const opts = typeof options === 'object' && options !== null ? options : {};
+  const render = opts.render === true;
+  commitTokens(committedTokens, { render });
+  integrateCommittedTokens(committedTokens, opts);
   return committedTokens;
 }
 
@@ -16451,8 +16502,7 @@ async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } 
   const isCmd = isCommand(trimmed);
   let committedTokens = [];
   if (!isCmd) {
-    committedTokens = commitInputTokensFromText(trimmed);
-    if (committedTokens.length) addConversationTokens(committedTokens);
+    committedTokens = commitInputTokensFromText(trimmed, { source: 'voice', render: false });
   }
 
   setInputPreviewTokens([], { render: false });
@@ -16480,8 +16530,7 @@ elements.sendBtn.addEventListener('click', () => {
 
   const isCmd = isCommand(input);
   if (!isCmd) {
-    const committedTokens = commitInputTokensFromText(rawValue);
-    if (committedTokens.length) addConversationTokens(committedTokens);
+    const committedTokens = commitInputTokensFromText(rawValue, { source: 'input-field', render: false });
   }
   setInputPreviewTokens([], { render: false });
   rebuildLiveGraph();
