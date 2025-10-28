@@ -332,7 +332,6 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       delete (metadata as any).token_index;
     }
 
-    logger.onSyncStart?.();
     const existingMetadata = await readJsonFileFromDirectory(directory, 'metadata.json');
     const existingTokenIndex = parseTokenIndexPayload(
       await readJsonFileFromDirectory(directory, 'token-index.json'),
