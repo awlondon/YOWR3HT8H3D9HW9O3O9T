@@ -1643,12 +1643,14 @@
       inset: 0;
       z-index: 1000;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
       background: radial-gradient(circle at top, rgba(0, 255, 136, 0.25), rgba(0, 0, 0, 0.92) 55%);
       padding: 3rem 1.5rem;
       color: #f9fdfb;
       font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      overflow-y: auto;
+      box-sizing: border-box;
     }
 
     .landing-container {
@@ -1662,6 +1664,7 @@
       box-shadow: 0 40px 80px rgba(0, 0, 0, 0.65);
       backdrop-filter: blur(18px);
       padding: 2.75rem;
+      margin: 0 auto 3rem;
     }
 
     @media (max-width: 980px) {
