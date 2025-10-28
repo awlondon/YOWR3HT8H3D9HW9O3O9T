@@ -452,6 +452,26 @@
       box-shadow: 0 0 24px rgba(0, 255, 136, 0.08);
     }
 
+    .voice-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .voice-panel-toggle {
+      margin-left: auto;
+    }
+
+    .voice-panel-body {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .voice-panel.collapsed .voice-panel-body {
+      display: none;
+    }
+
     .voice-panel-description {
       margin: 0;
       font-size: 0.9rem;

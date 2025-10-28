@@ -250,22 +250,35 @@
       </div>
     </div>
     <section id="voice-clone-panel" class="voice-panel">
-      <div class="section-title">🎙️ Voice Clone Studio</div>
-      <p class="voice-panel-description">
-        Capture speech-to-text training samples for cached tokens, tag each iteration, and map the resulting voice profile across your lexicon.
-      </p>
-      <div class="voice-panel-controls">
-        <input id="voice-token-search" type="search" placeholder="Search cached tokens…" aria-label="Search cached tokens" />
-        <button id="voice-token-refresh" class="btn btn-secondary btn-compact" type="button">Refresh tokens</button>
+      <div class="voice-panel-header">
+        <div class="section-title">🎙️ Voice Clone Studio</div>
+        <button
+          id="voice-panel-toggle"
+          class="btn btn-secondary btn-compact voice-panel-toggle"
+          type="button"
+          aria-expanded="true"
+          aria-controls="voice-clone-content"
+        >
+          Minimize
+        </button>
       </div>
-      <div id="voice-clone-status" class="voice-status-message" role="status" aria-live="polite"></div>
-      <div class="voice-panel-columns">
-        <div class="voice-token-column">
-          <ul id="voice-token-list" class="voice-token-list" aria-label="Cached tokens for voice cloning"></ul>
+      <div id="voice-clone-content" class="voice-panel-body">
+        <p class="voice-panel-description">
+          Capture speech-to-text training samples for cached tokens, tag each iteration, and map the resulting voice profile across your lexicon.
+        </p>
+        <div class="voice-panel-controls">
+          <input id="voice-token-search" type="search" placeholder="Search cached tokens…" aria-label="Search cached tokens" />
+          <button id="voice-token-refresh" class="btn btn-secondary btn-compact" type="button">Refresh tokens</button>
         </div>
-        <div class="voice-detail-column">
-          <div id="voice-token-detail" class="voice-token-detail">
-            <p class="voice-detail-placeholder">Select a cache token to begin recording and mapping your voice profile.</p>
+        <div id="voice-clone-status" class="voice-status-message" role="status" aria-live="polite"></div>
+        <div class="voice-panel-columns">
+          <div class="voice-token-column">
+            <ul id="voice-token-list" class="voice-token-list" aria-label="Cached tokens for voice cloning"></ul>
+          </div>
+          <div class="voice-detail-column">
+            <div id="voice-token-detail" class="voice-token-detail">
+              <p class="voice-detail-placeholder">Select a cache token to begin recording and mapping your voice profile.</p>
+            </div>
           </div>
         </div>
       </div>
