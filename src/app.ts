@@ -83,6 +83,36 @@ interface CommandHelpEntry {
   requiresMembership: boolean;
 }
 
+interface LocalHlsfAdjacencyTokenSummary {
+  token: string;
+  relationships: Record<string, { token: string; weight: number }[]>;
+  attention: number;
+  totalRelationships: number;
+}
+
+interface LocalHlsfPromptRecord {
+  id: string;
+  text: string;
+  tokens: string[];
+  adjacencySeeds: string[];
+  timestamp: string;
+}
+
+interface LocalHlsfAdjacencySummary {
+  id: string;
+  tokenCount: number;
+  summary: LocalHlsfAdjacencyTokenSummary[];
+  updatedAt: string;
+  label?: string;
+}
+
+interface LocalHlsfMemoryState {
+  prompts: LocalHlsfPromptRecord[];
+  adjacencySummaries: Map<string, LocalHlsfAdjacencySummary>;
+  lastPrompt?: LocalHlsfPromptRecord | null;
+  lastAdjacency?: LocalHlsfAdjacencySummary | null;
+}
+
 const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/help', description: 'Show this command catalog', requiresMembership: false },
   { command: '/clear', description: 'Clear log history', requiresMembership: true },
@@ -5560,6 +5590,153 @@ function recordSymbolMetrics(label, pipelineResult, baseTokenCount = 0) {
   bucket.topNodes = pipelineResult.top;
   bucket.history.push(entry);
   if (bucket.history.length > 20) bucket.history.shift();
+}
+
+function ensureLocalHlsfMemory(): LocalHlsfMemoryState | null {
+  if (typeof window === 'undefined') return null;
+  const globalWindow = window as Window & { HLSF?: any };
+  const hlsf = globalWindow.HLSF || (globalWindow.HLSF = {});
+  if (!hlsf.localMemory || typeof hlsf.localMemory !== 'object') {
+    hlsf.localMemory = {
+      prompts: [],
+      adjacencySummaries: new Map<string, LocalHlsfAdjacencySummary>(),
+      lastPrompt: null,
+      lastAdjacency: null,
+    } satisfies LocalHlsfMemoryState;
+  }
+
+  const memory = hlsf.localMemory as LocalHlsfMemoryState;
+
+  if (!Array.isArray(memory.prompts)) {
+    memory.prompts = [];
+  }
+
+  if (!(memory.adjacencySummaries instanceof Map)) {
+    memory.adjacencySummaries = new Map<string, LocalHlsfAdjacencySummary>();
+  }
+
+  return memory;
+}
+
+function recordLocalPromptMemory(
+  id: string,
+  promptText: string,
+  tokens: string[],
+  adjacencyTargets: Array<{ token?: string; normalized?: string }> = [],
+): LocalHlsfPromptRecord | null {
+  const memory = ensureLocalHlsfMemory();
+  if (!memory) return null;
+
+  const seenTokens = new Set<string>();
+  const normalizedTokens: string[] = [];
+  for (const token of Array.isArray(tokens) ? tokens : []) {
+    if (!token) continue;
+    const value = String(token).trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seenTokens.has(key)) continue;
+    seenTokens.add(key);
+    normalizedTokens.push(value);
+  }
+
+  const adjacencySeeds: string[] = [];
+  const seenAdjacency = new Set<string>();
+  for (const target of Array.isArray(adjacencyTargets) ? adjacencyTargets : []) {
+    if (!target) continue;
+    const raw = typeof target === 'string'
+      ? target
+      : typeof target === 'object'
+        ? String(target.token || target.normalized || '')
+        : '';
+    const value = raw.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seenAdjacency.has(key)) continue;
+    seenAdjacency.add(key);
+    adjacencySeeds.push(value);
+  }
+
+  const entry: LocalHlsfPromptRecord = {
+    id,
+    text: String(promptText || '').trim(),
+    tokens: normalizedTokens,
+    adjacencySeeds,
+    timestamp: new Date().toISOString(),
+  };
+
+  memory.prompts.push(entry);
+  while (memory.prompts.length > 100) {
+    memory.prompts.shift();
+  }
+  memory.lastPrompt = entry;
+
+  return entry;
+}
+
+function summarizeAdjacencyMapForLocal(
+  adjacencyMap: Map<string, any>,
+  options: { limit?: number; edgesPerToken?: number } = {},
+): LocalHlsfAdjacencyTokenSummary[] {
+  if (!(adjacencyMap instanceof Map)) return [];
+
+  const limit = Number.isFinite(options.limit) && options.limit
+    ? Math.max(1, Math.floor(options.limit))
+    : 20;
+  const edgesPerToken = Number.isFinite(options.edgesPerToken) && options.edgesPerToken
+    ? Math.max(1, Math.floor(options.edgesPerToken))
+    : 6;
+
+  const summary: LocalHlsfAdjacencyTokenSummary[] = [];
+  let count = 0;
+  for (const [token, entry] of adjacencyMap.entries()) {
+    if (!token || !entry) continue;
+    const limited = limitAdjacencyEntryEdges(entry, edgesPerToken);
+    const relationships =
+      limited.relationships && typeof limited.relationships === 'object'
+        ? (limited.relationships as Record<string, { token: string; weight: number }[]>)
+        : {};
+
+    summary.push({
+      token,
+      relationships,
+      attention: Number(limited.attention_score) || 0,
+      totalRelationships: Number(limited.total_relationships) || 0,
+    });
+
+    count += 1;
+    if (count >= limit) break;
+  }
+
+  return summary;
+}
+
+function recordLocalAdjacencySummary(
+  id: string,
+  adjacencyMap: Map<string, any>,
+  label = 'prompt-adjacency',
+  options: { limit?: number; edgesPerToken?: number } = {},
+): LocalHlsfAdjacencySummary | null {
+  const memory = ensureLocalHlsfMemory();
+  if (!memory || !(adjacencyMap instanceof Map)) return null;
+
+  const summary = summarizeAdjacencyMapForLocal(adjacencyMap, options);
+  const record: LocalHlsfAdjacencySummary = {
+    id,
+    label,
+    tokenCount: adjacencyMap.size,
+    summary,
+    updatedAt: new Date().toISOString(),
+  };
+
+  memory.adjacencySummaries.set(id, record);
+  while (memory.adjacencySummaries.size > 50) {
+    const oldest = memory.adjacencySummaries.keys().next();
+    if (oldest.done) break;
+    memory.adjacencySummaries.delete(oldest.value);
+  }
+  memory.lastAdjacency = record;
+
+  return record;
 }
 
 function collectSymbolAwareTokens(text, baseTokens = [], label = 'default') {
@@ -14936,6 +15113,26 @@ async function processPrompt(prompt) {
     </div>`);
 
     const inputAdjTokens = collectSymbolAwareTokens(normalizedPrompt, tokens, 'prompt-input');
+    const promptMemoryEntry = recordLocalPromptMemory(
+      promptReviewId,
+      normalizedPrompt,
+      uniqueTokens,
+      inputAdjTokens,
+    );
+    if (promptMemoryEntry) {
+      const tokenSummary = formatTokenList(promptMemoryEntry.tokens, 10);
+      const seedSummary = formatTokenList(promptMemoryEntry.adjacencySeeds, 10);
+      const summaryParts: string[] = [
+        sanitize(`${promptMemoryEntry.tokens.length} token${promptMemoryEntry.tokens.length === 1 ? '' : 's'}`),
+      ];
+      if (tokenSummary) {
+        summaryParts.push(sanitize(tokenSummary));
+      }
+      if (seedSummary) {
+        summaryParts.push(sanitize(`adjacency seeds ${seedSummary}`));
+      }
+      addLog(`<div class="adjacency-insight"><strong>🧠 Local HLSF memory primed:</strong> ${summaryParts.join(' · ')}</div>`);
+    }
     const normalizedSeeds = normalizeAdjacencyInputs(inputAdjTokens);
     const dbRecordIndex = buildDbRecordIndexMap();
     const remoteDbReady = window.HLSF?.remoteDb?.isReady?.() === true;
@@ -15055,6 +15252,26 @@ async function processPrompt(prompt) {
     calculateAttention(inputMatrices);
 
     const allMatrices = inputMatrices instanceof Map ? new Map(inputMatrices) : new Map();
+    const adjacencyRecord = recordLocalAdjacencySummary(
+      promptReviewId,
+      allMatrices,
+      'prompt-adjacency',
+      { limit: 24, edgesPerToken: 6 },
+    );
+    if (adjacencyRecord) {
+      const adjacencyTokenSummary = formatTokenList(
+        adjacencyRecord.summary.map(item => item.token),
+        10,
+      );
+      const detailParts: string[] = [
+        sanitize(`${adjacencyRecord.tokenCount} adjacency token${adjacencyRecord.tokenCount === 1 ? '' : 's'}`),
+      ];
+      if (adjacencyTokenSummary) {
+        detailParts.push(sanitize(adjacencyTokenSummary));
+      }
+      addLog(`<div class="adjacency-insight"><strong>🗂️ Local adjacency cache updated:</strong> ${detailParts.join(' · ')}</div>`);
+      notifyHlsfAdjacencyChange('prompt-local-memory', { immediate: true });
+    }
     const topTokens = summarizeAttention(allMatrices);
     const keyRels = extractKeyRelationships(allMatrices);
 
