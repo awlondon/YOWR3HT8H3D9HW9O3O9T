@@ -382,6 +382,25 @@
               <button id="voice-model-speaker" class="btn btn-secondary voice-model-button" type="button" disabled>Play response</button>
             </div>
             <div id="voice-model-status" class="voice-model-status" role="status" aria-live="polite">Awaiting input</div>
+            <div
+              id="voice-model-transcript"
+              class="voice-model-transcript"
+              role="log"
+              aria-live="polite"
+              aria-atomic="false"
+            >
+              <div id="voice-model-transcript-placeholder" class="voice-model-transcript__placeholder">
+                Listening for speech…
+              </div>
+              <div id="voice-model-transcript-tokens" class="voice-model-transcript__tokens"></div>
+              <div id="voice-model-transcript-interim" class="voice-model-transcript__interim"></div>
+            </div>
+            <div id="voice-model-loading" class="voice-model-loading" role="status" aria-live="polite" hidden>
+              <div class="voice-model-loading-bar">
+                <div id="voice-model-loading-progress" class="voice-model-loading-progress"></div>
+              </div>
+              <div id="voice-model-loading-label" class="voice-model-loading-label">Synthesizing response…</div>
+            </div>
           </div>
           <aside class="voice-model-settings" data-role="voice-model-settings">
             <details class="dock-panel" open>
@@ -395,11 +414,6 @@
                   FFT sensitivity
                   <input id="voice-model-fft" type="range" min="0" max="1" step="0.05" value="0.45" />
                 </label>
-                <label class="voice-model-field">
-                  Manual transcript
-                  <textarea id="voice-model-manual-transcript" rows="4" placeholder="Paste or type a transcript to bloom adjacencies…"></textarea>
-                </label>
-                <button id="voice-model-process" type="button" class="btn btn-secondary btn-compact">Bloom transcript</button>
               </div>
             </details>
             <details class="dock-panel" open>
