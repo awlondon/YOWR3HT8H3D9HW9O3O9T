@@ -372,6 +372,7 @@ const HlsfLoading = (() => {
     const pct = total > 0 ? Math.round(Math.max(0, Math.min(100, (done / total) * 100))) : 0;
     if (bar) bar.style.width = `${pct}%`;
     if (detail) detail.textContent = `Building semantic map… ${pct}%`;
+    if (pct >= 100) hide(250);
   }
 
   function hide(delay = 200) {
