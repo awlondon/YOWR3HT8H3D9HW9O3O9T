@@ -1580,6 +1580,21 @@
       gap: 0.4rem;
     }
 
+    .voice-model-transcript__actions {
+      display: flex;
+      justify-content: flex-end;
+      width: 100%;
+      margin-top: 0.25rem;
+    }
+
+    .voice-model-transcript__actions[hidden] {
+      display: none !important;
+    }
+
+    .voice-model-transcript__send {
+      min-width: 190px;
+    }
+
     .voice-model-token {
       display: inline-flex;
       align-items: center;
