@@ -3965,11 +3965,7 @@ window.CognitionEngine = window.CognitionEngine || {
   cache: {},
   api: {},
   processing: {},
-  remotedir,
 };
-if (window.CognitionEngine) {
-  window.CognitionEngine.remotedir = remotedir;
-}
 window.CognitionEngine.export = window.CognitionEngine.export || {};
 window.CognitionEngine.export.session = options => {
   const opts = options && typeof options === 'object' ? { ...options } : {};
@@ -4662,6 +4658,8 @@ function setRemotedirFlag(value: boolean) {
     window.CognitionEngine.remotedir = remotedir;
   }
 }
+
+setRemotedirFlag(remotedir);
 
 window.CognitionEngine.state = state;
 const saasPlatform = initializeSaasPlatform();
