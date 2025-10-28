@@ -8246,7 +8246,19 @@ async function fetchAdjacency(entry, context) {
   const kind = typeof entry === 'object' && entry && entry.kind ? entry.kind : 'word';
   const cat = typeof entry === 'object' && entry ? entry.cat || null : null;
 
-  const cached = getFromCache(token);
+  let cached = getFromCache(token);
+  if (!cached && window.HLSF?.remoteDb?.isReady?.()
+    && typeof window.HLSF.remoteDb.preloadTokens === 'function') {
+    try {
+      const preloadStats = await window.HLSF.remoteDb.preloadTokens([token]);
+      if (preloadStats && (Number(preloadStats.loaded) > 0 || Number(preloadStats.hits) > 0)) {
+        cached = getFromCache(token);
+      }
+    } catch (err) {
+      console.warn('Remote DB preload failed for token', token, err);
+    }
+  }
+
   if (cached) {
     const { entry: filteredCached, removed } = await filterVariantRelationships(cached);
     if (removed > 0) {
@@ -8497,6 +8509,14 @@ function collectNeighborCandidates(entry) {
   return candidates;
 }
 
+function selectHighAttentionNeighbors(entry, limit = 2) {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  const candidates = collectNeighborCandidates(entry);
+  if (!candidates.length) return [];
+  const max = Math.max(0, Math.floor(limit));
+  return candidates.slice(0, max);
+}
+
 async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
   CacheBatch.begin();
   try {
@@ -8517,7 +8537,27 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const dbRecordIndex = preferDb && options.dbRecordIndex instanceof Map
       ? options.dbRecordIndex
       : null;
-    const remoteDb = preferDb ? window.HLSF?.remoteDb : null;
+    const spawnLimit = Number.isFinite(options.spawnLimit) && options.spawnLimit > 0
+      ? Math.floor(options.spawnLimit)
+      : 2;
+    const stopWhenConnected = options.stopWhenConnected !== false;
+    const remoteDbStore = window.HLSF?.remoteDb;
+    const remoteDb = preferDb ? remoteDbStore : null;
+
+    const seedTokensForPreload = normalized
+      .map(entry => (entry && entry.token ? String(entry.token).trim() : ''))
+      .filter(Boolean);
+    if (seedTokensForPreload.length
+      && remoteDbStore
+      && typeof remoteDbStore.isReady === 'function'
+      && remoteDbStore.isReady()
+      && typeof remoteDbStore.preloadTokens === 'function') {
+      try {
+        await remoteDbStore.preloadTokens(seedTokensForPreload);
+      } catch (err) {
+        console.warn('Remote DB preload failed for seed tokens:', err);
+      }
+    }
 
     const queue = [];
     const enqueued = new Set();
@@ -8545,6 +8585,11 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       fetchCount: 0,
       visitedTokens: 0,
     };
+
+    const checkConnectivity = stopWhenConnected === true;
+    let lastConnectivitySnapshot = null;
+    let lastConnectivitySize = 0;
+    let connectivitySatisfied = false;
 
     const totalSteps = Math.max(1, queue.length);
     const progress = new ProgressTracker(totalSteps, label || 'adjacency recursion');
@@ -8678,7 +8723,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
 
           const nextDepth = item.depthRemaining - 1;
           if (nextDepth > 0 && item.entry.kind !== 'sym') {
-            const candidates = collectNeighborCandidates(limited);
+            const candidates = selectHighAttentionNeighbors(limited, spawnLimit);
             let enqueuedCount = 0;
             for (const candidate of candidates) {
               const nextKey = candidate.token.toLowerCase();
@@ -8697,12 +8742,27 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
         }
 
         progress.increment(1);
+
+        if (checkConnectivity && results.size && results.size !== lastConnectivitySize) {
+          lastConnectivitySnapshot = analyzeAdjacencyConnectivity(results, normalized);
+          lastConnectivitySize = results.size;
+          if (lastConnectivitySnapshot?.allSeedsConnected) {
+            connectivitySatisfied = true;
+            break;
+          }
+        }
       }
+
+      if (connectivitySatisfied) break;
     }
 
-    progress.complete(`${label || 'adjacency recursion'}: explored ${visited.size} token${visited.size === 1 ? '' : 's'} to depth ${depth}`);
+    if (connectivitySatisfied && lastConnectivitySnapshot?.allSeedsConnected) {
+      progress.complete(`${label || 'adjacency recursion'}: connected ${normalized.length} seed${normalized.length === 1 ? '' : 's'} across ${visited.size} token${visited.size === 1 ? '' : 's'}`);
+    } else {
+      progress.complete(`${label || 'adjacency recursion'}: explored ${visited.size} token${visited.size === 1 ? '' : 's'} to depth ${depth}`);
+    }
 
-    const connectivity = analyzeAdjacencyConnectivity(results, normalized);
+    const connectivity = lastConnectivitySnapshot || analyzeAdjacencyConnectivity(results, normalized);
 
     return {
       matrices: results,
