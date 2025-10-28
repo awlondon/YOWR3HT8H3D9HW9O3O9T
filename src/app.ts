@@ -5,6 +5,8 @@ import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
 import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './export/modelParams';
 import { initializeVoiceClonePanel, signalVoiceCloneTokensChanged } from './voice/voiceClone';
+import { initializeVoiceModelDock } from './voice/voiceModel';
+import { initializeUserAvatarStore } from './userAvatar';
 import { initializeSaasPlatform, registerSaasCommands } from './saas/platform';
 import { demoGoogleSignIn } from './auth/google';
 import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
@@ -3966,6 +3968,7 @@ window.CognitionEngine = window.CognitionEngine || {
   api: {},
   processing: {},
 };
+window.CognitionEngine.userAvatar = userAvatarStore;
 window.CognitionEngine.export = window.CognitionEngine.export || {};
 window.CognitionEngine.export.session = options => {
   const opts = options && typeof options === 'object' ? { ...options } : {};
@@ -4651,6 +4654,9 @@ const state = {
 
 state.hlsfReady = false;
 let remotedir = false;
+
+const userAvatarStore = initializeUserAvatarStore();
+let voiceDockController: ReturnType<typeof initializeVoiceModelDock> | null = null;
 
 function setRemotedirFlag(value: boolean) {
   remotedir = Boolean(value);
@@ -9512,6 +9518,17 @@ window.CognitionEngine.processing = {
   batchFetchAdjacencies,
   fetchRecursiveAdjacencies,
 };
+
+window.CognitionEngine.voiceModel = Object.assign(window.CognitionEngine.voiceModel || {}, {
+  submitPrompt: (input, opts) => submitVoiceModelPrompt(input, opts),
+  focusDock: () => {
+    try {
+      voiceDockController?.focus?.();
+    } catch (err) {
+      console.warn('Voice model dock focus failed:', err);
+    }
+  },
+});
 
 function calculateAttention(matrices) {
   for (const entry of matrices.values()) {
@@ -14625,6 +14642,16 @@ function setupLandingExperience() {
     document.body.classList.remove('onboarding-active');
     landingRoot.setAttribute('aria-hidden', 'true');
 
+    if (voiceDockController && typeof voiceDockController.focus === 'function') {
+      setTimeout(() => {
+        try {
+          voiceDockController?.focus();
+        } catch (err) {
+          console.warn('Unable to focus voice model dock:', err);
+        }
+      }, 200);
+    }
+
     const displayName = nextMembership.name || nextMembership.email || (level === MEMBERSHIP_LEVELS.MEMBER ? 'member' : 'demo explorer');
     if (level === MEMBERSHIP_LEVELS.MEMBER) {
       logOK(`Full membership activated for ${displayName} · Plan ${nextMembership.plan || 'pro'} with 7-day trial.`);
@@ -16194,6 +16221,39 @@ document.addEventListener('click', (event) => {
   }
 });
 
+async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } = {}) {
+  const raw = typeof input === 'string' ? input : String(input || '');
+  const trimmed = raw.trim();
+  const annotate = Boolean(options?.annotateLog);
+  if (!trimmed) {
+    return { success: false, tokens: [], kind: 'prompt', error: new Error('Prompt cannot be empty') };
+  }
+
+  const isCmd = isCommand(trimmed);
+  let committedTokens = [];
+  if (!isCmd) {
+    committedTokens = commitInputTokensFromText(trimmed);
+    if (committedTokens.length) addConversationTokens(committedTokens);
+  }
+
+  setInputPreviewTokens([], { render: false });
+  rebuildLiveGraph();
+  addLog(`${annotate ? '🎤' : '&gt;'} ${sanitize(trimmed)}`);
+
+  if (isCmd) {
+    await handleCommand(trimmed);
+    return { success: true, tokens: committedTokens, kind: 'command' as const };
+  }
+
+  try {
+    onUserPromptSubmitted(trimmed);
+    await processPrompt(trimmed);
+    return { success: true, tokens: committedTokens, kind: 'prompt' as const };
+  } catch (error) {
+    return { success: false, tokens: committedTokens, kind: 'prompt' as const, error };
+  }
+}
+
 elements.sendBtn.addEventListener('click', () => {
   const rawValue = elements.input.value;
   const input = rawValue.trim();
@@ -16261,6 +16321,20 @@ async function initialize() {
     syncHlsfControls(hlsfWrapper);
     showVisualizer();
   }
+
+  voiceDockController = initializeVoiceModelDock({
+    submitPrompt: (text, opts) => submitVoiceModelPrompt(text, opts),
+    userAvatar: userAvatarStore,
+    onTokensCommitted: tokens => {
+      if (Array.isArray(tokens) && tokens.length) {
+        try {
+          signalVoiceCloneTokensChanged('voice-model');
+        } catch (err) {
+          console.warn('Voice model token signal failed:', err);
+        }
+      }
+    },
+  });
 
   const storedKey = safeStorageGet(API_KEY_STORAGE_KEY, '');
   if (isValidApiKey(storedKey)) {
