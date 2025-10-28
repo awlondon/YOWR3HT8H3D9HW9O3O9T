@@ -126,6 +126,10 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   const orb = root.querySelector<HTMLElement>('#voice-model-orb');
   const micButton = root.querySelector<HTMLButtonElement>('#voice-model-mic');
   const speakerButton = root.querySelector<HTMLButtonElement>('#voice-model-speaker');
+  const promptInput = document.getElementById('command-input') as
+    | HTMLInputElement
+    | HTMLTextAreaElement
+    | null;
   const statusEl = root.querySelector<HTMLElement>('#voice-model-status');
   const transcriptContainer = root.querySelector<HTMLElement>('#voice-model-transcript');
   const transcriptTokens = root.querySelector<HTMLElement>('#voice-model-transcript-tokens');
@@ -155,6 +159,8 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   let settings = readSettings();
   let currentInteractionId: string | null = null;
   let inFlight = false;
+  let promptInputPreviousValue: string | null = null;
+  let promptInputPopulatedByVoice = false;
 
   if (latencyInput) {
     latencyInput.value = String(settings.latency);
@@ -496,6 +502,19 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
         return;
       }
       updateTranscriptTokens(trimmed, '');
+      if (promptInput) {
+        promptInputPreviousValue = promptInput.value;
+        promptInputPopulatedByVoice = true;
+        promptInput.value = trimmed;
+        if (typeof promptInput.focus === 'function') {
+          promptInput.focus();
+        }
+        promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
+        promptInputPreviousValue = null;
+        promptInputPopulatedByVoice = false;
+        console.warn('Voice model prompt input not found; sending without mirroring command field.');
+      }
       hideTranscriptEditor();
       processTranscript(trimmed);
     });
@@ -677,6 +696,13 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       inFlight = false;
       currentInteractionId = null;
       updateMicButtonState();
+      if (promptInput && promptInputPopulatedByVoice) {
+        const nextValue = promptInputPreviousValue ?? '';
+        promptInput.value = nextValue;
+        promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      promptInputPreviousValue = null;
+      promptInputPopulatedByVoice = false;
       const shouldResume = resumeListeningAfterSend;
       resumeListeningAfterSend = false;
       if (shouldResume) {
