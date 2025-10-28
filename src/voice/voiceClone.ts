@@ -2859,7 +2859,9 @@ async function finalizeRecording(session) {
   const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
   setStatus('Processing recording…', 'info');
   try {
-    const base64 = await blobToBase64(blob);
+    const processedBlob = await clipAudioRecording(blob);
+    const finalBlob = processedBlob || blob;
+    const base64 = await blobToBase64(finalBlob);
     const transcriptText = transcriptParts.join(' ').trim();
     const trimmedToken = typeof token === 'string' ? token.trim() : '';
     const trimmedBase = typeof baseToken === 'string' ? baseToken.trim() : '';
@@ -2869,7 +2871,7 @@ async function finalizeRecording(session) {
       token: trimmedToken,
       createdAt: new Date().toISOString(),
       audioBase64: base64,
-      audioType: blob.type || 'audio/webm',
+      audioType: finalBlob.type || blob.type || 'audio/webm',
       transcript: finalTranscript,
       tags: [],
       iteration: (recordingIndex.get(trimmedToken)?.[0]?.iteration || recordingIndex.get(trimmedToken)?.length || 0) + 1,
@@ -2986,6 +2988,146 @@ function blobToBase64(blob) {
 
 function generateRecordingId() {
   return `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function clipAudioRecording(blob: Blob): Promise<Blob> {
+  if (!blob || blob.size === 0) return blob;
+  if (typeof window === 'undefined') return blob;
+
+  const win = window as typeof window & { webkitAudioContext?: typeof AudioContext };
+  const AudioContextCtor = win.AudioContext || win.webkitAudioContext;
+  if (typeof AudioContextCtor !== 'function') return blob;
+
+  let context: AudioContext | null = null;
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const activeContext = new AudioContextCtor();
+    context = activeContext;
+    const audioBuffer = await decodeAudioBuffer(activeContext, arrayBuffer);
+    const { length, numberOfChannels, sampleRate } = audioBuffer;
+
+    if (!length || numberOfChannels <= 0) {
+      return blob;
+    }
+
+    const threshold = 0.0125;
+    const preRoll = Math.floor(sampleRate * 0.05);
+    const postRoll = Math.floor(sampleRate * 0.1);
+    let startSample = 0;
+    let endSample = length;
+
+    outerStart: for (let i = 0; i < length; i++) {
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        if (Math.abs(audioBuffer.getChannelData(channel)[i]) > threshold) {
+          startSample = Math.max(0, i - preRoll);
+          break outerStart;
+        }
+      }
+    }
+
+    outerEnd: for (let i = length - 1; i >= 0; i--) {
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        if (Math.abs(audioBuffer.getChannelData(channel)[i]) > threshold) {
+          endSample = Math.min(length, i + postRoll);
+          break outerEnd;
+        }
+      }
+    }
+
+    if (endSample <= startSample) {
+      return blob;
+    }
+
+    const trimmedLength = endSample - startSample;
+    const minTrimDelta = Math.floor(sampleRate * 0.01);
+    if (trimmedLength >= length - minTrimDelta) {
+      return blob;
+    }
+
+    const trimmedBuffer = activeContext.createBuffer(numberOfChannels, trimmedLength, sampleRate);
+    for (let channel = 0; channel < numberOfChannels; channel++) {
+      const source = audioBuffer.getChannelData(channel).subarray(startSample, endSample);
+      if (typeof trimmedBuffer.copyToChannel === 'function') {
+        trimmedBuffer.copyToChannel(source, channel);
+      } else {
+        trimmedBuffer.getChannelData(channel).set(source);
+      }
+    }
+
+    const wavBuffer = audioBufferToWav(trimmedBuffer);
+    return new Blob([wavBuffer], { type: 'audio/wav' });
+  } catch (error) {
+    console.warn('Failed to clip audio recording:', error);
+    return blob;
+  } finally {
+    if (context && typeof context.close === 'function') {
+      try {
+        await context.close();
+      } catch {
+        /* noop */
+      }
+    }
+  }
+}
+
+function decodeAudioBuffer(context: AudioContext, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
+  return new Promise<AudioBuffer>((resolve, reject) => {
+    const cloned = arrayBuffer.slice(0);
+    context.decodeAudioData(
+      cloned,
+      decoded => resolve(decoded),
+      error => reject(error || new Error('Unable to decode audio data.')),
+    );
+  });
+}
+
+function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
+  const channels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const bitsPerSample = 16;
+  const bytesPerSample = bitsPerSample / 8;
+  const blockAlign = channels * bytesPerSample;
+  const dataLength = buffer.length * blockAlign;
+  const bufferLength = 44 + dataLength;
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(arrayBuffer);
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  const channelData = [] as Float32Array[];
+  for (let channel = 0; channel < channels; channel++) {
+    channelData.push(buffer.getChannelData(channel));
+  }
+  for (let i = 0; i < buffer.length; i++) {
+    for (let channel = 0; channel < channels; channel++) {
+      let sample = channelData[channel][i];
+      sample = Math.max(-1, Math.min(1, sample));
+      const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      view.setInt16(offset, intSample, true);
+      offset += 2;
+    }
+  }
+
+  return arrayBuffer;
+}
+
+function writeString(view: DataView, offset: number, text: string): void {
+  for (let i = 0; i < text.length; i++) {
+    view.setUint8(offset + i, text.charCodeAt(i));
+  }
 }
 
 function updateRecordingTags(recordingId, value) {
