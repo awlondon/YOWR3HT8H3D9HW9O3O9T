@@ -98,6 +98,7 @@ const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/read', description: 'Ingest document for adjacency mapping', requiresMembership: true },
   { command: '/ingest', description: 'Alias for /read', requiresMembership: true },
   { command: '/loaddb', description: 'Load remote database manifest', requiresMembership: true },
+  { command: '/load', description: 'Bootstrap remote database and sync directory', requiresMembership: false },
   { command: '/remotedir', description: 'Connect remote DB save directory', requiresMembership: false },
   { command: '/hlsf', description: 'Render HLSF visualization', requiresMembership: true },
   { command: '/visualize', description: 'Alias for /hlsf', requiresMembership: true },
@@ -3964,7 +3965,11 @@ window.CognitionEngine = window.CognitionEngine || {
   cache: {},
   api: {},
   processing: {},
+  remotedir,
 };
+if (window.CognitionEngine) {
+  window.CognitionEngine.remotedir = remotedir;
+}
 window.CognitionEngine.export = window.CognitionEngine.export || {};
 window.CognitionEngine.export.session = options => {
   const opts = options && typeof options === 'object' ? { ...options } : {};
@@ -4645,6 +4650,15 @@ const state = {
 };
 
 state.hlsfReady = false;
+let remotedir = false;
+
+function setRemotedirFlag(value: boolean) {
+  remotedir = Boolean(value);
+  if (typeof window !== 'undefined' && window.CognitionEngine) {
+    window.CognitionEngine.remotedir = remotedir;
+  }
+}
+
 window.CognitionEngine.state = state;
 const saasPlatform = initializeSaasPlatform();
 state.saas = saasPlatform;
@@ -7084,6 +7098,7 @@ const remoteDbFileWriter = createRemoteDbFileWriter({
 });
 
 window.HLSF.remoteDbFileWriter = remoteDbFileWriter;
+setRemotedirFlag(typeof remoteDbFileWriter?.hasDirectory === 'function' && remoteDbFileWriter.hasDirectory());
 
 function updateCachedTokenDisplay(baseCount) {
   const normalizedBase = Number.isFinite(baseCount) ? Math.max(0, Math.floor(baseCount)) : 0;
@@ -12044,7 +12059,7 @@ async function cmdRead() {
   input.click();
 }
 
-async function cmdLoadDb(arg) {
+async function cmdLoadDb(arg): Promise<boolean> {
   try {
     const href = (arg || '').trim() || window.HLSF.config.bootstrapDbUrl;
     if (!href) throw new Error('Usage: /loaddb <metadata-url>');
@@ -12057,8 +12072,10 @@ async function cmdLoadDb(arg) {
     if (chunkCount != null) parts.push(`${chunkCount} chunks`);
     logFinal(`Remote DB ready${parts.length ? `: ${parts.join(', ')}` : ''}.`);
     announceDatabaseReady('force');
+    return true;
   } catch (e) {
     logError(`load failed: ${String(e.message || e)}`);
+    return false;
   }
 }
 
@@ -13238,21 +13255,65 @@ async function cmd_loaddb(args) {
   await cmdLoadDb(joined);
 }
 
-async function cmd_remotedir() {
+async function cmd_remotedir(): Promise<boolean> {
   const writer = remoteDbFileWriter;
   if (!writer || typeof writer.isSupported !== 'function' || !writer.isSupported()) {
     logWarning('Remote DB auto-save is unavailable in this browser. Use /export to capture updates manually.');
-    return;
+    setRemotedirFlag(false);
+    return false;
   }
   try {
     const connected = await writer.chooseDirectory();
     if (connected) {
+      setRemotedirFlag(true);
       logOK('Remote DB save directory connected. Future adjacency updates will sync automatically.');
+      return true;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logWarning(`Remote DB directory selection failed: ${sanitize(message)}`);
   }
+  const hasDirectory = typeof writer.hasDirectory === 'function' && writer.hasDirectory();
+  setRemotedirFlag(hasDirectory);
+  return hasDirectory;
+}
+
+async function cmd_load(args: string[] | string = []): Promise<boolean> {
+  const rawArgs = Array.isArray(args)
+    ? args
+    : typeof args === 'string'
+      ? args.split(/\s+/)
+      : [];
+  const filtered: string[] = [];
+  let requireRemotedir = false;
+
+  for (const raw of rawArgs) {
+    if (!raw) continue;
+    const trimmed = String(raw).trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    if (lower === '-remotedir' || lower === '--remotedir') {
+      requireRemotedir = true;
+      continue;
+    }
+    filtered.push(trimmed);
+  }
+
+  if (requireRemotedir) {
+    const writer = remoteDbFileWriter;
+    if (typeof writer?.hasDirectory === 'function' && writer.hasDirectory()) {
+      setRemotedirFlag(true);
+    }
+    if (!remotedir) {
+      await cmd_remotedir();
+    }
+  }
+
+  if (filtered.length > 0) {
+    return await cmdLoadDb(filtered.join(' '));
+  }
+
+  return await tryBootstrapDb();
 }
 
 function parseHiddenSweepArgs(args = []) {
@@ -13836,6 +13897,7 @@ registerCommand('/state', cmd_state);
 registerCommand('/import', cmd_import);
 registerCommand('/read', () => cmdRead());
 registerCommand('/ingest', () => cmdRead());
+registerCommand('/load', cmd_load);
 registerCommand('/loaddb', cmd_loaddb);
 registerCommand('/remotedir', cmd_remotedir);
 registerCommand('/maphidden', cmd_hidden);
@@ -15893,7 +15955,7 @@ async function initialize() {
     safeStorageRemove(API_KEY_STORAGE_KEY);
   }
 
-  const bootstrapped = await tryBootstrapDb();
+  const bootstrapped = await cmd_load(['-remotedir']);
   const dbAvailable = bootstrapped || !!getDb();
   scheduleRemoteCacheWarmup({ reason: 'initialize' });
 
