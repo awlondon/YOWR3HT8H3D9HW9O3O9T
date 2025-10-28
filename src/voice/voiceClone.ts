@@ -751,6 +751,7 @@ const panelState = {
   selectedToken: null,
   selectedRecordingId: null,
   isRecording: false,
+  isCollapsed: false,
   activeTranscript: '',
   status: { message: '', type: 'info' },
 };
@@ -762,6 +763,8 @@ const elements = {
   search: null,
   refresh: null,
   status: null,
+  content: null,
+  toggle: null,
 };
 
 let panelReady = false;
@@ -2451,6 +2454,30 @@ function handleTokensChanged(event) {
   scheduleTokenRefresh(reason);
 }
 
+function setVoicePanelCollapsed(collapsed) {
+  if (!elements.panel) return;
+  const isCollapsed = Boolean(collapsed);
+  panelState.isCollapsed = isCollapsed;
+  elements.panel.classList.toggle('collapsed', isCollapsed);
+  if (elements.content) {
+    if (isCollapsed) {
+      elements.content.setAttribute('hidden', 'true');
+    } else {
+      elements.content.removeAttribute('hidden');
+    }
+  }
+  if (elements.toggle) {
+    elements.toggle.textContent = isCollapsed ? 'Maximize' : 'Minimize';
+    elements.toggle.setAttribute('aria-expanded', String(!isCollapsed));
+  }
+}
+
+function handleVoicePanelToggle() {
+  if (!elements.panel) return;
+  const nextCollapsed = !elements.panel.classList.contains('collapsed');
+  setVoicePanelCollapsed(nextCollapsed);
+}
+
 function initializeVoiceClonePanel() {
   if (panelReady) return;
   store = loadVoiceStore();
@@ -2462,6 +2489,8 @@ function initializeVoiceClonePanel() {
   elements.search = document.getElementById('voice-token-search');
   elements.refresh = document.getElementById('voice-token-refresh');
   elements.status = document.getElementById('voice-clone-status');
+  elements.content = document.getElementById('voice-clone-content');
+  elements.toggle = document.getElementById('voice-panel-toggle');
   if (!elements.panel) return;
 
   panelReady = true;
@@ -2472,6 +2501,9 @@ function initializeVoiceClonePanel() {
   elements.tokenList?.addEventListener('click', handleTokenListClick);
   elements.detail?.addEventListener('click', handleDetailClick);
   elements.detail?.addEventListener('input', handleDetailInput);
+  elements.toggle?.addEventListener('click', handleVoicePanelToggle);
+
+  setVoicePanelCollapsed(panelState.isCollapsed);
 
   if (typeof window.addEventListener === 'function') {
     window.addEventListener(TOKENS_CHANGED_EVENT, handleTokensChanged);
