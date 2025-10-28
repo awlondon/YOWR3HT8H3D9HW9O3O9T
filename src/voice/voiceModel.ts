@@ -27,7 +27,7 @@ type VoiceModelDockController = {
 interface VoiceModelOptions {
   submitPrompt: SubmitPromptFn;
   userAvatar: UserAvatarStore;
-  onTokensCommitted?: (tokens: string[]) => void;
+  onTokensCommitted?: (tokens: string[], context?: { prompt?: string; kind?: 'prompt' | 'command' }) => void;
 }
 
 interface VoiceModelSettings {
@@ -697,8 +697,8 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
 
     if (result.success) {
       lastPlaybackText = `Voice session processed: ${prompt}`;
-      if (options.onTokensCommitted && result.tokens.length) {
-        options.onTokensCommitted(result.tokens);
+      if (options.onTokensCommitted) {
+        options.onTokensCommitted(result.tokens, { prompt, kind: result.kind });
       }
       if (speakerButton) {
         speakerButton.disabled = false;
