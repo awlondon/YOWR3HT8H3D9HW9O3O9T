@@ -52,14 +52,69 @@ function buildGraphNodes(tokens: Token[]): PipelineGraph['nodes'] {
   }));
 }
 
+interface EdgeProps {
+  type: string;
+  w?: number;
+  meta?: Record<string, unknown>;
+}
+
+function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
+  const edges: PipelineGraph['edges'] = [];
+  const edgeHistogram: Record<string, number> = Object.create(null);
+  let symbolEdgeCount = 0;
+  let weightSum = 0;
+
+  const push = (source: Token | undefined, target: Token | undefined, props: EdgeProps) => {
+    if (!source || !target) return;
+
+    const isSymbolEdge = source.kind === 'sym' || target.kind === 'sym';
+    if (isSymbolEdge && symbolEdgeCount >= symbolEdgeLimit) return;
+
+    const weight = typeof props.w === 'number' ? props.w : 0;
+    const entry = {
+      source: source.t,
+      target: target.t,
+      type: props.type,
+      w: weight,
+      meta: props.meta,
+    };
+
+    edges.push(entry);
+
+    if (isSymbolEdge) {
+      symbolEdgeCount += 1;
+    }
+
+    if (typeof weight === 'number' && Number.isFinite(weight)) {
+      weightSum += weight;
+    }
+
+    if (entry.type) {
+      edgeHistogram[entry.type] = (edgeHistogram[entry.type] || 0) + 1;
+    }
+  };
+
+  return {
+    edges,
+    edgeHistogram,
+    get symbolEdgeCount() {
+      return symbolEdgeCount;
+    },
+    get weightSum() {
+      return weightSum;
+    },
+    addEdgeByTokens(source: Token, target: Token, props: EdgeProps) {
+      push(source, target, props);
+    },
+    addEdgeByIndices(sourceIndex: number, targetIndex: number, props: EdgeProps) {
+      push(tokens[sourceIndex], tokens[targetIndex], props);
+    },
+  };
+}
+
 export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineResult {
   const tokens = cfg.tokenizeSymbols ? tokenizeWithSymbols(input) : legacyTokenizeDetailed(input);
   const nodes = buildGraphNodes(tokens);
-  const edges: PipelineGraph['edges'] = [];
-
-  let symbolEdgeCount = 0;
-  let weightSum = 0;
-  const edgeHistogram: Record<string, number> = Object.create(null);
 
   let wordCount = 0;
   let symbolCount = 0;
@@ -76,56 +131,29 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     ? 0
     : Math.max(symbolCount * 4, Math.ceil(tokens.length * 0.6));
 
-  const addEdge = (source: Token, target: Token, props: { type: string; w?: number; meta?: Record<string, unknown> }) => {
-    const isSymbolEdge = source.kind === 'sym' || target.kind === 'sym';
-    if (isSymbolEdge && symbolEdgeCount >= symbolEdgeLimit) return;
-
-    const weight = typeof props.w === 'number' ? props.w : 0;
-    const entry = {
-      source: source.t,
-      target: target.t,
-      type: props.type,
-      w: weight,
-      meta: props.meta,
-    };
-    edges.push(entry);
-    if (isSymbolEdge) symbolEdgeCount += 1;
-    if (typeof weight === 'number' && Number.isFinite(weight)) {
-      weightSum += weight;
-    }
-    if (entry.type) {
-      edgeHistogram[entry.type] = (edgeHistogram[entry.type] || 0) + 1;
-    }
-  };
+  const accumulator = createEdgeAccumulator(tokens, symbolEdgeLimit);
 
   if (cfg.tokenizeSymbols) {
     const neighborMap = computeWordNeighborMap(tokens);
-    emitSymbolEdges(tokens, addEdge, cfg.symbolWeightScale, cfg.symbolEmitMode, neighborMap);
+    emitSymbolEdges(
+      tokens,
+      (source, target, props) => accumulator.addEdgeByTokens(source, target, props),
+      cfg.symbolWeightScale,
+      cfg.symbolEmitMode,
+      neighborMap,
+    );
   }
 
   const adjacencyEdges = buildRecursiveAdjacency(tokens);
   for (const edge of adjacencyEdges) {
-    const source = tokens[edge.sourceIndex];
-    const target = tokens[edge.targetIndex];
-    if (!source || !target) continue;
-
-    const entry = {
-      source: source.t,
-      target: target.t,
+    accumulator.addEdgeByIndices(edge.sourceIndex, edge.targetIndex, {
       type: edge.type,
       w: edge.weight,
       meta: edge.meta,
-    };
-
-    edges.push(entry);
-    if (typeof edge.weight === 'number' && Number.isFinite(edge.weight)) {
-      weightSum += edge.weight;
-    }
-    if (entry.type) {
-      edgeHistogram[entry.type] = (edgeHistogram[entry.type] || 0) + 1;
-    }
+    });
   }
 
+  const { edges, edgeHistogram, symbolEdgeCount, weightSum } = accumulator;
   const graph: PipelineGraph = { nodes, edges };
   const top = rankNodes(nodes, 20);
 
