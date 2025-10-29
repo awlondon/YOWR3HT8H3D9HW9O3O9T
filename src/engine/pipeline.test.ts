@@ -71,3 +71,42 @@ test('runPipeline builds complete recursive adjacency graph', () => {
     'base adjacency edges should include level metadata',
   );
 });
+
+test('runPipeline synthesizes a consciousness workspace with recurrent monitoring', () => {
+  const input = 'Global workspace integration enables conscious broadcasting!';
+  const result = runPipeline(input, { ...SETTINGS, tokenizeSymbols: true });
+
+  const consciousness = result.consciousness;
+  assert.equal(Boolean(consciousness), true, 'pipeline should expose consciousness state');
+  assert.equal(
+    consciousness.workspace.broadcast.length > 0,
+    true,
+    'workspace broadcast should contain salient tokens',
+  );
+  assert.equal(
+    consciousness.workspace.iterations >= 1,
+    true,
+    'recurrent loop should run at least once',
+  );
+  assert.equal(
+    consciousness.meta.integrationScore >= 0 && consciousness.meta.integrationScore <= 1,
+    true,
+    'integration score should be normalized',
+  );
+  assert.equal(
+    consciousness.meta.causalImpact.length <= 5,
+    true,
+    'causal impact estimates should be limited to top signals',
+  );
+  const [primarySignal] = consciousness.workspace.broadcast;
+  assert.equal(
+    Array.isArray(primarySignal?.sources) && primarySignal.sources.length >= 1,
+    true,
+    'primary signal should track contributing sources',
+  );
+  assert.equal(
+    Array.isArray(consciousness.meta.notes) && consciousness.meta.notes.length >= 1,
+    true,
+    'meta monitoring should surface narrative notes',
+  );
+});

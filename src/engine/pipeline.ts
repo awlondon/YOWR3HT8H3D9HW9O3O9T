@@ -4,6 +4,7 @@ import { emitSymbolEdges } from '../graph/symbol_edges.js';
 import { buildRecursiveAdjacency } from '../graph/recursive_adjacency.js';
 import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
+import { buildConsciousnessState, type ConsciousnessState } from './consciousness.js';
 
 export interface PipelineGraph {
   nodes: Array<{
@@ -36,6 +37,7 @@ export interface PipelineResult {
     weightSum: number;
   };
   top: PipelineGraph['nodes'];
+  consciousness: ConsciousnessState;
 }
 
 export function legacyTokenizeDetailed(source: string): Token[] {
@@ -67,8 +69,9 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
   const push = (source: Token | undefined, target: Token | undefined, props: EdgeProps) => {
     if (!source || !target) return;
 
+    const isModifierEdge = typeof props.type === 'string' && props.type.startsWith('modifier');
     const isSymbolEdge = source.kind === 'sym' || target.kind === 'sym';
-    if (isSymbolEdge && symbolEdgeCount >= symbolEdgeLimit) return;
+    if (isModifierEdge && symbolEdgeCount >= symbolEdgeLimit) return;
 
     const weight = typeof props.w === 'number' ? props.w : 0;
     const entry = {
@@ -81,7 +84,7 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
 
     edges.push(entry);
 
-    if (isSymbolEdge) {
+    if (isModifierEdge) {
       symbolEdgeCount += 1;
     }
 
@@ -167,6 +170,8 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     weightSum,
   };
 
+  const consciousness = buildConsciousnessState(tokens, graph);
+
   if (cfg.tokenizeSymbols) {
     emitPipelineTelemetry({
       metrics,
@@ -178,6 +183,7 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
         symbolEmitMode: cfg.symbolEmitMode,
         includeSymbolInSummaries: cfg.includeSymbolInSummaries,
       },
+      consciousness,
     });
   }
 
@@ -187,5 +193,6 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     edges,
     metrics,
     top,
+    consciousness,
   };
 }
