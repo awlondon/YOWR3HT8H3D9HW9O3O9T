@@ -9,11 +9,12 @@ export interface SessionExportOptions {
   edges: PipelineGraph['edges'];
   metrics?: PipelineResult['metrics'];
   top?: PipelineGraph['nodes'];
+  consciousness?: PipelineResult['consciousness'];
   settingsSnapshot?: Partial<typeof SETTINGS>;
   extras?: Record<string, unknown>;
 }
 
-export function buildSessionExport({ tokens, edges, metrics, top, settingsSnapshot, extras }: SessionExportOptions) {
+export function buildSessionExport({ tokens, edges, metrics, top, consciousness, settingsSnapshot, extras }: SessionExportOptions) {
   const session: Record<string, unknown> = {
     version: '2.1',
     tokens,
@@ -37,6 +38,10 @@ export function buildSessionExport({ tokens, edges, metrics, top, settingsSnapsh
 
   if (metrics && typeof metrics === 'object') {
     session.metrics = metrics;
+  }
+
+  if (consciousness && typeof consciousness === 'object') {
+    session.consciousness = consciousness;
   }
 
   const normalizedTop = Array.isArray(top)
@@ -81,7 +86,13 @@ export function buildSessionExport({ tokens, edges, metrics, top, settingsSnapsh
   }
 
   if (extras && typeof extras === 'object') {
-    const { metrics: metricsOverride, top: topOverride, settingsSnapshot: snapshotOverride, ...rest } = extras;
+    const {
+      metrics: metricsOverride,
+      top: topOverride,
+      consciousness: consciousnessOverride,
+      settingsSnapshot: snapshotOverride,
+      ...rest
+    } = extras;
     Object.assign(session, rest);
     if (snapshotOverride && typeof snapshotOverride === 'object') {
       session.settings = Object.assign({}, session.settings, snapshotOverride);
@@ -91,6 +102,9 @@ export function buildSessionExport({ tokens, edges, metrics, top, settingsSnapsh
     }
     if (!session.topNodes && topOverride) {
       session.topNodes = topOverride;
+    }
+    if (!session.consciousness && consciousnessOverride) {
+      session.consciousness = consciousnessOverride;
     }
   }
 

@@ -4585,6 +4585,7 @@ window.CognitionEngine.export.session = options => {
   const lastPipeline = state.symbolMetrics?.lastPipeline;
   const metrics = opts.metrics || lastPipeline?.metrics || null;
   const topNodes = opts.top || lastPipeline?.top || null;
+  const consciousness = opts.consciousness || lastPipeline?.consciousness || null;
   const snapshot = opts.settingsSnapshot && typeof opts.settingsSnapshot === 'object'
     ? opts.settingsSnapshot
     : null;
@@ -4593,6 +4594,7 @@ window.CognitionEngine.export.session = options => {
     edges,
     metrics: metrics || undefined,
     top: topNodes || undefined,
+    consciousness: consciousness || undefined,
     settingsSnapshot: snapshot || undefined,
     extras: opts.extras,
   });
