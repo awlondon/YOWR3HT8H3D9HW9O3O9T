@@ -9774,10 +9774,36 @@ function formatTokenList(tokens, limit = 12) {
   return extra > 0 ? `${base} +${extra} more` : base;
 }
 
-function limitAdjacencyEntryEdges(entry, maxEdges) {
+function limitAdjacencyEntryEdges(
+  entry,
+  maxEdges,
+  priorityTokens = [],
+) {
   if (!entry || typeof entry !== 'object') return entry;
+
   const limit = Number.isFinite(maxEdges) && maxEdges > 0 ? Math.floor(maxEdges) : 0;
-  if (limit <= 0) return entry;
+  const priorityMap = new Map();
+  if (priorityTokens && typeof (priorityTokens as any)[Symbol.iterator] === 'function') {
+    for (const value of priorityTokens) {
+      let token = '';
+      if (typeof value === 'string') {
+        token = value.trim();
+      } else if (value && typeof value === 'object' && typeof value.token === 'string') {
+        token = value.token.trim();
+      }
+      if (!token) continue;
+      const key = token.toLowerCase();
+      if (!priorityMap.has(key)) {
+        priorityMap.set(key, token);
+      }
+    }
+  }
+
+  if (limit <= 0 && priorityMap.size === 0) return entry;
+
+  const entryToken = typeof entry.token === 'string' ? entry.token.trim() : '';
+  const entryKey = entryToken ? entryToken.toLowerCase() : '';
+  const isSeedEntry = entryKey && priorityMap.has(entryKey);
 
   const aggregated = [];
   const rels = entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
@@ -9785,16 +9811,67 @@ function limitAdjacencyEntryEdges(entry, maxEdges) {
     if (!Array.isArray(edges)) continue;
     for (const edge of edges) {
       if (!edge || !edge.token) continue;
+      const token = String(edge.token).trim();
+      if (!token) continue;
+      const normalized = token.toLowerCase();
       aggregated.push({
         relation: rel,
-        token: String(edge.token).trim(),
+        token,
+        normalized,
         weight: Number(edge.weight) || 0,
+        priority: priorityMap.has(normalized) && normalized !== entryKey,
       });
     }
   }
 
   aggregated.sort((a, b) => b.weight - a.weight);
-  const selected = aggregated.slice(0, limit);
+
+  const selected = [];
+  const seenPairs = new Set();
+  const selectedTokenKeys = new Set();
+  const priorityCovered = new Set();
+
+  const pushEdge = (item) => {
+    if (!item || !item.token) return false;
+    const pairKey = `${item.relation}|${item.normalized}`;
+    if (seenPairs.has(pairKey)) return false;
+    seenPairs.add(pairKey);
+    selected.push(item);
+    selectedTokenKeys.add(item.normalized);
+    if (item.priority && !priorityCovered.has(item.normalized)) {
+      priorityCovered.add(item.normalized);
+    }
+    return true;
+  };
+
+  for (const item of aggregated) {
+    if (!item.priority) continue;
+    pushEdge(item);
+  }
+
+  const baseLimit = limit > 0 ? limit : 0;
+  const targetLimit = baseLimit + priorityCovered.size;
+
+  for (const item of aggregated) {
+    if (selected.length >= targetLimit) break;
+    pushEdge(item);
+  }
+
+  if (isSeedEntry && priorityMap.size > 1) {
+    for (const [key, token] of priorityMap.entries()) {
+      if (key === entryKey) continue;
+      if (selectedTokenKeys.has(key)) continue;
+      const synthetic = {
+        relation: 'seed-link',
+        token,
+        normalized: key,
+        weight: 0.001,
+        priority: true,
+      };
+      pushEdge(synthetic);
+    }
+  }
+
   const relationships = {};
   for (const item of selected) {
     if (!item.token) continue;
@@ -9860,7 +9937,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const spawnLimit = Number.isFinite(options.spawnLimit) && options.spawnLimit > 0
       ? Math.floor(options.spawnLimit)
       : 2;
-    const stopWhenConnected = options.stopWhenConnected !== false;
+    const stopWhenConnected = options.stopWhenConnected === true;
     const requireCompleteGraph = options.requireCompleteGraph !== false;
     const remoteDbStore = window.HLSF?.remoteDb;
     const remoteDb = preferDb ? remoteDbStore : null;
@@ -9907,7 +9984,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       visitedTokens: 0,
     };
 
-    const checkConnectivity = stopWhenConnected === true;
+    const checkConnectivity = stopWhenConnected;
     let lastConnectivitySnapshot = null;
     let lastConnectivitySize = 0;
     let connectivitySatisfied = false;
@@ -10031,7 +10108,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
             llmGeneratedTokens.add(result.token);
           }
 
-          const limited = limitAdjacencyEntryEdges(result, edgesPerLevel);
+          const limited = limitAdjacencyEntryEdges(result, edgesPerLevel, normalized);
           results.set(limited.token, limited);
 
           if (onTokenLoaded) {
@@ -10070,18 +10147,18 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
           lastConnectivitySize = resultsSize;
         }
 
-        if (requireCompleteGraph && resultsSize) {
+        if (stopWhenConnected && requireCompleteGraph && resultsSize) {
           if (isCompleteAdjacencyGraph(results)) {
             connectivitySatisfied = true;
             break;
           }
-        } else if (!requireCompleteGraph && lastConnectivitySnapshot?.allSeedsConnected) {
+        } else if (stopWhenConnected && !requireCompleteGraph && lastConnectivitySnapshot?.allSeedsConnected) {
           connectivitySatisfied = true;
           break;
         }
       }
 
-      if (connectivitySatisfied) break;
+      if (connectivitySatisfied && stopWhenConnected) break;
     }
 
     const finalConnectivity = lastConnectivitySnapshot || analyzeAdjacencyConnectivity(results, normalized);
