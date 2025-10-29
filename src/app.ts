@@ -1292,12 +1292,40 @@ function clusterToAnchors(index, anchors) {
 
 function packLevels(index, scope, state) {
   const stateRelTypes = state?.relationTypes || {};
-  const { D, types } = computeDimension(index, scope, stateRelTypes);
+  let { D, types } = computeDimension(index, scope, stateRelTypes);
+  const focusListRaw = Array.isArray(state?.focusTokens)
+    ? state.focusTokens.filter(token => typeof token === 'string' && index.has(token))
+    : [];
+  const focusSet = new Set();
+  const focusList = [];
+  for (const token of focusListRaw) {
+    if (focusSet.has(token)) continue;
+    focusSet.add(token);
+    focusList.push(token);
+  }
+
   const tokensCount = scope === 'state'
     ? (state?.tokens instanceof Set ? state.tokens.size : index.size)
     : index.size;
-  const anchors = selectAnchors(index, Math.min(D || tokensCount, tokensCount));
-  const effectiveD = Math.min(D, Math.max(anchors.length, 0));
+  if (focusList.length) {
+    const minDimension = Math.max(focusList.length, 1);
+    D = Math.max(D || minDimension, minDimension);
+  }
+
+  let anchors = selectAnchors(index, Math.min(D || tokensCount, tokensCount));
+  if (focusList.length) {
+    const ordered = focusList.slice();
+    anchors = [...ordered, ...anchors.filter(token => !focusSet.has(token))];
+    if (anchors.length > D) {
+      D = Math.max(D, anchors.length);
+    }
+  }
+
+  let effectiveD = Math.min(D, Math.max(anchors.length, 0));
+  if (focusList.length && effectiveD < focusList.length) {
+    effectiveD = Math.min(Math.max(focusList.length, 1), Math.max(anchors.length, focusList.length));
+  }
+
   const levels = [];
   levels.push({ cells: [{ anchor: null, tokens: anchors.slice(0, Math.min(effectiveD || anchors.length, anchors.length)) }] });
 
@@ -1466,6 +1494,9 @@ function computeLayout(graph, index, options = {}) {
   const config = window.HLSF?.config || {};
   const desiredScope = (options?.scope || config.hlsfScope || 'db').toLowerCase();
   let scope = desiredScope === 'state' ? 'state' : 'db';
+  const focusTokens = Array.isArray(options?.focusTokens)
+    ? options.focusTokens.filter(token => typeof token === 'string' && token.trim())
+    : [];
 
   const sessionTokens = window.Session?.tokens instanceof Set ? window.Session.tokens : new Set();
   const scopedTokens = new Set();
@@ -1492,8 +1523,16 @@ function computeLayout(graph, index, options = {}) {
     for (const token of baseIndex.keys()) scopedTokens.add(token);
   }
 
+  for (const token of focusTokens) {
+    if (scopedIndex.has(token)) scopedTokens.add(token);
+  }
+
   const typeList = nonEmptyTypes(scopedIndex);
-  const packed = packLevels(scopedIndex, scope, { relationTypes: { maxPresent: typeList.length }, tokens: scopedTokens });
+  const packed = packLevels(scopedIndex, scope, {
+    relationTypes: { maxPresent: typeList.length },
+    tokens: scopedTokens,
+    focusTokens,
+  });
   const activeAngles = computeActiveAngles(packed.types || []);
   const placed = placeLevels(packed.levels, packed.effectiveD, activeAngles);
   const metrics = computeDbStats(scopedIndex);
@@ -1906,6 +1945,164 @@ function buildHiddenAdjacencyNetwork(graph, index, lowerMap, ensureNode, options
   };
 }
 
+function cloneRecordWithRelationships(rec) {
+  if (!rec || typeof rec !== 'object') {
+    return { token: '', relationships: {} };
+  }
+  const clone: any = Object.assign({}, rec);
+  const relationships = rec.relationships && typeof rec.relationships === 'object' ? rec.relationships : {};
+  const relClone: Record<string, any[]> = {};
+  for (const [type, edges] of Object.entries(relationships)) {
+    relClone[type] = Array.isArray(edges)
+      ? edges.map(edge => (edge && typeof edge === 'object' ? Object.assign({}, edge) : edge))
+      : [];
+  }
+  clone.relationships = relClone;
+  return clone;
+}
+
+function normalizeEdgeRecord(edge) {
+  if (!edge || typeof edge !== 'object') return null;
+  const token = typeof edge.token === 'string' ? edge.token.trim() : '';
+  if (!token) return null;
+  const weightRaw = Number.isFinite(edge.weight) ? Number(edge.weight) : Number(edge.w);
+  const weight = Number.isFinite(weightRaw) ? weightRaw : 0;
+  const copy: any = Object.assign({}, edge, { token });
+  copy.weight = weight;
+  if (!Number.isFinite(copy.w)) copy.w = weight;
+  return copy;
+}
+
+function mergeEdgeLists(existingEdges = [], newEdges = []) {
+  const merged = new Map();
+  for (const edge of existingEdges) {
+    const normalized = normalizeEdgeRecord(edge);
+    if (!normalized) continue;
+    merged.set(normalized.token, normalized);
+  }
+  for (const edge of newEdges) {
+    const normalized = normalizeEdgeRecord(edge);
+    if (!normalized) continue;
+    const prev = merged.get(normalized.token);
+    if (!prev || (normalized.weight ?? 0) > (prev.weight ?? 0)) {
+      merged.set(normalized.token, Object.assign({}, prev || {}, normalized));
+    }
+  }
+  return [...merged.values()].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+}
+
+function applyConversationOverlay(index) {
+  if (!(index instanceof Map)) {
+    return { index, focusTokens: [] };
+  }
+
+  const memory = ensureLocalHlsfMemory();
+  const summaries: LocalHlsfAdjacencySummary[] = [];
+  if (memory?.adjacencySummaries instanceof Map) {
+    for (const value of memory.adjacencySummaries.values()) {
+      if (value && typeof value === 'object') summaries.push(value);
+    }
+  }
+  const lastAdjacency = memory?.lastAdjacency && typeof memory.lastAdjacency === 'object'
+    ? memory.lastAdjacency
+    : null;
+  if (lastAdjacency) summaries.push(lastAdjacency);
+
+  if (!summaries.length) {
+    return { index, focusTokens: [] };
+  }
+
+  const augmented = new Map(index);
+  const caseMap = buildLowercaseIndexMap(augmented);
+  const modified = new Set();
+  const focusMap = new Map();
+
+  const ensureRecord = (tokenRaw) => {
+    if (!tokenRaw) return null;
+    const base = String(tokenRaw).trim();
+    if (!base) return null;
+    const lower = base.toLowerCase();
+    const existingKey = augmented.has(base)
+      ? base
+      : augmented.has(lower)
+        ? lower
+        : caseMap.get(lower) || base;
+    let record = augmented.get(existingKey);
+    if (record && !modified.has(existingKey)) {
+      record = cloneRecordWithRelationships(record);
+      augmented.set(existingKey, record);
+      modified.add(existingKey);
+    } else if (!record) {
+      record = { token: existingKey, relationships: {} };
+      augmented.set(existingKey, record);
+      modified.add(existingKey);
+    }
+    if (!record.relationships || typeof record.relationships !== 'object') {
+      record.relationships = {};
+    }
+    if (lower && !caseMap.has(lower)) caseMap.set(lower, existingKey);
+    return { key: existingKey, record };
+  };
+
+  const mergeSummary = (summary, captureFocus = false) => {
+    if (!summary || !Array.isArray(summary.summary)) return;
+    for (const item of summary.summary) {
+      if (!item || typeof item.token !== 'string') continue;
+      const ensured = ensureRecord(item.token);
+      if (!ensured) continue;
+      const { key, record } = ensured;
+      const relationships = item.relationships && typeof item.relationships === 'object'
+        ? item.relationships
+        : {};
+      for (const [relType, edges] of Object.entries(relationships)) {
+        if (!Array.isArray(edges) || !edges.length) continue;
+        const normalizedEdges = [];
+        for (const edge of edges) {
+          if (!edge || typeof edge.token !== 'string') continue;
+          const neighbor = ensureRecord(edge.token);
+          if (!neighbor) continue;
+          const mergedEdge = normalizeEdgeRecord(Object.assign({}, edge, { token: neighbor.key }));
+          if (mergedEdge) normalizedEdges.push(mergedEdge);
+        }
+        const existing = Array.isArray(record.relationships[relType]) ? record.relationships[relType] : [];
+        record.relationships[relType] = mergeEdgeLists(existing, normalizedEdges);
+      }
+
+      if (Number.isFinite(item.attention)) {
+        const att = Number(item.attention);
+        const existingAttention = Number(record.attention_score);
+        record.attention_score = Number.isFinite(existingAttention)
+          ? Math.max(existingAttention, att)
+          : att;
+        if (captureFocus && att > 0) {
+          const prev = focusMap.get(key) || 0;
+          if (att > prev) focusMap.set(key, att);
+        }
+      }
+
+      if (Number.isFinite(item.totalRelationships)) {
+        const total = Number(item.totalRelationships);
+        const existingTotal = Number(record.total_relationships);
+        if (!Number.isFinite(existingTotal) || total > existingTotal) {
+          record.total_relationships = total;
+        }
+      }
+    }
+  };
+
+  for (const summary of summaries) {
+    const captureFocus = lastAdjacency === summary;
+    mergeSummary(summary, captureFocus);
+  }
+
+  const focusTokens = [...focusMap.entries()]
+    .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+    .map(([token]) => token)
+    .slice(0, 12);
+
+  return { index: augmented, focusTokens };
+}
+
 function anchorsForMode(args, idx){
   let index = idx;
   if (!(index instanceof Map)) {
@@ -1915,16 +2112,20 @@ function anchorsForMode(args, idx){
     index = buildIndex(db);
   }
 
+  const overlay = applyConversationOverlay(index);
+  index = overlay.index instanceof Map ? overlay.index : index;
+  const focusTokens = Array.isArray(overlay.focusTokens) ? overlay.focusTokens : [];
+
   if (args.mode === 'conversation') {
     const conv = [...(Session?.tokens || [])].filter(t => index.has(t));
     const anchors = conv.length ? conv : defaultAnchors(index, 32);
-    return { anchors, idx: index };
+    return { anchors, idx: index, focusTokens };
   }
 
   if (args.mode === 'tokens') {
     let anchors = args.tokens.filter(t => index.has(t));
     if (!anchors.length) anchors = defaultAnchors(index, 32);
-    return { anchors, idx: index };
+    return { anchors, idx: index, focusTokens };
   }
 
   if (args.mode === 'glyphs') {
@@ -1938,7 +2139,7 @@ function anchorsForMode(args, idx){
     }
     const toks = glyphTokens.filter(t => index.has(t));
     const anchors = toks.length ? toks : defaultAnchors(index, 32);
-    return { anchors, idx: index, glyphOnly: true };
+    return { anchors, idx: index, glyphOnly: true, focusTokens };
   }
 
   const cap = getAnchorCap(index);
@@ -1947,10 +2148,10 @@ function anchorsForMode(args, idx){
   if (scope === METRIC_SCOPE.RUN) {
     const liveAnchors = collectWorkingMemoryAnchors(index, limit);
     if (liveAnchors.length) {
-      return { anchors: liveAnchors, idx: index };
+      return { anchors: liveAnchors, idx: index, focusTokens };
     }
   }
-  return { anchors: defaultAnchors(index, limit), idx: index };
+  return { anchors: defaultAnchors(index, limit), idx: index, focusTokens };
 }
 
 function nodeLabel(token, glyphOnly = false) {
@@ -13438,7 +13639,7 @@ async function cmdHlsf(rawArgs) {
     }
 
     const index = await time('index', async () => loadOrGetIndex());
-    const { anchors, idx, glyphOnly } = await time('anchors', async () => anchorsForMode(args, index));
+    const { anchors, idx, glyphOnly, focusTokens } = await time('anchors', async () => anchorsForMode(args, index));
     const effectiveIndex = idx || index;
     const metricScope = window.HLSF.config.metricScope || METRIC_SCOPE.RUN;
     let anchorsToUse = Array.isArray(anchors) ? [...anchors] : [];
@@ -13462,7 +13663,7 @@ async function cmdHlsf(rawArgs) {
     if (metricScope === METRIC_SCOPE.RUN) {
       graph = await time('graph', async () => assembleGraphFromAnchorsLogged(anchorsToUse, depth, effectiveIndex));
       await time('cluster', async () => { applyAffinityClusters(graph, effectiveIndex); });
-      layoutResult = await time('layout', async () => computeLayout(graph, effectiveIndex, { scope: window.HLSF?.config?.hlsfScope }));
+      layoutResult = await time('layout', async () => computeLayout(graph, effectiveIndex, { scope: window.HLSF?.config?.hlsfScope, focusTokens }));
       await time('stage', async () => prepareBuffers(graph, layoutResult, { glyphOnly: glyphOnly === true }));
       await time('render', async () => {
         showVisualizer();
@@ -13513,6 +13714,7 @@ async function cmdHlsf(rawArgs) {
       depth,
       flags: runOptions,
       metricScope,
+      focusTokens,
     };
     syncHlsfControls(document.getElementById('hlsf-canvas-container'));
 
@@ -13570,7 +13772,6 @@ async function rebuildHlsfFromLastCommand(logUpdate = false) {
       const refreshed = await loadOrGetIndex();
       if (refreshed) {
         index = refreshed;
-        last.idx = refreshed;
       }
     } catch (err) {
       if (!index) {
@@ -13581,6 +13782,17 @@ async function rebuildHlsfFromLastCommand(logUpdate = false) {
     }
 
     if (!index) return null;
+
+    const overlay = applyConversationOverlay(index);
+    index = overlay.index instanceof Map ? overlay.index : index;
+    const focusTokens = Array.isArray(overlay.focusTokens)
+      ? overlay.focusTokens
+      : Array.isArray(last.focusTokens)
+        ? last.focusTokens
+        : [];
+
+    last.idx = index;
+    last.focusTokens = focusTokens;
 
     const anchorCandidates = Array.isArray(last.anchors) ? last.anchors : [];
     let anchors = anchorCandidates;
@@ -13601,7 +13813,7 @@ async function rebuildHlsfFromLastCommand(logUpdate = false) {
     const depth = Number.isFinite(last.depth) ? last.depth : 3;
     const graph = await assembleGraphFromAnchorsLogged(anchors, depth, index, { silent: true });
     applyAffinityClusters(graph, index);
-    const layout = computeLayout(graph, index, { scope: window.HLSF?.config?.hlsfScope });
+    const layout = computeLayout(graph, index, { scope: window.HLSF?.config?.hlsfScope, focusTokens });
     prepareBuffers(graph, layout, { glyphOnly: last.glyphOnly === true });
     showVisualizer();
     drawComposite(graph, { glyphOnly: last.glyphOnly === true });
