@@ -4656,6 +4656,7 @@ function persistChangedTokenCaches(records, changedTokens) {
     if (!persisted && !memoryStorageFallback.has(cacheKey)) {
       memoryStorageFallback.set(cacheKey, payload);
     }
+    CacheBatch.record(rec.token);
   }
 }
 
@@ -8045,6 +8046,59 @@ function getFromCache(token) {
   } catch { return null; }
 }
 
+function buildRelationshipSignature(relationships) {
+  const signature = new Map();
+  if (!relationships || typeof relationships !== 'object') {
+    return signature;
+  }
+
+  for (const [rawKey, values] of Object.entries(relationships)) {
+    const relKey = normRelKey(rawKey) || rawKey;
+    if (!relKey) continue;
+    if (!Array.isArray(values)) continue;
+
+    for (const entry of values) {
+      if (!entry || typeof entry.token !== 'string') continue;
+      const neighbor = String(entry.token).trim().toLowerCase();
+      if (!neighbor) continue;
+      const key = `${relKey}::${neighbor}`;
+      const weight = typeof entry.weight === 'number' ? entry.weight : Number(entry.weight);
+      signature.set(key, Number.isFinite(weight) ? weight : null);
+    }
+  }
+
+  return signature;
+}
+
+function relationshipsExpanded(previousRelationships, nextRelationships) {
+  const nextSignature = buildRelationshipSignature(nextRelationships);
+  if (!nextSignature.size) return false;
+
+  const previousSignature = buildRelationshipSignature(previousRelationships);
+  if (!previousSignature.size && nextSignature.size) {
+    return true;
+  }
+
+  for (const [key, weight] of nextSignature.entries()) {
+    if (!previousSignature.has(key)) {
+      return true;
+    }
+    const previousWeight = previousSignature.get(key);
+    const nextNumeric = typeof weight === 'number' ? weight : null;
+    const previousNumeric = typeof previousWeight === 'number' ? previousWeight : null;
+    if (nextNumeric !== null) {
+      if (previousNumeric === null) {
+        return true;
+      }
+      if (nextNumeric > previousNumeric + 1e-6) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function saveToCache(token, data, options = {}) {
   const { deferReload = false } = options || {};
   try {
@@ -8056,6 +8110,7 @@ function saveToCache(token, data, options = {}) {
       : token;
     payloadData.token = recordToken;
     const wasCached = isTokenCached(recordToken);
+    const previousRecord = wasCached ? getCachedRecordForToken(recordToken) : null;
     const enrichedRecord = refreshDbReference(payloadData, { deferReload });
     if (!enrichedRecord || typeof enrichedRecord.token !== 'string') return;
     const finalToken = enrichedRecord.token;
@@ -8065,7 +8120,11 @@ function saveToCache(token, data, options = {}) {
     const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
     if (!persisted && !fallbackStored) return;
     updateTokenIndex(finalToken);
-    if (!wasCached) CacheBatch.record(finalToken);
+    const adjacencyExpanded = relationshipsExpanded(
+      previousRecord?.relationships,
+      enrichedRecord.relationships,
+    );
+    if (!wasCached || adjacencyExpanded) CacheBatch.record(finalToken);
     signalVoiceCloneTokensChanged('token-cached');
   } catch (err) {
     if (err.name === 'QuotaExceededError') {
@@ -11851,6 +11910,29 @@ function restoreConversationLog(snapshot) {
   logElement.scrollTop = logElement.scrollHeight;
 }
 
+function clearConversationLog(options: { resetBatchLog?: boolean } = {}) {
+  const { resetBatchLog = false } = options;
+  try {
+    restoreConversationLog({ html: '', entries: [] });
+  } catch (err) {
+    const logElement = elements?.log;
+    if (logElement instanceof HTMLElement) {
+      logElement.innerHTML = '';
+      logElement.scrollTop = logElement.scrollHeight;
+    } else {
+      console.warn('Unable to clear conversation log:', err);
+    }
+  }
+
+  if (resetBatchLog) {
+    try {
+      BatchLog?.clear?.();
+    } catch (batchErr) {
+      console.warn('Batch log clear failed during reset:', batchErr);
+    }
+  }
+}
+
 function snapshotLocalHlsfMemory() {
   const memory = ensureLocalHlsfMemory();
   if (!memory) return null;
@@ -15305,7 +15387,7 @@ async function handleCommand(cmd) {
   switch (command.toLowerCase()) {
     case 'clear':
       trackCommandExecution(normalized, args, 'handler');
-      elements.log.innerHTML = '';
+      clearConversationLog();
       logOK('Log cleared');
       break;
     case 'reset':
@@ -15351,10 +15433,7 @@ async function handleCommand(cmd) {
           delete window.Session.voiceProfile;
           delete window.Session.voiceProfileClone;
         }
-        if (BatchLog && typeof BatchLog.clear === 'function') {
-          try { BatchLog.clear(); } catch {}
-        }
-        restoreConversationLog({ html: '' });
+        clearConversationLog({ resetBatchLog: true });
         restoreLocalHlsfMemory({});
         if (state?.tokenSources instanceof Map) {
           state.tokenSources.clear();
