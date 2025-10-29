@@ -1,6 +1,6 @@
 import { SETTINGS } from './settings';
 import { runPipeline } from './engine/pipeline';
-import { createRemoteDbFileWriter } from './engine/remoteDbWriter';
+import { createRemoteDbFileWriter, type RemoteDbDirectoryStats } from './engine/remoteDbWriter';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
 import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './export/modelParams';
@@ -14846,7 +14846,7 @@ async function cmd_loaddb(args) {
   await cmdLoadDb(joined);
 }
 
-function cmd_remotestats(): boolean {
+async function cmd_remotestats(): Promise<boolean> {
   const remote = window.HLSF?.remoteDb;
   if (!remote || typeof remote.isReady !== 'function' || !remote.isReady()) {
     logWarning('Remote database not configured. Use /loaddb or /load to connect a manifest first.');
@@ -14865,6 +14865,15 @@ function cmd_remotestats(): boolean {
     return false;
   }
 
+  let reposedStats: RemoteDbDirectoryStats | null = null;
+  if (typeof remoteDbFileWriter?.getDirectoryStats === 'function') {
+    try {
+      reposedStats = await remoteDbFileWriter.getDirectoryStats();
+    } catch (err) {
+      console.warn('Remote directory stats unavailable:', err);
+    }
+  }
+
   const safeText = (value) => sanitize(value == null ? '' : String(value));
   const formatCount = (value) => (Number.isFinite(value) ? Number(value).toLocaleString() : '—');
   const formatDecimal = (value, digits = 1) => (Number.isFinite(value) ? Number(value).toFixed(digits) : '—');
@@ -14875,6 +14884,15 @@ function cmd_remotestats(): boolean {
       return date.toLocaleString();
     }
     return String(value);
+  };
+  const formatDelta = (value) => {
+    if (!Number.isFinite(value) || value === 0) return '0';
+    const sign = value > 0 ? '+' : '−';
+    return `${sign}${Math.abs(Number(value)).toLocaleString()}`;
+  };
+  const describeChunk = (chunk) => {
+    if (!chunk || !Number.isFinite(chunk.count)) return '—';
+    return `${chunk.prefix} (${formatCount(chunk.count)} tokens)`;
   };
 
   const chunkEntries = Array.isArray(metadata.chunks) ? metadata.chunks : [];
@@ -14926,6 +14944,8 @@ function cmd_remotestats(): boolean {
   const averageDegree = Number.isFinite(derivedTokenTotal) && Number.isFinite(derivedRelationships) && derivedTokenTotal > 0
     ? derivedRelationships / derivedTokenTotal
     : null;
+  const declaredTokenTotal = typeof derivedTokenTotal === 'number' ? derivedTokenTotal : null;
+  const declaredRelationshipTotal = typeof derivedRelationships === 'number' ? derivedRelationships : null;
 
   const version = typeof metadata.version === 'string'
     ? metadata.version
@@ -14963,6 +14983,22 @@ function cmd_remotestats(): boolean {
     ? `${smallestChunk.prefix} (${formatCount(smallestChunk.count)} tokens)`
     : '—';
 
+  const reposedConnected = Boolean(reposedStats?.connected);
+  const reposedTokenTotal = reposedStats?.totalTokens ?? null;
+  const reposedRelationships = reposedStats?.totalRelationships ?? null;
+  const reposedTokenIndexCount = reposedStats?.tokenIndexCount ?? null;
+  const reposedChunkCount = reposedStats?.chunkCount ?? null;
+  const reposedChunkPrefixLength = reposedStats?.chunkPrefixLength ?? null;
+  const reposedGeneratedAt = reposedStats?.generatedAt ?? null;
+  const reposedLargestDisplay = describeChunk(reposedStats?.largestChunk ?? null);
+  const reposedSmallestDisplay = describeChunk(reposedStats?.smallestChunk ?? null);
+  const reposedTokenDelta = (reposedTokenTotal != null && declaredTokenTotal != null)
+    ? reposedTokenTotal - declaredTokenTotal
+    : null;
+  const reposedRelationshipDelta = (reposedRelationships != null && declaredRelationshipTotal != null)
+    ? reposedRelationships - declaredRelationshipTotal
+    : null;
+
   const dbStats = metadata.database_stats && typeof metadata.database_stats === 'object'
     ? metadata.database_stats
     : null;
@@ -14992,6 +15028,37 @@ function cmd_remotestats(): boolean {
     scaleLines.push(`• Token index coverage: <strong>${safeText(coverageDisplay)}</strong>`);
   }
   scaleLines.push(`• Cache status: <strong>${safeText(cacheStatus)}</strong>`);
+
+  const reposedLines: string[] = [];
+  if (reposedConnected) {
+    reposedLines.push(`• Reposed tokens: <strong>${safeText(formatCount(reposedTokenTotal))}</strong>`);
+    reposedLines.push(`• Reposed relationships: <strong>${safeText(formatCount(reposedRelationships))}</strong>`);
+    if (reposedTokenDelta != null) {
+      reposedLines.push(`• Token delta (reposed − declared): <strong>${safeText(formatDelta(reposedTokenDelta))}</strong>`);
+    }
+    if (reposedRelationshipDelta != null) {
+      reposedLines.push(`• Relationship delta: <strong>${safeText(formatDelta(reposedRelationshipDelta))}</strong>`);
+    }
+    reposedLines.push(`• Stored token index entries: <strong>${safeText(formatCount(reposedTokenIndexCount))}</strong>`);
+    reposedLines.push(`• Stored chunks: <strong>${safeText(formatCount(reposedChunkCount))}</strong>`);
+    reposedLines.push(`• Stored chunk prefix length: <strong>${safeText(formatCount(reposedChunkPrefixLength))}</strong>`);
+    reposedLines.push(`• Largest stored chunk: <strong>${safeText(reposedLargestDisplay)}</strong>`);
+    reposedLines.push(`• Smallest stored chunk: <strong>${safeText(reposedSmallestDisplay)}</strong>`);
+    if (reposedGeneratedAt) {
+      reposedLines.push(`• Stored manifest generated: <strong>${safeText(formatDateTime(reposedGeneratedAt))}</strong>`);
+    }
+  } else if (reposedStats?.error) {
+    reposedLines.push(`• Reposed totals unavailable: ${safeText(reposedStats.error)}`);
+  } else {
+    reposedLines.push('• Reposed totals unavailable. Connect with <strong>/remotedir</strong>.');
+  }
+
+  const reposedSection = reposedLines.length
+    ? `<div class="adjacency-insight">
+        <strong>🏛️ Reposed Repository Totals:</strong><br>
+        ${reposedLines.join('<br>')}
+      </div>`
+    : '';
 
   const dbStatsLines = [];
   if (dbStats) {
@@ -15034,6 +15101,8 @@ function cmd_remotestats(): boolean {
       <strong>📦 Scale & Topology:</strong><br>
       ${scaleLines.join('<br>')}
     </div>
+
+    ${reposedSection}
 
     ${dbStatsSection}
 
@@ -15976,7 +16045,7 @@ async function handleCommand(cmd) {
     case 'remotestats':
     case 'remotedb':
       trackCommandExecution(normalized, args, 'handler');
-      cmd_remotestats();
+      void cmd_remotestats();
       break;
     case 'export':
       trackCommandExecution(normalized, args, 'handler');

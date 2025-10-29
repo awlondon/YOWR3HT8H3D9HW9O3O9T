@@ -30,11 +30,26 @@ interface RemoteDbWriterLogger {
   onSyncError?: (message: string) => void;
 }
 
+interface RemoteDbDirectoryStats {
+  connected: boolean;
+  metadata: any | null;
+  totalTokens: number | null;
+  totalRelationships: number | null;
+  tokenIndexCount: number | null;
+  chunkCount: number;
+  chunkPrefixLength: number | null;
+  generatedAt: string | null;
+  largestChunk: { prefix: string; count: number } | null;
+  smallestChunk: { prefix: string; count: number } | null;
+  error?: string;
+}
+
 interface RemoteDbWriter {
   isSupported(): boolean;
   hasDirectory(): boolean;
   chooseDirectory(): Promise<boolean>;
   handlePersist(update: RemoteDbUpdate | null): void;
+  getDirectoryStats(): Promise<RemoteDbDirectoryStats>;
 }
 
 function isFsSupported(): boolean {
@@ -319,6 +334,102 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       chunks,
       tokenIndex,
     } as RemoteDbUpdate;
+  };
+
+  const getDirectoryStats = async (): Promise<RemoteDbDirectoryStats> => {
+    const base: RemoteDbDirectoryStats = {
+      connected: false,
+      metadata: null,
+      totalTokens: null,
+      totalRelationships: null,
+      tokenIndexCount: null,
+      chunkCount: 0,
+      chunkPrefixLength: null,
+      generatedAt: null,
+      largestChunk: null,
+      smallestChunk: null,
+    };
+
+    if (!state.directoryHandle) {
+      return { ...base, error: 'No directory connected' };
+    }
+
+    let hasAccess = false;
+    try {
+      hasAccess = await ensureDirectory();
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ...base, error: message || 'Unable to verify directory access' };
+    }
+
+    if (!hasAccess) {
+      return { ...base, error: 'Directory permission not granted' };
+    }
+
+    try {
+      const metadata = await readJsonFileFromDirectory(state.directoryHandle, 'metadata.json');
+      const tokenIndexPayload = await readJsonFileFromDirectory(state.directoryHandle, 'token-index.json');
+      const tokenIndexList = parseTokenIndexPayload(tokenIndexPayload);
+
+      const chunks = Array.isArray(metadata?.chunks) ? metadata.chunks : [];
+      let totalTokens = 0;
+      let hasTokenTotal = false;
+      let largestChunk: { prefix: string; count: number } | null = null;
+      let smallestChunk: { prefix: string; count: number } | null = null;
+
+      for (const chunk of chunks) {
+        if (!chunk || typeof chunk !== 'object') continue;
+        const prefix = typeof (chunk as any).prefix === 'string' && (chunk as any).prefix
+          ? (chunk as any).prefix
+          : '_';
+        const countRaw = Number((chunk as any).token_count);
+        if (!Number.isFinite(countRaw)) continue;
+        const count = Math.max(0, Math.floor(countRaw));
+        totalTokens += count;
+        hasTokenTotal = true;
+        if (!largestChunk || count > largestChunk.count) {
+          largestChunk = { prefix, count };
+        }
+        if (!smallestChunk || count < smallestChunk.count) {
+          smallestChunk = { prefix, count };
+        }
+      }
+
+      const relationshipRaw = (metadata as any)?.total_relationships ?? (metadata as any)?.totalRelationships;
+      const totalRelationships = Number.isFinite(relationshipRaw)
+        ? Math.max(0, Math.floor(relationshipRaw))
+        : null;
+
+      const chunkPrefixLengthRaw = (metadata as any)?.chunk_prefix_length ?? (metadata as any)?.chunkPrefixLength;
+      const chunkPrefixLength = Number.isFinite(chunkPrefixLengthRaw)
+        ? Math.max(1, Math.floor(chunkPrefixLengthRaw))
+        : null;
+
+      const generatedAt = (metadata as any)?.generated_at
+        || (metadata as any)?.generatedAt
+        || (metadata as any)?.generated
+        || null;
+
+      return {
+        connected: true,
+        metadata: metadata ?? null,
+        totalTokens: hasTokenTotal ? totalTokens : null,
+        totalRelationships,
+        tokenIndexCount: tokenIndexList.length ? tokenIndexList.length : null,
+        chunkCount: chunks.length,
+        chunkPrefixLength,
+        generatedAt,
+        largestChunk,
+        smallestChunk,
+      };
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        ...base,
+        connected: true,
+        error: message || 'Failed to read remote DB directory',
+      };
+    }
   };
 
   const writeUpdate = async (update: RemoteDbUpdate) => {
@@ -660,7 +771,8 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
     hasDirectory: () => state.directoryHandle != null,
     chooseDirectory,
     handlePersist,
+    getDirectoryStats,
   };
 }
 
-export type { RemoteDbWriter };
+export type { RemoteDbWriter, RemoteDbDirectoryStats };
