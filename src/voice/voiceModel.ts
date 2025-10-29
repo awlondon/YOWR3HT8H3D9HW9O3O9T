@@ -35,6 +35,27 @@ interface VoiceModelSettings {
   fftSensitivity: number;
 }
 
+type CaptureSegment = {
+  text: string;
+  startMs: number;
+  endMs: number;
+};
+
+type CapturedAudioPayload = {
+  blob: Blob;
+  mimeType: string;
+  segments: CaptureSegment[];
+  transcriptParts: string[];
+  capturedAt: string;
+  originalTranscript: string;
+};
+
+type TokenAudioClip = {
+  token: string;
+  transcript: string;
+  blob: Blob;
+};
+
 const SETTINGS_STORAGE_KEY = 'hlsf-voice-model-settings';
 
 function readSettings(): VoiceModelSettings {
@@ -198,6 +219,18 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   let interimTranscript = '';
   let previousTokenCount = 0;
   let capturedTranscript = '';
+  let audioStream: MediaStream | null = null;
+  let audioRecorder: MediaRecorder | null = null;
+  let audioChunks: Blob[] = [];
+  let audioCaptureStartTime: number | null = null;
+  let audioCaptureStartedAt: string | null = null;
+  let currentAudioSegments: CaptureSegment[] = [];
+  let capturedAudioPayload: CapturedAudioPayload | null = null;
+  const RECOGNITION_SEGMENT_LAG_MS = 140;
+  const MIN_SEGMENT_DURATION_MS = 120;
+  const SEGMENT_PRE_ROLL_SEC = 0.04;
+  const SEGMENT_POST_ROLL_SEC = 0.08;
+  const MIN_TOKEN_DURATION_SEC = 0.12;
   let resumeListeningAfterSend = false;
   let loadingTimer: number | null = null;
   let lastPlaybackText = '';
@@ -365,6 +398,181 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     updateTranscriptSendButtonState(tokens.length);
   }
 
+  function resetAudioCaptureState(): void {
+    audioChunks = [];
+    currentAudioSegments = [];
+    audioCaptureStartTime = null;
+    audioCaptureStartedAt = null;
+  }
+
+  function clearCapturedAudio(): void {
+    capturedAudioPayload = null;
+  }
+
+  async function startAudioCapture(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    if (typeof window.MediaRecorder === 'undefined') {
+      clearCapturedAudio();
+      resetAudioCaptureState();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      clearCapturedAudio();
+      resetAudioCaptureState();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStream = stream;
+      audioRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      currentAudioSegments = [];
+      capturedAudioPayload = null;
+      audioCaptureStartTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      audioCaptureStartedAt = new Date().toISOString();
+      audioRecorder.addEventListener('dataavailable', event => {
+        if (event.data?.size) {
+          audioChunks.push(event.data);
+        }
+      });
+      audioRecorder.addEventListener('error', event => {
+        console.warn('Voice model audio capture error:', event);
+      });
+      try {
+        audioRecorder.start();
+      } catch (error) {
+        console.warn('Unable to start voice model audio recorder:', error);
+        resetAudioCaptureState();
+        clearCapturedAudio();
+      }
+    } catch (error) {
+      console.warn('Unable to access microphone for voice model audio capture:', error);
+      clearCapturedAudio();
+      resetAudioCaptureState();
+    }
+  }
+
+  function stopAudioCapture(): Promise<{ blob: Blob | null; mimeType: string }> {
+    if (!audioRecorder) {
+      if (audioStream) {
+        try {
+          audioStream.getTracks().forEach(track => track.stop());
+        } catch {}
+        audioStream = null;
+      }
+      return Promise.resolve({ blob: null, mimeType: '' });
+    }
+
+    const recorder = audioRecorder;
+    audioRecorder = null;
+    return new Promise(resolve => {
+      recorder.addEventListener(
+        'stop',
+        () => {
+          const mimeType = recorder.mimeType || 'audio/webm';
+          const blob = audioChunks.length ? new Blob(audioChunks, { type: mimeType }) : null;
+          audioChunks = [];
+          if (audioStream) {
+            try {
+              audioStream.getTracks().forEach(track => track.stop());
+            } catch {}
+            audioStream = null;
+          }
+          resolve({ blob, mimeType });
+        },
+        { once: true },
+      );
+      try {
+        recorder.stop();
+      } catch (error) {
+        console.warn('Failed to stop voice model audio recorder:', error);
+        audioChunks = [];
+        if (audioStream) {
+          try {
+            audioStream.getTracks().forEach(track => track.stop());
+          } catch {}
+          audioStream = null;
+        }
+        resolve({ blob: null, mimeType: '' });
+      }
+    }).finally(() => {
+      resetAudioCaptureState();
+    });
+  }
+
+  function noteAudioSegment(text: string): void {
+    if (!text || !audioCaptureStartTime) return;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const elapsed = Math.max(0, now - audioCaptureStartTime);
+    const adjustedEnd = Math.max(0, elapsed - RECOGNITION_SEGMENT_LAG_MS);
+    const last = currentAudioSegments[currentAudioSegments.length - 1];
+    const startMs = last ? last.endMs : 0;
+    const endMs = Math.max(startMs + MIN_SEGMENT_DURATION_MS, adjustedEnd);
+    currentAudioSegments.push({ text, startMs, endMs });
+  }
+
+  async function commitCapturedAudioRecordings(
+    tokens: string[],
+    context: { prompt?: string; kind?: 'prompt' | 'command' },
+  ): Promise<void> {
+    if (!capturedAudioPayload || !tokens.length) {
+      clearCapturedAudio();
+      return;
+    }
+    if (typeof window === 'undefined') {
+      clearCapturedAudio();
+      return;
+    }
+    const voiceApi = (window as any)?.CognitionEngine?.voice;
+    if (!voiceApi || typeof voiceApi.saveTokenRecordings !== 'function') {
+      clearCapturedAudio();
+      return;
+    }
+
+    try {
+      const clips = await generateTokenRecordingsFromCapture(tokens, capturedAudioPayload, {
+        preRoll: SEGMENT_PRE_ROLL_SEC,
+        postRoll: SEGMENT_POST_ROLL_SEC,
+        minimumTokenDuration: MIN_TOKEN_DURATION_SEC,
+      });
+      if (!clips.length) {
+        clearCapturedAudio();
+        return;
+      }
+      const payload = [] as Array<{
+        token: string;
+        transcript: string;
+        audioBase64: string;
+        audioType: string;
+        capturedAt: string;
+      }>;
+      for (const clip of clips) {
+        const base64 = await blobToBase64(clip.blob);
+        if (!base64) continue;
+        payload.push({
+          token: clip.token,
+          transcript: clip.transcript,
+          audioBase64: base64,
+          audioType: clip.blob.type || capturedAudioPayload.mimeType || 'audio/webm',
+          capturedAt: capturedAudioPayload.capturedAt,
+        });
+      }
+      if (!payload.length) {
+        clearCapturedAudio();
+        return;
+      }
+      voiceApi.saveTokenRecordings(payload, {
+        source: 'voice-model',
+        prompt: context.prompt ?? capturedAudioPayload.originalTranscript,
+        kind: context.kind,
+      });
+    } catch (error) {
+      console.warn('Failed to persist voice model recordings:', error);
+    } finally {
+      clearCapturedAudio();
+    }
+  }
+
   function startLoadingBar(targetLatency: number): void {
     if (!loadingEl || !loadingProgress) return;
     if (loadingTimer !== null && typeof window !== 'undefined') {
@@ -424,11 +632,14 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       recognition.interimResults = true;
       recognition.onresult = handleRecognitionResult;
       recognition.onerror = handleRecognitionError;
-      recognition.onend = handleRecognitionEnd;
+      recognition.onend = () => {
+        void handleRecognitionEnd();
+      };
       transcriptParts = [];
       interimTranscript = '';
       previousTokenCount = 0;
       updateTranscriptTokens('', '');
+      void startAudioCapture();
       recognition.start();
       recognitionActive = true;
       updateOrbActive(true);
@@ -478,6 +689,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       if (!value) continue;
       if (result.isFinal) {
         transcriptParts.push(value);
+        noteAudioSegment(value);
         finalChanged = true;
       } else {
         interimValue = value;
@@ -513,7 +725,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     }
   }
 
-  function handleRecognitionEnd(): void {
+  async function handleRecognitionEnd(): Promise<void> {
     recognitionActive = false;
     if (recognition) {
       recognition.onresult = null;
@@ -523,7 +735,17 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     }
     updateOrbActive(false);
     const finalTranscript = transcriptParts.join(' ').trim();
+    const transcriptSnapshot = transcriptParts.slice();
+    const segmentSnapshot = currentAudioSegments.map(segment => ({ ...segment }));
+    const captureTimestamp = audioCaptureStartedAt || new Date().toISOString();
+    const audioStopPromise = stopAudioCapture().catch(error => {
+      console.warn('Voice model audio capture stop failed:', error);
+      return { blob: null as Blob | null, mimeType: '' };
+    });
+
     if (!finalTranscript) {
+      await audioStopPromise;
+      clearCapturedAudio();
       if (listeningRequested && !inFlight) {
         if (typeof window !== 'undefined') {
           window.setTimeout(() => {
@@ -539,9 +761,27 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       }
       return;
     }
+
     if (inFlight) {
+      await audioStopPromise;
+      clearCapturedAudio();
       return;
     }
+
+    const { blob, mimeType } = await audioStopPromise;
+    if (blob) {
+      capturedAudioPayload = {
+        blob,
+        mimeType: blob.type || mimeType || 'audio/webm',
+        segments: segmentSnapshot,
+        transcriptParts: transcriptSnapshot,
+        capturedAt: captureTimestamp,
+        originalTranscript: finalTranscript,
+      };
+    } else {
+      clearCapturedAudio();
+    }
+
     transcriptParts = [];
     interimTranscript = '';
     previousTokenCount = finalTranscript ? finalTranscript.split(/\s+/).filter(Boolean).length : 0;
@@ -624,6 +864,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       hideTranscriptEditor();
       updateTranscriptTokens('', '');
       previousTokenCount = 0;
+      clearCapturedAudio();
       updateStatus('Transcript cleared. Ready to capture new input.');
       const shouldResume = resumeListeningAfterSend;
       resumeListeningAfterSend = false;
@@ -789,6 +1030,13 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     try {
       const result = await options.submitPrompt(trimmed, { annotateLog: true });
       finalizeInteraction(currentInteractionId, result, trimmed);
+      if (result.success) {
+        void commitCapturedAudioRecordings(result.tokens, { prompt: trimmed, kind: result.kind }).catch(error => {
+          console.warn('Voice model recording ingestion failed:', error);
+        });
+      } else {
+        clearCapturedAudio();
+      }
     } catch (error) {
       if (currentInteractionId) {
         options.userAvatar.updateInteraction(currentInteractionId, {
@@ -797,6 +1045,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
         });
       }
       console.error('Voice model processing failed:', error);
+      clearCapturedAudio();
     } finally {
       stopLoadingBar();
       inFlight = false;
@@ -866,4 +1115,233 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       }
     },
   };
+}
+
+type TokenTiming = {
+  token: string;
+  transcript: string;
+  startSec: number;
+  endSec: number;
+};
+
+async function generateTokenRecordingsFromCapture(
+  tokens: string[],
+  payload: CapturedAudioPayload,
+  options: { preRoll: number; postRoll: number; minimumTokenDuration: number },
+): Promise<TokenAudioClip[]> {
+  if (!payload || !payload.blob) return [];
+  const sanitizedTokens = Array.isArray(tokens)
+    ? tokens.map(token => (typeof token === 'string' ? token.trim() : '')).filter(Boolean)
+    : [];
+  if (!sanitizedTokens.length) return [];
+  if (typeof window === 'undefined') return [];
+  const AudioContextCtor = (window as any).AudioContext || (window as any).webkitAudioContext;
+  if (typeof AudioContextCtor !== 'function') return [];
+
+  const arrayBuffer = await payload.blob.arrayBuffer();
+  const context = new AudioContextCtor();
+  try {
+    const audioBuffer = await decodeAudioBuffer(context, arrayBuffer);
+    const timings = computeTokenTimings(sanitizedTokens, payload, options, audioBuffer.duration);
+    if (!timings.length) return [];
+    const clips: TokenAudioClip[] = [];
+    const { numberOfChannels, sampleRate } = audioBuffer;
+    for (const timing of timings) {
+      const startSample = Math.max(0, Math.floor(timing.startSec * sampleRate));
+      const endSample = Math.min(audioBuffer.length, Math.ceil(timing.endSec * sampleRate));
+      if (endSample <= startSample) continue;
+      const length = endSample - startSample;
+      const segmentBuffer = context.createBuffer(numberOfChannels, length, sampleRate);
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        const channelData = audioBuffer.getChannelData(channel).subarray(startSample, endSample);
+        if (typeof segmentBuffer.copyToChannel === 'function') {
+          segmentBuffer.copyToChannel(channelData, channel);
+        } else {
+          segmentBuffer.getChannelData(channel).set(channelData);
+        }
+      }
+      const wavBuffer = audioBufferToWav(segmentBuffer);
+      clips.push({
+        token: timing.token,
+        transcript: timing.transcript,
+        blob: new Blob([wavBuffer], { type: 'audio/wav' }),
+      });
+    }
+    return clips;
+  } catch (error) {
+    console.warn('Voice model audio decoding failed:', error);
+    return [];
+  } finally {
+    try {
+      await context.close();
+    } catch {}
+  }
+}
+
+function computeTokenTimings(
+  tokens: string[],
+  payload: CapturedAudioPayload,
+  options: { preRoll: number; postRoll: number; minimumTokenDuration: number },
+  totalDuration: number,
+): TokenTiming[] {
+  const minDuration = Math.max(0.01, options.minimumTokenDuration);
+  const fallbackTokens = (payload.transcriptParts || [])
+    .join(' ')
+    .split(/\s+/)
+    .map(token => token.trim())
+    .filter(Boolean);
+  const segments = Array.isArray(payload.segments) ? payload.segments : [];
+  const normalizedSegments = segments.length
+    ? segments
+        .map(segment => {
+          const baseStart = Math.max(0, segment.startMs / 1000 - options.preRoll);
+          const baseEnd = Math.min(totalDuration, segment.endMs / 1000 + options.postRoll);
+          const segmentTokens = typeof segment.text === 'string'
+            ? segment.text.split(/\s+/).map(token => token.trim()).filter(Boolean)
+            : [];
+          const startSec = Math.max(0, Math.min(baseStart, totalDuration));
+          const endSec = Math.max(startSec + minDuration, Math.min(baseEnd, totalDuration));
+          return { startSec, endSec, tokens: segmentTokens };
+        })
+        .sort((a, b) => a.startSec - b.startSec)
+    : [
+        {
+          startSec: 0,
+          endSec: Math.max(totalDuration, minDuration * tokens.length || minDuration),
+          tokens: fallbackTokens.length ? fallbackTokens : [...tokens],
+        },
+      ];
+
+  const timings: TokenTiming[] = [];
+  let tokenIndex = 0;
+  let previousEnd = 0;
+  for (const segment of normalizedSegments) {
+    if (tokenIndex >= tokens.length) break;
+    const segmentTokenCount = segment.tokens.length || Math.min(tokens.length - tokenIndex, 1);
+    const availableTokens = Math.min(segmentTokenCount, tokens.length - tokenIndex);
+    const startSec = Math.max(previousEnd, Math.min(segment.startSec, totalDuration));
+    const endSec = Math.max(startSec + minDuration * availableTokens, Math.min(segment.endSec, totalDuration));
+    const duration = Math.max(endSec - startSec, minDuration * availableTokens);
+    const perToken = duration / availableTokens;
+    for (let i = 0; i < availableTokens && tokenIndex < tokens.length; i++) {
+      const token = tokens[tokenIndex];
+      const tokenStart = startSec + perToken * i;
+      let tokenEnd = i === availableTokens - 1 ? endSec : tokenStart + perToken;
+      if (tokenEnd - tokenStart < minDuration) {
+        tokenEnd = tokenStart + minDuration;
+      }
+      const clampedStart = Math.max(0, Math.min(tokenStart, totalDuration));
+      const clampedEnd = Math.max(clampedStart + minDuration / 2, Math.min(tokenEnd, totalDuration));
+      timings.push({
+        token,
+        transcript: token,
+        startSec: clampedStart,
+        endSec: clampedEnd,
+      });
+      tokenIndex += 1;
+    }
+    previousEnd = Math.max(previousEnd, endSec);
+  }
+
+  if (tokenIndex < tokens.length) {
+    const remaining = tokens.length - tokenIndex;
+    const startSec = timings.length ? timings[timings.length - 1].endSec : 0;
+    const available = Math.max(totalDuration - startSec, minDuration * remaining);
+    const perToken = available / remaining;
+    for (let i = 0; i < remaining && tokenIndex < tokens.length; i++) {
+      const token = tokens[tokenIndex];
+      const tokenStart = startSec + perToken * i;
+      let tokenEnd = tokenStart + perToken;
+      if (tokenEnd - tokenStart < minDuration) {
+        tokenEnd = tokenStart + minDuration;
+      }
+      timings.push({
+        token,
+        transcript: token,
+        startSec: Math.max(0, Math.min(tokenStart, totalDuration)),
+        endSec: Math.max(minDuration, Math.min(tokenEnd, totalDuration)),
+      });
+      tokenIndex += 1;
+    }
+  }
+
+  return timings;
+}
+
+function decodeAudioBuffer(context: AudioContext, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
+  return new Promise<AudioBuffer>((resolve, reject) => {
+    const cloned = arrayBuffer.slice(0);
+    context.decodeAudioData(
+      cloned,
+      decoded => resolve(decoded),
+      error => reject(error || new Error('Unable to decode audio data.')),
+    );
+  });
+}
+
+function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
+  const channels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const bitsPerSample = 16;
+  const format = 1;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const byteRate = sampleRate * blockAlign;
+  const dataLength = buffer.length * blockAlign;
+  const bufferLength = 44 + dataLength;
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(arrayBuffer);
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  const channelData = [] as Float32Array[];
+  for (let channel = 0; channel < channels; channel++) {
+    channelData.push(buffer.getChannelData(channel));
+  }
+  for (let i = 0; i < buffer.length; i++) {
+    for (let channel = 0; channel < channels; channel++) {
+      let sample = channelData[channel][i];
+      sample = Math.max(-1, Math.min(1, sample));
+      const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      view.setInt16(offset, intSample, true);
+      offset += 2;
+    }
+  }
+
+  return arrayBuffer;
+}
+
+function writeString(view: DataView, offset: number, text: string): void {
+  for (let i = 0; i < text.length; i++) {
+    view.setUint8(offset + i, text.charCodeAt(i));
+  }
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        const base64 = result.split(',')[1] || '';
+        resolve(base64);
+      } else {
+        reject(new Error('Unexpected FileReader result.'));
+      }
+    };
+    reader.onerror = err => reject(err);
+    reader.readAsDataURL(blob);
+  });
 }
