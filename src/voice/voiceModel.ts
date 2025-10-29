@@ -114,6 +114,48 @@ function speakText(text: string): void {
   }
 }
 
+type LocalVoiceOutputs = {
+  prompt?: string;
+  localThought?: string;
+  localResponse?: string;
+  updatedAt?: number;
+  source?: string;
+};
+
+function getLatestLocalVoiceOutputs(): LocalVoiceOutputs | null {
+  if (typeof window === 'undefined') return null;
+  const root = (window as any).CognitionEngine;
+  if (!root || typeof root !== 'object') return null;
+  const voice = root.voice;
+  if (!voice || typeof voice !== 'object') return null;
+
+  try {
+    if (typeof voice.getLatestLocalOutputs === 'function') {
+      const value = voice.getLatestLocalOutputs();
+      if (value && typeof value === 'object') {
+        return value as LocalVoiceOutputs;
+      }
+    }
+  } catch (error) {
+    console.warn('Voice output retrieval failed:', error);
+  }
+
+  if (voice.latestLocalOutputs && typeof voice.latestLocalOutputs === 'object') {
+    return voice.latestLocalOutputs as LocalVoiceOutputs;
+  }
+
+  return null;
+}
+
+function resolveLocalPlaybackText(): string {
+  const data = getLatestLocalVoiceOutputs();
+  if (!data) return '';
+  const localResponse = typeof data.localResponse === 'string' ? data.localResponse.trim() : '';
+  if (localResponse) return localResponse;
+  const localThought = typeof data.localThought === 'string' ? data.localThought.trim() : '';
+  return localThought;
+}
+
 export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModelDockController | null {
   if (!options || typeof options.submitPrompt !== 'function' || !options.userAvatar) {
     console.warn('Voice model dock requires submitPrompt and userAvatar options.');
@@ -696,16 +738,24 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     });
 
     if (result.success) {
-      lastPlaybackText = `Voice session processed: ${prompt}`;
+      const playbackText = resolveLocalPlaybackText();
+      lastPlaybackText = playbackText;
+
       if (options.onTokensCommitted) {
         options.onTokensCommitted(result.tokens, { prompt, kind: result.kind });
       }
+
       if (speakerButton) {
-        speakerButton.disabled = false;
+        speakerButton.disabled = !playbackText;
       }
-      if (result.kind !== 'command' && lastPlaybackText) {
-        updateStatus('Playing synthesized response profile.');
-        speakText(lastPlaybackText);
+
+      if (result.kind !== 'command') {
+        if (playbackText) {
+          updateStatus('Playing local HLSF AGI output.');
+          speakText(playbackText);
+        } else {
+          updateStatus('Local HLSF AGI output unavailable for playback.');
+        }
       }
     } else if (speakerButton) {
       speakerButton.disabled = true;
@@ -775,11 +825,11 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     speakerButton.disabled = true;
     speakerButton.addEventListener('click', () => {
       if (!lastPlaybackText) {
-        updateStatus('No synthesized response available yet.');
+        updateStatus('No local HLSF AGI output available for playback.');
         return;
       }
       speakText(lastPlaybackText);
-      updateStatus('Playing synthesized response profile.');
+      updateStatus('Playing local HLSF AGI output.');
     });
   }
 

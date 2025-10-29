@@ -9821,6 +9821,39 @@ window.CognitionEngine.voiceModel = Object.assign(window.CognitionEngine.voiceMo
   },
 });
 
+function recordLatestLocalVoiceOutputs(payload) {
+  if (typeof window === 'undefined') return;
+  const root = (window.CognitionEngine = window.CognitionEngine || {});
+  const voice = (root.voice = root.voice || {});
+
+  const prompt = typeof payload?.prompt === 'string' ? payload.prompt : '';
+  const localThought = typeof payload?.localThought === 'string' ? payload.localThought : '';
+  const localResponse = typeof payload?.localResponse === 'string' ? payload.localResponse : '';
+  if (!localThought && !localResponse) {
+    return;
+  }
+
+  const data = {
+    prompt,
+    localThought,
+    localResponse,
+    source: typeof payload?.source === 'string' ? payload.source : 'prompt',
+    updatedAt: Date.now(),
+  };
+
+  voice.latestLocalOutputs = data;
+  voice.lastLocalOutputAt = data.updatedAt;
+  voice.getLatestLocalOutputs = () => voice.latestLocalOutputs || null;
+
+  if (typeof voice.onLocalOutputsUpdated === 'function') {
+    try {
+      voice.onLocalOutputsUpdated(data);
+    } catch (error) {
+      console.warn('Voice local output listener failed:', error);
+    }
+  }
+}
+
 function calculateAttention(matrices) {
   for (const entry of matrices.values()) {
     let weightSum = 0, totalEdges = 0;
@@ -13074,7 +13107,7 @@ async function runHlsfSafely(args) {
 
 async function rebuildHlsfFromLastCommand(logUpdate = false) {
   const last = window.HLSF?.lastCommand;
-  if (!last || !last.idx || !Array.isArray(last.anchors) || !last.anchors.length) return null;
+  if (!last || !Array.isArray(last.anchors) || !last.anchors.length) return null;
   if (last.metricScope === METRIC_SCOPE.DB) {
     if (logUpdate) {
       const suffix = last.rawArgs ? ` ${last.rawArgs}` : '';
@@ -13083,10 +13116,43 @@ async function rebuildHlsfFromLastCommand(logUpdate = false) {
     return null;
   }
   try {
+    let index = last.idx;
+    try {
+      const refreshed = await loadOrGetIndex();
+      if (refreshed) {
+        index = refreshed;
+        last.idx = refreshed;
+      }
+    } catch (err) {
+      if (!index) {
+        console.warn('Failed to refresh HLSF index for rebuild:', err);
+        return null;
+      }
+      console.warn('Falling back to cached HLSF index for rebuild:', err);
+    }
+
+    if (!index) return null;
+
+    const anchorCandidates = Array.isArray(last.anchors) ? last.anchors : [];
+    let anchors = anchorCandidates;
+    if (index instanceof Map) {
+      const existing = anchorCandidates.filter(token => index.has(token));
+      if (existing.length) {
+        anchors = existing;
+      } else if (index.size) {
+        const fallback = defaultAnchors(index, getAnchorCap(index));
+        if (fallback.length) anchors = fallback;
+      }
+    }
+
+    if (!anchors.length) return null;
+
+    last.anchors = anchors.slice();
+
     const depth = Number.isFinite(last.depth) ? last.depth : 3;
-    const graph = await assembleGraphFromAnchorsLogged(last.anchors, depth, last.idx, { silent: true });
-    applyAffinityClusters(graph, last.idx);
-    const layout = computeLayout(graph, last.idx, { scope: window.HLSF?.config?.hlsfScope });
+    const graph = await assembleGraphFromAnchorsLogged(anchors, depth, index, { silent: true });
+    applyAffinityClusters(graph, index);
+    const layout = computeLayout(graph, index, { scope: window.HLSF?.config?.hlsfScope });
     prepareBuffers(graph, layout, { glyphOnly: last.glyphOnly === true });
     showVisualizer();
     drawComposite(graph, { glyphOnly: last.glyphOnly === true });
@@ -15769,6 +15835,13 @@ async function processPrompt(prompt) {
     const visitedSummary = Array.isArray(localOutputData.visitedTokens) && localOutputData.visitedTokens.length
       ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
       : '';
+
+    recordLatestLocalVoiceOutputs({
+      prompt: normalizedPrompt,
+      localThought,
+      localResponse: localOutput,
+      source: 'prompt',
+    });
 
     const safeThought = sanitize(localThought);
     const safeResponse = sanitize(localOutput);
