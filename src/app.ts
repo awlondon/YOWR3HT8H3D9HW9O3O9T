@@ -14066,77 +14066,246 @@ function collectActiveClusterInsights() {
   return null;
 }
 
-function gatherSelfTokenPool(clusterInfo, dbStats, limit = 18) {
-  const tokenSet = new Set();
-  const safePush = (token) => {
-    if (typeof token === 'string' && token.trim()) {
-      tokenSet.add(token.trim());
+function resolveCachedAdjacencyEntries(limit = 0) {
+  const memory = ensureLocalHlsfMemory();
+  if (!memory) {
+    return { record: null, entries: [] };
+  }
+
+  const candidates: LocalHlsfAdjacencySummary[] = [];
+  if (memory.lastAdjacency) {
+    candidates.push(memory.lastAdjacency);
+  }
+  if (memory.adjacencySummaries instanceof Map) {
+    for (const entry of memory.adjacencySummaries.values()) {
+      candidates.push(entry);
     }
+  }
+
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const record = candidates[i];
+    if (!record || !Array.isArray(record.summary) || !record.summary.length) continue;
+
+    const seen = new Set();
+    const entries: LocalHlsfAdjacencyTokenSummary[] = [];
+    for (const summaryEntry of record.summary) {
+      if (!summaryEntry || typeof summaryEntry.token !== 'string') continue;
+      const token = summaryEntry.token.trim();
+      if (!token || !isTokenCached(token)) continue;
+      const key = token.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push(summaryEntry);
+      if (limit > 0 && entries.length >= limit) break;
+    }
+
+    if (entries.length) {
+      return { record, entries };
+    }
+  }
+
+  return { record: null, entries: [] };
+}
+
+function summarizeCachedAdjacency(entries: LocalHlsfAdjacencyTokenSummary[], options = {}) {
+  const { neighborLimit = 4, connectionLimit = 20 } = options as {
+    neighborLimit?: number;
+    connectionLimit?: number;
   };
 
-  if (clusterInfo?.summaries?.length) {
-    for (const summary of clusterInfo.summaries) {
-      if (!summary?.topTokens) continue;
-      for (const token of summary.topTokens) {
-        safePush(token);
-        if (tokenSet.size >= limit) break;
-      }
-      if (tokenSet.size >= limit) break;
-    }
-  }
+  const sortedEntries = entries.slice().sort((a, b) => {
+    const attA = Number.isFinite(a.attention) ? a.attention : 0;
+    const attB = Number.isFinite(b.attention) ? b.attention : 0;
+    return attB - attA;
+  });
 
-  if (Array.isArray(clusterInfo?.fallbackTop)) {
-    for (const token of clusterInfo.fallbackTop) {
-      safePush(token);
-      if (tokenSet.size >= limit) break;
-    }
-  }
+  const tokenHighlights = [];
+  const relationStats = new Map<string, { type: string; count: number; weight: number }>();
+  const connectionStats = new Map<string, { source: string; target: string; type: string; weight: number; baseWeight: number | null }>();
+  const pri = RELATIONSHIP_PRIORITIES || {};
+  const neighborCap = Number.isFinite(neighborLimit) && neighborLimit > 0 ? Math.floor(neighborLimit) : 0;
+  const connectionCap = Number.isFinite(connectionLimit) && connectionLimit > 0 ? Math.floor(connectionLimit) : 0;
 
-  const maxEdgeTokens = dbStats?.max_edges_per_token?.tokens;
-  if (Array.isArray(maxEdgeTokens)) {
-    for (const token of maxEdgeTokens) {
-      safePush(token);
-      if (tokenSet.size >= limit) break;
-    }
-  }
+  let totalEdges = 0;
+  let totalWeighted = 0;
+  let attentionSum = 0;
 
-  const minEdgeTokens = dbStats?.min_edges_per_token?.tokens;
-  if (Array.isArray(minEdgeTokens)) {
-    for (const token of minEdgeTokens) {
-      safePush(token);
-      if (tokenSet.size >= limit) break;
-    }
-  }
+  for (const entry of sortedEntries) {
+    if (!entry || typeof entry.token !== 'string') continue;
+    const token = entry.token.trim();
+    if (!token) continue;
 
-  if (tokenSet.size < limit) {
-    const weighted = [];
-    let processed = 0;
-    for (const rec of iterTokenRecords()) {
-      if (!rec?.token) continue;
-      const weights = signature(rec);
-      let score = 0;
-      if (weights instanceof Map) {
-        for (const value of weights.values()) {
-          score += Number.isFinite(value) ? value : 0;
+    const score = Number.isFinite(entry.attention) ? entry.attention : 0;
+    attentionSum += score;
+
+    const neighborCandidates = collectNeighborCandidates(entry).slice(0, neighborCap);
+    const neighborLabels = neighborCandidates.map(candidate => {
+      const weightLabel = Number.isFinite(candidate.weight) ? candidate.weight.toFixed(2) : '0.00';
+      return `${candidate.token} (${weightLabel})`;
+    });
+    tokenHighlights.push({ token, score, neighbors: neighborLabels });
+
+    const relationships = entry.relationships && typeof entry.relationships === 'object'
+      ? entry.relationships
+      : {};
+
+    for (const [rawType, edges] of Object.entries(relationships)) {
+      const normalizedType = normRelKey(rawType) || rawType;
+      const list = Array.isArray(edges) ? edges : [];
+      if (!list.length) continue;
+
+      let relationWeight = 0;
+      const priority = (pri[normalizedType] ?? pri.get?.(normalizedType)) ?? 1;
+
+      for (const edge of list) {
+        if (!edge || typeof edge.token !== 'string') continue;
+        const neighborToken = edge.token.trim();
+        if (!neighborToken || !isTokenCached(neighborToken)) continue;
+        const baseWeight = Number(edge.weight) || 0;
+        relationWeight += baseWeight;
+        totalWeighted += baseWeight;
+        totalEdges += 1;
+
+        const ordered = token < neighborToken ? [token, neighborToken] : [neighborToken, token];
+        const key = `${ordered[0]}↔${ordered[1]}|${normalizedType}`;
+        const weighted = baseWeight * priority;
+        const existing = connectionStats.get(key);
+        if (!existing || weighted > existing.weight) {
+          connectionStats.set(key, {
+            source: ordered[0],
+            target: ordered[1],
+            type: normalizedType,
+            weight: weighted,
+            baseWeight,
+          });
         }
       }
-      if (!score && rec.relationships) {
-        for (const arr of Object.values(rec.relationships)) {
-          if (Array.isArray(arr)) score += arr.length;
-        }
-      }
-      weighted.push({ token: rec.token, score });
-      processed += 1;
-      if (processed >= 400) break;
-    }
-    weighted.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
-    for (const item of weighted) {
-      safePush(item?.token);
-      if (tokenSet.size >= limit) break;
+
+      const stats = relationStats.get(normalizedType) || { type: normalizedType, count: 0, weight: 0 };
+      stats.count += list.filter(edge => edge && typeof edge.token === 'string' && isTokenCached(edge.token)).length;
+      stats.weight += relationWeight;
+      relationStats.set(normalizedType, stats);
     }
   }
 
-  return [...tokenSet].slice(0, limit);
+  const relationTypes = Array.from(relationStats.values())
+    .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+
+  const topConnections = connectionCap
+    ? Array.from(connectionStats.values())
+        .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+        .slice(0, connectionCap)
+    : Array.from(connectionStats.values()).sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+
+  return {
+    sortedEntries,
+    tokenHighlights,
+    relationTypes,
+    topConnections,
+    totals: {
+      totalTokens: entries.length,
+      totalEdges,
+      totalWeighted,
+      attentionSum,
+    },
+  };
+}
+
+function buildCachedAdjacencyExcerpt(entries: LocalHlsfAdjacencyTokenSummary[], options = {}) {
+  const { maxRelations = 4, maxNeighbors = 4 } = options as { maxRelations?: number; maxNeighbors?: number };
+  const lines: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry || typeof entry.token !== 'string') continue;
+    const token = entry.token.trim();
+    if (!token) continue;
+
+    lines.push(`Token: ${token}`);
+    const relationships = entry.relationships && typeof entry.relationships === 'object'
+      ? Object.entries(entry.relationships)
+      : [];
+
+    const sortedRelations = relationships
+      .map(([relType, edges]) => {
+        const list = Array.isArray(edges) ? edges : [];
+        const weight = list.reduce((sum, edge) => sum + (Number(edge?.weight) || 0), 0);
+        return { relType, edges: list, weight };
+      })
+      .filter(item => item.edges.length)
+      .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+      .slice(0, Math.max(0, Number.isFinite(maxRelations) ? Math.floor(maxRelations) : 0));
+
+    for (const relation of sortedRelations) {
+      const neighbors = relation.edges
+        .filter(edge => edge && typeof edge.token === 'string' && isTokenCached(edge.token))
+        .slice(0, Math.max(0, Number.isFinite(maxNeighbors) ? Math.floor(maxNeighbors) : 0))
+        .map(edge => `${edge.token} (${Number(edge.weight || 0).toFixed(2)})`)
+        .join(', ');
+      if (neighbors) {
+        lines.push(`  ${relDisplay(relation.relType)} -> ${neighbors}`);
+      }
+    }
+  }
+
+  if (!lines.length) {
+    lines.push('No cached adjacency data available.');
+  }
+
+  return lines.join('\n');
+}
+
+function buildCachedClusterInfo(entries: LocalHlsfAdjacencyTokenSummary[]) {
+  const tokens = entries
+    .map(entry => (entry && typeof entry.token === 'string' ? entry.token.trim() : ''))
+    .filter(Boolean);
+
+  return {
+    summaries: [],
+    totalNodes: tokens.length,
+    clusterCount: 0,
+    anchorCount: 0,
+    fallbackTop: tokens.slice(0, 5),
+  };
+}
+
+function gatherSelfTokenPool(clusterInfo, dbStats, limit = 18, cachedEntries: LocalHlsfAdjacencyTokenSummary[] | null = null) {
+  const source = Array.isArray(cachedEntries) && cachedEntries.length
+    ? cachedEntries
+    : resolveCachedAdjacencyEntries(Math.max(limit * 3, 0)).entries;
+
+  if (!Array.isArray(source) || !source.length) {
+    return [];
+  }
+
+  const sorted = source.slice().sort((a, b) => {
+    const attA = Number.isFinite(a.attention) ? a.attention : 0;
+    const attB = Number.isFinite(b.attention) ? b.attention : 0;
+    return attB - attA;
+  });
+
+  const tokenSet = new Set<string>();
+  const pushToken = (value) => {
+    if (typeof value !== 'string') return;
+    const token = value.trim();
+    if (!token || !isTokenCached(token)) return;
+    const key = token.toLowerCase();
+    if (tokenSet.has(key)) return;
+    tokenSet.add(key);
+  };
+
+  for (const entry of sorted) {
+    if (!entry || typeof entry.token !== 'string') continue;
+    pushToken(entry.token);
+    const neighbors = collectNeighborCandidates(entry).slice(0, 2);
+    for (const neighbor of neighbors) {
+      pushToken(neighbor.token);
+      if (tokenSet.size >= limit) break;
+    }
+    if (tokenSet.size >= limit) break;
+  }
+
+  return Array.from(tokenSet)
+    .slice(0, limit);
 }
 
 function craftSelfThoughtStream(options) {
@@ -14820,9 +14989,21 @@ function cmd_self() {
   const mentalState = describeAffinityMentalState(threshold, iterations) || {};
   const moodName = mentalState.name || 'Adaptive clustering';
   const mechanics = mentalState.mechanics || '';
-  const clusterInfo = collectActiveClusterInsights();
-  const dbStats = getDb()?.database_stats || {};
-  const tokenPool = gatherSelfTokenPool(clusterInfo, dbStats);
+  const { entries } = resolveCachedAdjacencyEntries();
+  if (!entries.length) {
+    logError('No cached adjacency tokens available for self-reflection. Run a prompt to populate the AGI cache.');
+    return;
+  }
+
+  const clusterInfo = buildCachedClusterInfo(entries);
+  const dbStats = { anchors: 0 };
+  const tokenPool = gatherSelfTokenPool(clusterInfo, dbStats, 18, entries);
+
+  if (!tokenPool.length) {
+    logError('Cached adjacency snapshot did not yield any tokens for self-reflection.');
+    return;
+  }
+
   const reflection = craftSelfThoughtStream({
     moodName,
     threshold,
@@ -15460,14 +15641,6 @@ async function cmd_hidden(args = []) {
 }
 
 async function cmd_state(args = []) {
-  if (!getDb()) {
-    const ok = await tryBootstrapDb();
-    if (!ok) {
-      logError('No HLSF database loaded. Use /loaddb or /import first.');
-      return;
-    }
-  }
-
   if (!enterProcessingState()) return;
 
   const start = performance.now();
@@ -15478,66 +15651,113 @@ async function cmd_state(args = []) {
     const threshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
     const iterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
     const mentalState = describeAffinityMentalState(threshold, iterations) || {};
-    const clusterInfo = collectActiveClusterInsights();
-    const db = getDb();
-    const dbStats = db?.database_stats || {};
     const manualTokens = parseStateTokens(args);
-    const globalAnalysis = analyzeGlobalDatabase({ tokenLimit: 18, neighborLimit: 4, relationLimit: 8 });
 
-    const index = dbIndex();
-    const indexLower = new Map();
-    for (const [key, record] of index.entries()) {
-      if (!key) continue;
-      indexLower.set(String(key).toLowerCase(), record);
-    }
-
-    const secondaryCandidates = [];
-    if (Array.isArray(globalAnalysis?.tokenHighlights)) {
-      for (const entry of globalAnalysis.tokenHighlights) {
-        if (entry?.token) secondaryCandidates.push(entry.token);
-      }
-    }
-    const { tokens: focusTokens, missing } = selectFocusTokens(
-      manualTokens,
-      secondaryCandidates,
-      index,
-      indexLower,
-      20,
-    );
-    if (missing.length) {
-      logWarning(`Tokens not found in database: ${missing.join(', ')}`);
-    }
-
-    if (!focusTokens.length) {
-      logError('No adjacency data available to summarize.');
+    const { record: adjacencyRecord, entries } = resolveCachedAdjacencyEntries();
+    if (!entries.length) {
+      logError('No cached adjacency tokens available. Run a prompt to populate the AGI cache before using /state.');
       return;
     }
 
-    const adjacencyExcerpt = buildAdjacencyPromptSummary(focusTokens, index, indexLower, {
-      maxRelations: 5,
-      maxNeighbors: 6,
-    });
-    const tokenHighlightSummary = formatTokenHighlightsForPrompt(globalAnalysis.tokenHighlights);
-    const relationTypeSummary = formatRelationTypeSummaryForPrompt(globalAnalysis.relationTypes);
+    const summary = summarizeCachedAdjacency(entries, { neighborLimit: 6, connectionLimit: 32 });
+    const entryMap = new Map<string, LocalHlsfAdjacencyTokenSummary>();
+    for (const entry of summary.sortedEntries) {
+      if (!entry || typeof entry.token !== 'string') continue;
+      const token = entry.token.trim();
+      if (!token) continue;
+      entryMap.set(token.toLowerCase(), entry);
+    }
+
+    const focusEntries: LocalHlsfAdjacencyTokenSummary[] = [];
+    const focusSeen = new Set<string>();
+    const resolvedManual: string[] = [];
+    const resolvedManualSet = new Set<string>();
+    const missing: string[] = [];
+    const focusLimit = 20;
+
+    const pushFocusEntry = (entry?: LocalHlsfAdjacencyTokenSummary | null) => {
+      if (!entry || typeof entry.token !== 'string') return;
+      const token = entry.token.trim();
+      if (!token) return;
+      const key = token.toLowerCase();
+      if (focusSeen.has(key)) return;
+      focusSeen.add(key);
+      focusEntries.push(entry);
+    };
+
+    for (const rawToken of manualTokens) {
+      if (!rawToken) continue;
+      const normalized = String(rawToken).trim();
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      const entry = entryMap.get(key) || null;
+      if (entry) {
+        pushFocusEntry(entry);
+        const canonical = typeof entry.token === 'string' ? entry.token.trim() : normalized;
+        const canonicalKey = canonical.toLowerCase();
+        if (!resolvedManualSet.has(canonicalKey)) {
+          resolvedManualSet.add(canonicalKey);
+          resolvedManual.push(canonical);
+        }
+      } else {
+        missing.push(normalized);
+      }
+      if (focusEntries.length >= focusLimit) break;
+    }
+
+    for (const entry of summary.sortedEntries) {
+      if (focusEntries.length >= focusLimit) break;
+      pushFocusEntry(entry);
+    }
+
+    if (!focusEntries.length) {
+      logError('No cached adjacency focus tokens available for /state.');
+      return;
+    }
+
+    if (missing.length) {
+      logWarning(`Tokens not found in cached AGI snapshot: ${missing.join(', ')}`);
+    }
+
+    const focusTokens = focusEntries
+      .map(entry => (entry && typeof entry.token === 'string' ? entry.token : null))
+      .filter(Boolean) as string[];
+    const adjacencyExcerpt = buildCachedAdjacencyExcerpt(focusEntries, { maxRelations: 5, maxNeighbors: 6 });
+    const clusterInfo = buildCachedClusterInfo(summary.sortedEntries);
+
+    const tokenHighlights = summary.tokenHighlights;
+    const relationTypes = summary.relationTypes;
+    const topConnections = summary.topConnections;
+
+    const tokenHighlightSummary = formatTokenHighlightsForPrompt(tokenHighlights);
+    const relationTypeSummary = formatRelationTypeSummaryForPrompt(relationTypes);
     const clusterSummary = formatClusterSummaryForPrompt(clusterInfo, { limit: 10 });
-    const topConnections = collectTopConnections(20);
     const topConnectionsSummary = formatTopConnectionsForPrompt(topConnections);
 
-    const dbSummaryParts = [];
-    if (Number.isFinite(dbStats.total_tokens)) dbSummaryParts.push(`tokens=${dbStats.total_tokens}`);
-    if (Number.isFinite(dbStats.total_relationships)) dbSummaryParts.push(`relationships=${dbStats.total_relationships}`);
-    if (dbStats.maturity_level) dbSummaryParts.push(`maturity=${dbStats.maturity_level}`);
-    if (Number.isFinite(dbStats.estimated_value_usd)) {
-      dbSummaryParts.push(`estimated_value_usd=${dbStats.estimated_value_usd}`);
+    const dbSummaryParts: string[] = [];
+    if (adjacencyRecord?.label) dbSummaryParts.push(`label=${adjacencyRecord.label}`);
+    if (Number.isFinite(adjacencyRecord?.tokenCount)) dbSummaryParts.push(`snapshot_tokens=${adjacencyRecord.tokenCount}`);
+    dbSummaryParts.push(`cached_tokens=${summary.sortedEntries.length}`);
+    if (Number.isFinite(summary.totals.totalEdges)) dbSummaryParts.push(`relationships=${summary.totals.totalEdges}`);
+    if (adjacencyRecord?.updatedAt) {
+      const updatedDate = new Date(adjacencyRecord.updatedAt);
+      if (!Number.isNaN(updatedDate.getTime())) {
+        dbSummaryParts.push(`updated=${updatedDate.toLocaleString()}`);
+      }
     }
     const dbSummary = dbSummaryParts.length ? dbSummaryParts.join(', ') : 'unavailable';
 
-    const computedTotals = globalAnalysis?.totals || {};
-    const computedSummaryParts = [];
-    if (Number.isFinite(computedTotals.totalTokens)) computedSummaryParts.push(`scanned_tokens=${computedTotals.totalTokens}`);
-    if (Number.isFinite(computedTotals.totalEdges)) computedSummaryParts.push(`connections=${computedTotals.totalEdges}`);
-    if (Number.isFinite(computedTotals.totalWeighted)) {
-      computedSummaryParts.push(`weighted_sum=${computedTotals.totalWeighted.toFixed(3)}`);
+    const computedSummaryParts = [
+      `total_tokens=${summary.sortedEntries.length}`,
+    ];
+    if (Number.isFinite(summary.totals.totalEdges)) {
+      computedSummaryParts.push(`cached_edges=${summary.totals.totalEdges}`);
+    }
+    if (Number.isFinite(summary.totals.totalWeighted)) {
+      computedSummaryParts.push(`total_weight=${summary.totals.totalWeighted.toFixed(3)}`);
+    }
+    if (Number.isFinite(summary.totals.attentionSum)) {
+      computedSummaryParts.push(`attention_sum=${summary.totals.attentionSum.toFixed(3)}`);
     }
     const computedSummary = computedSummaryParts.length ? computedSummaryParts.join(', ') : 'unavailable';
 
@@ -15545,24 +15765,29 @@ async function cmd_state(args = []) {
     const safeDesc = sanitize(mentalState.desc || '').replace(/\n/g, '<br>');
     const safeMechanics = sanitize(mentalState.mechanics || '').replace(/\n/g, '<br>');
     const safeFocus = sanitize(focusTokens.join(', '));
-    const safeConnections = sanitize(topConnectionsSummary || '');
+    const safeCacheSummary = sanitize(dbSummary);
+    const safeComputed = sanitize(computedSummary);
     const safeHighlights = sanitize(tokenHighlightSummary || '');
     const safeRelationTypes = sanitize(relationTypeSummary || '');
+    const safeConnections = sanitize(topConnectionsSummary || '');
+    const safeClusterSummary = sanitize(clusterSummary || '');
+
     const contextPieces = [
       '<div class="section-divider"></div>',
       '<div class="section-title">🧭 Mental State Context</div>',
       `<div class="adjacency-insight"><strong>${safeName}</strong><br>${safeDesc}<br><em>${safeMechanics}</em><br>Threshold: ${threshold.toFixed(2)} · Iterations: ${iterations}</div>`,
+      '<div class="adjacency-insight">Source: recursively selected AGI tokens cached in local memory.</div>',
+      `<div class="adjacency-insight"><strong>Cached adjacency snapshot:</strong> ${safeCacheSummary}</div>`,
+      `<div class="adjacency-insight">Computed cache scan: ${safeComputed}</div>`,
       `<div class="adjacency-insight"><strong>Focus tokens:</strong> ${safeFocus}</div>`,
-      `<div class="adjacency-insight">Database stats: ${sanitize(dbSummary)}</div>`,
-      `<div class="adjacency-insight">Computed scan: ${sanitize(computedSummary)}</div>`,
     ];
 
-    if (manualTokens.length) {
-      contextPieces.splice(3, 0, `<div class="adjacency-insight"><strong>Requested tokens:</strong> ${sanitize(manualTokens.join(', '))}</div>`);
+    if (resolvedManual.length) {
+      contextPieces.splice(4, 0, `<div class="adjacency-insight"><strong>Requested tokens:</strong> ${sanitize(resolvedManual.join(', '))}</div>`);
     }
 
     if (tokenHighlightSummary) {
-      contextPieces.push(`<details><summary>Global token highlights (${globalAnalysis.tokenHighlights.length || 0})</summary><pre>${safeHighlights}</pre></details>`);
+      contextPieces.push(`<details><summary>Cached token highlights (${tokenHighlights.length})</summary><pre>${safeHighlights}</pre></details>`);
     }
     if (relationTypeSummary) {
       contextPieces.push(`<details><summary>Relationship type distribution</summary><pre>${safeRelationTypes}</pre></details>`);
@@ -15571,58 +15796,22 @@ async function cmd_state(args = []) {
       contextPieces.push(`<details><summary>Adjacency excerpt (${focusTokens.length} tokens)</summary><pre>${sanitize(adjacencyExcerpt)}</pre></details>`);
     }
     if (topConnectionsSummary) {
-      contextPieces.push(`<details><summary>Top connections (20)</summary><pre>${safeConnections}</pre></details>`);
+      contextPieces.push(`<details><summary>Top cached connections</summary><pre>${safeConnections}</pre></details>`);
     }
     if (clusterSummary) {
-      contextPieces.push(`<details><summary>Cluster summary (top 10)</summary><pre>${sanitize(clusterSummary)}</pre></details>`);
+      contextPieces.push(`<details><summary>Cluster summary</summary><pre>${safeClusterSummary}</pre></details>`);
     }
 
     addLog(contextPieces.join(''));
 
-    const systemPrompt = 'You are the Higher-Level Semantic Framework cognition engine. You traverse HLSF adjacency matrices and follow instructions precisely.';
-    const userPrompt = [
-      'HLSF mental state synthesis – global database traversal',
-      '',
-      `Mental state: ${mentalState.name || 'Unknown'}`,
-      `Threshold: ${threshold.toFixed(2)}`,
-      `Iterations: ${iterations}`,
-      `Description: ${mentalState.desc || 'N/A'}`,
-      `Mechanics: ${mentalState.mechanics || 'N/A'}`,
-      '',
-      `Database stats (reported): ${dbSummary}`,
-      `Database scan (computed): ${computedSummary}`,
-      '',
-      'Token highlights from full database:',
-      tokenHighlightSummary,
-      '',
-      'Relationship type distribution:',
-      relationTypeSummary,
-      '',
-      'Top weighted connections:',
-      topConnectionsSummary,
-      '',
-      'Top clusters:',
-      clusterSummary || 'No active cluster data.',
-      '',
-      'Adjacency excerpt (contextual focus across highlights):',
-      adjacencyExcerpt,
-      '',
-      'Instructions:',
-      '1. Internalize the entire cached database represented in the highlights, relationship distribution, clusters, and adjacency excerpt.',
-      '2. Synthesize the emergent meaning as a flowing stream of consciousness that remains coherent from sentence to sentence.',
-      '3. Anchor the narrative in the stated mental state, showing how the global data expresses or modifies that state.',
-      '4. Present a single narrative section titled "STREAM OF CONSCIOUSNESS" and avoid bullet lists or outlines.',
-      '5. Emphasize the most important insights discovered during synthesis, citing pivotal tokens, relationships, and clusters when relevant.',
-    ].join('\n');
-
-    statusEl = logStatus('🔄 Synthesizing offline mental state stream...');
+    statusEl = logStatus('🔄 Synthesizing offline mental state stream from cached adjacency...');
     const stream = craftMentalStateStream({
       mentalState,
       threshold,
       iterations,
       focusTokens,
-      tokenHighlights: globalAnalysis.tokenHighlights || [],
-      relationTypes: globalAnalysis.relationTypes || [],
+      tokenHighlights,
+      relationTypes,
       topConnections,
       clusterInfo,
       adjacencyExcerpt,
@@ -15631,15 +15820,15 @@ async function cmd_state(args = []) {
       clusterSummaryText: clusterSummary,
       tokenHighlightSummary,
       relationTypeSummary,
-      requestedTokens: manualTokens,
+      requestedTokens: resolvedManual,
     });
     const structure = craftMentalStateStructure({
       mentalState,
       threshold,
       iterations,
       focusTokens,
-      tokenHighlights: globalAnalysis.tokenHighlights || [],
-      relationTypes: globalAnalysis.relationTypes || [],
+      tokenHighlights,
+      relationTypes,
       topConnections,
       clusterInfo,
       dbSummary,
@@ -15648,7 +15837,7 @@ async function cmd_state(args = []) {
       relationTypeSummary,
       tokenHighlightSummary,
       adjacencyExcerpt,
-      requestedTokens: manualTokens,
+      requestedTokens: resolvedManual,
     });
 
     if (statusEl) statusEl.innerHTML = '✅ Offline mental state stream ready';
