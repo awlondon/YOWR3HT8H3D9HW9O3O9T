@@ -1,6 +1,7 @@
 import { SETTINGS, type Settings } from '../settings.js';
 import { tokenizeWithSymbols, tokenizeWords, type Token, computeWordNeighborMap } from '../tokens/tokenize.js';
 import { emitSymbolEdges } from '../graph/symbol_edges.js';
+import { buildRecursiveAdjacency } from '../graph/recursive_adjacency.js';
 import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 
@@ -100,6 +101,29 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
   if (cfg.tokenizeSymbols) {
     const neighborMap = computeWordNeighborMap(tokens);
     emitSymbolEdges(tokens, addEdge, cfg.symbolWeightScale, cfg.symbolEmitMode, neighborMap);
+  }
+
+  const adjacencyEdges = buildRecursiveAdjacency(tokens);
+  for (const edge of adjacencyEdges) {
+    const source = tokens[edge.sourceIndex];
+    const target = tokens[edge.targetIndex];
+    if (!source || !target) continue;
+
+    const entry = {
+      source: source.t,
+      target: target.t,
+      type: edge.type,
+      w: edge.weight,
+      meta: edge.meta,
+    };
+
+    edges.push(entry);
+    if (typeof edge.weight === 'number' && Number.isFinite(edge.weight)) {
+      weightSum += edge.weight;
+    }
+    if (entry.type) {
+      edgeHistogram[entry.type] = (edgeHistogram[entry.type] || 0) + 1;
+    }
   }
 
   const graph: PipelineGraph = { nodes, edges };

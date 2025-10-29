@@ -47,3 +47,27 @@ test('symbol edge limits scale with symbol density', () => {
   assert.equal(emphasisEdges >= 5, true, 'modifier emphasis edges should be counted');
   assert.equal(Array.isArray(last.topDrift.entered), true, 'top drift should expose entered tokens');
 });
+
+test('runPipeline builds complete recursive adjacency graph', () => {
+  const input = 'alpha beta gamma delta';
+  const result = runPipeline(input, { ...SETTINGS, tokenizeSymbols: false });
+
+  const adjacencyEdges = result.edges.filter(edge => edge.type && edge.type.startsWith('adjacency:'));
+  assert.equal(adjacencyEdges.length, 6, 'complete graph should contain six edges for four tokens');
+
+  const uniquePairs = new Set(
+    adjacencyEdges.map(edge => [edge.source, edge.target].sort().join('::')),
+  );
+  assert.equal(uniquePairs.size, 6, 'all token pairs should be connected exactly once');
+  assert.equal(result.metrics.edgeCount >= 6, true, 'edge count should reflect adjacency expansion');
+  assert.equal(
+    adjacencyEdges.some(edge => edge.type === 'adjacency:expanded'),
+    true,
+    'expanded edges should be emitted beyond the base circle',
+  );
+  assert.equal(
+    adjacencyEdges.some(edge => (edge.meta as { level?: number } | undefined)?.level === 0),
+    true,
+    'base adjacency edges should include level metadata',
+  );
+});
