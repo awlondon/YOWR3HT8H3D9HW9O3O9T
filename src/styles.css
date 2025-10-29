@@ -2443,10 +2443,14 @@
       font-weight: 600;
     }
 
-    .payment-form {
+    .payment-form { 
       display: flex;
       flex-direction: column;
       gap: 1rem;
+    }
+
+    .payment-form__field--hidden {
+      display: none !important;
     }
 
     .payment-form__row {

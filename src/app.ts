@@ -16078,6 +16078,20 @@ function setupLandingExperience() {
   const paymentPrice = paymentScreen instanceof HTMLElement
     ? paymentScreen.querySelector('[data-payment-price]')
     : null;
+  const paymentCardFields: HTMLElement[] = paymentForm instanceof HTMLFormElement
+    ? Array.from(paymentForm.querySelectorAll<HTMLElement>('[data-payment-card-field]'))
+    : [];
+  const paymentSubmitButton = paymentForm instanceof HTMLFormElement
+    ? paymentForm.querySelector<HTMLButtonElement>('[data-payment-submit]')
+    : null;
+  const paymentFootnote = paymentForm instanceof HTMLFormElement
+    ? paymentForm.querySelector<HTMLElement>('[data-payment-footnote]')
+    : null;
+  const defaultPaymentSubmitLabel = paymentSubmitButton?.textContent?.trim() ?? 'Authorize & start trial';
+  const defaultPaymentFootnote = paymentFootnote?.textContent?.trim()
+    ?? 'You can cancel anytime before the trial ends to avoid charges.';
+  const SECURE_BILLING_SUBMIT_LABEL = 'Request secure billing link';
+  const SECURE_BILLING_FOOTNOTE = 'We will email a PCI-compliant checkout link. Your trial activates after secure checkout.';
   const DEFAULT_TRIAL_DAYS = Number.parseInt(paymentTrialDays?.textContent || '7', 10) || 7;
   const DEFAULT_PLAN_NAME = (paymentPlan?.textContent || 'Pro').trim();
   const DEFAULT_PRICE = (paymentPrice?.textContent || '$19.99/mo').trim();
@@ -16096,6 +16110,51 @@ function setupLandingExperience() {
     if (!(quickSigninButton instanceof HTMLButtonElement)) return;
     quickSigninButton.disabled = !enabled;
     quickSigninButton.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+  }
+
+  function applySecureBillingMode(enabled) {
+    if (!(paymentForm instanceof HTMLFormElement)) return;
+
+    if (enabled) {
+      paymentForm.dataset.secureBilling = 'true';
+    } else {
+      delete paymentForm.dataset.secureBilling;
+    }
+
+    for (const field of paymentCardFields) {
+      if (!(field instanceof HTMLElement)) continue;
+      field.classList.toggle('payment-form__field--hidden', enabled);
+      field.setAttribute('aria-hidden', enabled ? 'true' : 'false');
+      const inputs = Array.from(field.querySelectorAll<HTMLInputElement>('input'));
+      for (const input of inputs) {
+        if (!(input instanceof HTMLInputElement)) continue;
+        if (enabled) {
+          if (input.required) {
+            input.dataset.wasRequired = 'true';
+          }
+          input.required = false;
+          input.value = '';
+        } else if (input.dataset.wasRequired === 'true') {
+          input.required = true;
+        }
+        if (!enabled) {
+          delete input.dataset.wasRequired;
+        }
+        input.disabled = enabled;
+      }
+    }
+
+    if (paymentSubmitButton instanceof HTMLButtonElement) {
+      paymentSubmitButton.textContent = enabled
+        ? SECURE_BILLING_SUBMIT_LABEL
+        : defaultPaymentSubmitLabel;
+    }
+
+    if (paymentFootnote instanceof HTMLElement) {
+      paymentFootnote.textContent = enabled
+        ? SECURE_BILLING_FOOTNOTE
+        : defaultPaymentFootnote;
+    }
   }
 
   function renderGoogleProfile(profile, options = {}) {
@@ -16129,6 +16188,7 @@ function setupLandingExperience() {
     googleProfilePreview.classList.add('is-visible');
   }
 
+  applySecureBillingMode(Boolean(SETTINGS.secureBillingOnly));
   setQuickSigninAvailability(false);
 
   function setActiveView(view) {
@@ -16160,6 +16220,7 @@ function setupLandingExperience() {
     if (paymentForm instanceof HTMLFormElement) {
       paymentForm.reset();
     }
+    applySecureBillingMode(Boolean(SETTINGS.secureBillingOnly));
     if (resetPending) {
       resetPendingMembership();
     }
@@ -16173,33 +16234,43 @@ function setupLandingExperience() {
 
   function openPaymentIntake(level, details = {}) {
     pendingMembershipLevel = level;
-    pendingMembershipDetails = details;
+    const baseDetails = details && typeof details === 'object' ? { ...details } : {};
+    const secureMode = typeof (details as any)?.secureBilling === 'boolean'
+      ? Boolean((details as any).secureBilling)
+      : Boolean(SETTINGS.secureBillingOnly);
+    pendingMembershipDetails = { ...baseDetails, secureBilling: secureMode };
+    const viewDetails: Record<string, any> = pendingMembershipDetails || {};
     if (paymentName instanceof HTMLElement) {
-      const label = (details.name || details.email || 'your team').trim() || 'your team';
+      const rawLabel = viewDetails.name || viewDetails.email || 'your team';
+      const label = typeof rawLabel === 'string'
+        ? rawLabel.trim() || 'your team'
+        : String(rawLabel || 'your team').trim() || 'your team';
       paymentName.textContent = label;
     }
     if (paymentPlan instanceof HTMLElement) {
-      const rawPlan = typeof details.plan === 'string' ? details.plan.trim() : '';
+      const rawPlan = typeof viewDetails.plan === 'string' ? viewDetails.plan.trim() : '';
       const planLabel = rawPlan
         ? `${rawPlan.charAt(0).toUpperCase()}${rawPlan.slice(1)}`
         : DEFAULT_PLAN_NAME;
       paymentPlan.textContent = planLabel;
     }
     if (paymentTrialDays instanceof HTMLElement) {
-      const trialProvided = details.trialDays;
+      const trialProvided = viewDetails.trialDays;
       const parsedTrial = Number.isFinite(Number(trialProvided)) ? Number(trialProvided) : DEFAULT_TRIAL_DAYS;
       const trialValue = parsedTrial > 0 ? parsedTrial : DEFAULT_TRIAL_DAYS;
       paymentTrialDays.textContent = String(trialValue);
     }
     if (paymentPrice instanceof HTMLElement) {
-      paymentPrice.textContent = details.price || DEFAULT_PRICE;
+      paymentPrice.textContent = viewDetails.price || DEFAULT_PRICE;
     }
     if (paymentForm instanceof HTMLFormElement) {
       const cardNameInput = paymentForm.querySelector('input[name="cardName"]');
       if (cardNameInput instanceof HTMLInputElement) {
-        cardNameInput.value = (details.name || details.email || '').trim();
+        const raw = viewDetails.name || viewDetails.email || '';
+        cardNameInput.value = typeof raw === 'string' ? raw.trim() : String(raw || '').trim();
       }
     }
+    applySecureBillingMode(secureMode);
     document.body.classList.add('payment-active');
     if (paymentScreen instanceof HTMLElement) {
       paymentScreen.removeAttribute('aria-hidden');
