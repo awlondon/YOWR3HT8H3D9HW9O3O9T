@@ -910,6 +910,17 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function formatEmotionTag(tag) {
+  if (typeof tag !== 'string') return '';
+  const trimmed = tag.trim();
+  if (!trimmed) return '';
+  return trimmed
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function escapeAttr(value) {
   return escapeHtml(value);
 }
@@ -1031,6 +1042,122 @@ function generateVoiceDataId() {
   return `voice_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const EMOTION_KEYWORD_RULES = [
+  { tag: 'joyful', patterns: [/\bjoy(?:ful|ous)?\b/i, /\bhapp(?:y|iness)?\b/i, /\bdelight\w*/i, /\blaugh\w*/i, /\bcheer\w*/i] },
+  { tag: 'melancholic', patterns: [/\bsad(?:ness)?\b/i, /\bsorrow\w*/i, /\bmelancholy\b/i, /\bgloom\w*/i, /\btear(?:ful|s)?\b/i] },
+  { tag: 'agitated', patterns: [/\banger\b/i, /\bangry\b/i, /\brage\b/i, /\bfurious\b/i, /\birritat\w*/i] },
+  { tag: 'anxious', patterns: [/\banxious\b/i, /\bnervous\b/i, /\bworr(?:y|ied|ies)\b/i, /\btense\b/i, /\bfear\w*/i, /\bafraid\b/i, /\buneasy\b/i] },
+  { tag: 'calm', patterns: [/\bcalm\b/i, /\bpeace\w*/i, /\bseren\w*/i, /\brelax\w*/i, /\bsooth\w*/i, /\bsteady\b/i] },
+  { tag: 'excited', patterns: [/\bexcite\w*/i, /\bthrill\w*/i, /\beager\b/i, /\benerg\w*/i, /\bviv(?:id|acious)\w*/i, /\benthusias\w*/i] },
+  { tag: 'warm', patterns: [/\blove\b/i, /\baffection\w*/i, /\bkind\w*/i, /\bcompassion\w*/i, /\bheartfelt\b/i, /\bgrateful\b/i] },
+  { tag: 'surprised', patterns: [/\bsurpris\w*/i, /\bastonish\w*/i, /\bamaze\w*/i, /\bstartl\w*/i, /\bshock\w*/i] },
+  { tag: 'playful', patterns: [/\bplayful\b/i, /\bhumor\w*/i, /\blol\b/i, /\bhaha\b/i, /\bheh\b/i, /\bjok\w*/i] },
+];
+
+function analyzeEmotionTags(samples, prompt = '') {
+  const textParts = [];
+  if (Array.isArray(samples)) {
+    for (const sample of samples) {
+      if (typeof sample === 'string' && sample.trim()) {
+        textParts.push(sample.trim());
+      }
+    }
+  }
+  if (typeof prompt === 'string' && prompt.trim()) {
+    textParts.push(prompt.trim());
+  }
+
+  if (!textParts.length) {
+    return ['neutral'];
+  }
+
+  const combinedOriginal = textParts.join(' ');
+  const tags = new Set();
+  const normalizedLower = combinedOriginal.toLowerCase();
+  const tokenWords = normalizedLower.split(/[^a-z0-9']+/).filter(Boolean);
+  if (tokenWords.length) {
+    let positiveMatches = 0;
+    let negativeMatches = 0;
+    for (const word of tokenWords) {
+      if (POSITIVE_WORDS.has(word)) positiveMatches += 1;
+      if (NEGATIVE_WORDS.has(word)) negativeMatches += 1;
+    }
+    if (positiveMatches > 0 && positiveMatches >= negativeMatches) {
+      tags.add('positive');
+      if (positiveMatches >= 2 && negativeMatches === 0) {
+        tags.add('uplifting');
+      }
+    }
+    if (negativeMatches > 0) {
+      tags.add(negativeMatches > positiveMatches ? 'somber' : 'melancholic');
+    }
+  }
+
+  for (const rule of EMOTION_KEYWORD_RULES) {
+    if (rule.patterns.some(pattern => pattern.test(combinedOriginal))) {
+      tags.add(rule.tag);
+    }
+  }
+
+  const exclamationMatches = combinedOriginal.match(/!/g);
+  if (exclamationMatches && exclamationMatches.length >= 2) {
+    tags.add('intense');
+  } else if (exclamationMatches && exclamationMatches.length === 1) {
+    tags.add('animated');
+  }
+
+  const questionMatches = combinedOriginal.match(/\?/g);
+  if (questionMatches && questionMatches.length > 0) {
+    tags.add('inquisitive');
+  }
+
+  const uppercaseWords = combinedOriginal
+    .split(/\s+/)
+    .filter(
+      word =>
+        word.length >= 3 &&
+        /[A-Z]/.test(word) &&
+        word === word.toUpperCase() &&
+        /[A-Z0-9]/.test(word.replace(/[^A-Z0-9]/g, '')),
+    );
+  if (uppercaseWords.length >= 1) {
+    tags.add('emphatic');
+  }
+
+  if (/(:\)|:-\)|:D|\^\^|<3)/.test(combinedOriginal)) {
+    tags.add('positive');
+  }
+  if (/(:\(|:'\(|:-\()/.test(combinedOriginal)) {
+    tags.add('melancholic');
+  }
+
+  if (/\b(powerful|strong|command|forceful|bold)\b/i.test(combinedOriginal)) {
+    tags.add('assertive');
+  }
+
+  if (!tags.size) {
+    tags.add('neutral');
+  }
+
+  return Array.from(tags).sort();
+}
+
+function normalizeEmotionTags(emotionTags, tokens, prompt) {
+  const sanitized = Array.isArray(emotionTags)
+    ? Array.from(
+        new Set(
+          emotionTags
+            .map(tag => (typeof tag === 'string' ? tag.trim().toLowerCase() : ''))
+            .filter(Boolean),
+        ),
+      )
+    : [];
+  if (sanitized.length) {
+    return sanitized;
+  }
+  return analyzeEmotionTags(tokens, prompt);
+}
+
 function normalizeVoiceDataEntry(entry) {
   if (!entry || typeof entry !== 'object') return null;
   const tokens = Array.isArray(entry.tokens)
@@ -1046,7 +1173,8 @@ function normalizeVoiceDataEntry(entry) {
     : tokens.length;
   const source = typeof entry.source === 'string' && entry.source.trim() ? entry.source.trim() : 'voice-model';
   const id = typeof entry.id === 'string' && entry.id ? entry.id : generateVoiceDataId();
-  return { id, tokens, prompt, capturedAt, tokenCount, source };
+  const emotionTags = normalizeEmotionTags(entry.emotionTags, tokens, prompt);
+  return { id, tokens, prompt, capturedAt, tokenCount, source, emotionTags };
 }
 
 function ensureVoiceDataStore() {
@@ -1116,6 +1244,7 @@ function recordVoiceDataTokens(tokens, options = {}) {
     capturedAt: typeof options.capturedAt === 'string' ? options.capturedAt : new Date().toISOString(),
     tokenCount: normalizedTokens.length,
     source: typeof options.source === 'string' && options.source ? options.source : 'voice-model',
+    emotionTags: analyzeEmotionTags(normalizedTokens, prompt),
   };
   if (!voiceStoreLoaded) {
     pendingVoiceData.push(entry);
@@ -1626,12 +1755,18 @@ function renderVoiceDataSection(token) {
       const promptMarkup = entry.prompt
         ? `<div class="voice-data-entry__prompt">${escapeHtml(entry.prompt)}</div>`
         : '';
+      const emotionTags = normalizeEmotionTags(entry.emotionTags, entry.tokens || [], entry.prompt || '');
+      const emotionsMarkup = emotionTags.length
+        ? `<div class="voice-data-entry__emotions">${emotionTags
+            .map(tag => `<span class="voice-emotion-tag">${escapeHtml(formatEmotionTag(tag))}</span>`)
+            .join('')}</div>`
+        : '';
       const tokensMarkup = Array.isArray(entry.tokens) && entry.tokens.length
         ? `<div class="voice-data-entry__tokens">${entry.tokens
             .map(sample => `<span class="voice-data-token">${escapeHtml(sample)}</span>`)
             .join('')}</div>`
         : '';
-      return `<li class="voice-data-entry">${meta}${promptMarkup}${tokensMarkup}</li>`;
+      return `<li class="voice-data-entry">${meta}${promptMarkup}${emotionsMarkup}${tokensMarkup}</li>`;
     })
     .join('');
   const remaining = sorted.length - limited.length;
