@@ -48,28 +48,30 @@ test('symbol edge limits scale with symbol density', () => {
   assert.equal(Array.isArray(last.topDrift.entered), true, 'top drift should expose entered tokens');
 });
 
-test('runPipeline builds complete recursive adjacency graph', () => {
-  const input = 'alpha beta gamma delta';
+test('runPipeline builds bounded recursive adjacency graph', () => {
+  const input = 'alpha beta gamma delta epsilon';
   const result = runPipeline(input, { ...SETTINGS, tokenizeSymbols: false });
 
   const adjacencyEdges = result.edges.filter(edge => edge.type && edge.type.startsWith('adjacency:'));
-  assert.equal(adjacencyEdges.length, 6, 'complete graph should contain six edges for four tokens');
+  const maxExpected = Math.floor((SETTINGS.maxAdjacencyEdgesMultiplier ?? 6) * result.tokens.length);
 
-  const uniquePairs = new Set(
-    adjacencyEdges.map(edge => [edge.source, edge.target].sort().join('::')),
-  );
-  assert.equal(uniquePairs.size, 6, 'all token pairs should be connected exactly once');
-  assert.equal(result.metrics.edgeCount >= 6, true, 'edge count should reflect adjacency expansion');
+  assert.equal(adjacencyEdges.length >= result.tokens.length, true, 'base adjacency should connect the full ring');
   assert.equal(
-    adjacencyEdges.some(edge => edge.type === 'adjacency:expanded'),
+    adjacencyEdges.length <= maxExpected,
     true,
-    'expanded edges should be emitted beyond the base circle',
+    'adjacency expansion should respect configured edge multiplier',
   );
-  assert.equal(
-    adjacencyEdges.some(edge => (edge.meta as { level?: number } | undefined)?.level === 0),
-    true,
-    'base adjacency edges should include level metadata',
-  );
+
+  const metadataLevels = new Set<number>();
+  for (const edge of adjacencyEdges) {
+    const level = (edge.meta as { level?: number }).level;
+    if (typeof level === 'number') {
+      metadataLevels.add(level);
+    }
+  }
+
+  assert.equal(metadataLevels.has(0), true, 'base edges should expose level metadata');
+  assert.equal(metadataLevels.size >= 2, true, 'expanded edges should include higher-level metadata');
 });
 
 test('runPipeline synthesizes a consciousness workspace with recurrent monitoring', () => {

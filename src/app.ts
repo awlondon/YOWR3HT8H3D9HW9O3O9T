@@ -16338,6 +16338,22 @@ function setupLandingExperience() {
     paymentForm.addEventListener('submit', (event) => {
       event.preventDefault();
       if (!paymentForm.reportValidity()) return;
+
+      if (paymentForm.dataset.secureBilling === 'true') {
+        const fallbackCardholder = (pendingMembershipDetails && (pendingMembershipDetails.name || pendingMembershipDetails.email))
+          ? String(pendingMembershipDetails.name || pendingMembershipDetails.email).trim()
+          : '';
+        logWarning('Direct card capture is disabled. A secure billing link will be emailed to complete activation.');
+        logOK('Secure billing link requested. Free trial provisioning will resume after checkout.');
+        const membershipDetails = Object.assign({}, pendingMembershipDetails || {}, {
+          paymentMethod: 'secure-link',
+          cardholder: fallbackCardholder,
+          secureBillingRequestedAt: new Date().toISOString(),
+        });
+        finalizeOnboarding(pendingMembershipLevel, membershipDetails);
+        return;
+      }
+
       const data = new FormData(paymentForm);
       const rawNumber = String(data.get('cardNumber') || '');
       const digitsOnly = rawNumber.replace(/\D+/g, '');

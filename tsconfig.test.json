@@ -13,6 +13,8 @@
     "src/engine/pipeline.ts",
     "src/engine/pipeline.test.ts",
     "src/graph/symbol_edges.ts",
+    "src/graph/recursive_adjacency.ts",
+    "src/graph/recursive_adjacency.test.ts",
     "src/tokens/tokenize.ts",
     "src/tokens/symbols.ts",
     "src/analytics/metrics.ts",

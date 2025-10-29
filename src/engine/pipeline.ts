@@ -70,7 +70,6 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
     if (!source || !target) return;
 
     const isModifierEdge = typeof props.type === 'string' && props.type.startsWith('modifier');
-    const isSymbolEdge = source.kind === 'sym' || target.kind === 'sym';
     if (isModifierEdge && symbolEdgeCount >= symbolEdgeLimit) return;
 
     const weight = typeof props.w === 'number' ? props.w : 0;
@@ -147,7 +146,14 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     );
   }
 
-  const adjacencyEdges = buildRecursiveAdjacency(tokens);
+  const adjacencyEdges = buildRecursiveAdjacency(tokens, {
+    maxDepth: cfg.maxAdjacencyDepth,
+    maxDegree: cfg.maxAdjacencyDegree,
+    maxEdges: Math.max(
+      tokens.length,
+      Math.floor((cfg.maxAdjacencyEdgesMultiplier ?? 6) * tokens.length),
+    ),
+  });
   for (const edge of adjacencyEdges) {
     accumulator.addEdgeByIndices(edge.sourceIndex, edge.targetIndex, {
       type: edge.type,

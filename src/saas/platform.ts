@@ -106,28 +106,16 @@ function renderRegistrationPage(
         <p class="saas-registration__note">You'll be redirected to PayPal to confirm the subscription.</p>
       </section>
       <section class="saas-registration__method">
-        <h3>Credit Card</h3>
-        <form class="saas-registration__card-form">
-          <label>
-            Cardholder Name
-            <input type="text" name="cardName" placeholder="Full name on card" autocomplete="cc-name">
-          </label>
-          <label>
-            Card Number
-            <input type="text" name="cardNumber" inputmode="numeric" placeholder="1234 5678 9012 3456" autocomplete="cc-number">
-          </label>
-          <div class="saas-registration__card-row">
-            <label>
-              Expiry
-              <input type="text" name="expiry" placeholder="MM/YY" autocomplete="cc-exp">
-            </label>
-            <label>
-              CVC
-              <input type="text" name="cvc" placeholder="123" autocomplete="cc-csc">
-            </label>
+        <h3>Secure billing link</h3>
+        <form class="saas-registration__card-form" data-secure-billing="true">
+          <p class="saas-registration__note saas-registration__note--warning">
+            Direct card entry is disabled in this prototype. Request a PCI-compliant checkout link instead.
+          </p>
+          <div class="saas-registration__card-placeholder" role="status" aria-live="polite">
+            Card numbers are never stored locally. We will send a one-time payment URL to complete onboarding through our processor.
           </div>
           <button type="submit" class="saas-registration__button saas-registration__button--primary">
-            Authorize membership
+            Request secure billing link
           </button>
         </form>
         <p class="saas-registration__note">Usage-based LLM API credits are reconciled after each cycle.</p>
