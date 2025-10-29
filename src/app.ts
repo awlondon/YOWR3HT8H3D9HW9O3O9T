@@ -132,6 +132,8 @@ const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/loaddb', description: 'Load remote database manifest', requiresMembership: true },
   { command: '/load', description: 'Bootstrap remote database and sync directory', requiresMembership: false },
   { command: '/remotedir', description: 'Connect remote DB save directory', requiresMembership: false },
+  { command: '/remotestats', description: 'View remote database statistics', requiresMembership: true },
+  { command: '/remotedb', description: 'Alias for /remotestats', requiresMembership: true },
   { command: '/hlsf', description: 'Render HLSF visualization', requiresMembership: true },
   { command: '/visualize', description: 'Alias for /hlsf', requiresMembership: true },
   { command: '/scheme', description: 'Toggle visual theme', requiresMembership: true },
@@ -14842,6 +14844,206 @@ async function cmd_loaddb(args) {
   await cmdLoadDb(joined);
 }
 
+function cmd_remotestats(): boolean {
+  const remote = window.HLSF?.remoteDb;
+  if (!remote || typeof remote.isReady !== 'function' || !remote.isReady()) {
+    logWarning('Remote database not configured. Use /loaddb or /load to connect a manifest first.');
+    return false;
+  }
+
+  let metadata = null;
+  try {
+    metadata = typeof remote.metadata === 'function' ? remote.metadata() : null;
+  } catch (err) {
+    console.warn('Remote metadata access failed:', err);
+  }
+
+  if (!metadata || typeof metadata !== 'object') {
+    logWarning('Remote database metadata unavailable. Try reloading with /loaddb.');
+    return false;
+  }
+
+  const safeText = (value) => sanitize(value == null ? '' : String(value));
+  const formatCount = (value) => (Number.isFinite(value) ? Number(value).toLocaleString() : '—');
+  const formatDecimal = (value, digits = 1) => (Number.isFinite(value) ? Number(value).toFixed(digits) : '—');
+  const formatDateTime = (value) => {
+    if (!value) return 'Unknown';
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleString();
+    }
+    return String(value);
+  };
+
+  const chunkEntries = Array.isArray(metadata.chunks) ? metadata.chunks : [];
+  let totalChunkTokens = 0;
+  let largestChunk = null;
+  let smallestChunk = null;
+
+  for (const entry of chunkEntries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const prefix = typeof entry.prefix === 'string' && entry.prefix ? entry.prefix : '_';
+    const count = Number(entry.token_count);
+    const normalizedCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    totalChunkTokens += normalizedCount;
+    if (!largestChunk || normalizedCount > largestChunk.count) {
+      largestChunk = { prefix, count: normalizedCount };
+    }
+    if (!smallestChunk || normalizedCount < smallestChunk.count) {
+      smallestChunk = { prefix, count: normalizedCount };
+    }
+  }
+
+  const chunkCount = chunkEntries.length;
+  const averageChunkSize = chunkCount > 0 ? totalChunkTokens / chunkCount : 0;
+  const chunkPrefixLengthRaw = metadata.chunk_prefix_length ?? metadata.chunkPrefixLength;
+  const chunkPrefixLength = Number(chunkPrefixLengthRaw);
+
+  let tokenIndexCount = null;
+  try {
+    if (typeof remote.listTokens === 'function') {
+      const tokens = remote.listTokens();
+      if (Array.isArray(tokens)) {
+        tokenIndexCount = tokens.length;
+      }
+    }
+  } catch (err) {
+    console.warn('Remote token index access failed:', err);
+  }
+
+  const declaredTokensRaw = metadata.total_tokens ?? metadata.totalTokens;
+  const declaredRelationshipsRaw = metadata.total_relationships ?? metadata.totalRelationships;
+  const declaredTokens = Number(declaredTokensRaw);
+  const declaredRelationships = Number(declaredRelationshipsRaw);
+  const derivedTokenTotal = Number.isFinite(declaredTokens) && declaredTokens > 0
+    ? declaredTokens
+    : (totalChunkTokens > 0 ? totalChunkTokens : null);
+  const derivedRelationships = Number.isFinite(declaredRelationships) && declaredRelationships >= 0
+    ? declaredRelationships
+    : null;
+  const averageDegree = Number.isFinite(derivedTokenTotal) && Number.isFinite(derivedRelationships) && derivedTokenTotal > 0
+    ? derivedRelationships / derivedTokenTotal
+    : null;
+
+  const version = typeof metadata.version === 'string'
+    ? metadata.version
+    : (typeof metadata.db_version === 'string' ? metadata.db_version : '');
+  const source = typeof metadata.source === 'string'
+    ? metadata.source
+    : (typeof metadata.dataset === 'string' ? metadata.dataset : '');
+  const generatedAt = metadata.generated_at || metadata.generatedAt || metadata.generated;
+
+  const remoteCacheEstimate = estimateRemoteTokenCount();
+  const remoteStateParts = [];
+  if (remotedir) remoteStateParts.push('auto-save ready');
+  if (Number.isFinite(remoteCacheEstimate) && remoteCacheEstimate > 0) {
+    remoteStateParts.push(`${remoteCacheEstimate.toLocaleString()} cached tokens detected`);
+  }
+  if (!remoteStateParts.length) {
+    remoteStateParts.push('cache warming pending');
+  }
+  const cacheStatus = remoteStateParts.join('; ');
+
+  const coverageRatio = Number.isFinite(tokenIndexCount) && Number.isFinite(derivedTokenTotal) && derivedTokenTotal > 0
+    ? tokenIndexCount / derivedTokenTotal
+    : null;
+  const coverageDisplay = Number.isFinite(coverageRatio)
+    ? `${(coverageRatio * 100).toFixed(1)}%`
+    : null;
+
+  const chunkSummary = chunkCount > 0
+    ? `${formatCount(chunkCount)} chunks · avg ${formatDecimal(averageChunkSize, 1)} tokens/chunk`
+    : 'No chunk manifest entries found';
+  const largestChunkDisplay = largestChunk
+    ? `${largestChunk.prefix} (${formatCount(largestChunk.count)} tokens)`
+    : '—';
+  const smallestChunkDisplay = smallestChunk
+    ? `${smallestChunk.prefix} (${formatCount(smallestChunk.count)} tokens)`
+    : '—';
+
+  const dbStats = metadata.database_stats && typeof metadata.database_stats === 'object'
+    ? metadata.database_stats
+    : null;
+  const estimatedValueRaw = Number(dbStats?.estimated_value_usd ?? metadata.estimated_value_usd);
+  const estimatedValue = Number.isFinite(estimatedValueRaw) ? estimatedValueRaw : null;
+
+  const manifestSummaryLines = [
+    `• Manifest version: <strong>${safeText(version || '—')}</strong>`,
+    `• Generated at: <strong>${safeText(formatDateTime(generatedAt))}</strong>`,
+  ];
+  if (source) {
+    manifestSummaryLines.push(`• Source: <strong>${safeText(source)}</strong>`);
+  }
+  manifestSummaryLines.push(`• Auto-save directory: <strong>${safeText(remotedir ? 'Connected' : 'Not connected')}</strong>`);
+
+  const scaleLines = [
+    `• Declared tokens: <strong>${safeText(formatCount(derivedTokenTotal))}</strong>`,
+    `• Declared relationships: <strong>${safeText(formatCount(derivedRelationships))}</strong>`,
+    `• Token index entries: <strong>${safeText(formatCount(tokenIndexCount))}</strong>`,
+    `• Average degree: <strong>${safeText(formatDecimal(averageDegree, 2))}</strong>`,
+    `• Chunk prefix length: <strong>${safeText(formatCount(chunkPrefixLength))}</strong>`,
+    `• Chunk manifest: <strong>${safeText(chunkSummary)}</strong>`,
+    `• Largest chunk: <strong>${safeText(largestChunkDisplay)}</strong>`,
+    `• Smallest chunk: <strong>${safeText(smallestChunkDisplay)}</strong>`,
+  ];
+  if (coverageDisplay) {
+    scaleLines.push(`• Token index coverage: <strong>${safeText(coverageDisplay)}</strong>`);
+  }
+  scaleLines.push(`• Cache status: <strong>${safeText(cacheStatus)}</strong>`);
+
+  const dbStatsLines = [];
+  if (dbStats) {
+    if (typeof dbStats.maturity_level === 'string' && dbStats.maturity_level) {
+      dbStatsLines.push(`• Maturity: <strong>${safeText(dbStats.maturity_level)}</strong>`);
+    }
+    if (Number.isFinite(dbStats.total_tokens)) {
+      dbStatsLines.push(`• Source total tokens: <strong>${safeText(formatCount(dbStats.total_tokens))}</strong>`);
+    }
+    if (Number.isFinite(dbStats.total_relationships)) {
+      dbStatsLines.push(`• Source relationships: <strong>${safeText(formatCount(dbStats.total_relationships))}</strong>`);
+    }
+    if (estimatedValue !== null) {
+      dbStatsLines.push(`• Estimated value: <strong>${safeText(formatCurrency(estimatedValue))}</strong>`);
+    }
+    if (typeof dbStats.maturity_message === 'string' && dbStats.maturity_message) {
+      dbStatsLines.push(`• Note: ${safeText(dbStats.maturity_message)}`);
+    }
+  }
+
+  const dbStatsSection = dbStatsLines.length
+    ? `<div class="adjacency-insight">
+      <strong>🧭 Declared Dataset Insights:</strong><br>
+      ${dbStatsLines.join('<br>')}
+    </div>`
+    : '';
+
+  const manifestJson = safeText(JSON.stringify(metadata, null, 2));
+
+  addLog(`
+    <div class="section-divider"></div>
+    <div class="section-title">🌐 Remote Database Statistics</div>
+
+    <div class="adjacency-insight">
+      <strong>🔌 Connection Details:</strong><br>
+      ${manifestSummaryLines.join('<br>')}
+    </div>
+
+    <div class="adjacency-insight">
+      <strong>📦 Scale & Topology:</strong><br>
+      ${scaleLines.join('<br>')}
+    </div>
+
+    ${dbStatsSection}
+
+    <details>
+      <summary>🗂️ View raw manifest</summary>
+      <pre>${manifestJson}</pre>
+    </details>
+  `);
+
+  return true;
+}
+
 async function cmd_remotedir(): Promise<boolean> {
   const writer = remoteDbFileWriter;
   if (!writer || typeof writer.isSupported !== 'function' || !writer.isSupported()) {
@@ -15500,6 +15702,8 @@ registerCommand('/ingest', () => cmdRead());
 registerCommand('/load', cmd_load);
 registerCommand('/loaddb', cmd_loaddb);
 registerCommand('/remotedir', cmd_remotedir);
+registerCommand('/remotestats', () => cmd_remotestats());
+registerCommand('/remotedb', () => cmd_remotestats());
 registerCommand('/maphidden', cmd_hidden);
 registerCommand('/hidden', cmd_hidden);
 window.COMMANDS = COMMANDS;
@@ -15766,6 +15970,11 @@ async function handleCommand(cmd) {
     case 'db':
       trackCommandExecution(normalized, args, 'handler');
       showDatabaseMetadata();
+      break;
+    case 'remotestats':
+    case 'remotedb':
+      trackCommandExecution(normalized, args, 'handler');
+      cmd_remotestats();
       break;
     case 'export':
       trackCommandExecution(normalized, args, 'handler');
