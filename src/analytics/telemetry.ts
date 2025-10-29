@@ -1,3 +1,5 @@
+import type { ConsciousnessState } from '../engine/consciousness.js';
+
 export interface PipelineTelemetryMetrics {
   tokenCount: number;
   wordCount: number;
@@ -50,6 +52,7 @@ export interface PipelineTelemetryPayload {
   top: PipelineTelemetryTopNode[];
   topDrift: PipelineTopDrift;
   settings: PipelineTelemetrySettings;
+  consciousness?: ConsciousnessState;
 }
 
 export interface PipelineTelemetryEvent {
@@ -57,6 +60,7 @@ export interface PipelineTelemetryEvent {
   edgeHistogram: Record<string, number>;
   top: PipelineTelemetryTopInput[];
   settings: PipelineTelemetrySettings;
+  consciousness?: ConsciousnessState;
 }
 
 export type PipelineTelemetrySink = (payload: PipelineTelemetryPayload) => void;
@@ -141,6 +145,10 @@ export function emitPipelineTelemetry(event: PipelineTelemetryEvent): void {
     topDrift,
     settings: event.settings,
   };
+
+  if (event.consciousness) {
+    payload.consciousness = event.consciousness;
+  }
 
   history.push(payload);
   while (history.length > MAX_HISTORY) {
