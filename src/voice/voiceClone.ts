@@ -1264,6 +1264,70 @@ function flushPendingVoiceData() {
   }
 }
 
+function ingestVoiceModelRecordings(entries = [], options = {}) {
+  if (!Array.isArray(entries) || !entries.length) return 0;
+  const normalized = [];
+  for (const entry of entries) {
+    const token = typeof entry?.token === 'string' ? entry.token.trim() : '';
+    const audioBase64 = typeof entry?.audioBase64 === 'string' ? entry.audioBase64.trim() : '';
+    if (!token || !audioBase64) continue;
+    const transcript = typeof entry?.transcript === 'string' && entry.transcript.trim()
+      ? entry.transcript.trim()
+      : token;
+    const audioType = typeof entry?.audioType === 'string' && entry.audioType.trim()
+      ? entry.audioType.trim()
+      : 'audio/webm';
+    const capturedAt = typeof entry?.capturedAt === 'string' && entry.capturedAt.trim()
+      ? entry.capturedAt.trim()
+      : new Date().toISOString();
+    normalized.push({ token, audioBase64, audioType, transcript, capturedAt });
+  }
+  if (!normalized.length) return 0;
+
+  const iterationCounter = new Map();
+  for (const [token, list] of recordingIndex) {
+    if (!Array.isArray(list) || !list.length) continue;
+    const latest = list[0];
+    const nextIteration = Number.isFinite(latest?.iteration) ? Number(latest.iteration) + 1 : list.length + 1;
+    iterationCounter.set(token, nextIteration);
+  }
+
+  let added = 0;
+  for (const entry of normalized) {
+    const nextIteration = iterationCounter.get(entry.token) ?? 1;
+    const recording = {
+      id: generateRecordingId(),
+      token: entry.token,
+      createdAt: entry.capturedAt,
+      audioBase64: entry.audioBase64,
+      audioType: entry.audioType,
+      transcript: entry.transcript,
+      tags: [],
+      iteration: nextIteration,
+      sourceToken: entry.token,
+    };
+    store.recordings.push(recording);
+    store.assignments[entry.token] = recording.id;
+    iterationCounter.set(entry.token, nextIteration + 1);
+    added += 1;
+  }
+
+  if (!added) return 0;
+
+  recordingIndex = buildRecordingIndex();
+  panelState.tokens = gatherTokens();
+  refreshVoiceProfileClone(false);
+  saveVoiceStore();
+  renderTokenDetail();
+  renderTokenList();
+  const message = options?.prompt
+    ? `Voice model captured ${added} recording${added === 1 ? '' : 's'} for "${options.prompt}".`
+    : `Voice model captured ${added} recording${added === 1 ? '' : 's'}.`;
+  setStatus(message, 'success');
+  signalVoiceCloneTokensChanged('recording-added');
+  return added;
+}
+
 function saveVoiceStore() {
   try {
     const payload = JSON.stringify(store);
@@ -3537,6 +3601,7 @@ function initializeVoiceClonePanel() {
     playToken: playAssignedForToken,
     playTts: playTokenTts,
     recordVoiceTokens: (tokens, options) => recordVoiceDataTokens(tokens, options),
+    saveTokenRecordings: (entries, options) => ingestVoiceModelRecordings(entries, options),
     signalTokensChanged: signalVoiceCloneTokensChanged,
     getProfileClone: getProfileCloneExportPayload,
     getProfileExport: getVoiceProfileExportPayload,
