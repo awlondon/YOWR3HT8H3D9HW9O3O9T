@@ -11851,6 +11851,29 @@ function restoreConversationLog(snapshot) {
   logElement.scrollTop = logElement.scrollHeight;
 }
 
+function clearConversationLog(options: { resetBatchLog?: boolean } = {}) {
+  const { resetBatchLog = false } = options;
+  try {
+    restoreConversationLog({ html: '', entries: [] });
+  } catch (err) {
+    const logElement = elements?.log;
+    if (logElement instanceof HTMLElement) {
+      logElement.innerHTML = '';
+      logElement.scrollTop = logElement.scrollHeight;
+    } else {
+      console.warn('Unable to clear conversation log:', err);
+    }
+  }
+
+  if (resetBatchLog) {
+    try {
+      BatchLog?.clear?.();
+    } catch (batchErr) {
+      console.warn('Batch log clear failed during reset:', batchErr);
+    }
+  }
+}
+
 function snapshotLocalHlsfMemory() {
   const memory = ensureLocalHlsfMemory();
   if (!memory) return null;
@@ -15305,7 +15328,7 @@ async function handleCommand(cmd) {
   switch (command.toLowerCase()) {
     case 'clear':
       trackCommandExecution(normalized, args, 'handler');
-      elements.log.innerHTML = '';
+      clearConversationLog();
       logOK('Log cleared');
       break;
     case 'reset':
@@ -15351,10 +15374,7 @@ async function handleCommand(cmd) {
           delete window.Session.voiceProfile;
           delete window.Session.voiceProfileClone;
         }
-        if (BatchLog && typeof BatchLog.clear === 'function') {
-          try { BatchLog.clear(); } catch {}
-        }
-        restoreConversationLog({ html: '' });
+        clearConversationLog({ resetBatchLog: true });
         restoreLocalHlsfMemory({});
         if (state?.tokenSources instanceof Map) {
           state.tokenSources.clear();
