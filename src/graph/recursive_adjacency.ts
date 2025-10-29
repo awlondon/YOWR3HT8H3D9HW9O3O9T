@@ -8,6 +8,12 @@ export interface RecursiveAdjacencyEdge {
   meta: Record<string, unknown>;
 }
 
+export interface RecursiveAdjacencyOptions {
+  maxDepth?: number;
+  maxEdges?: number;
+  maxDegree?: number;
+}
+
 function pairKey(a: number, b: number): string {
   return a < b ? `${a}:${b}` : `${b}:${a}`;
 }
@@ -42,19 +48,41 @@ function createMeta(
   return meta;
 }
 
-export function buildRecursiveAdjacency(tokens: Token[]): RecursiveAdjacencyEdge[] {
+function resolveMaxEdges(total: number, requested?: number): number {
+  const completeGraphEdges = (total * (total - 1)) / 2;
+  if (!requested || requested <= 0) {
+    return Math.min(completeGraphEdges, total * 8);
+  }
+
+  return Math.min(completeGraphEdges, Math.max(total, requested));
+}
+
+export function buildRecursiveAdjacency(
+  tokens: Token[],
+  options: RecursiveAdjacencyOptions = {},
+): RecursiveAdjacencyEdge[] {
   const total = tokens.length;
   if (total < 2) return [];
 
   const edges: RecursiveAdjacencyEdge[] = [];
   const connected = new Set<string>();
   const adjacency: Array<Set<number>> = Array.from({ length: total }, () => new Set<number>());
-  const targetPairCount = (total * (total - 1)) / 2;
 
-  const connect = (a: number, b: number, level: number, viaIndex: number) => {
+  const maxDepth = options.maxDepth ?? 4;
+  const maxDegree = options.maxDegree ?? Math.max(4, Math.ceil(Math.log2(total) * 4));
+  const maxEdges = resolveMaxEdges(total, options.maxEdges);
+
+  const connect = (a: number, b: number, level: number, viaIndex: number): boolean => {
     if (a === b) return false;
     const key = pairKey(a, b);
     if (connected.has(key)) return false;
+    if (edges.length >= maxEdges) return false;
+
+    const baseEdge = level === 0;
+    if (!baseEdge) {
+      if (adjacency[a].size >= maxDegree) return false;
+      if (adjacency[b].size >= maxDegree) return false;
+    }
 
     connected.add(key);
     adjacency[a].add(b);
@@ -62,8 +90,8 @@ export function buildRecursiveAdjacency(tokens: Token[]): RecursiveAdjacencyEdge
 
     const [sourceIndex, targetIndex] = a < b ? [a, b] : [b, a];
     const span = circularDistance(a, b, total);
-    const type = level === 0 ? 'adjacency:base' : 'adjacency:expanded';
-    const weight = level === 0 ? 1 : Math.max(0.1, 1 / (level + 1));
+    const type = baseEdge ? 'adjacency:base' : 'adjacency:expanded';
+    const weight = baseEdge ? 1 : Math.max(0.1, 1 / (level + 1));
 
     edges.push({
       sourceIndex,
@@ -82,40 +110,44 @@ export function buildRecursiveAdjacency(tokens: Token[]): RecursiveAdjacencyEdge
     connect(i, j, 0, -1);
   }
 
-  if (connected.size >= targetPairCount) {
-    return edges;
+  const queue: Array<{ source: number; target: number; via: number; level: number }> = [];
+  const seen = new Set<string>();
+
+  const enqueue = (source: number, target: number, via: number, level: number) => {
+    if (level > maxDepth) return;
+    const key = `${source}-${target}-${via}-${level}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    queue.push({ source, target, via, level });
+  };
+
+  for (let i = 0; i < total; i += 1) {
+    for (const neighbor of adjacency[i]) {
+      for (const candidate of adjacency[neighbor]) {
+        if (candidate === i) continue;
+        enqueue(i, candidate, neighbor, 1);
+      }
+    }
   }
 
-  let level = 1;
-  while (connected.size < targetPairCount) {
-    let addedThisLevel = 0;
+  while (queue.length > 0 && edges.length < maxEdges) {
+    const { source, target, via, level } = queue.shift()!;
+    if (level > maxDepth) continue;
 
-    for (let i = 0; i < total; i += 1) {
-      for (let j = i + 1; j < total; j += 1) {
-        const key = pairKey(i, j);
-        if (connected.has(key)) continue;
-
-        let viaIndex = -1;
-        for (const neighbor of adjacency[i]) {
-          if (adjacency[neighbor].has(j)) {
-            viaIndex = neighbor;
-            break;
-          }
-        }
-
-        if (viaIndex === -1) continue;
-
-        if (connect(i, j, level, viaIndex)) {
-          addedThisLevel += 1;
-        }
+    if (!connected.has(pairKey(source, target))) {
+      if (!connect(source, target, level, via)) {
+        continue;
       }
     }
 
-    if (addedThisLevel === 0) {
-      break;
+    if (level >= maxDepth) {
+      continue;
     }
 
-    level += 1;
+    for (const next of adjacency[target]) {
+      if (next === source) continue;
+      enqueue(source, next, target, level + 1);
+    }
   }
 
   return edges;

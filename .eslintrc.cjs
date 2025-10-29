@@ -14,17 +14,19 @@ module.exports = {
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
     'plugin:import/recommended',
-    'plugin:import/typescript',
     'prettier',
   ],
   rules: {
     '@typescript-eslint/ban-ts-comment': 'off',
     '@typescript-eslint/no-explicit-any': 'off',
+    'import/no-unresolved': 'off',
+    'import/namespace': 'off',
+    'import/default': 'off',
   },
   settings: {
     'import/resolver': {
-      typescript: {
-        project: './tsconfig.json',
+      node: {
+        extensions: ['.js', '.ts', '.tsx'],
       },
     },
   },

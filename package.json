@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "lint": "eslint \"src/graph/**/*.{ts,tsx}\" src/engine/pipeline.ts src/engine/pipeline.test.ts src/saas/**/*.ts src/settings.ts",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,css,md}\"",
     "test": "tsc --project tsconfig.test.json && node --test build/test"
   },

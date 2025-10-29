@@ -317,6 +317,21 @@
       opacity: 0.7;
     }
 
+    .saas-registration__note--warning {
+      color: #ffb347;
+      font-weight: 600;
+      opacity: 1;
+    }
+
+    .saas-registration__card-placeholder {
+      border: 1px dashed rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 0.85rem 0.9rem;
+      background: rgba(2, 45, 21, 0.3);
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+
     .saas-registration__footnote {
       margin: 0;
       font-size: 0.85rem;
