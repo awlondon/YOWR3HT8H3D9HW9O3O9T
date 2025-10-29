@@ -191,7 +191,7 @@ const REL_EN = {
   "⇝":"Causes","↼":"Caused By","*":"Evokes","≜":"Represents","★":"Symbolizes","↦":"Refers To","⊢":"Defines","⊣":"Is Defined By",
   "↷":"Transforms To","↶":"Transformed From","∘":"Functions As","⊨":"Interpreted As","◁":"Used With","⇄":"Co-occurs With",
   "⊗":"Synthesizes","÷":"Divides Into","⊘":"Opposes","↳":"Leads To","↲":"Results In","⟂":"Orthogonal To","≉":"Diverges From",
-  "≍":"Equivalent In Form","≓":"Approximately Equals","≔":"Defined As"
+  "≍":"Equivalent In Form","≓":"Approximately Equals","≔":"Defined As","⊚":"Hidden Adjacency"
 };
 
 // Return "∼ Adjacent To"
@@ -810,8 +810,18 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
   const opts = options || {};
   const fallbackAnchors = Array.isArray(options?.anchors) ? options.anchors : undefined;
   const legacySeeds = Array.isArray(options?.seeds) ? options.seeds : undefined;
-  const anchors = anchorsInput ?? fallbackAnchors ?? legacySeeds ?? [];
-  const graph = { nodes: new Map(), links: [], anchors: [...anchors] };
+  const rawAnchors = anchorsInput ?? fallbackAnchors ?? legacySeeds ?? [];
+  const lowerIndexMap = buildLowercaseIndexMap(index);
+  const resolvedAnchorSet = new Set();
+  const resolvedAnchors = [];
+  for (const rawAnchor of Array.isArray(rawAnchors) ? rawAnchors : []) {
+    const resolved = resolveTokenKey(rawAnchor, index, lowerIndexMap) || rawAnchor;
+    if (!resolved || resolvedAnchorSet.has(resolved)) continue;
+    resolvedAnchorSet.add(resolved);
+    resolvedAnchors.push(resolved);
+  }
+  const anchorList = resolvedAnchors.length ? resolvedAnchors : (Array.isArray(rawAnchors) ? rawAnchors.slice() : []);
+  const graph = { nodes: new Map(), links: [], anchors: anchorList.slice() };
   const outSet = new Set();
   const inSet = new Set();
   let edgeTypeEnums = 0;
@@ -891,28 +901,35 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
       const visibleItems = limit === Infinity ? rawItems : rawItems.slice(0, limit);
       if (!visibleItems.length) continue;
       const hiddenItems = limit === Infinity ? [] : rawItems.slice(visibleItems.length);
-      const hiddenTokens = hiddenItems.map(item => item?.token).filter(Boolean);
+      const hiddenTokenSet = new Set();
+      for (const item of hiddenItems) {
+        const hiddenResolved = resolveTokenKey(item?.token, index, lowerIndexMap);
+        if (hiddenResolved) hiddenTokenSet.add(hiddenResolved);
+      }
+      const hiddenTokens = [...hiddenTokenSet];
       let enumerated = false;
       const nextDepth = depth + 1;
       for (const item of visibleItems) {
         const target = item?.token;
         if (!target) continue;
-        const targetRec = index.get(target);
+        const canonicalTarget = resolveTokenKey(target, index, lowerIndexMap);
+        if (!canonicalTarget) continue;
+        const targetRec = index.get(canonicalTarget);
         if (!targetRec) continue;
-        ensureNode(target, nextDepth);
+        ensureNode(canonicalTarget, nextDepth);
         const weight = Number.isFinite(item?.weight)
           ? item.weight
           : Number.isFinite(item?.w)
             ? item.w
             : relation?.aggWeight;
         const normalizedWeight = Number(weight) || 0;
-        const added = pushLink(token, target, relation?.rtype, normalizedWeight, hiddenTokens);
+        const added = pushLink(token, canonicalTarget, relation?.rtype, normalizedWeight, hiddenTokens);
         if (added) {
           enumerated = true;
           if (depth < maxDepth) {
-            queueNext(token, target, relation?.rtype, normalizedWeight, nextDepth);
+            queueNext(token, canonicalTarget, relation?.rtype, normalizedWeight, nextDepth);
           } else if (frac > 0) {
-            fractionalNodes.add(target);
+            fractionalNodes.add(canonicalTarget);
           }
         }
       }
@@ -920,22 +937,24 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
     }
   };
 
-  for (const anchor of anchors) {
-    if (!index.get(anchor)) continue;
-    ensureNode(anchor, 0);
-    expandSource(anchor, 0);
-    visitedSrc.add(anchor);
+  for (const anchor of anchorList) {
+    const resolvedAnchor = resolveTokenKey(anchor, index, lowerIndexMap);
+    if (!resolvedAnchor || !index.get(resolvedAnchor)) continue;
+    ensureNode(resolvedAnchor, 0);
+    expandSource(resolvedAnchor, 0);
+    visitedSrc.add(resolvedAnchor);
   }
 
-  logPhase('anchored', { anchors: anchors.length, queued: enqueued });
+  logPhase('anchored', { anchors: anchorList.length, queued: enqueued });
 
   while (head < queue.length) {
     const edge = queue[head++];
     if (!edge) break;
     if (edge.depth > maxDepth) continue;
     if (visitedSrc.has(edge.to)) continue;
-    expandSource(edge.to, edge.depth);
-    visitedSrc.add(edge.to);
+    const resolvedTo = resolveTokenKey(edge.to, index, lowerIndexMap) || edge.to;
+    expandSource(resolvedTo, edge.depth);
+    visitedSrc.add(resolvedTo);
     if (!opts.silent && expanded % 1000 === 0) {
       logPhase('tick', { expanded, queued: Math.max(0, queue.length - head), nodes: graph.nodes.size, link_instances: graph.links.length });
       await microtask();
@@ -948,11 +967,61 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
 
   logProgress(1, 1);
   const metrics = {
-    nodes: outSet.size,
+    nodes: graph.nodes.size,
     edges: edgeTypeEnums,
     relationships: graph.links.length,
     anchors: [...outSet].filter((t) => inSet.has(t)).length,
   };
+
+  const hiddenConfig = {
+    limit: Number(window.HLSF?.config?.hiddenAdjacencyDegree) || DEFAULT_HIDDEN_ATTENTION_PER_TOKEN,
+    depth: Number(window.HLSF?.config?.hiddenAdjacencyDepth),
+    cap: Number(window.HLSF?.config?.hiddenAdjacencyCap),
+  };
+
+  const hiddenNetwork = buildHiddenAdjacencyNetwork(graph, index, lowerIndexMap, ensureNode, hiddenConfig);
+  if (hiddenNetwork) {
+    const { adjacency, scores, stats } = hiddenNetwork;
+    let hiddenEdgeCount = 0;
+    for (const [key, weight] of scores.entries()) {
+      if (!key) continue;
+      const [a, b] = key.split('|');
+      if (!a || !b) continue;
+      const normalizedWeight = normalizeHiddenWeight(weight);
+      const addedForward = pushLink(a, b, HIDDEN_ADJACENCY_RELATION, normalizedWeight, []);
+      if (addedForward) hiddenEdgeCount += 1;
+      const addedReverse = pushLink(b, a, HIDDEN_ADJACENCY_RELATION, normalizedWeight, []);
+      if (addedReverse) hiddenEdgeCount += 1;
+    }
+
+    const adjacencyMap = new Map();
+    for (const [token, neighbors] of adjacency.entries()) {
+      adjacencyMap.set(token, Array.from(neighbors));
+    }
+    graph.hiddenAdjacency = adjacencyMap;
+    graph.hiddenAdjacencyStats = stats;
+    metrics.hiddenEdges = hiddenEdgeCount;
+    metrics.hiddenTokens = adjacency.size;
+    metrics.relationships = graph.links.length;
+    metrics.nodes = graph.nodes.size;
+    metrics.anchors = [...outSet].filter((t) => inSet.has(t)).length;
+    const edgeKeySet = new Set();
+    for (const edge of graph.links) {
+      if (edge?.from && edge?.rtype) {
+        edgeKeySet.add(`${edge.from}|${edge.rtype}`);
+      }
+    }
+    metrics.edges = edgeKeySet.size;
+    if (loggingActive) {
+      logPhase('hidden-adjacency', {
+        expansions: stats.expansions,
+        seeds: stats.seeds,
+        hidden_tokens: adjacency.size,
+        hidden_edges: hiddenEdgeCount,
+      });
+    }
+  }
+
   graph._metrics = metrics;
   logPhase('summary', metrics);
   markRelationLegendDirty();
@@ -1543,6 +1612,298 @@ function collectWorkingMemoryAnchors(index, limit) {
   }
 
   return anchors;
+}
+
+function buildLowercaseIndexMap(index) {
+  const map = new Map();
+  if (!(index instanceof Map)) return map;
+  for (const key of index.keys()) {
+    if (typeof key !== 'string') continue;
+    const lower = key.toLowerCase();
+    if (!lower || map.has(lower)) continue;
+    map.set(lower, key);
+  }
+  return map;
+}
+
+function resolveTokenKey(token, index, lowerMap) {
+  if (!token || !(index instanceof Map)) return null;
+  if (index.has(token)) return token;
+  if (typeof token === 'string') {
+    const lower = token.toLowerCase();
+    if (index.has(lower)) return lower;
+    if (lowerMap instanceof Map) {
+      const resolved = lowerMap.get(lower);
+      if (resolved && index.has(resolved)) return resolved;
+    }
+  }
+  return null;
+}
+
+function normalizeHiddenWeight(value) {
+  if (!Number.isFinite(value)) return HIDDEN_EDGE_MIN_WEIGHT;
+  const clamped = Math.max(HIDDEN_EDGE_MIN_WEIGHT, value);
+  return Math.round(clamped * 1000) / 1000;
+}
+
+function topAttentionNeighborsForRecord(record, index, lowerMap, limit) {
+  if (!record || typeof record !== 'object') return [];
+  const aggregate = new Map();
+  const origin = typeof record.token === 'string' ? record.token : '';
+  const relationships = record.relationships || {};
+  for (const [rawType, edges] of Object.entries(relationships)) {
+    if (!Array.isArray(edges) || edges.length === 0) continue;
+    const glyph = normRelKey(rawType) || rawType;
+    const priority = getRelationshipPriority(glyph);
+    if (!Number.isFinite(priority) || priority <= 0) continue;
+    for (const edge of edges) {
+      if (!edge || typeof edge.token !== 'string') continue;
+      const resolved = resolveTokenKey(edge.token, index, lowerMap);
+      if (!resolved || resolved === origin) continue;
+      const weight = Number(edge.weight);
+      const score = (Number.isFinite(weight) ? weight : 1) * priority;
+      if (!Number.isFinite(score) || score <= 0) continue;
+      aggregate.set(resolved, (aggregate.get(resolved) || 0) + score);
+    }
+  }
+  return [...aggregate.entries()]
+    .sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0]);
+    })
+    .slice(0, limit)
+    .map(([token, score]) => ({ token, score }));
+}
+
+function gatherHiddenAdjacencySeeds(graph, index, lowerMap, cap) {
+  const seeds = new Set();
+  const limit = Math.max(1, Number(cap) || 1);
+
+  const addToken = (token) => {
+    if (!token || seeds.size >= limit) return;
+    const resolved = resolveTokenKey(token, index, lowerMap);
+    if (!resolved) return;
+    seeds.add(resolved);
+  };
+
+  if (graph?.nodes instanceof Map) {
+    for (const token of graph.nodes.keys()) {
+      addToken(token);
+      if (seeds.size >= limit) break;
+    }
+  }
+
+  const workingAnchors = collectWorkingMemoryAnchors(index, limit);
+  for (const token of workingAnchors) {
+    addToken(token);
+    if (seeds.size >= limit) return Array.from(seeds);
+  }
+
+  if (typeof window !== 'undefined') {
+    const hlsf = window.HLSF || {};
+    const memory = hlsf.localMemory;
+    if (memory) {
+      const prompts = Array.isArray(memory.prompts) ? memory.prompts : [];
+      for (let i = prompts.length - 1; i >= 0 && seeds.size < limit; i--) {
+        const entry = prompts[i];
+        const tokens = Array.isArray(entry?.tokens) ? entry.tokens : [];
+        for (const token of tokens) {
+          addToken(token);
+          if (seeds.size >= limit) break;
+        }
+      }
+
+      const summaries = memory.adjacencySummaries;
+      if (summaries instanceof Map) {
+        const recent = Array.from(summaries.values());
+        for (let i = recent.length - 1; i >= 0 && seeds.size < limit; i--) {
+          const record = recent[i];
+          const summaryEntries = Array.isArray(record?.summary) ? record.summary : [];
+          for (const item of summaryEntries) {
+            if (!item) continue;
+            const token = typeof item === 'string' ? item : item.token;
+            addToken(token);
+            if (seeds.size >= limit) break;
+          }
+        }
+      }
+
+      const lastAdjacency = memory.lastAdjacency;
+      if (lastAdjacency && Array.isArray(lastAdjacency.summary)) {
+        for (const item of lastAdjacency.summary) {
+          if (!item) continue;
+          const token = typeof item === 'string' ? item : item.token;
+          addToken(token);
+          if (seeds.size >= limit) break;
+        }
+      }
+    }
+  }
+
+  return Array.from(seeds);
+}
+
+function ensureFullHiddenConnectivity(hiddenMap, nodeIterator, scoreMap) {
+  if (!(hiddenMap instanceof Map)) return;
+  const baseNodes = Array.isArray(nodeIterator)
+    ? nodeIterator
+    : Array.from(nodeIterator || []);
+  if (!baseNodes.length) return;
+  const visited = new Set();
+  const components = [];
+
+  const traverse = (start) => {
+    const stack = [start];
+    const component = [];
+    visited.add(start);
+    while (stack.length) {
+      const current = stack.pop();
+      component.push(current);
+      const neighbors = hiddenMap.get(current);
+      if (!(neighbors instanceof Set)) continue;
+      for (const neighbor of neighbors) {
+        if (!neighbor || visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        stack.push(neighbor);
+      }
+    }
+    return component;
+  };
+
+  for (const token of baseNodes) {
+    if (!token || visited.has(token)) continue;
+    components.push(traverse(token));
+  }
+
+  if (components.length <= 1) return;
+
+  const primary = components[0] || [];
+  const primaryToken = primary[0];
+  if (!primaryToken) return;
+
+  for (let i = 1; i < components.length; i++) {
+    const component = components[i];
+    if (!component || !component.length) continue;
+    const target = component[0];
+    if (!target) continue;
+    let primarySet = hiddenMap.get(primaryToken);
+    if (!(primarySet instanceof Set)) {
+      primarySet = new Set();
+      hiddenMap.set(primaryToken, primarySet);
+    }
+    primarySet.add(target);
+    let targetSet = hiddenMap.get(target);
+    if (!(targetSet instanceof Set)) {
+      targetSet = new Set();
+      hiddenMap.set(target, targetSet);
+    }
+    targetSet.add(primaryToken);
+    const key = primaryToken < target ? `${primaryToken}|${target}` : `${target}|${primaryToken}`;
+    if (!scoreMap.has(key)) {
+      scoreMap.set(key, HIDDEN_EDGE_MIN_WEIGHT);
+    }
+  }
+}
+
+function buildHiddenAdjacencyNetwork(graph, index, lowerMap, ensureNode, options = {}) {
+  if (!(graph?.nodes instanceof Map) || !(index instanceof Map)) return null;
+
+  const limit = Number.isFinite(options.limit) && options.limit > 0
+    ? Math.floor(options.limit)
+    : DEFAULT_HIDDEN_ATTENTION_PER_TOKEN;
+  const depthLimit = Number.isFinite(options.depth) && options.depth >= 0
+    ? Math.floor(options.depth)
+    : DEFAULT_HIDDEN_ADJACENCY_DEPTH;
+  const baseCap = Number.isFinite(options.cap) && options.cap > 0
+    ? Math.floor(options.cap)
+    : DEFAULT_HIDDEN_ADJACENCY_CAP;
+  const cap = Math.max(baseCap, graph.nodes.size);
+
+  const adjacency = new Map();
+  const scores = new Map();
+  const seenDepth = new Map();
+  const queue = [];
+
+  const ensureEntry = (token) => {
+    if (!token) return null;
+    let set = adjacency.get(token);
+    if (!(set instanceof Set)) {
+      set = new Set();
+      adjacency.set(token, set);
+    }
+    return set;
+  };
+
+  const enqueue = (token, depthValue) => {
+    if (!token || seenDepth.size >= cap) return null;
+    const resolved = resolveTokenKey(token, index, lowerMap);
+    if (!resolved) return null;
+    const node = ensureNode(resolved, depthValue);
+    if (!node) return null;
+    ensureEntry(resolved);
+    const prevDepth = seenDepth.get(resolved);
+    if (!Number.isFinite(prevDepth) || prevDepth > depthValue) {
+      seenDepth.set(resolved, depthValue);
+      queue.push({ token: resolved, depth: depthValue });
+    }
+    return resolved;
+  };
+
+  const seeds = gatherHiddenAdjacencySeeds(graph, index, lowerMap, cap);
+  for (const seed of seeds) {
+    enqueue(seed, 0);
+    if (seenDepth.size >= cap) break;
+  }
+
+  let expansions = 0;
+  const maxExpansions = Math.max(cap * limit, graph.nodes.size * limit * Math.max(1, depthLimit || 1));
+
+  while (queue.length && expansions < maxExpansions) {
+    const current = queue.shift();
+    if (!current) continue;
+    const { token, depth } = current;
+    if (depth > depthLimit) continue;
+    const record = index.get(token);
+    if (!record) continue;
+    const neighbors = topAttentionNeighborsForRecord(record, index, lowerMap, limit);
+    for (const neighbor of neighbors) {
+      if (expansions >= maxExpansions) break;
+      const nextToken = neighbor?.token;
+      if (!nextToken || nextToken === token) continue;
+      const resolvedNeighbor = resolveTokenKey(nextToken, index, lowerMap);
+      if (!resolvedNeighbor) continue;
+      const neighborNode = ensureNode(resolvedNeighbor, depth + 1);
+      if (!neighborNode) continue;
+      ensureEntry(token).add(resolvedNeighbor);
+      ensureEntry(resolvedNeighbor).add(token);
+      const key = token < resolvedNeighbor ? `${token}|${resolvedNeighbor}` : `${resolvedNeighbor}|${token}`;
+      const normalizedScore = normalizeHiddenWeight(neighbor?.score);
+      if (!scores.has(key) || (scores.get(key) || 0) < normalizedScore) {
+        scores.set(key, normalizedScore);
+      }
+      const nextDepth = depth + 1;
+      const previousDepth = seenDepth.get(resolvedNeighbor);
+      if (nextDepth <= depthLimit && (!Number.isFinite(previousDepth) || previousDepth > nextDepth)) {
+        if (seenDepth.size < cap) {
+          seenDepth.set(resolvedNeighbor, nextDepth);
+          queue.push({ token: resolvedNeighbor, depth: nextDepth });
+        }
+      }
+      expansions += 1;
+    }
+  }
+
+  ensureFullHiddenConnectivity(adjacency, [...graph.nodes.keys()], scores);
+
+  return {
+    adjacency,
+    scores,
+    stats: {
+      seeds: seeds.length,
+      expansions,
+      nodes: adjacency.size,
+    },
+  };
 }
 
 function anchorsForMode(args, idx){
@@ -4624,6 +4985,12 @@ const GLYPH_LIBRARY = [
   '⚙', '⚛', '⚝', '⚞', '⚟', '⚬', '⚭', '⚮', '⚯', '⚰'
 ];
 
+const HIDDEN_ADJACENCY_RELATION = '⊚';
+const HIDDEN_EDGE_MIN_WEIGHT = 0.01;
+const DEFAULT_HIDDEN_ATTENTION_PER_TOKEN = 2;
+const DEFAULT_HIDDEN_ADJACENCY_DEPTH = 6;
+const DEFAULT_HIDDEN_ADJACENCY_CAP = 2048;
+
 const RELATIONSHIP_PRIORITIES = new Map([
   ['≡', 1.0], ['⊃', 1.0], ['⊂', 0.8], ['≈', 0.7], ['∈', 0.9], ['∋', 0.9],
   ['⊤', 0.9], ['⊥', 0.9], ['⊏', 0.8], ['⊐', 0.8], ['↔', 0.7], ['⇌', 0.7],
@@ -4635,7 +5002,7 @@ const RELATIONSHIP_PRIORITIES = new Map([
   ['⊗', 0.9], ['÷', 0.7], ['⊘', 0.8], ['×', 0.8], ['¬', 0.8], ['†', 0.8],
   ['⊠', 0.8], ['/∈', 0.8], ['⊬', 0.8], ['⊩', 0.9], ['⊨', 0.9], ['?', 0.5],
   ['⚡', 0.7], ['⇒ Attention', 0.7], ['↶ Self-Reference', 0.7], ['∧', 0.6],
-  ['↭', 0.6], ['▷◁', 0.6]
+  ['↭', 0.6], ['▷◁', 0.6], [HIDDEN_ADJACENCY_RELATION, 0.6]
 ]);
 
 // ============================================
