@@ -860,6 +860,26 @@
       gap: 0.35rem;
     }
 
+    .voice-data-entry__emotions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+    }
+
+    .voice-emotion-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 214, 102, 0.28);
+      background: rgba(255, 214, 102, 0.14);
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: #ffd666;
+    }
+
     .voice-data-token {
       display: inline-flex;
       align-items: center;
