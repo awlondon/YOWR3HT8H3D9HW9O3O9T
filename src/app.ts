@@ -4656,6 +4656,7 @@ function persistChangedTokenCaches(records, changedTokens) {
     if (!persisted && !memoryStorageFallback.has(cacheKey)) {
       memoryStorageFallback.set(cacheKey, payload);
     }
+    CacheBatch.record(rec.token);
   }
 }
 
@@ -8045,6 +8046,59 @@ function getFromCache(token) {
   } catch { return null; }
 }
 
+function buildRelationshipSignature(relationships) {
+  const signature = new Map();
+  if (!relationships || typeof relationships !== 'object') {
+    return signature;
+  }
+
+  for (const [rawKey, values] of Object.entries(relationships)) {
+    const relKey = normRelKey(rawKey) || rawKey;
+    if (!relKey) continue;
+    if (!Array.isArray(values)) continue;
+
+    for (const entry of values) {
+      if (!entry || typeof entry.token !== 'string') continue;
+      const neighbor = String(entry.token).trim().toLowerCase();
+      if (!neighbor) continue;
+      const key = `${relKey}::${neighbor}`;
+      const weight = typeof entry.weight === 'number' ? entry.weight : Number(entry.weight);
+      signature.set(key, Number.isFinite(weight) ? weight : null);
+    }
+  }
+
+  return signature;
+}
+
+function relationshipsExpanded(previousRelationships, nextRelationships) {
+  const nextSignature = buildRelationshipSignature(nextRelationships);
+  if (!nextSignature.size) return false;
+
+  const previousSignature = buildRelationshipSignature(previousRelationships);
+  if (!previousSignature.size && nextSignature.size) {
+    return true;
+  }
+
+  for (const [key, weight] of nextSignature.entries()) {
+    if (!previousSignature.has(key)) {
+      return true;
+    }
+    const previousWeight = previousSignature.get(key);
+    const nextNumeric = typeof weight === 'number' ? weight : null;
+    const previousNumeric = typeof previousWeight === 'number' ? previousWeight : null;
+    if (nextNumeric !== null) {
+      if (previousNumeric === null) {
+        return true;
+      }
+      if (nextNumeric > previousNumeric + 1e-6) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function saveToCache(token, data, options = {}) {
   const { deferReload = false } = options || {};
   try {
@@ -8056,6 +8110,7 @@ function saveToCache(token, data, options = {}) {
       : token;
     payloadData.token = recordToken;
     const wasCached = isTokenCached(recordToken);
+    const previousRecord = wasCached ? getCachedRecordForToken(recordToken) : null;
     const enrichedRecord = refreshDbReference(payloadData, { deferReload });
     if (!enrichedRecord || typeof enrichedRecord.token !== 'string') return;
     const finalToken = enrichedRecord.token;
@@ -8065,7 +8120,11 @@ function saveToCache(token, data, options = {}) {
     const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
     if (!persisted && !fallbackStored) return;
     updateTokenIndex(finalToken);
-    if (!wasCached) CacheBatch.record(finalToken);
+    const adjacencyExpanded = relationshipsExpanded(
+      previousRecord?.relationships,
+      enrichedRecord.relationships,
+    );
+    if (!wasCached || adjacencyExpanded) CacheBatch.record(finalToken);
     signalVoiceCloneTokensChanged('token-cached');
   } catch (err) {
     if (err.name === 'QuotaExceededError') {
