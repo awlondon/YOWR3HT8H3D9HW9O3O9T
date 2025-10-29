@@ -112,9 +112,14 @@ export function buildRecursiveAdjacency(
 
   const queue: Array<{ source: number; target: number; via: number; level: number }> = [];
   const seen = new Set<string>();
+  const pairLevels = new Map<string, number>();
 
   const enqueue = (source: number, target: number, via: number, level: number) => {
     if (level > maxDepth) return;
+    const pair = pairKey(source, target);
+    const previousLevel = pairLevels.get(pair);
+    if (previousLevel !== undefined && level >= previousLevel) return;
+    pairLevels.set(pair, level);
     const key = `${source}-${target}-${via}-${level}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -130,9 +135,15 @@ export function buildRecursiveAdjacency(
     }
   }
 
-  while (queue.length > 0 && edges.length < maxEdges) {
-    const { source, target, via, level } = queue.shift()!;
+  let cursor = 0;
+  while (cursor < queue.length && edges.length < maxEdges) {
+    const { source, target, via, level } = queue[cursor++]!;
     if (level > maxDepth) continue;
+    const pair = pairKey(source, target);
+    const bestLevel = pairLevels.get(pair);
+    if (bestLevel !== undefined && level > bestLevel) {
+      continue;
+    }
 
     if (!connected.has(pairKey(source, target))) {
       if (!connect(source, target, level, via)) {

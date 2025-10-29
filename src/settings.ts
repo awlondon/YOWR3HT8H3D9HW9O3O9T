@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   maxAdjacencyDepth: 4,
   maxAdjacencyDegree: 12,
   maxAdjacencyEdgesMultiplier: 6,
+  secureBillingOnly: true,
 };
 
 type SettingsShape = typeof DEFAULT_SETTINGS & Record<string, unknown>;
