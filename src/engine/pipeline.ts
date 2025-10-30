@@ -288,9 +288,12 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
       type: edge.type,
       w: edge.weight,
       meta: edge.meta,
-    }
+    });
+  }
+
   // Ensure growth even for single-token prompts by synthetic branching
   try {
+
     const limits = resolveLimitsFromSettings(cfg);
     const currentEdgeCount = accumulator.edges.length;
     if (tokens.length <= 1 || currentEdgeCount === 0) {
