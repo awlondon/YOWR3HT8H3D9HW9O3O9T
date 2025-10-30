@@ -1,7 +1,11 @@
 import { SETTINGS, type Settings } from '../settings.js';
 import { tokenizeWithSymbols, tokenizeWords, type Token, computeWordNeighborMap } from '../tokens/tokenize.js';
 import { emitSymbolEdges } from '../graph/symbol_edges.js';
-import { buildRecursiveAdjacency } from '../graph/recursive_adjacency.js';
+import {
+  buildRecursiveAdjacency,
+  type RecursiveAdjacencyEdge,
+  type RecursiveAdjacencyOptions,
+} from '../graph/recursive_adjacency.js';
 import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 import { buildConsciousnessState, type ConsciousnessState } from './consciousness.js';
@@ -114,6 +118,47 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
   };
 }
 
+function buildChunkedAdjacency(
+  tokens: Token[],
+  chunkSize: number,
+  options: RecursiveAdjacencyOptions,
+): RecursiveAdjacencyEdge[] {
+  const total = tokens.length;
+  if (total < 2) {
+    return [];
+  }
+
+  const normalizedSize = Math.max(1, Math.floor(Number.isFinite(chunkSize) ? chunkSize : 1));
+  if (normalizedSize <= 1 || normalizedSize >= total) {
+    return buildRecursiveAdjacency(tokens, options);
+  }
+
+  const edges: RecursiveAdjacencyEdge[] = [];
+
+  for (let start = 0, chunkIndex = 0; start < total; start += normalizedSize, chunkIndex += 1) {
+    const end = Math.min(total, start + normalizedSize);
+    if (end - start < 2) {
+      continue;
+    }
+
+    const chunkEdges = buildRecursiveAdjacency(tokens.slice(start, end), options);
+    for (const edge of chunkEdges) {
+      edges.push({
+        ...edge,
+        sourceIndex: edge.sourceIndex + start,
+        targetIndex: edge.targetIndex + start,
+        meta: { ...edge.meta, chunkIndex, chunkOffset: start },
+      });
+    }
+  }
+
+  if (!edges.length) {
+    return buildRecursiveAdjacency(tokens, options);
+  }
+
+  return edges;
+}
+
 export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineResult {
   const tokens = cfg.tokenizeSymbols ? tokenizeWithSymbols(input) : legacyTokenizeDetailed(input);
   const nodes = buildGraphNodes(tokens);
@@ -146,14 +191,16 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     );
   }
 
-  const adjacencyEdges = buildRecursiveAdjacency(tokens, {
+  const adjacencyChunkSize = Math.max(1, Math.floor(cfg.promptAdjacencyChunkSize ?? 8));
+  const adjacencyOptions: RecursiveAdjacencyOptions = {
     maxDepth: cfg.maxAdjacencyDepth,
     maxDegree: cfg.maxAdjacencyDegree,
     maxEdges: Math.max(
       tokens.length,
       Math.floor((cfg.maxAdjacencyEdgesMultiplier ?? 6) * tokens.length),
     ),
-  });
+  };
+  const adjacencyEdges = buildChunkedAdjacency(tokens, adjacencyChunkSize, adjacencyOptions);
   for (const edge of adjacencyEdges) {
     accumulator.addEdgeByIndices(edge.sourceIndex, edge.targetIndex, {
       type: edge.type,
