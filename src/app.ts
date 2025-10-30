@@ -4985,7 +4985,7 @@ async function loadDbObject(dbLike, options = {}) {
       if (!batch || !batch.length) return;
       if (recorder && typeof recorder.ingestMany === 'function') {
         try {
-          recorder.ingestMany(batch);
+          await recorder.ingestMany(batch);
         } catch (err) {
           console.warn('Remote DB recorder bulk ingest failed:', err);
         }
@@ -8021,12 +8021,23 @@ const RemoteDbRecorder = (() => {
     return changed;
   };
 
-  const ingestMany = (records) => {
+  const REMOTE_DB_INGEST_YIELD_EVERY = 250;
+
+  const ingestMany = async (records) => {
     let changed = 0;
     if (!Array.isArray(records)) return changed;
+
+    let processed = 0;
+    const yieldInterval = REMOTE_DB_INGEST_YIELD_EVERY;
+
     for (const record of records) {
       if (ingest(record, { deferPersist: true })) changed += 1;
+      processed += 1;
+      if (processed % yieldInterval === 0) {
+        await yieldDbImport();
+      }
     }
+
     if (changed > 0) schedulePersist();
     return changed;
   };
