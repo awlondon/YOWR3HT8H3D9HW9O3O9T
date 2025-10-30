@@ -9498,6 +9498,16 @@ function scheduleRemoteCacheWarmup(options = {}) {
 
 window.HLSF.remoteDb = RemoteDbStore;
 
+try {
+  const recorder = window.HLSF?.remoteDbRecorder;
+  const storeReady = typeof RemoteDbStore.isReady === 'function' ? RemoteDbStore.isReady() : false;
+  if (!storeReady && recorder && typeof RemoteDbStore.attachRecorder === 'function') {
+    RemoteDbStore.attachRecorder(recorder);
+  }
+} catch (err) {
+  console.warn('Initial remote DB recorder attachment failed:', err);
+}
+
 function onAdjacencyPreloadComplete(triggerToken, loadedTokens = []) {
   const normalizedTrigger = typeof triggerToken === 'string' ? triggerToken.toLowerCase() : '';
   const candidates = Array.isArray(loadedTokens) ? loadedTokens.filter(token => typeof token === 'string' && token.trim()) : [];
