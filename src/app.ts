@@ -184,10 +184,6 @@ const DATABASE_READY_EVENT = 'hlsf:database-ready';
 const GLOBAL_CONNECTION_RELATION = '∼';
 const GLOBAL_CONNECTION_WEIGHT = 0.05;
 
-const DEFAULT_LIVE_TOKEN_CAP = 160;
-const DEFAULT_LIVE_EDGE_WEIGHT_MIN = 0.02;
-const DEFAULT_LOCAL_MEMORY_EDGE_WEIGHT_MIN = 0.02;
-
 // Canonical 50-type display names
 const REL_EN = {
   "≡":"Identity","⊃":"Contains","⊂":"Is Contained By","≈":"Variant","∈":"Is Instance Of","∋":"Has Instance",
@@ -6364,57 +6360,26 @@ function summarizeAdjacencyMapForLocal(
   const edgesPerToken = Number.isFinite(options.edgesPerToken) && options.edgesPerToken
     ? Math.max(1, Math.floor(options.edgesPerToken))
     : 6;
-  const minEdgeWeight = resolveLocalMemoryEdgeWeightFloor();
-
-  const candidates: Array<{
-    token: string;
-    relationships: Record<string, { token: string; weight: number }[]>;
-    attention: number;
-    totalRelationships: number;
-    score: number;
-  }> = [];
-
-  for (const [tokenKey, entry] of adjacencyMap.entries()) {
-    if (!tokenKey || !entry) continue;
-    const limited = limitAdjacencyEntryEdges(entry, edgesPerToken);
-    const { relationships, totalWeight, totalEdges } = pruneRelationshipEdgesByWeight(
-      limited.relationships,
-      minEdgeWeight,
-    );
-    const attention = Number(limited.attention_score) || 0;
-    const token = typeof limited.token === 'string' && limited.token.trim()
-      ? limited.token.trim()
-      : (typeof tokenKey === 'string' ? String(tokenKey).trim() : '');
-    if (!token) continue;
-    const hasRelationships = Object.keys(relationships).length > 0;
-    if (!hasRelationships && attention <= 0) continue;
-    const totalRelationships = totalEdges > 0
-      ? totalEdges
-      : (Number(limited.total_relationships) || 0);
-    candidates.push({
-      token,
-      relationships,
-      attention,
-      totalRelationships,
-      score: Math.max(attention, totalWeight),
-    });
-  }
-
-  candidates.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (b.attention !== a.attention) return b.attention - a.attention;
-    return a.token.localeCompare(b.token, undefined, { sensitivity: 'base' });
-  });
 
   const summary: LocalHlsfAdjacencyTokenSummary[] = [];
-  for (const entry of candidates) {
+  let count = 0;
+  for (const [token, entry] of adjacencyMap.entries()) {
+    if (!token || !entry) continue;
+    const limited = limitAdjacencyEntryEdges(entry, edgesPerToken);
+    const relationships =
+      limited.relationships && typeof limited.relationships === 'object'
+        ? (limited.relationships as Record<string, { token: string; weight: number }[]>)
+        : {};
+
     summary.push({
-      token: entry.token,
-      relationships: entry.relationships,
-      attention: entry.attention,
-      totalRelationships: entry.totalRelationships,
+      token,
+      relationships,
+      attention: Number(limited.attention_score) || 0,
+      totalRelationships: Number(limited.total_relationships) || 0,
     });
-    if (summary.length >= limit) break;
+
+    count += 1;
+    if (count >= limit) break;
   }
 
   return summary;
@@ -6433,7 +6398,7 @@ function recordLocalAdjacencySummary(
   const record: LocalHlsfAdjacencySummary = {
     id,
     label,
-    tokenCount: summary.length,
+    tokenCount: adjacencyMap.size,
     summary,
     updatedAt: new Date().toISOString(),
   };
@@ -6655,174 +6620,6 @@ function pruneInactiveTokens() {
     }
   }
   state.tokenOrder = state.tokenOrder.filter(token => state.tokenSources.has(token));
-}
-
-function resolveLiveGraphTokenCap() {
-  if (typeof window !== 'undefined') {
-    const configured = Number(window?.HLSF?.config?.liveTokenCap);
-    if (Number.isFinite(configured) && configured > 0) {
-      return Math.max(12, Math.floor(configured));
-    }
-  }
-  return DEFAULT_LIVE_TOKEN_CAP;
-}
-
-function resolveLiveGraphEdgeWeightFloor() {
-  if (typeof window !== 'undefined') {
-    const configured = Number(window?.HLSF?.config?.liveEdgeWeightMin);
-    if (Number.isFinite(configured) && configured >= 0) {
-      return Math.max(0, configured);
-    }
-  }
-  return DEFAULT_LIVE_EDGE_WEIGHT_MIN;
-}
-
-function resolveLocalMemoryEdgeWeightFloor() {
-  if (typeof window !== 'undefined') {
-    const config = window?.HLSF?.config || {};
-    const raw = config.localMemoryEdgeWeightMin != null
-      ? Number(config.localMemoryEdgeWeightMin)
-      : Number(config.liveEdgeWeightMin);
-    if (Number.isFinite(raw) && raw >= 0) {
-      return Math.max(0, raw);
-    }
-  }
-  return DEFAULT_LOCAL_MEMORY_EDGE_WEIGHT_MIN;
-}
-
-function pruneRelationshipEdgesByWeight(relationships, minWeight = 0) {
-  const result = {};
-  let totalWeight = 0;
-  let totalEdges = 0;
-  const threshold = Number.isFinite(minWeight) && minWeight > 0 ? minWeight : 0;
-
-  if (!relationships || typeof relationships !== 'object') {
-    return { relationships: result, totalWeight, totalEdges };
-  }
-
-  for (const [rel, edges] of Object.entries(relationships)) {
-    if (!Array.isArray(edges) || edges.length === 0) continue;
-    const filtered = [];
-    for (const edge of edges) {
-      if (!edge || typeof edge.token !== 'string') continue;
-      const token = edge.token.trim();
-      if (!token) continue;
-      const weight = Number(edge.weight) || 0;
-      if (weight < threshold) continue;
-      filtered.push({ token, weight });
-      totalWeight += weight;
-      totalEdges += 1;
-    }
-    if (filtered.length) {
-      filtered.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
-      result[rel] = filtered;
-    }
-  }
-
-  return { relationships: result, totalWeight, totalEdges };
-}
-
-function pruneLiveGraphNodes(nodes, edges, options = {}) {
-  if (!(nodes instanceof Map)) {
-    return { edges: Array.isArray(edges) ? edges.filter(edge => edge && typeof edge === 'object') : [], removedTokens: [] };
-  }
-
-  const minWeight = Number.isFinite(options.minWeight) ? Math.max(0, options.minWeight) : resolveLiveGraphEdgeWeightFloor();
-  const maxTokens = Number.isFinite(options.maxTokens) ? Math.max(1, Math.floor(options.maxTokens)) : resolveLiveGraphTokenCap();
-
-  const weightMap = new Map();
-  for (const token of nodes.keys()) {
-    weightMap.set(token, 0);
-  }
-
-  const filteredEdges = [];
-  if (Array.isArray(edges)) {
-    for (const edge of edges) {
-      if (!edge || typeof edge !== 'object') continue;
-      const from = typeof edge.from === 'string' ? edge.from : null;
-      const to = typeof edge.to === 'string' ? edge.to : null;
-      if (!from || !to) continue;
-      if (!nodes.has(from) || !nodes.has(to)) continue;
-      const weight = Number(edge.w) || 0;
-      if (weight < minWeight) continue;
-      filteredEdges.push(edge);
-      weightMap.set(from, (weightMap.get(from) || 0) + weight);
-      weightMap.set(to, (weightMap.get(to) || 0) + weight);
-    }
-  }
-
-  for (const [token, entry] of state.tokenSources.entries()) {
-    if (!nodes.has(token)) continue;
-    let base = 0;
-    if (entry?.input) base += 1.0;
-    if (entry?.output) base += 0.6;
-    if (entry?.committed) base += 0.3;
-    if (base > 0) {
-      weightMap.set(token, (weightMap.get(token) || 0) + base);
-    }
-  }
-
-  const removalSet = new Set();
-  const orderedTokens = Array.from(nodes.keys());
-
-  for (const token of orderedTokens) {
-    if (removalSet.has(token)) continue;
-    const weight = weightMap.get(token) || 0;
-    if (weight > 0) continue;
-    const entry = state.tokenSources.get(token);
-    const active = !!(entry && (entry.input || entry.output || entry.committed));
-    if (!active && nodes.size - removalSet.size > 1) {
-      removalSet.add(token);
-    }
-  }
-
-  let remaining = nodes.size - removalSet.size;
-  if (maxTokens > 0 && remaining > maxTokens) {
-    const candidates = orderedTokens.filter(token => !removalSet.has(token));
-    candidates.sort((a, b) => {
-      const weightA = weightMap.get(a) || 0;
-      const weightB = weightMap.get(b) || 0;
-      if (weightA !== weightB) return weightA - weightB;
-      const idxA = state.tokenOrder.indexOf(a);
-      const idxB = state.tokenOrder.indexOf(b);
-      const normA = idxA === -1 ? Number.MAX_SAFE_INTEGER : idxA;
-      const normB = idxB === -1 ? Number.MAX_SAFE_INTEGER : idxB;
-      if (normA !== normB) return normA - normB;
-      return a.localeCompare(b, undefined, { sensitivity: 'base' });
-    });
-    const excess = remaining - maxTokens;
-    for (let i = 0; i < excess && i < candidates.length; i += 1) {
-      removalSet.add(candidates[i]);
-    }
-    remaining -= Math.min(excess, candidates.length);
-  }
-
-  if (removalSet.size) {
-    for (const token of removalSet) {
-      nodes.delete(token);
-    }
-  }
-
-  const finalEdges = filteredEdges.filter(edge => nodes.has(edge.from) && nodes.has(edge.to));
-
-  for (const node of nodes.values()) {
-    node.degree = 0;
-  }
-  for (const edge of finalEdges) {
-    const fromNode = nodes.get(edge.from);
-    const toNode = nodes.get(edge.to);
-    if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
-    if (toNode) toNode.degree = (toNode.degree || 0) + 1;
-  }
-
-  if (removalSet.size) {
-    for (const token of removalSet) {
-      state.tokenSources.delete(token);
-    }
-    state.tokenOrder = state.tokenOrder.filter(token => state.tokenSources.has(token));
-  }
-
-  return { edges: finalEdges, removedTokens: Array.from(removalSet) };
 }
 
 function setInputPreviewTokens(tokens, options = {}) {
@@ -9615,9 +9412,7 @@ function rebuildLiveGraph(options = {}) {
   });
 
   graph.nodes = nodes;
-  let edges = computeLiveGraphEdges(nodes);
-  const { edges: prunedEdges } = pruneLiveGraphNodes(nodes, edges);
-  edges = prunedEdges;
+  const edges = computeLiveGraphEdges(nodes);
   graph.links = edges;
   graph.edges = edges;
   graph.nodeCount = nodes.size;
