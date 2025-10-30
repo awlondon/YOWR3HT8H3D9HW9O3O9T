@@ -53,7 +53,7 @@ const CONFIG: EngineConfig = {
   MAX_CONCURRENCY: 5,
   MAX_RETRY_ATTEMPTS: 3,
   RETRY_BASE_DELAY_MS: 500,
-  DOCUMENT_CHUNK_SIZE: 1000,
+  DOCUMENT_CHUNK_SIZE: 12,
   CACHE_SEED_LIMIT: 8000,
   DEFAULT_MODEL: 'gpt-4o-mini',
   MODEL_PRICING: {
@@ -66,7 +66,7 @@ const CONFIG: EngineConfig = {
     completion: 320,
   },
   ADJACENCY_RECURSION_DEPTH: 3,
-  ADJACENCY_EDGES_PER_LEVEL: 50,
+  ADJACENCY_EDGES_PER_LEVEL: 6,
   NETWORK_RETRY_BACKOFF_MS: 5000,
 };
 
@@ -10314,6 +10314,52 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
   }
 }
 
+async function ensureSymbolicAdjacencyConnectivity(matrices, seedEntries, chunkLabel, context) {
+  const normalizedSeeds = normalizeAdjacencyInputs(seedEntries);
+  if (!normalizedSeeds.length) {
+    return { updated: false, connectivity: null, stats: null, provenance: null };
+  }
+
+  const initialConnectivity = analyzeAdjacencyConnectivity(matrices, normalizedSeeds);
+  if (initialConnectivity?.allSeedsConnected) {
+    return { updated: false, connectivity: initialConnectivity, stats: null, provenance: null };
+  }
+
+  const expansion = await fetchRecursiveAdjacencies(
+    normalizedSeeds,
+    context,
+    `${chunkLabel} symbolic connectivity`,
+    {
+      normalizedSeeds,
+      depth: CONFIG.ADJACENCY_RECURSION_DEPTH,
+      edgesPerLevel: CONFIG.ADJACENCY_EDGES_PER_LEVEL,
+      stopWhenConnected: true,
+      requireCompleteGraph: false,
+      preferDb: true,
+    },
+  );
+
+  if (expansion?.matrices instanceof Map && expansion.matrices.size) {
+    mergeAdjacencyMaps(matrices, expansion.matrices);
+    calculateAttention(matrices);
+    const resolvedConnectivity = expansion.connectivity
+      || analyzeAdjacencyConnectivity(matrices, normalizedSeeds);
+    return {
+      updated: true,
+      connectivity: resolvedConnectivity,
+      stats: expansion.stats || null,
+      provenance: expansion.provenance || null,
+    };
+  }
+
+  return {
+    updated: false,
+    connectivity: initialConnectivity,
+    stats: expansion?.stats || null,
+    provenance: expansion?.provenance || null,
+  };
+}
+
 function collectHiddenAdjacencyTokens(options = {}) {
   const minAdjacencies = Number.isFinite(options.minAdjacencies) && options.minAdjacencies >= 0
     ? Math.floor(options.minAdjacencies)
@@ -17321,60 +17367,45 @@ async function processPrompt(prompt) {
   }
 }
 
-function buildDocumentChunks(text, maxChars = 1000) {
-  const sentences = splitIntoSentences(text);
-  const rawChunkTexts = [];
-  let currentText = '';
-  let oversizedSentences = 0;
-  let rawTokenCount = 0;
+function buildDocumentChunks(text, maxUniqueTokens = CONFIG.DOCUMENT_CHUNK_SIZE || 12) {
+  const rawTokens = tokenize(text || '');
+  const alignedTokens = DbLexicon.alignTokens(rawTokens).filter(Boolean);
+  const uniqueLimit = Math.max(1, Math.floor(Number(maxUniqueTokens) || 1));
 
-  const flushCurrent = () => {
-    if (currentText.trim()) {
-      rawChunkTexts.push(currentText.trim());
-      currentText = '';
-    }
-  };
+  const chunks = [];
+  let currentChunk = [];
+  let currentUnique = new Set();
 
-  for (const sentence of sentences) {
-    const trimmed = sentence.trim();
-    if (!trimmed) continue;
-    const sentenceTokens = tokenize(trimmed);
-    if (!sentenceTokens.length) continue;
-    rawTokenCount += sentenceTokens.length;
-    const sentenceLength = trimmed.length;
-
-    if (sentenceLength > maxChars) {
-      flushCurrent();
-      oversizedSentences += 1;
-      for (let i = 0; i < sentenceLength; i += maxChars) {
-        const slice = trimmed.slice(i, i + maxChars).trim();
-        if (slice) rawChunkTexts.push(slice);
-      }
+  for (const token of alignedTokens) {
+    const normalized = (token == null ? '' : String(token)).trim();
+    if (!normalized) {
       continue;
     }
 
-    const needsFlush = currentText && (currentText.length + 1 + sentenceLength) > maxChars;
-    if (needsFlush) flushCurrent();
+    currentChunk.push(normalized);
+    if (normalized) {
+      currentUnique.add(normalized.toLowerCase());
+    }
 
-    currentText = currentText ? `${currentText} ${trimmed}` : trimmed;
+    if (currentUnique.size >= uniqueLimit) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentUnique = new Set();
+    }
   }
 
-  flushCurrent();
-
-  if (!rawChunkTexts.length && sentences.length) {
-    const fallback = sentences.join(' ').trim();
-    const fallbackTokens = tokenize(fallback);
-    rawTokenCount += fallbackTokens.length;
-    if (fallback) rawChunkTexts.push(fallback);
+  if (currentChunk.length) {
+    chunks.push(currentChunk);
   }
 
-  const alignedChunks = rawChunkTexts
-    .map(chunkText => DbLexicon.alignTokens(tokenize(chunkText)).filter(Boolean))
-    .filter(chunk => chunk.length);
+  const totalTokens = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
 
-  const totalTokens = alignedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-
-  return { chunks: alignedChunks, totalTokens, oversizedSentences, rawTokenCount };
+  return {
+    chunks,
+    totalTokens,
+    oversizedSentences: 0,
+    rawTokenCount: rawTokens.length,
+  };
 }
 
 async function editForCoherence(kind, chunkLabel, text) {
@@ -17818,8 +17849,8 @@ Write a reflective synthesis of this passage in the voice of the cached database
   calculateAttention(outputMatrices);
   const allMatrices = new Map([...inputMatrices, ...outputMatrices]);
   calculateAttention(allMatrices);
-  const topTokens = summarizeAttention(allMatrices);
-  const keyRels = extractKeyRelationships(allMatrices);
+  let topTokens = summarizeAttention(allMatrices);
+  let keyRels = extractKeyRelationships(allMatrices);
 
   addLog(`<div class="adjacency-insight"><strong>🎯 ${sanitize(chunkLabel)} Focus:</strong> ${formatTopTokens(topTokens)}</div>`);
   if (keyRels.length) {
@@ -17873,8 +17904,9 @@ Write a reflective synthesis of this passage in the voice of the cached database
   }
 
   let localAdjacency = null;
+  let localAdjTargets = [];
   if (localResponseTokens.length) {
-    const localAdjTargets = collectSymbolAwareTokens(localOutput, localResponseTokens, `${chunkLabel}-local-output`);
+    localAdjTargets = collectSymbolAwareTokens(localOutput, localResponseTokens, `${chunkLabel}-local-output`);
     if (localAdjTargets.length) {
       const localAdjStatus = logStatus(`⏳ ${chunkLabel}: caching local HLSF AGI adjacencies`);
       const localAdjStart = performance.now();
@@ -17896,6 +17928,36 @@ Write a reflective synthesis of this passage in the voice of the cached database
     localAdjStats = summarizeAdjacencyResults(localAdjacency);
     mergeAdjacencyMaps(allMatrices, localAdjacency);
     calculateAttention(allMatrices);
+  }
+
+  const symbolicSeeds = [
+    ...promptAdjTokens,
+    ...originalAdjTokens,
+    ...localAdjTargets,
+  ].filter(Boolean);
+
+  if (symbolicSeeds.length) {
+    const connectivityStatus = logStatus(`⏳ ${chunkLabel}: ensuring symbolic connectivity`);
+    try {
+      const connectivityResult = await ensureSymbolicAdjacencyConnectivity(
+        allMatrices,
+        symbolicSeeds,
+        chunkLabel,
+        promptText,
+      );
+      if (connectivityResult.updated) {
+        topTokens = summarizeAttention(allMatrices);
+        keyRels = extractKeyRelationships(allMatrices);
+      }
+      if (connectivityResult.connectivity?.allSeedsConnected) {
+        connectivityStatus.innerHTML = `✅ ${sanitize(`${chunkLabel}: symbolic connectivity satisfied`)}`;
+      } else {
+        connectivityStatus.innerHTML = `⚠️ ${sanitize(`${chunkLabel}: symbolic connectivity incomplete`)}`;
+      }
+    } catch (err) {
+      connectivityStatus.innerHTML = `❌ ${sanitize(`${chunkLabel}: symbolic connectivity failed`)}${err?.message ? ` (${sanitize(err.message)})` : ''}`;
+      console.warn('Symbolic connectivity expansion failed:', err);
+    }
   }
 
   const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
@@ -18281,9 +18343,9 @@ async function processDocumentFile(file) {
 
     const text = await DocumentReaders.extract(file);
     if (currentAbortController?.signal.aborted) throw new Error('AbortError');
-    const chunkSize = CONFIG.DOCUMENT_CHUNK_SIZE || 1000;
-    const chunkInfo = buildDocumentChunks(text, chunkSize);
-    const { chunks, totalTokens, oversizedSentences, rawTokenCount } = chunkInfo;
+    const chunkDimension = Number(CONFIG.DOCUMENT_CHUNK_SIZE) || 12;
+    const chunkInfo = buildDocumentChunks(text, chunkDimension);
+    const { chunks, totalTokens, rawTokenCount } = chunkInfo;
 
     if (!rawTokenCount) {
       logError('Document contained no readable tokens.');
@@ -18297,10 +18359,7 @@ async function processDocumentFile(file) {
       return;
     }
 
-    addLog(`📥 Processing <strong>${sanitize(file.name || 'document')}</strong> (${totalTokens} tokens → ${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
-    if (oversizedSentences) {
-      addLog(`ℹ️ ${oversizedSentences} sentence${oversizedSentences === 1 ? '' : 's'} exceeded ${chunkSize} characters and were split.`);
-    }
+    addLog(`📥 Processing <strong>${sanitize(file.name || 'document')}</strong> (${totalTokens} tokens → ${chunks.length} segment${chunks.length === 1 ? '' : 's'} · ≤ ${chunkDimension} unique tokens each)`);
 
     const cachedTokenBaseline = Number.isFinite(state.documentCacheBaseline)
       ? state.documentCacheBaseline
@@ -18323,27 +18382,47 @@ async function processDocumentFile(file) {
     const chunkResults = [];
 
     let cancelledMidway = false;
-    for (let i = 0; i < chunks.length; i++) {
+    const levelDimension = Math.max(1, Number(CONFIG.DOCUMENT_CHUNK_SIZE) || 1);
+    for (let levelStart = 0; levelStart < chunks.length; levelStart += levelDimension) {
       if (currentAbortController?.signal.aborted) {
         logWarning('Document processing cancelled.');
         cancelledMidway = true;
         exitStatus = 'cancelled';
         break;
       }
-      const chunk = chunks[i];
-      chunk.forEach(token => focusTokens.add(token));
-      commitTokens(chunk, { render: false });
-      addConversationTokens(chunk);
-      const chunkMeta = estimator ? estimator.prepareChunk(i, chunk) : {};
-      if (!chunkMeta.documentName) {
-        chunkMeta.documentName = file?.name || 'document';
+
+      const levelChunks = chunks.slice(levelStart, levelStart + levelDimension);
+      const levelIndex = Math.floor(levelStart / levelDimension) + 1;
+      for (let offset = 0; offset < levelChunks.length; offset++) {
+        if (currentAbortController?.signal.aborted) {
+          logWarning('Document processing cancelled.');
+          cancelledMidway = true;
+          exitStatus = 'cancelled';
+          break;
+        }
+
+        const chunkIndex = levelStart + offset;
+        const chunk = levelChunks[offset];
+        chunk.forEach(token => focusTokens.add(token));
+        commitTokens(chunk, { render: false });
+        addConversationTokens(chunk);
+        const chunkMeta = estimator ? estimator.prepareChunk(chunkIndex, chunk) : {};
+        if (!chunkMeta.documentName) {
+          chunkMeta.documentName = file?.name || 'document';
+        }
+        const result = await analyzeDocumentChunk(chunk, chunkIndex, chunks.length, chunkMeta);
+        if (result) {
+          chunkResults.push(result);
+          mergeAdjacencyMaps(aggregateMatrices, result.matrices);
+          if (estimator) estimator.recordChunk(chunkIndex, result.metrics || {}, chunkMeta);
+        }
       }
-      const result = await analyzeDocumentChunk(chunk, i, chunks.length, chunkMeta);
-      if (result) {
-        chunkResults.push(result);
-        mergeAdjacencyMaps(aggregateMatrices, result.matrices);
-        if (estimator) estimator.recordChunk(i, result.metrics || {}, chunkMeta);
+
+      if (cancelledMidway || currentAbortController?.signal.aborted) {
+        break;
       }
+
+      logOK(`HLSF level ${levelIndex} consolidated (${levelChunks.length} segment${levelChunks.length === 1 ? '' : 's'}).`);
     }
 
     if (cancelledMidway) {
