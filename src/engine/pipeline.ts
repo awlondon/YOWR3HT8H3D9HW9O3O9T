@@ -377,3 +377,4 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     top,
     consciousness,
   };
+}
