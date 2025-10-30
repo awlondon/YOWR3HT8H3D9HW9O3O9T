@@ -5487,6 +5487,46 @@ const DocumentReaders = (() => {
     return await file.text();
   }
 
+  async function preload(options = {}) {
+    const config = (options && typeof options === 'object') ? options : {};
+    const formats = Array.isArray(config.formats) && config.formats.length
+      ? new Set(config.formats.map(f => String(f).toLowerCase()))
+      : null;
+    const silent = config.silent === true;
+
+    const shouldInclude = (format) => !formats || formats.has(format);
+    const tasks = [];
+
+    if (shouldInclude('pdf')) {
+      tasks.push(
+        ExternalLoaders.loadPdfJs()
+          .then(lib => Boolean(lib))
+          .catch(err => {
+            if (!silent) console.warn('PDF preloader failed:', err);
+            return false;
+          })
+      );
+    }
+
+    if (shouldInclude('docx')) {
+      tasks.push(
+        ExternalLoaders.loadJsZip()
+          .then(lib => Boolean(lib))
+          .catch(err => {
+            if (!silent) console.warn('DOCX preloader failed:', err);
+            return false;
+          })
+      );
+    }
+
+    if (!tasks.length) {
+      return { pdf: false, docx: false };
+    }
+
+    const [pdfReady = false, docxReady = false] = await Promise.all(tasks);
+    return { pdf: Boolean(pdfReady), docx: Boolean(docxReady) };
+  }
+
   async function extract(file) {
     if (!file) throw new Error('No file selected');
     const name = (file.name || '').toLowerCase();
@@ -5507,7 +5547,7 @@ const DocumentReaders = (() => {
     }
   }
 
-  return { extract };
+  return { extract, preload };
 })();
 
 function validatePrompt(prompt) {
@@ -13577,6 +13617,11 @@ async function cmdRead() {
     logWarning('Processing already in progress');
     return;
   }
+  try {
+    await DocumentReaders.preload({ silent: true });
+  } catch (err) {
+    console.warn('Document reader preload failed:', err);
+  }
   const input = elements.readFileInput;
   if (!input) {
     logError('Reader input unavailable');
@@ -17290,6 +17335,7 @@ class DocumentReadEstimator {
     this.totalNonAdjacencyDurationMs = 0;
     this.totalUniqueTokensObserved = 0;
     this.cachedTokenBaseline = Math.max(0, Number(options?.cachedTokenBaseline) || 0);
+    this.warmupStats = null;
 
     const seedTokens = Array.isArray(options?.seedTokens)
       ? options.seedTokens
@@ -17363,6 +17409,23 @@ class DocumentReadEstimator {
       keys: uniqueKeys,
       cachedFlags,
     };
+  }
+
+  recordWarmup(stats = {}) {
+    if (!stats || typeof stats !== 'object') return;
+    const summary = {
+      uniqueTokens: Math.max(0, Number(stats.uniqueTokens) || 0),
+      cachedBefore: Math.max(0, Number(stats.cachedBefore) || 0),
+      stagedFromDb: Math.max(0, Number(stats.stagedFromDb) || 0),
+      remoteHits: Math.max(0, Number(stats.remoteHits) || 0),
+      remoteLoads: Math.max(0, Number(stats.remoteLoads) || 0),
+      durationMs: Math.max(0, Number(stats.durationMs) || 0),
+    };
+    this.warmupStats = summary;
+    if (summary.cachedBefore > this.cachedTokenBaseline) {
+      this.cachedTokenBaseline = summary.cachedBefore;
+    }
+    this.updateStatus();
   }
 
   getSimulationSeed() {
@@ -17542,7 +17605,11 @@ class DocumentReadEstimator {
       const baselineNote = hasBaseline && preview.cachedBefore === 0
         ? ` Warm cache baseline detected: ${baseline.toLocaleString()} tokens.`
         : '';
-      this.statusElement.innerHTML = `⏳ Document ETA ready • ${this.totalChunks} ${chunkWord}.<br><small>Segment 1 preview: ${preview.uniqueTokens} unique tokens (${preview.newBefore} new, ${cachedSummary}).${baselineNote}</small>`;
+      const warmup = this.warmupStats;
+      const warmupLine = warmup
+        ? `<br><small>Warmup: ${warmup.cachedBefore.toLocaleString()} cached · ${(warmup.stagedFromDb + warmup.remoteLoads).toLocaleString()} hydrated · ${warmup.remoteHits.toLocaleString()} remote hits</small>`
+        : '';
+      this.statusElement.innerHTML = `⏳ Document ETA ready • ${this.totalChunks} ${chunkWord}.<br><small>Segment 1 preview: ${preview.uniqueTokens} unique tokens (${preview.newBefore} new, ${cachedSummary}).${baselineNote}</small>${warmupLine}`;
       return;
     }
 
@@ -18008,6 +18075,116 @@ async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, foc
   addLog(`<div class="section-divider"></div><div class="section-title">🧾 Document Reflection</div><div class="thought-stream">${sanitize(finalReflection)}</div>`);
 }
 
+async function warmDocumentIngestion(chunks, options = {}) {
+  const config = (options && typeof options === 'object') ? options : {};
+  const estimator = config.estimator && typeof config.estimator.recordWarmup === 'function'
+    ? config.estimator
+    : null;
+
+  const tokenSet = new Set();
+  for (const chunk of Array.isArray(chunks) ? chunks : []) {
+    if (!Array.isArray(chunk) || !chunk.length) continue;
+    for (const token of chunk) {
+      if (!token) continue;
+      tokenSet.add(String(token));
+    }
+  }
+
+  const uniqueTokens = Array.from(tokenSet).filter(Boolean);
+  if (!uniqueTokens.length) return null;
+
+  const warmupStatus = logStatus('⏳ Prewarming document cache…');
+  const start = performance.now();
+
+  let cachedBefore = 0;
+  const toWarm = [];
+  for (const token of uniqueTokens) {
+    if (isTokenCached(token)) {
+      cachedBefore += 1;
+    } else {
+      toWarm.push(token);
+    }
+  }
+
+  let stagedFromDb = 0;
+  const dbIndex = toWarm.length ? buildDbRecordIndexMap() : new Map();
+  if (toWarm.length && dbIndex.size) {
+    CacheBatch.begin({ snapshot: getCachedTokenCount() });
+    try {
+      for (const token of toWarm) {
+        const key = typeof token === 'string' ? token.toLowerCase() : '';
+        if (!key || !dbIndex.has(key)) continue;
+        const record = dbIndex.get(key);
+        if (record && stageDbRecordForCache(record)) stagedFromDb += 1;
+      }
+    } finally {
+      CacheBatch.end();
+    }
+  }
+
+  let remoteHits = 0;
+  let remoteLoads = 0;
+  const remote = window.HLSF?.remoteDb;
+  if (toWarm.length
+    && remote
+    && typeof remote.isReady === 'function'
+    && remote.isReady()
+    && typeof remote.preloadTokens === 'function') {
+    try {
+      const stats = await remote.preloadTokens(toWarm);
+      remoteHits = Number(stats?.hits) || 0;
+      remoteLoads = Number(stats?.loaded) || 0;
+    } catch (err) {
+      console.warn('Document warmup remote preload failed:', err);
+    }
+  }
+
+  const elapsed = performance.now() - start;
+  const summaryParts = [];
+  if (cachedBefore > 0) summaryParts.push(`${cachedBefore} cached tokens`);
+  if (stagedFromDb > 0) summaryParts.push(`${stagedFromDb} staged from DB`);
+  if (remoteLoads + remoteHits > 0) {
+    summaryParts.push(`${remoteLoads} remote loads`);
+    summaryParts.push(`${remoteHits} remote hits`);
+  }
+
+  if (warmupStatus) {
+    const duration = formatDuration(elapsed);
+    const summary = summaryParts.length
+      ? summaryParts.map(part => sanitize(part)).join(' · ')
+      : sanitize('No additional warmup required');
+    warmupStatus.innerHTML = `✅ Document cache warmed in ${sanitize(duration)} • ${summary}`;
+  }
+
+  if ((stagedFromDb + remoteLoads + remoteHits) > 0) {
+    notifyHlsfAdjacencyChange('document-warmup', { immediate: true });
+  }
+
+  if (estimator) {
+    try {
+      estimator.recordWarmup({
+        uniqueTokens: uniqueTokens.length,
+        cachedBefore,
+        stagedFromDb,
+        remoteHits,
+        remoteLoads,
+        durationMs: elapsed,
+      });
+    } catch (err) {
+      console.warn('Document warmup estimator update failed:', err);
+    }
+  }
+
+  return {
+    uniqueTokens: uniqueTokens.length,
+    cachedBefore,
+    stagedFromDb,
+    remoteHits,
+    remoteLoads,
+    durationMs: elapsed,
+  };
+}
+
 async function processDocumentFile(file) {
   if (!enterProcessingState()) return;
   let estimator = null;
@@ -18057,6 +18234,10 @@ async function processDocumentFile(file) {
     });
     const etaStatus = logStatus('⏳ Document ETA initializing…');
     estimator.setStatusElement(etaStatus);
+
+    await warmDocumentIngestion(chunks, {
+      estimator,
+    });
 
     const aggregateMatrices = new Map();
     const focusTokens = new Set();
