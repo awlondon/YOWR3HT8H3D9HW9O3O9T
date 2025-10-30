@@ -69,6 +69,17 @@ function cloneData<T>(data: T): T {
   return JSON.parse(JSON.stringify(data)) as T;
 }
 
+const STALE_HANDLE_ERROR_PATTERN = /state cached in an interface object/i;
+
+function markIfStaleHandleError(err: any) {
+  if (!err || typeof err !== 'object') return;
+  const name = typeof (err as any).name === 'string' ? (err as any).name : '';
+  const message = typeof (err as any).message === 'string' ? (err as any).message : '';
+  if (name === 'InvalidStateError' || STALE_HANDLE_ERROR_PATTERN.test(message)) {
+    (err as any).remoteDbStaleHandle = true;
+  }
+}
+
 async function writeJsonToWritable(writable: any, data: unknown) {
   const serialized = JSON.stringify(cloneData(data));
   if (encoder) {
@@ -79,12 +90,17 @@ async function writeJsonToWritable(writable: any, data: unknown) {
 }
 
 async function writeJsonFile(directory: any, name: string, data: unknown) {
-  const fileHandle = await directory.getFileHandle(name, { create: true });
-  const writable = await fileHandle.createWritable();
   try {
-    await writeJsonToWritable(writable, data);
-  } finally {
-    await writable.close();
+    const fileHandle = await directory.getFileHandle(name, { create: true });
+    const writable = await fileHandle.createWritable();
+    try {
+      await writeJsonToWritable(writable, data);
+    } finally {
+      await writable.close();
+    }
+  } catch (err: any) {
+    markIfStaleHandleError(err);
+    throw err;
   }
 }
 
@@ -104,6 +120,7 @@ async function readJsonFromHandle(handle: any) {
     if (err && (err.name === 'NotFoundError' || err.name === 'NotAllowedError')) {
       return null;
     }
+    markIfStaleHandleError(err);
     throw err;
   }
 }
@@ -117,6 +134,7 @@ async function readJsonFileFromDirectory(directory: any, name: string) {
     if (err && (err.name === 'NotFoundError' || err.name === 'NotAllowedError')) {
       return null;
     }
+    markIfStaleHandleError(err);
     throw err;
   }
 }
@@ -306,8 +324,14 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
   const ensureChunksDirectory = async () => {
     if (!state.directoryHandle) return null;
     if (state.chunksHandle) return state.chunksHandle;
-    state.chunksHandle = await state.directoryHandle.getDirectoryHandle('chunks', { create: true });
-    return state.chunksHandle;
+    try {
+      state.chunksHandle = await state.directoryHandle.getDirectoryHandle('chunks', { create: true });
+      return state.chunksHandle;
+    } catch (err: any) {
+      state.chunksHandle = null;
+      markIfStaleHandleError(err);
+      throw err;
+    }
   };
 
   const normalizeUpdate = (update: RemoteDbUpdate | null) => {
@@ -525,29 +549,37 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
         return `${entryPrefix}.json`;
       })();
 
-      const fileHandle = await chunksDirectory.getFileHandle(fileName, { create: true });
-      const existingPayload = await readJsonFromHandle(fileHandle);
-      const existingTokens = Array.isArray(existingPayload?.tokens) ? existingPayload.tokens : [];
-      const incomingTokens = Array.isArray(chunk.tokens) ? chunk.tokens : [];
-      const mergedTokens = mergeChunkTokens(existingTokens, incomingTokens);
-
-      const writable = await fileHandle.createWritable();
       try {
-        await writeJsonToWritable(writable, {
-          prefix: entryPrefix,
-          token_count: mergedTokens.length,
-          tokens: mergedTokens,
-        });
-      } finally {
-        await writable.close();
-      }
+        const fileHandle = await chunksDirectory.getFileHandle(fileName, { create: true });
+        const existingPayload = await readJsonFromHandle(fileHandle);
+        const existingTokens = Array.isArray(existingPayload?.tokens) ? existingPayload.tokens : [];
+        const incomingTokens = Array.isArray(chunk.tokens) ? chunk.tokens : [];
+        const mergedTokens = mergeChunkTokens(existingTokens, incomingTokens);
 
-      chunkEntries.set(key, {
-        prefix: entryPrefix,
-        href,
-        token_count: mergedTokens.length,
-      });
-      chunkDataCache.set(key, { prefix: entryPrefix, tokens: mergedTokens });
+        const writable = await fileHandle.createWritable();
+        try {
+          await writeJsonToWritable(writable, {
+            prefix: entryPrefix,
+            token_count: mergedTokens.length,
+            tokens: mergedTokens,
+          });
+        } finally {
+          await writable.close();
+        }
+
+        chunkEntries.set(key, {
+          prefix: entryPrefix,
+          href,
+          token_count: mergedTokens.length,
+        });
+        chunkDataCache.set(key, { prefix: entryPrefix, tokens: mergedTokens });
+      } catch (err: any) {
+        markIfStaleHandleError(err);
+        if (err && typeof err === 'object' && (err as any).remoteDbStaleHandle) {
+          state.chunksHandle = null;
+        }
+        throw err;
+      }
     }
 
     const tokenSet = new Map<string, string>();
@@ -716,8 +748,14 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
         state.lastSuccessAt = now;
       }
     } catch (err) {
+      if (err && typeof err === 'object' && (err as any).remoteDbStaleHandle) {
+        state.chunksHandle = null;
+      }
       const message = err instanceof Error ? err.message : String(err);
-      logger.onSyncError?.(`Remote DB sync failed: ${message}`);
+      const suffix = err && typeof err === 'object' && (err as any).remoteDbStaleHandle
+        ? ' (retrying with refreshed file handles)'
+        : '';
+      logger.onSyncError?.(`Remote DB sync failed: ${message}${suffix}`);
     } finally {
       state.writing = false;
       state.metrics.activeStart = 0;
