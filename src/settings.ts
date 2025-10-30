@@ -6,8 +6,9 @@ const DEFAULT_SETTINGS = {
   symbolEmitMode: 'paired' as SymbolEmitMode,
   includeSymbolInSummaries: false,
   maxAdjacencyDepth: 4,
-  maxAdjacencyDegree: 12,
+  maxAdjacencyDegree: 4,
   maxAdjacencyEdgesMultiplier: 6,
+  promptAdjacencyChunkSize: 8,
   secureBillingOnly: true,
 };
 
