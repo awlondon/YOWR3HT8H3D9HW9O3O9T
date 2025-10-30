@@ -187,6 +187,7 @@ const GLOBAL_CONNECTION_WEIGHT = 0.05;
 const DEFAULT_LIVE_TOKEN_CAP = 160;
 const DEFAULT_LIVE_EDGE_WEIGHT_MIN = 0.02;
 const DEFAULT_LOCAL_MEMORY_EDGE_WEIGHT_MIN = 0.02;
+const DEFAULT_HLSF_RELATIONSHIP_LIMIT = 1000;
 
 // Canonical 50-type display names
 const REL_EN = {
@@ -1995,6 +1996,232 @@ function mergeEdgeLists(existingEdges = [], newEdges = []) {
     }
   }
   return [...merged.values()].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+}
+
+function resolveHlsfRelationshipBudget(overrideLimit = null) {
+  if (overrideLimit === Infinity) return Infinity;
+  if (typeof overrideLimit === 'string') {
+    const trimmed = overrideLimit.trim();
+    if (trimmed.toLowerCase() === 'infinity') return Infinity;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return Math.max(0, Math.floor(numeric));
+    }
+  } else if (Number.isFinite(overrideLimit)) {
+    return Math.max(0, Math.floor(Number(overrideLimit)));
+  }
+
+  if (typeof window !== 'undefined') {
+    const config = window?.HLSF?.config || {};
+    const raw = config.relationshipBudget ?? config.relationshipLimit;
+    if (raw === Infinity) return Infinity;
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
+      }
+      if (trimmed.toLowerCase() === 'infinity') return Infinity;
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) {
+        return Math.max(0, Math.floor(numeric));
+      }
+      return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
+    }
+    if (Number.isFinite(raw)) {
+      return Math.max(0, Math.floor(Number(raw)));
+    }
+  }
+
+  return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
+}
+
+function countRecordRelationships(record) {
+  if (!record || typeof record !== 'object') return 0;
+  const relationships = record.relationships && typeof record.relationships === 'object'
+    ? record.relationships
+    : {};
+  let total = 0;
+  for (const edges of Object.values(relationships)) {
+    if (!Array.isArray(edges)) continue;
+    total += edges.length;
+  }
+  return total;
+}
+
+function trimRecordRelationships(record, maxEdges) {
+  if (!record || typeof record !== 'object') {
+    return { removed: 0, kept: 0 };
+  }
+
+  const relationships = record.relationships && typeof record.relationships === 'object'
+    ? record.relationships
+    : {};
+
+  const collected = [];
+  for (const [rel, edges] of Object.entries(relationships)) {
+    if (!Array.isArray(edges)) continue;
+    for (const edge of edges) {
+      if (!edge || typeof edge.token !== 'string') continue;
+      const token = edge.token.trim();
+      if (!token) continue;
+      const weight = Number(edge.weight);
+      collected.push({ rel, token, weight: Number.isFinite(weight) ? weight : 0 });
+    }
+  }
+
+  const allowed = Math.max(0, Math.floor(Number.isFinite(maxEdges) ? maxEdges : 0));
+  if (collected.length <= allowed) {
+    for (const edges of Object.values(relationships)) {
+      if (Array.isArray(edges)) {
+        edges.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+      }
+    }
+    record.relationships = relationships;
+    record.total_relationships = collected.length;
+    if ('relationshipTypes' in record) {
+      record.relationshipTypes = typeof record.relationshipTypes === 'number'
+        ? Object.keys(relationships).length
+        : Object.keys(relationships);
+    }
+    if ('relationship_types' in record) {
+      record.relationship_types = typeof record.relationship_types === 'number'
+        ? Object.keys(relationships).length
+        : Object.keys(relationships);
+    }
+    return { removed: 0, kept: collected.length };
+  }
+
+  collected.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  const selected = collected.slice(0, allowed);
+  const next = {};
+  for (const entry of selected) {
+    if (!next[entry.rel]) next[entry.rel] = [];
+    next[entry.rel].push({ token: entry.token, weight: entry.weight });
+  }
+  for (const edges of Object.values(next)) {
+    edges.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+  }
+
+  record.relationships = next;
+  record.total_relationships = selected.length;
+  const nextKeys = Object.keys(next);
+  if ('relationshipTypes' in record) {
+    record.relationshipTypes = typeof record.relationshipTypes === 'number'
+      ? nextKeys.length
+      : nextKeys;
+  }
+  if ('relationship_types' in record) {
+    record.relationship_types = typeof record.relationship_types === 'number'
+      ? nextKeys.length
+      : nextKeys;
+  }
+
+  return { removed: collected.length - selected.length, kept: selected.length };
+}
+
+function resolveRecordTimestamp(record, fallbackIndex = 0) {
+  if (!record || typeof record !== 'object') {
+    return Number.MIN_SAFE_INTEGER;
+  }
+  const candidates = [record.cached_at, record.updated_at, record.last_ingested_at, record.timestamp];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return Number.MAX_SAFE_INTEGER - fallbackIndex;
+}
+
+function enforceLocalRelationshipBudget(options = {}) {
+  const { limit = null, persist = true } = options || {};
+  const resolvedLimit = resolveHlsfRelationshipBudget(limit);
+  if (!Number.isFinite(resolvedLimit) || resolvedLimit < 0) {
+    return false;
+  }
+
+  const db = window?.HLSF?.dbCache;
+  if (!db || !Array.isArray(db.full_token_data) || db.full_token_data.length === 0) {
+    return false;
+  }
+
+  const records = db.full_token_data;
+  const metrics = [];
+  let totalRelationships = 0;
+
+  for (let idx = 0; idx < records.length; idx += 1) {
+    const record = records[idx];
+    if (!record || typeof record.token !== 'string') continue;
+    const count = countRecordRelationships(record);
+    if (count <= 0) continue;
+    totalRelationships += count;
+    metrics.push({
+      record,
+      token: record.token,
+      count,
+      timestamp: resolveRecordTimestamp(record, idx),
+      index: idx,
+    });
+  }
+
+  if (totalRelationships <= resolvedLimit) {
+    return false;
+  }
+
+  metrics.sort((a, b) => {
+    if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+    return b.index - a.index;
+  });
+
+  let budgetUsed = 0;
+  const trimmedTokens = new Map();
+
+  for (const entry of metrics) {
+    const remaining = resolvedLimit - budgetUsed;
+    if (remaining <= 0) {
+      const { removed } = trimRecordRelationships(entry.record, 0);
+      if (removed > 0) {
+        trimmedTokens.set(entry.token, entry.record);
+      }
+      continue;
+    }
+    if (entry.count <= remaining) {
+      budgetUsed += entry.count;
+      continue;
+    }
+    const { removed, kept } = trimRecordRelationships(entry.record, remaining);
+    budgetUsed += kept;
+    if (removed > 0) {
+      trimmedTokens.set(entry.token, entry.record);
+    }
+  }
+
+  if (!trimmedTokens.size) {
+    return false;
+  }
+
+  for (const [token, record] of trimmedTokens.entries()) {
+    if (!token) continue;
+    const cacheKey = getCacheKey(token);
+    const payload = JSON.stringify(record);
+    const persistedRecord = safeStorageSet(cacheKey, payload);
+    if (!persistedRecord && !memoryStorageFallback.has(cacheKey)) {
+      memoryStorageFallback.set(cacheKey, payload);
+    }
+  }
+
+  if (persist !== false) {
+    try {
+      safeStorageSet(DB_RAW_KEY, JSON.stringify(db));
+    } catch (err) {
+      console.warn('Failed to persist DB snapshot after relationship pruning:', err);
+    }
+  }
+
+  return true;
 }
 
 function applyConversationOverlay(index) {
@@ -4285,6 +4512,7 @@ window.HLSF.config = Object.assign({
   autoHlsfOnChange: existingConfig.autoHlsfOnChange === true,
   showAllAdjacencies: existingConfig.showAllAdjacencies !== false,
   affinity: { threshold: 0.35, iterations: 8 },
+  relationshipBudget: DEFAULT_HLSF_RELATIONSHIP_LIMIT,
 }, existingConfig);
 const initialRelationCap = window.HLSF.config.relationTypeCap;
 window.HLSF.config.relationTypeCap = initialRelationCap === Infinity
@@ -4297,6 +4525,10 @@ window.HLSF.config.edgesPerType = initialEdgesPerType === Infinity
 window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
 window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
 window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
+window.HLSF.config.relationshipBudget = resolveHlsfRelationshipBudget(window.HLSF.config.relationshipBudget);
+if ('relationshipLimit' in window.HLSF.config) {
+  window.HLSF.config.relationshipLimit = window.HLSF.config.relationshipBudget;
+}
 markRelationLegendDirty();
 window.HLSF.config.showRelationLabels = window.HLSF.config.showRelationLabels !== false;
 const rawEdgeLabelThreshold = Number(window.HLSF.config.edgeLabelDensityThreshold);
@@ -5185,6 +5417,7 @@ function refreshDbReference(recordLike, options = {}) {
   }
 
   window.HLSF.dbCache = db;
+  enforceLocalRelationshipBudget({ persist: false });
   if (persist) {
     try {
       safeStorageSet(DB_RAW_KEY, JSON.stringify(db));
