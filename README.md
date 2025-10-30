@@ -32,6 +32,7 @@ flows over the core cognition experience.
 ## System highlights
 ### Prompt comprehension pipeline
 - Symbol-aware tokenization can include modifier glyphs and word neighborhood context (`src/tokens/tokenize.ts`).
+- Prompts are segmented into eight-token adjacency batches to enforce localized relationship mapping (`src/engine/pipeline.ts`).
 - Recursive adjacency building applies configurable depth/degree caps and weight aggregation (`src/graph/recursive_adjacency.ts`).
 - Metrics summarise token density, edge histograms, and salience rankings for downstream tooling (`src/analytics/metrics.ts`).
 

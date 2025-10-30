@@ -17738,14 +17738,12 @@ class DocumentReadEstimator {
   }
 }
 
+
 async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta = {}) {
   const chunkLabel = `Segment ${index + 1}/${totalChunks}`;
   const chunkStart = performance.now();
   const previewTokens = chunkTokens.slice(0, 18).join(' ');
   addLog(`<div class="section-divider"></div><div class="section-title">📚 ${sanitize(chunkLabel)}</div><div>${sanitize(previewTokens)}${chunkTokens.length > 18 ? ' …' : ''}</div>`);
-
-  const storedLesson = LessonStore.fetch(chunkTokens);
-  const lessonUpdates = {};
 
   const documentWordLimit = Math.min(CONFIG.DOCUMENT_WORD_LIMIT || CONFIG.INPUT_WORD_LIMIT, CONFIG.MAX_TOKENS_PER_PROMPT);
   const limitedChunkTokens = chunkTokens.slice(0, documentWordLimit);
@@ -17774,54 +17772,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     documentName: typeof chunkMeta?.documentName === 'string' ? chunkMeta.documentName : undefined,
   });
 
-  const uniqueTokens = [...new Set(promptTokens)].slice(0, 80);
-  const lexiconHint = uniqueTokens.join(', ');
-
-  let originalResponse = '';
-  let originalFromLive = false;
-  const originalStatus = logStatus(`⏳ ${chunkLabel}: generating original response`);
-
-  if (state.apiKey) {
-    const messages = [
-      { role: 'system', content: `You reflect on passages using only the supplied lexicon. Limit your response to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words.` },
-      { role: 'user', content: `Lexicon: ${lexiconHint || '(empty)'}
-Tokens: ${promptTokens.join(' ')}
-Write a reflective synthesis of this passage in the voice of the cached database.` }
-    ];
-    const draftOriginal = await safeAsync(
-      () => callOpenAI(messages, { temperature: 0.45, max_tokens: 420 }),
-      `${chunkLabel} original response failed`
-    ) || '';
-    originalResponse = draftOriginal.trim();
-    if (originalResponse) {
-      originalStatus.innerHTML = `✅ ${chunkLabel}: original response ready`;
-      originalFromLive = true;
-    } else {
-      originalStatus.innerHTML = `⚠️ ${chunkLabel}: original response empty`;
-    }
-  }
-
-  if (!originalResponse && storedLesson?.originalResponse) {
-    originalResponse = storedLesson.originalResponse;
-    originalStatus.innerHTML = `✅ ${chunkLabel}: cached original response`;
-  } else if (!originalResponse) {
-    originalResponse = promptText;
-    originalStatus.innerHTML = `⚠️ ${chunkLabel}: offline original response`;
-  }
-
-  originalResponse = DbLexicon.rewriteText(originalResponse);
-  const originalLimited = limitWords(originalResponse, CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT);
-  if (originalLimited.trimmed) {
-    logWarning(`${chunkLabel}: original response truncated to ${CONFIG.ORIGINAL_OUTPUT_WORD_LIMIT} words.`);
-  }
-  originalResponse = originalLimited.text;
-  const originalWordCount = originalLimited.wordCount;
-
-  const originalTokens = tokenize(originalResponse);
-  if (originalTokens.length) {
-    addConversationTokens(originalTokens);
-    addOutputTokens(originalTokens, { render: false });
-  }
+  const adjacencyStatus = logStatus(`⏳ ${chunkLabel}: preparing adjacency mapping`);
 
   const measure = async (fn) => {
     const startTime = performance.now();
@@ -17830,24 +17781,20 @@ Write a reflective synthesis of this passage in the voice of the cached database
   };
 
   const promptAdjTokens = collectSymbolAwareTokens(promptText, promptTokens, `${chunkLabel}-prompt`);
-  const originalAdjTokens = collectSymbolAwareTokens(originalResponse, originalTokens, `${chunkLabel}-original`);
-  const [inputData, outputData] = await Promise.all([
-    measure(() => batchFetchAdjacencies(promptAdjTokens, promptText, `${chunkLabel} prompt adjacencies`)),
-    measure(() => batchFetchAdjacencies(originalAdjTokens, originalResponse, `${chunkLabel} original response adjacencies`)),
-  ]);
+  const inputData = await measure(() => batchFetchAdjacencies(promptAdjTokens, promptText, `${chunkLabel} prompt adjacencies`));
+
+  if (adjacencyStatus) {
+    adjacencyStatus.innerHTML = `✅ ${sanitize(`${chunkLabel}: adjacency mapping cached`)}`;
+  }
 
   const inputMatrices = inputData.result;
-  const outputMatrices = outputData.result;
   const inputAdjDuration = inputData.duration || 0;
-  const outputAdjDuration = outputData.duration || 0;
   const inputAdjStats = summarizeAdjacencyResults(inputMatrices);
-  const outputAdjStats = summarizeAdjacencyResults(outputMatrices);
   let localAdjDuration = 0;
   let localAdjStats = { hits: 0, misses: 0, total: 0 };
 
   calculateAttention(inputMatrices);
-  calculateAttention(outputMatrices);
-  const allMatrices = new Map([...inputMatrices, ...outputMatrices]);
+  const allMatrices = new Map(inputMatrices);
   calculateAttention(allMatrices);
   let topTokens = summarizeAttention(allMatrices);
   let keyRels = extractKeyRelationships(allMatrices);
@@ -17932,7 +17879,6 @@ Write a reflective synthesis of this passage in the voice of the cached database
 
   const symbolicSeeds = [
     ...promptAdjTokens,
-    ...originalAdjTokens,
     ...localAdjTargets,
   ].filter(Boolean);
 
@@ -17986,15 +17932,9 @@ Write a reflective synthesis of this passage in the voice of the cached database
     ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
   `);
 
-  const safeOriginal = sanitize(originalResponse);
-
   addLog(`<div class="section-divider"></div>
     <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
     <div class="final-output">
-      <details open>
-        <summary>Original LLM response (${originalWordCount} words)</summary>
-        <pre>${safeOriginal}</pre>
-      </details>
       <details open>
         <summary>Local HLSF AGI thought stream (${localThoughtWordCount} words)</summary>
         <pre>${safeThought}</pre>
@@ -18030,7 +17970,12 @@ Write a reflective synthesis of this passage in the voice of the cached database
       },
       {
         role: 'user',
-        content: `Local response:\n${localOutput}\n\nAdjacency lexicon hints:${adjacencyLexicon.length ? ` ${adjacencyLexicon.join(', ')}` : ' (none)'}\nHistorical refinement hints:${uncachedHistoricalHints.length ? ` ${uncachedHistoricalHints.join(', ')}` : ' (none available)' }\nInstructions: Produce a grammatically coherent rewrite that incorporates adjacency hints and, when helpful, the historical refinement hints to fill gaps with coherent replacements. Rate the original response coherence on a 0-1 scale and explain improvements in the rewrite where relevant.`,
+        content: `Local response:
+${localOutput}
+
+Adjacency lexicon hints:${adjacencyLexicon.length ? ` ${adjacencyLexicon.join(', ')}` : ' (none)'}
+Historical refinement hints:${uncachedHistoricalHints.length ? ` ${uncachedHistoricalHints.join(', ')}` : ' (none available)' }
+Instructions: Produce a grammatically coherent rewrite that incorporates adjacency hints and, when helpful, the historical refinement hints to fill gaps with coherent replacements. Rate the original response coherence on a 0-1 scale and explain improvements in the rewrite where relevant.`,
       },
     ];
     const rawCoherence = await safeAsync(
@@ -18090,20 +18035,6 @@ Write a reflective synthesis of this passage in the voice of the cached database
     }
   }
 
-  if (originalFromLive && originalResponse) {
-    lessonUpdates.originalResponse = originalResponse;
-  }
-  if (localOutput) {
-    lessonUpdates.localOutput = localOutput;
-  }
-  if (localThought) {
-    lessonUpdates.thoughtStream = localThought;
-  }
-
-  if (state.apiKey && Object.keys(lessonUpdates).length) {
-    LessonStore.record(chunkTokens, lessonUpdates);
-  }
-
   rebuildLiveGraph({ render: false });
 
   const metaUnique = Number(chunkMeta.uniqueTokens);
@@ -18130,16 +18061,16 @@ Write a reflective synthesis of this passage in the voice of the cached database
     newBefore = uniqueTokenCount;
   }
 
-  const adjacencyDurationMs = inputAdjDuration + outputAdjDuration + localAdjDuration;
-  const adjacencyHits = inputAdjStats.hits + outputAdjStats.hits + localAdjStats.hits;
-  const adjacencyMisses = inputAdjStats.misses + outputAdjStats.misses + localAdjStats.misses;
-  const adjacencyRequests = inputAdjStats.total + outputAdjStats.total + localAdjStats.total;
+  const adjacencyDurationMs = inputAdjDuration + localAdjDuration;
+  const adjacencyHits = inputAdjStats.hits + localAdjStats.hits;
+  const adjacencyMisses = inputAdjStats.misses + localAdjStats.misses;
+  const adjacencyRequests = inputAdjStats.total + localAdjStats.total;
   const totalDurationMs = performance.now() - chunkStart;
   const adjacencyHitRate = adjacencyRequests > 0 ? adjacencyHits / adjacencyRequests : 0;
 
   return {
     tokens: chunkTokens,
-    originalResponse,
+    originalResponse: null,
     localOutput,
     thoughtStream: localThought,
     coherence: coherenceAssessment,
@@ -18159,6 +18090,7 @@ Write a reflective synthesis of this passage in the voice of the cached database
     },
   };
 }
+
 
 async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, focusTokens, docName) {
   calculateAttention(aggregateMatrices);
