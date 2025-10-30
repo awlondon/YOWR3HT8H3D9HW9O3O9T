@@ -27,6 +27,7 @@ export interface UserAvatarStore {
   getState(): UserAvatarState;
   recordInteraction(entry: Partial<Omit<AvatarInteraction, 'id' | 'timestamp'>> & { prompt: string; tokens?: string[]; }): AvatarInteraction;
   updateInteraction(id: string, updates: Partial<Omit<AvatarInteraction, 'id' | 'timestamp'>>): AvatarInteraction | null;
+  reset(options?: { notify?: boolean }): void;
   subscribe(listener: (state: UserAvatarState) => void): () => void;
 }
 
@@ -86,6 +87,15 @@ function persistEntries(entries: AvatarInteraction[]): void {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
   } catch (error) {
     console.warn('Unable to persist UserAvatar entries:', error);
+  }
+}
+
+function clearPersistedEntries(): void {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn('Unable to clear persisted UserAvatar entries:', error);
   }
 }
 
@@ -222,10 +232,21 @@ export function initializeUserAvatarStore(): UserAvatarStore {
     };
   }
 
+  function reset(options?: { notify?: boolean }): void {
+    const shouldNotify = options?.notify !== false;
+    state.entries.length = 0;
+    state.metrics = recalcMetrics(state.entries);
+    clearPersistedEntries();
+    if (shouldNotify) {
+      notify();
+    }
+  }
+
   return {
     getState,
     recordInteraction,
     updateInteraction,
+    reset,
     subscribe,
   };
 }
