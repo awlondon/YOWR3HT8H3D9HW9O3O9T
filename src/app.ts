@@ -3040,19 +3040,67 @@ function drawHLSFMatrix(graph, opts = {}) {
 }
 
 let _anim = null;
+const HLSF_FRAME_INTERVAL_MS = 1000 / 30;
+
+function isEmergentAnimationActive() {
+  const cfg = window.HLSF?.config;
+  const state = window.HLSF?.state;
+  if (!cfg || !state) return false;
+  if (cfg.emergentActive === false) return false;
+  const emergent = state.emergent;
+  if (!emergent || emergent.on !== true) return false;
+  const speed = Number.isFinite(emergent.speed)
+    ? emergent.speed
+    : (Number.isFinite(cfg.rotationOmega) ? cfg.rotationOmega : 0);
+  return Math.abs(speed) > 1e-3;
+}
+
+function startHlsfAnimation(step) {
+  if (!isEmergentAnimationActive()) {
+    _anim = null;
+    return;
+  }
+
+  let last = performance.now();
+  let accumulator = 0;
+
+  const tick = (now) => {
+    if (!isEmergentAnimationActive()) {
+      _anim = null;
+      return;
+    }
+
+    accumulator += now - last;
+    last = now;
+
+    if (accumulator < HLSF_FRAME_INTERVAL_MS) {
+      _anim = requestAnimationFrame(tick);
+      return;
+    }
+
+    const dtSeconds = accumulator / 1000;
+    accumulator = 0;
+    step(dtSeconds);
+    _anim = requestAnimationFrame(tick);
+  };
+
+  _anim = requestAnimationFrame(tick);
+}
+
 function animateComposite(graph, glyphOnly = false) {
   if (!graph) return;
-  cancelAnimationFrame(_anim);
+  if (_anim) {
+    cancelAnimationFrame(_anim);
+    _anim = null;
+  }
   window.HLSF.currentGraph = graph;
   window.HLSF.currentGlyphOnly = glyphOnly === true;
-  let last = performance.now();
-  (function loop(now) {
-    const dt = (now - last) / 1000;
-    last = now;
+  const drawFrame = () => drawComposite(graph, { glyphOnly });
+  drawFrame();
+  startHlsfAnimation(dt => {
     stepRotation(dt);
-    drawComposite(graph, { glyphOnly });
-    _anim = requestAnimationFrame(loop);
-  })(last);
+    drawFrame();
+  });
 }
 
 function animateHLSF(graph, glyphOnly = false) {
@@ -3063,17 +3111,18 @@ function animateHLSF(graph, glyphOnly = false) {
     return;
   }
 
-  cancelAnimationFrame(_anim);
+  if (_anim) {
+    cancelAnimationFrame(_anim);
+    _anim = null;
+  }
   window.HLSF.currentGraph = graph;
   window.HLSF.currentGlyphOnly = glyphOnly === true;
-  let last = performance.now();
-  (function loop(now) {
-    const dt = (now - last) / 1000;
-    last = now;
+  const drawFrame = () => drawHLSFMatrix(graph, { glyphOnly });
+  drawFrame();
+  startHlsfAnimation(dt => {
     stepRotation(dt);
-    drawHLSFMatrix(graph, { glyphOnly });
-    _anim = requestAnimationFrame(loop);
-  })(last);
+    drawFrame();
+  });
 }
 
 function stopHLSFAnimation() {
@@ -3525,7 +3574,7 @@ function ensureHLSFCanvas() {
         <div class="hlsf-control-group">
           <label>Emergent rotation</label>
           <div class="hlsf-button-row">
-            <button id="hlsf-toggle-emergent" class="btn btn-secondary">Stop Emergence</button>
+            <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergence</button>
           </div>
         </div>
         <div class="hlsf-control-group">
@@ -3827,6 +3876,12 @@ function bindHlsfControls(wrapper) {
       state.on = !state.on;
       window.HLSF.config.emergentActive = state.on;
       syncHlsfControls(wrapper);
+      if (state.on && window.HLSF.currentGraph) {
+        animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
+      } else if (!state.on && _anim) {
+        cancelAnimationFrame(_anim);
+        _anim = null;
+      }
       requestRender();
     });
   }
@@ -3985,9 +4040,15 @@ function syncHlsfControls(wrapper) {
   window.HLSF.config.rotationOmega = clampedOmega;
   if (emergentState) {
     emergentState.speed = clampedOmega;
+    if (typeof emergentState.on !== 'boolean') {
+      emergentState.on = config.emergentActive === true;
+    }
   } else {
     window.HLSF.state = window.HLSF.state || {};
-    window.HLSF.state.emergent = { on: true, speed: clampedOmega };
+    window.HLSF.state.emergent = {
+      on: config.emergentActive === true,
+      speed: clampedOmega,
+    };
   }
   if (speedSlider) speedSlider.value = clampedOmega.toFixed(2);
   if (speedVal) speedVal.textContent = clampedOmega.toFixed(2);
@@ -4194,7 +4255,7 @@ window.HLSF.config = Object.assign({
   scale: 1,
   tx: 0,
   ty: 0,
-  emergentActive: true,
+  emergentActive: false,
   showEdges: true,
   showLabels: true,
   fillFaces: false,
@@ -4263,7 +4324,8 @@ window.HLSF.state = Object.assign({}, prevState);
 const emergentState = prevState.emergent && typeof prevState.emergent === 'object'
   ? prevState.emergent
   : {};
-window.HLSF.state.emergent = Object.assign({ on: true, speed: window.HLSF.config.rotationOmega || 0 }, emergentState);
+const emergentDefaultOn = window.HLSF.config.emergentActive === true;
+window.HLSF.state.emergent = Object.assign({ on: emergentDefaultOn, speed: window.HLSF.config.rotationOmega || 0 }, emergentState);
 window.HLSF.state.emergentRot = Number.isFinite(prevState.emergentRot) ? prevState.emergentRot : 0;
 if (!(window.HLSF.state.patches instanceof Map)) window.HLSF.state.patches = new Map();
 window.HLSF.view = Object.assign({ x: 0, y: 0, scale: 1 }, window.HLSF.view || {});
@@ -11568,6 +11630,12 @@ function initHLSFCanvas() {
     state.on = !state.on;
     window.HLSF.config.emergentActive = state.on;
     emergentBtn.textContent = state.on ? 'Stop Emergence' : 'Start Emergence';
+    if (state.on && window.HLSF.currentGraph) {
+      animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
+    } else if (!state.on && _anim) {
+      cancelAnimationFrame(_anim);
+      _anim = null;
+    }
     requestRender();
   });
 
