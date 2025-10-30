@@ -53,7 +53,7 @@ const CONFIG: EngineConfig = {
   MAX_CONCURRENCY: 5,
   MAX_RETRY_ATTEMPTS: 3,
   RETRY_BASE_DELAY_MS: 500,
-  DOCUMENT_CHUNK_SIZE: 12,
+  DOCUMENT_CHUNK_SIZE: 8,
   CACHE_SEED_LIMIT: 8000,
   DEFAULT_MODEL: 'gpt-4o-mini',
   MODEL_PRICING: {
@@ -17367,7 +17367,7 @@ async function processPrompt(prompt) {
   }
 }
 
-function buildDocumentChunks(text, maxUniqueTokens = CONFIG.DOCUMENT_CHUNK_SIZE || 12) {
+function buildDocumentChunks(text, maxUniqueTokens = CONFIG.DOCUMENT_CHUNK_SIZE || 8) {
   const rawTokens = tokenize(text || '');
   const alignedTokens = DbLexicon.alignTokens(rawTokens).filter(Boolean);
   const uniqueLimit = Math.max(1, Math.floor(Number(maxUniqueTokens) || 1));
@@ -18343,7 +18343,7 @@ async function processDocumentFile(file) {
 
     const text = await DocumentReaders.extract(file);
     if (currentAbortController?.signal.aborted) throw new Error('AbortError');
-    const chunkDimension = Number(CONFIG.DOCUMENT_CHUNK_SIZE) || 12;
+    const chunkDimension = Number(CONFIG.DOCUMENT_CHUNK_SIZE) || 8;
     const chunkInfo = buildDocumentChunks(text, chunkDimension);
     const { chunks, totalTokens, rawTokenCount } = chunkInfo;
 
