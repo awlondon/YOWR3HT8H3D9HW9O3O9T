@@ -19229,3 +19229,91 @@ window.addEventListener('load', () => {
 
 setupLandingExperience();
 initialize();
+
+
+/* ===== HLSF limit controls and mental state dropdown wiring ===== */
+(function initHlsfLimitControls(){
+  try {
+    const root = document;
+    const perfSel = root.getElementById('hlsf-performance') as HTMLSelectElement | null;
+    const maxNodes = root.getElementById('hlsf-max-nodes') as HTMLInputElement | null;
+    const maxEdges = root.getElementById('hlsf-max-edges') as HTMLInputElement | null;
+    const maxRel = root.getElementById('hlsf-max-rel') as HTMLInputElement | null;
+    const prune = root.getElementById('hlsf-prune-thresh') as HTMLInputElement | null;
+    const pruneVal = root.getElementById('hlsf-prune-thresh-val') as HTMLElement | null;
+    const mentalSel = root.getElementById('hlsf-mental-state') as HTMLSelectElement | null;
+
+    const PRESETS: Record<string, {branchingFactor:number;maxNodes:number;maxEdges:number;maxRelationTypes:number;pruneWeightThreshold:number}> = {
+      'Featherweight': { branchingFactor: 2, maxNodes: 600,  maxEdges: 1800,  maxRelationTypes: 24, pruneWeightThreshold: 0.22 },
+      'Balanced':     { branchingFactor: 2, maxNodes: 1600, maxEdges: 6400,  maxRelationTypes: 40, pruneWeightThreshold: 0.18 },
+      'Research':     { branchingFactor: 2, maxNodes: 2400, maxEdges: 9600,  maxRelationTypes: 50, pruneWeightThreshold: 0.16 },
+      'Maximalist':   { branchingFactor: 2, maxNodes: 3200, maxEdges: 12800, maxRelationTypes: 50, pruneWeightThreshold: 0.15 },
+      'ChaosLab':     { branchingFactor: 3, maxNodes: 1400, maxEdges: 5600,  maxRelationTypes: 50, pruneWeightThreshold: 0.26 },
+    };
+
+    function applyHlsfLimitsFromControls() {
+      const cfg = (window as any).SETTINGS || ((window as any).SETTINGS = {});
+      cfg.branchingFactor = Number(cfg.branchingFactor ?? 2);
+      if (perfSel && PRESETS[perfSel.value]) {
+        const p = PRESETS[perfSel.value];
+        cfg.branchingFactor = p.branchingFactor;
+        cfg.maxNodes = p.maxNodes;
+        cfg.maxEdges = p.maxEdges;
+        cfg.maxRelationTypes = p.maxRelationTypes;
+        cfg.pruneWeightThreshold = p.pruneWeightThreshold;
+        if (maxNodes) maxNodes.value = String(p.maxNodes);
+        if (maxEdges) maxEdges.value = String(p.maxEdges);
+        if (maxRel)   maxRel.value   = String(p.maxRelationTypes);
+        if (prune)    prune.value    = String(p.pruneWeightThreshold);
+        if (pruneVal) pruneVal.textContent = String(p.pruneWeightThreshold);
+      }
+      if (maxNodes) cfg.maxNodes = Number(maxNodes.value || cfg.maxNodes || 1600);
+      if (maxEdges) cfg.maxEdges = Number(maxEdges.value || cfg.maxEdges || 6400);
+      if (maxRel)   cfg.maxRelationTypes = Number(maxRel.value || cfg.maxRelationTypes || 40);
+      if (prune)    cfg.pruneWeightThreshold = Number(prune.value || cfg.pruneWeightThreshold || 0.18);
+      if (pruneVal) pruneVal.textContent = Number(cfg.pruneWeightThreshold).toFixed(2);
+    }
+
+    function applyMentalStateSelection() {
+      if (!mentalSel) return;
+      const name = mentalSel.value;
+      const map: any = {
+        'Focused':     { threshold: 0.45, iterations: 6,  desc: 'Sustained attention on salient paths' },
+        'Exploratory': { threshold: 0.35, iterations: 8,  desc: 'Broaden search with moderate gating' },
+        'Divergent':   { threshold: 0.25, iterations: 12, desc: 'Fan out aggressively for novelty' },
+        'Reflective':  { threshold: 0.40, iterations: 14, desc: 'Deeper cycling over known structure' },
+        'Agitated':    { threshold: 0.55, iterations: 4,  desc: 'Spike on strongest cues only' },
+      };
+      const picked = map[name] || map['Exploratory'];
+      const wrapper = document;
+      const thr = picked.threshold;
+      const iters = picked.iterations;
+      const thresholdSlider = wrapper.querySelector('#hlsf-aff-thresh') as HTMLInputElement | null;
+      const thresholdVal = wrapper.querySelector('#hlsf-aff-thresh-val') as HTMLElement | null;
+      const iterSlider = wrapper.querySelector('#hlsf-aff-iters') as HTMLInputElement | null;
+      const iterVal = wrapper.querySelector('#hlsf-aff-iters-val') as HTMLElement | null;
+      if (thresholdSlider) thresholdSlider.value = thr.toFixed(2);
+      if (thresholdVal) thresholdVal.textContent = thr.toFixed(2);
+      if (iterSlider) iterSlider.value = String(iters);
+      if (iterVal) iterVal.textContent = String(iters);
+      // trigger any existing listeners
+      thresholdSlider?.dispatchEvent(new Event('input'));
+      iterSlider?.dispatchEvent(new Event('input'));
+    }
+
+    perfSel?.addEventListener('change', applyHlsfLimitsFromControls);
+    maxNodes?.addEventListener('change', applyHlsfLimitsFromControls);
+    maxEdges?.addEventListener('change', applyHlsfLimitsFromControls);
+    maxRel?.addEventListener('change', applyHlsfLimitsFromControls);
+    prune?.addEventListener('input', applyHlsfLimitsFromControls);
+    mentalSel?.addEventListener('change', applyMentalStateSelection);
+
+    // initialize on load
+    applyHlsfLimitsFromControls();
+    applyMentalStateSelection();
+    (window as any).applyHlsfLimitsFromControls = applyHlsfLimitsFromControls;
+  } catch (err) {
+    console.warn('HLSF limit controls init failed:', err);
+  }
+})();
+

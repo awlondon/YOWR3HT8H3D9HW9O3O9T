@@ -573,6 +573,43 @@
                   <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
                   <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
                 </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-performance">Performance profile</label>
+                <select id="hlsf-performance">
+                  <option>Featherweight</option>
+                  <option selected>Balanced</option>
+                  <option>Research</option>
+                  <option>Maximalist</option>
+                  <option>ChaosLab</option>
+                </select>
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-max-nodes">Max nodes</label>
+                <input id="hlsf-max-nodes" type="number" min="100" step="100" value="1600">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-max-edges">Max edges</label>
+                <input id="hlsf-max-edges" type="number" min="300" step="100" value="6400">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-max-rel">Max relation types</label>
+                <input id="hlsf-max-rel" type="number" min="1" max="50" step="1" value="40">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-prune-thresh">Pruning weight threshold <span id="hlsf-prune-thresh-val">0.18</span></label>
+                <input id="hlsf-prune-thresh" type="range" min="0.10" max="0.30" step="0.01" value="0.18">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-mental-state">Mental state</label>
+                <select id="hlsf-mental-state">
+                  <option>Focused</option>
+                  <option selected>Exploratory</option>
+                  <option>Divergent</option>
+                  <option>Reflective</option>
+                  <option>Agitated</option>
+                </select>
+              </div>
+
               </div>
               <div class="hlsf-control-group">
                 <label for="hlsf-layout">Layout</label>

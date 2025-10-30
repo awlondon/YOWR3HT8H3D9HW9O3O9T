@@ -10,6 +10,88 @@ import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 import { buildConsciousnessState, type ConsciousnessState } from './consciousness.js';
 
+
+/** ===== Synthetic branching expansion helpers (guaranteed growth from 1 token) ===== */
+
+type Limits = {
+  branchingFactor: number;
+  maxNodes: number;
+  maxEdges: number;
+  maxRelationTypes: number;
+  pruneWeightThreshold: number;
+};
+
+function resolveLimitsFromSettings(cfg: any): Limits {
+  const dm = (typeof navigator !== 'undefined' && (navigator as any).deviceMemory) || 8;
+  const def = dm <= 4 ? { branchingFactor: 2, maxNodes: 600,  maxEdges: 1800,  maxRelationTypes: 24, pruneWeightThreshold: 0.22 }
+           : dm >= 16 ? { branchingFactor: 2, maxNodes: 3200, maxEdges: 12800, maxRelationTypes: 50, pruneWeightThreshold: 0.15 }
+                       : { branchingFactor: 2, maxNodes: 1600, maxEdges: 6400,  maxRelationTypes: 40, pruneWeightThreshold: 0.18 };
+  return {
+    branchingFactor: Number(cfg?.branchingFactor ?? def.branchingFactor) || def.branchingFactor,
+    maxNodes: Number(cfg?.maxNodes ?? def.maxNodes) || def.maxNodes,
+    maxEdges: Number(cfg?.maxEdges ?? def.maxEdges) || def.maxEdges,
+    maxRelationTypes: Number(cfg?.maxRelationTypes ?? def.maxRelationTypes) || def.maxRelationTypes,
+    pruneWeightThreshold: Number(cfg?.pruneWeightThreshold ?? def.pruneWeightThreshold) || def.pruneWeightThreshold,
+  };
+}
+
+function generateChildrenForToken(token: string, n: number): string[] {
+  const base = String(token || '').trim();
+  const out: string[] = [];
+  const suffixes = ['·α','·β','·γ','·δ','·ε','-1','-2','s','ing'];
+  for (const s of suffixes) {
+    if (out.length >= n) break;
+    const cand = base + s;
+    if (cand !== base) out.push(cand);
+  }
+  while (out.length < n) {
+    out.push(base + '·' + Math.random().toString(36).slice(2, 5));
+  }
+  return out.slice(0, n);
+}
+
+function stronglyConnectedFromEdges(nodes: Array<{token:string}>, edges: Array<{source:string,target:string}>): boolean {
+  const nodeSet = new Set(nodes.map(n => n.token));
+  if (nodeSet.size <= 1) return true;
+  const adj: Record<string, Set<string>> = Object.create(null);
+  for (const t of nodeSet) adj[t] = new Set();
+  for (const e of edges) {
+    if (!nodeSet.has(e.source) || !nodeSet.has(e.target)) continue;
+    adj[e.source].add(e.target);
+    adj[e.target].add(e.source); // undirected approximation
+  }
+  const start = nodeSet.values().next().value as string;
+  const seen = new Set<string>([start]);
+  const q = [start];
+  while (q.length) {
+    const cur = q.shift()!;
+    for (const nb of adj[cur]) if (!seen.has(nb)) { seen.add(nb); q.push(nb); }
+  }
+  return seen.size === nodeSet.size;
+}
+
+function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, seeds: string[], limits: Limits) {
+  const seen = new Set(nodes.map(n => n.token));
+  const queue = [...seeds];
+  while (queue.length) {
+    if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
+    const parent = queue.shift()!;
+    const kids = generateChildrenForToken(parent, limits.branchingFactor);
+    for (const k of kids) {
+      if (!seen.has(k)) {
+        seen.add(k);
+        nodes.push({ token: k, kind: 'word' });
+        queue.push(k);
+      }
+      // bidirectional edges
+      acc.edges.push({ source: parent, target: k, type: 'seed-expansion', w: 1, meta: { synthetic: true } });
+      acc.edges.push({ source: k, target: parent, type: 'seed-expansion', w: 1, meta: { synthetic: true } });
+      if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
+    }
+    // early exit if strongly connected
+    if (stronglyConnectedFromEdges(nodes, acc.edges)) break;
+  }
+}
 export interface PipelineGraph {
   nodes: Array<{
     token: string;
@@ -206,10 +288,56 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
       type: edge.type,
       w: edge.weight,
       meta: edge.meta,
-    });
+    }
+  // Ensure growth even for single-token prompts by synthetic branching
+  try {
+    const limits = resolveLimitsFromSettings(cfg);
+    const currentEdgeCount = accumulator.edges.length;
+    if (tokens.length <= 1 || currentEdgeCount === 0) {
+      const seedText = tokens.length ? String(tokens[0].t || tokens[0].token || '') : '';
+      const seeds = seedText ? [seedText] : [];
+      if (seeds.length) {
+        syntheticBranchingExpansion(nodes, accumulator, seeds, limits);
+      }
+    }
+  } catch (e) {
+    console.warn('Synthetic branching expansion skipped:', e);
+  }
+);
   }
 
   const { edges, edgeHistogram, symbolEdgeCount, weightSum } = accumulator;
+
+  // Prune to limits if configured
+  try {
+    const limits = resolveLimitsFromSettings(cfg);
+    // 1) prune low-weight edges if over cap
+    edges.sort((a,b) => (a.w ?? 0) - (b.w ?? 0));
+    while (edges.length > limits.maxEdges) {
+      if (!edges.length) break;
+      const candidate = edges[0];
+      if ((candidate.w ?? 0) > limits.pruneWeightThreshold) break;
+      edges.shift();
+    }
+    // 2) drop isolated nodes if over cap
+    const nodeSet = new Set(nodes.map(n => n.token));
+    const connected = new Set<string>();
+    for (const e of edges) {
+      if (e.source) connected.add(e.source);
+      if (e.target) connected.add(e.target);
+    }
+    if (nodes.length > limits.maxNodes) {
+      const keep = nodes.filter(n => n?.token && connected.has(n.token));
+      if (keep.length) {
+        nodes.length = 0; nodes.push(...keep.slice(0, limits.maxNodes));
+      } else {
+        nodes.length = limits.maxNodes;
+      }
+    }
+  } catch (e) {
+    console.warn('Prune-to-limits skipped:', e);
+  }
+
   const graph: PipelineGraph = { nodes, edges };
   const top = rankNodes(nodes, 20);
 
