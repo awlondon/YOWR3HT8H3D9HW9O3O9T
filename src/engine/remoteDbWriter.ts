@@ -238,6 +238,12 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
     wasIdleNotified: false,
   };
 
+  const invalidateDirectoryHandles = () => {
+    state.directoryHandle = null;
+    state.chunksHandle = null;
+    state.missingNotified = false;
+  };
+
   const computeChunkCount = (update: RemoteDbUpdate | null) => {
     if (!update) return 0;
     const chunks = Array.isArray(update.chunks) ? update.chunks : [];
@@ -328,8 +334,12 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       state.chunksHandle = await state.directoryHandle.getDirectoryHandle('chunks', { create: true });
       return state.chunksHandle;
     } catch (err: any) {
-      state.chunksHandle = null;
       markIfStaleHandleError(err);
+      if (err && typeof err === 'object' && (err as any).remoteDbStaleHandle) {
+        invalidateDirectoryHandles();
+      } else {
+        state.chunksHandle = null;
+      }
       throw err;
     }
   };
@@ -576,7 +586,7 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       } catch (err: any) {
         markIfStaleHandleError(err);
         if (err && typeof err === 'object' && (err as any).remoteDbStaleHandle) {
-          state.chunksHandle = null;
+          invalidateDirectoryHandles();
         }
         throw err;
       }
@@ -749,7 +759,7 @@ export function createRemoteDbFileWriter(logger: RemoteDbWriterLogger = {}): Rem
       }
     } catch (err) {
       if (err && typeof err === 'object' && (err as any).remoteDbStaleHandle) {
-        state.chunksHandle = null;
+        invalidateDirectoryHandles();
       }
       const message = err instanceof Error ? err.message : String(err);
       const suffix = err && typeof err === 'object' && (err as any).remoteDbStaleHandle
