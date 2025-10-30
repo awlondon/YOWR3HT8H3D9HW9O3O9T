@@ -293,7 +293,6 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
 
   // Ensure growth even for single-token prompts by synthetic branching
   try {
-
     const limits = resolveLimitsFromSettings(cfg);
     const currentEdgeCount = accumulator.edges.length;
     if (tokens.length <= 1 || currentEdgeCount === 0) {
@@ -306,10 +305,9 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
   } catch (e) {
     console.warn('Synthetic branching expansion skipped:', e);
   }
-);
-  }
 
   const { edges, edgeHistogram, symbolEdgeCount, weightSum } = accumulator;
+
 
   // Prune to limits if configured
   try {
@@ -379,4 +377,3 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     top,
     consciousness,
   };
-}
