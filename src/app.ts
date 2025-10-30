@@ -7314,6 +7314,10 @@ function shouldForceHlsfReload(reason) {
 function notifyHlsfAdjacencyChange(reason = 'cache-update', options = {}) {
   markHlsfDataDirty();
   const normalizedReason = typeof reason === 'string' ? reason.toLowerCase() : '';
+  const isPromptReason = normalizedReason.startsWith('prompt');
+  if (isPromptReason) {
+    forcePromptLiveGraphPruning();
+  }
   const forceReload = shouldForceHlsfReload(normalizedReason);
   const shouldAutoReload = forceReload || window.HLSF?.config?.autoHlsfOnChange === true;
   if (shouldAutoReload) {
@@ -7322,7 +7326,7 @@ function notifyHlsfAdjacencyChange(reason = 'cache-update', options = {}) {
     return;
   }
   if (normalizedReason) {
-    if (normalizedReason.startsWith('prompt')) {
+    if (isPromptReason) {
       queueLiveGraphUpdate(60);
       return;
     }
@@ -8661,7 +8665,8 @@ window.CognitionEngine.cache = {
   list: listCachedTokens,
 };
 
-function removeTokensFromCache(tokens) {
+function removeTokensFromCache(tokens, options = {}) {
+  const { silent = false } = options || {};
   const map = new Map();
   for (const raw of Array.isArray(tokens) ? tokens : []) {
     if (!raw) continue;
@@ -8727,7 +8732,9 @@ function removeTokensFromCache(tokens) {
     setDocumentCacheBaseline(Math.max(0, cachedCount));
   }
   updateHeaderCounts();
-  queueLiveGraphUpdate(80);
+  if (!silent) {
+    queueLiveGraphUpdate(80);
+  }
   if (removed > 0) {
     signalVoiceCloneTokensChanged('token-removed');
   }
@@ -9293,6 +9300,27 @@ const RemoteDbStore = (() => {
 
   const listTokens = () => Array.isArray(tokenIndex) ? [...tokenIndex] : [];
 
+  const reset = () => {
+    metadata = null;
+    metadataUrl = null;
+    chunkPrefixLength = 1;
+    chunkMap = new Map();
+    chunkCache.clear();
+    tokenCache.clear();
+    tokenIndex = [];
+    recorderSource = null;
+    try {
+      if (window.HLSF) {
+        window.HLSF.dbCache = null;
+        window.HLSF.dbMeta = null;
+        window.HLSF.dbIndex = [];
+      }
+    } catch (err) {
+      console.warn('Remote DB reset failed to clear HLSF state:', err);
+    }
+    updateHeaderCounts();
+  };
+
   return {
     configure,
     isReady: hasMetadata,
@@ -9301,6 +9329,7 @@ const RemoteDbStore = (() => {
     metadata: () => metadata,
     chunkForToken: chunkKeyFor,
     attachRecorder,
+    reset,
   };
 })();
 
@@ -9600,6 +9629,20 @@ function queueLiveGraphUpdate(delay = 120) {
   }, ms);
 }
 
+function forcePromptLiveGraphPruning() {
+  try {
+    const totalTokens = Array.isArray(state.tokenOrder) ? state.tokenOrder.length : 0;
+    if (totalTokens === 0) return;
+    const result = rebuildLiveGraph({ render: false }) || {};
+    const removed = Array.isArray(result.removedTokens) ? result.removedTokens : [];
+    if (removed.length) {
+      removeTokensFromCache(removed, { silent: true });
+    }
+  } catch (err) {
+    console.warn('Prompt adjacency pruning failed:', err);
+  }
+}
+
 function rebuildLiveGraph(options = {}) {
   const { render = true } = options;
   if (state.liveGraphUpdateTimer) {
@@ -9626,13 +9669,16 @@ function rebuildLiveGraph(options = {}) {
 
   graph.nodes = nodes;
   let edges = computeLiveGraphEdges(nodes);
-  const { edges: prunedEdges } = pruneLiveGraphNodes(nodes, edges);
-  edges = prunedEdges;
+  const pruneResult = pruneLiveGraphNodes(nodes, edges);
+  edges = pruneResult.edges;
   graph.links = edges;
   graph.edges = edges;
   graph.nodeCount = nodes.size;
   graph.dimensionLayout = null;
   graph.live = true;
+  graph.removedTokens = Array.isArray(pruneResult.removedTokens)
+    ? pruneResult.removedTokens
+    : [];
 
   if (!render) return graph;
 
@@ -16537,12 +16583,31 @@ async function handleCommand(cmd) {
         const hadDbSnapshot = safeStorageGet(DB_RAW_KEY, null) != null;
         safeStorageRemove(DB_RAW_KEY);
         markHlsfDataDirty();
+        CacheBatch.cancel();
+        memoryStorageFallback.clear();
+        if (pendingHlsfReloadTimer) {
+          clearTimeout(pendingHlsfReloadTimer);
+          pendingHlsfReloadTimer = null;
+        }
+        hlsfReloadInFlight = false;
+        pendingHlsfReloadAfterFlight = false;
+        lastQueuedHlsfReason = '';
         window.HLSF_GRAPH = null;
         if (window.HLSF) {
           window.HLSF.dbCache = null;
+          window.HLSF.matrices = null;
+          window.HLSF.metrics = {};
+          window.HLSF.layoutCache = null;
+          window.HLSF.indexCache = null;
+          window.HLSF.indexCacheSource = null;
           window.HLSF.currentGraph = null;
           window.HLSF.currentGlyphOnly = false;
           window.HLSF.__centerInit = false;
+          window.HLSF.rendering = null;
+          window.HLSF.state = null;
+          window.HLSF.canvas = null;
+          window.HLSF.ctx = null;
+          window.HLSF.view = { x: 0, y: 0, scale: 1 };
         }
         Session.tokens.clear();
         if (Array.isArray(Session.prompts)) {
@@ -16561,6 +16626,14 @@ async function handleCommand(cmd) {
           }
         } catch (err) {
           console.warn('Remote DB recorder reset failed:', err);
+        }
+        try {
+          const remoteStore = window.HLSF?.remoteDb;
+          if (remoteStore && typeof remoteStore.reset === 'function') {
+            remoteStore.reset();
+          }
+        } catch (err) {
+          console.warn('Remote DB cache reset failed:', err);
         }
         try {
           resetVoiceCloneStore({ persist: true, notify: false });
@@ -16588,8 +16661,28 @@ async function handleCommand(cmd) {
         if (state?.pendingPromptReviews instanceof Map) {
           state.pendingPromptReviews.clear();
         }
+        if (state?.symbolMetrics && typeof state.symbolMetrics === 'object') {
+          state.symbolMetrics.history = [];
+          state.symbolMetrics.last = null;
+          state.symbolMetrics.lastRunGraph = null;
+          state.symbolMetrics.topNodes = [];
+          state.symbolMetrics.lastTokens = [];
+          state.symbolMetrics.lastPipeline = null;
+        }
+        if (state?.liveGraphUpdateTimer) {
+          clearTimeout(state.liveGraphUpdateTimer);
+          state.liveGraphUpdateTimer = null;
+        }
+        state.liveGraph = { nodes: new Map(), links: [] };
+        state.hlsfReady = false;
+        state.liveGraphMode = true;
+        state.lastComputedCacheBase = 0;
+        remoteCacheWarmPromise = null;
+        remoteCacheWarmActiveKey = '';
+        remoteCacheWarmCompletedKey = '';
         setDocumentCacheBaseline(0, { manual: true });
         updateStats();
+        updateHeaderCounts();
         markHlsfDataDirty();
         stopHLSFAnimation();
         hideVisualizer();
