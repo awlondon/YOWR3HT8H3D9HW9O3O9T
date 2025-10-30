@@ -39,6 +39,8 @@ interface EngineConfig {
   ADJACENCY_TOKEN_ESTIMATES: { prompt: number; completion: number };
   ADJACENCY_RECURSION_DEPTH: number;
   ADJACENCY_EDGES_PER_LEVEL: number;
+  ADJACENCY_SPAWN_LIMIT: number;
+  ADJACENCY_RELATIONSHIPS_PER_NODE: number;
   NETWORK_RETRY_BACKOFF_MS: number;
 }
 
@@ -66,7 +68,9 @@ const CONFIG: EngineConfig = {
     completion: 320,
   },
   ADJACENCY_RECURSION_DEPTH: 3,
-  ADJACENCY_EDGES_PER_LEVEL: 6,
+  ADJACENCY_EDGES_PER_LEVEL: 4,
+  ADJACENCY_SPAWN_LIMIT: 2,
+  ADJACENCY_RELATIONSHIPS_PER_NODE: 8,
   NETWORK_RETRY_BACKOFF_MS: 5000,
 };
 
@@ -10395,7 +10399,7 @@ function limitAdjacencyEntryEdges(
 ) {
   if (!entry || typeof entry !== 'object') return entry;
 
-  const limit = Number.isFinite(maxEdges) && maxEdges > 0 ? Math.floor(maxEdges) : 0;
+  const configuredLimit = Number.isFinite(maxEdges) && maxEdges > 0 ? Math.floor(maxEdges) : 0;
   const priorityMap = new Map();
   if (priorityTokens && typeof (priorityTokens as any)[Symbol.iterator] === 'function') {
     for (const value of priorityTokens) {
@@ -10413,7 +10417,30 @@ function limitAdjacencyEntryEdges(
     }
   }
 
-  if (limit <= 0 && priorityMap.size === 0) return entry;
+  const defaultEdgeLimit = Number.isFinite(CONFIG.ADJACENCY_EDGES_PER_LEVEL)
+    ? Math.max(0, Math.floor(CONFIG.ADJACENCY_EDGES_PER_LEVEL))
+    : 0;
+  let hardEdgeLimit = configuredLimit > 0 ? configuredLimit : defaultEdgeLimit;
+  if (defaultEdgeLimit > 0) {
+    hardEdgeLimit = Math.min(hardEdgeLimit || defaultEdgeLimit, defaultEdgeLimit);
+  }
+
+  const relationshipCap = Number.isFinite(CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE)
+    ? Math.max(0, Math.floor(CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE))
+    : 0;
+  if (relationshipCap > 0) {
+    const maxEdgesFromRelationships = Math.max(1, Math.floor(relationshipCap / 2));
+    hardEdgeLimit = hardEdgeLimit > 0 ? Math.min(hardEdgeLimit, maxEdgesFromRelationships) : maxEdgesFromRelationships;
+  }
+
+  if (hardEdgeLimit <= 0 && priorityMap.size === 0) {
+    return { ...entry, relationships: {} };
+  }
+  if (hardEdgeLimit <= 0) {
+    hardEdgeLimit = Math.max(1, Math.min(priorityMap.size, relationshipCap > 0 ? Math.max(1, Math.floor(relationshipCap / 2)) : priorityMap.size));
+  }
+
+  const relationshipLimit = relationshipCap > 0 ? relationshipCap : hardEdgeLimit * 2;
 
   const entryToken = typeof entry.token === 'string' ? entry.token.trim() : '';
   const entryKey = entryToken ? entryToken.toLowerCase() : '';
@@ -10443,18 +10470,15 @@ function limitAdjacencyEntryEdges(
   const selected = [];
   const seenPairs = new Set();
   const selectedTokenKeys = new Set();
-  const priorityCovered = new Set();
 
   const pushEdge = (item) => {
     if (!item || !item.token) return false;
+    if (hardEdgeLimit > 0 && selected.length >= hardEdgeLimit) return false;
     const pairKey = `${item.relation}|${item.normalized}`;
     if (seenPairs.has(pairKey)) return false;
     seenPairs.add(pairKey);
     selected.push(item);
     selectedTokenKeys.add(item.normalized);
-    if (item.priority && !priorityCovered.has(item.normalized)) {
-      priorityCovered.add(item.normalized);
-    }
     return true;
   };
 
@@ -10463,11 +10487,8 @@ function limitAdjacencyEntryEdges(
     pushEdge(item);
   }
 
-  const baseLimit = limit > 0 ? limit : 0;
-  const targetLimit = baseLimit + priorityCovered.size;
-
   for (const item of aggregated) {
-    if (selected.length >= targetLimit) break;
+    if (selected.length >= hardEdgeLimit) break;
     pushEdge(item);
   }
 
@@ -10487,7 +10508,8 @@ function limitAdjacencyEntryEdges(
   }
 
   const relationships = {};
-  for (const item of selected) {
+  const finalEdges = relationshipLimit > 0 ? selected.slice(0, relationshipLimit) : selected;
+  for (const item of finalEdges) {
     if (!item.token) continue;
     if (!relationships[item.relation]) relationships[item.relation] = [];
     relationships[item.relation].push({ token: item.token, weight: item.weight });
@@ -10548,9 +10570,16 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const dbRecordIndex = preferDb && options.dbRecordIndex instanceof Map
       ? options.dbRecordIndex
       : null;
-    const spawnLimit = Number.isFinite(options.spawnLimit) && options.spawnLimit > 0
+    const configuredSpawnLimit = Number.isFinite(options.spawnLimit) && options.spawnLimit > 0
       ? Math.floor(options.spawnLimit)
-      : 2;
+      : CONFIG.ADJACENCY_SPAWN_LIMIT;
+    const spawnLimit = Math.max(
+      1,
+      Math.min(
+        configuredSpawnLimit || CONFIG.ADJACENCY_SPAWN_LIMIT,
+        Math.max(1, CONFIG.ADJACENCY_SPAWN_LIMIT),
+      ),
+    );
     const stopWhenConnected = options.stopWhenConnected === true;
     const requireCompleteGraph = options.requireCompleteGraph !== false;
     const remoteDbStore = window.HLSF?.remoteDb;
@@ -16881,6 +16910,11 @@ async function handleCommand(cmd) {
           delete window.Session.voiceProfileClone;
         }
         clearConversationLog({ resetBatchLog: true });
+        try {
+          userAvatarStore.reset({ notify: true });
+        } catch (err) {
+          console.warn('User avatar reset failed:', err);
+        }
         restoreLocalHlsfMemory({});
         if (state?.tokenSources instanceof Map) {
           state.tokenSources.clear();
