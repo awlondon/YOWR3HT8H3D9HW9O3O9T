@@ -1542,7 +1542,7 @@ function computeLayout(graph, index, options = {}) {
   });
   const activeAngles = computeActiveAngles(packed.types || []);
   const placed = placeLevels(packed.levels, packed.effectiveD, activeAngles);
-  const metrics = computeDbStats(scopedIndex);
+  const dbMetrics = computeDbStats(scopedIndex);
 
   const positions = placed.positions;
   const ensurePosition = (token) => {
@@ -1586,7 +1586,8 @@ function computeLayout(graph, index, options = {}) {
     positions,
     maxRadius: placed.maxRadius || levelCount || 1,
     anchorAngles: placed.anchorAngles,
-    metrics,
+    metrics: dbMetrics,
+    dbMetrics,
     levelCount,
     lastLevelComponents,
     types: packed.types,
@@ -1594,7 +1595,8 @@ function computeLayout(graph, index, options = {}) {
 
   graph.dimensionLayout = layout;
   graph.anchors = Array.isArray(packed.anchors) ? packed.anchors : graph.anchors;
-  graph._metrics = metrics;
+  graph._dbMetrics = dbMetrics;
+  graph._metrics = ensureGraphMetrics(graph);
 
   const linkCount = Array.isArray(graph.links)
     ? graph.links.length
@@ -1603,7 +1605,8 @@ function computeLayout(graph, index, options = {}) {
     nodes: newNodes.size,
     edges: linkCount,
     layout,
-    metrics,
+    metrics: dbMetrics,
+    runMetrics: graph._metrics,
   };
 }
 
