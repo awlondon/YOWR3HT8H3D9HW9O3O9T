@@ -19059,16 +19059,12 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
   const safeResponse = sanitize(localOutput);
 
   addLog(`<div class="section-divider"></div>
-    <div class="section-title">🤖 Local HLSF AGI Output</div>
+    <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
     <div class="thought-stream"><strong>Thought stream:</strong> ${safeThought}</div>
     <div class="local-response"><strong>Actual output:</strong> ${safeResponse}</div>
     <div class="adjacency-insight">${mentalSummary}</div>
     ${visitedSummary}
     ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
-  `);
-
-  addLog(`<div class="section-divider"></div>
-    <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
     <div class="final-output">
       <details open>
         <summary>Local HLSF AGI thought stream (${localThoughtWordCount} words)</summary>
@@ -19157,7 +19153,6 @@ Instructions: Produce a grammatically coherent rewrite that incorporates adjacen
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🧮 Coherence Evaluation</div>
         <div class="adjacency-insight"><strong>Local HLSF AGI coherence score:</strong> ${sanitize(decimalScoreLabel)} (${sanitize(scoreLabel)})<br><strong>Adjacency lexicon:</strong> ${sanitize(lexiconLabel)}<br><strong>Historical refinement lexicon:</strong> ${sanitize(historicalLexiconLabel)}<br>${sanitize(summaryLabel)}${avgScoreLabel ? `<br>${sanitize(avgScoreLabel)}` : ''}</div>
-        <details open><summary>Refined LLM output</summary><pre>${safeCoherent || 'No coherent rewrite returned.'}</pre></details>
       `);
 
       coherenceAssessment = {
