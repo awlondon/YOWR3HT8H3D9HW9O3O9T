@@ -15006,26 +15006,53 @@ const DbLexicon = (() => {
   }
 
   function padToTokenCount(text, target) {
-    const lex = ensure();
     const baseTokens = tokenize(text);
     if (baseTokens.length >= target) return text;
-    const needed = target - baseTokens.length;
-    const lexTokens = lex.tokens.length ? lex.tokens : baseTokens;
-    if (!lexTokens.length || needed <= 0) return text;
+
+    const normalized = (text || '').trim();
+    if (!normalized) return text;
+
+    const sliceSentences = (value) => {
+      return value
+        .split(/[\n\r]+/)
+        .flatMap((line) => {
+          const trimmed = line.trim();
+          if (!trimmed) return [];
+          if (/^[\-*•]/.test(trimmed)) {
+            return [trimmed.replace(/^[\-*•]\s*/, '').trim()];
+          }
+          return trimmed
+            .split(/(?<=[.!?])\s+/)
+            .map(part => part.trim())
+            .filter(Boolean);
+        })
+        .filter(Boolean);
+    };
+
+    const fragments = Array.from(new Set(sliceSentences(normalized)));
+    if (!fragments.length) return text;
+
+    const fragmentTokens = fragments
+      .map(fragment => ({ fragment, tokens: tokenize(fragment) }))
+      .filter(entry => entry.tokens.length > 0);
+
+    if (!fragmentTokens.length) return text;
+
     const filler = [];
-    for (let i = 0; i < needed; i++) {
-      filler.push(lexTokens[i % lexTokens.length]);
+    let remaining = target - baseTokens.length;
+    let idx = 0;
+    const maxIterations = fragmentTokens.length * 8;
+    while (remaining > 0 && idx < maxIterations) {
+      const current = fragmentTokens[idx % fragmentTokens.length];
+      filler.push(current.fragment);
+      remaining -= current.tokens.length;
+      idx += 1;
     }
-    const sentences = [];
-    for (let i = 0; i < filler.length; i += 25) {
-      const slice = filler.slice(i, i + 25);
-      if (!slice.length) continue;
-      const sentence = slice.join(' ');
-      sentences.push(sentence.charAt(0).toUpperCase() + sentence.slice(1) + '.');
-    }
-    const trimmed = text.trim();
-    const fillerText = sentences.join(' ');
-    return trimmed ? `${trimmed}\n\n${fillerText}` : fillerText;
+
+    if (!filler.length) return text;
+
+    const fillerText = filler.join(' ');
+    return normalized ? `${normalized}\n\n${fillerText}` : fillerText;
   }
 
   function uniqueTokens(limit = 120) {
@@ -19781,8 +19808,18 @@ async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, foc
     finalReflection = polishedReflection;
   }
 
-  finalReflection = DbLexicon.padToTokenCount(finalReflection, 1000);
-  const reflectionTokens = tokenize(finalReflection);
+  let reflectionTokens = tokenize(finalReflection);
+  const tokenCountMsg = `Document reflection tokens (pre-padding): ${reflectionTokens.length}`;
+  if (reflectionTokens.length) {
+    logOK(tokenCountMsg);
+  } else {
+    logWarning(tokenCountMsg);
+  }
+
+  if (!state.apiKey || reflectionTokens.length < 150) {
+    finalReflection = DbLexicon.padToTokenCount(finalReflection, 1000);
+    reflectionTokens = tokenize(finalReflection);
+  }
   if (reflectionTokens.length) {
     addConversationTokens(reflectionTokens);
     addOutputTokens(reflectionTokens, { render: false });
