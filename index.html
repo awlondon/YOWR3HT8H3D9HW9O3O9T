@@ -369,9 +369,19 @@
       <section id="voice-model-window" class="voice-model-window">
         <header class="voice-window-header">
           <div class="section-title">🧬 Voice Model Interface</div>
-          <div class="voice-window-actions"></div>
+          <div class="voice-window-actions">
+            <button
+              id="voice-model-minimize"
+              class="btn btn-secondary btn-compact"
+              type="button"
+              aria-expanded="true"
+              aria-controls="voice-model-content"
+            >
+              Minimize
+            </button>
+          </div>
         </header>
-        <div class="voice-model-content">
+        <div id="voice-model-content" class="voice-model-content">
           <div class="voice-model-main" role="region" aria-label="Voice model controls">
             <div class="voice-model-orb" id="voice-model-orb" aria-hidden="true">
               <div class="voice-model-wave voice-model-wave--outer"></div>

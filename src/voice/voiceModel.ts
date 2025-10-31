@@ -57,6 +57,7 @@ type TokenAudioClip = {
 };
 
 const SETTINGS_STORAGE_KEY = 'hlsf-voice-model-settings';
+const MINIMIZE_STORAGE_KEY = 'hlsf-voice-model-minimized';
 
 function readSettings(): VoiceModelSettings {
   if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
@@ -83,6 +84,26 @@ function writeSettings(settings: VoiceModelSettings): void {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   } catch (error) {
     console.warn('Unable to persist voice model settings:', error);
+  }
+}
+
+function readMinimizePreference(): boolean {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem(MINIMIZE_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writeMinimizePreference(minimized: boolean): void {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return;
+  try {
+    window.localStorage.setItem(MINIMIZE_STORAGE_KEY, minimized ? 'true' : 'false');
+  } catch (error) {
+    console.warn('Unable to persist voice model minimized state:', error);
   }
 }
 
@@ -189,6 +210,8 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   const orb = root.querySelector<HTMLElement>('#voice-model-orb');
   const micButton = root.querySelector<HTMLButtonElement>('#voice-model-mic');
   const speakerButton = root.querySelector<HTMLButtonElement>('#voice-model-speaker');
+  const windowContent = root.querySelector<HTMLElement>('#voice-model-content');
+  const minimizeButton = root.querySelector<HTMLButtonElement>('#voice-model-minimize');
   const promptInput = document.getElementById('command-input') as
     | HTMLInputElement
     | HTMLTextAreaElement
@@ -212,6 +235,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   const logContainer = root.querySelector<HTMLElement>('#voice-model-log');
   const metricsContainer = root.querySelector<HTMLElement>('#voice-avatar-metrics');
 
+  let isMinimized = readMinimizePreference();
   let listeningRequested = false;
   let recognition: GenericSpeechRecognition | null = null;
   let recognitionActive = false;
@@ -239,6 +263,46 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   let inFlight = false;
   let promptInputPreviousValue: string | null = null;
   let promptInputPopulatedByVoice = false;
+
+  const MINIMIZE_LABELS = {
+    minimize: 'Minimize voice model interface',
+    maximize: 'Maximize voice model interface',
+  } as const;
+
+  function applyMinimizeState(minimized: boolean): void {
+    root.classList.toggle('is-minimized', minimized);
+    if (windowContent) {
+      windowContent.hidden = minimized;
+    }
+    if (minimizeButton) {
+      minimizeButton.textContent = minimized ? 'Maximize' : 'Minimize';
+      minimizeButton.setAttribute('aria-expanded', minimized ? 'false' : 'true');
+      minimizeButton.setAttribute(
+        'aria-label',
+        minimized ? MINIMIZE_LABELS.maximize : MINIMIZE_LABELS.minimize,
+      );
+    }
+  }
+
+  function setMinimized(minimized: boolean, persist = true): void {
+    isMinimized = minimized;
+    applyMinimizeState(minimized);
+    if (persist) {
+      writeMinimizePreference(minimized);
+    }
+  }
+
+  applyMinimizeState(isMinimized);
+
+  if (minimizeButton) {
+    minimizeButton.addEventListener('click', () => {
+      const next = !isMinimized;
+      setMinimized(next);
+      if (!next && micButton && typeof micButton.focus === 'function') {
+        micButton.focus();
+      }
+    });
+  }
 
   if (latencyInput) {
     latencyInput.value = String(settings.latency);
@@ -1109,6 +1173,9 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
 
   return {
     focus() {
+      if (isMinimized) {
+        setMinimized(false);
+      }
       root.scrollIntoView({ behavior: 'smooth', block: 'start' });
       if (micButton) {
         micButton.focus();
