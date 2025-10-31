@@ -595,6 +595,14 @@
                 <label for="hlsf-max-rel">Max relationships</label>
                 <input id="hlsf-max-rel" type="number" min="500" step="100" value="4200">
               </div>
+              <div class="hlsf-limit-summary" id="hlsf-limit-summary" aria-live="polite">
+                <div class="hlsf-limit-summary__metrics">
+                  <span data-hlsf-limit-nodes>Nodes: 1,600</span>
+                  <span data-hlsf-limit-edges>Edges: 6,400</span>
+                  <span data-hlsf-limit-relationships>Relationships: 4,200</span>
+                </div>
+                <div class="hlsf-limit-summary__hint">Hold Shift (or Option) and drag on the canvas to zoom into a cluster.</div>
+              </div>
               <div class="hlsf-control-group">
                 <label for="hlsf-prune-thresh">Pruning weight threshold <span id="hlsf-prune-thresh-val">0.18</span></label>
                 <input id="hlsf-prune-thresh" type="range" min="0.10" max="0.30" step="0.01" value="0.18">

@@ -125,13 +125,261 @@ function applyPerformanceCaps(settingsOverride = null) {
       maxNodes: nodeCap,
       maxEdges: edgeCap,
       maxRelationships: rawRelationship ?? numericRelationship ?? relationshipBudget,
-      maxRelationTypes: relationCap,
+      maxRelationTypes: Math.max(50, relationCap),
       pruneWeightThreshold: pruneThreshold,
     });
   }
+
+  updateHlsfLimitSummary({
+    nodes: nodeCap,
+    edges: edgeCap,
+    relationships: relationshipBudget,
+  });
 }
 
 applyPerformanceCaps();
+
+function formatHlsfLimitValue(value: unknown): string {
+  if (value === Infinity) return '∞';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toLocaleString();
+  }
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric.toLocaleString();
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : '—';
+  }
+  return '—';
+}
+
+function updateHlsfLimitSummary(limits?: { nodes?: unknown; edges?: unknown; relationships?: unknown }) {
+  if (typeof document === 'undefined') return;
+  const summary = document.getElementById('hlsf-limit-summary');
+  if (!summary) return;
+  const nodesEl = summary.querySelector('[data-hlsf-limit-nodes]');
+  const edgesEl = summary.querySelector('[data-hlsf-limit-edges]');
+  const relEl = summary.querySelector('[data-hlsf-limit-relationships]');
+  if (nodesEl) nodesEl.textContent = `Nodes: ${formatHlsfLimitValue(limits?.nodes)}`;
+  if (edgesEl) edgesEl.textContent = `Edges: ${formatHlsfLimitValue(limits?.edges)}`;
+  if (relEl) relEl.textContent = `Relationships: ${formatHlsfLimitValue(limits?.relationships)}`;
+  if (summary instanceof HTMLElement) {
+    if (Number.isFinite(Number(limits?.nodes))) {
+      summary.dataset.nodes = String(limits?.nodes ?? '');
+    } else {
+      delete summary.dataset.nodes;
+    }
+    if (Number.isFinite(Number(limits?.edges))) {
+      summary.dataset.edges = String(limits?.edges ?? '');
+    } else {
+      delete summary.dataset.edges;
+    }
+    if (limits?.relationships === Infinity) {
+      summary.dataset.relationships = 'Infinity';
+    } else if (Number.isFinite(Number(limits?.relationships))) {
+      summary.dataset.relationships = String(limits?.relationships ?? '');
+    } else {
+      delete summary.dataset.relationships;
+    }
+  }
+}
+
+function shouldStartClusterZoom(event: MouseEvent): boolean {
+  return event.shiftKey || event.altKey || event.metaKey;
+}
+
+function ensureClusterZoomOverlay(canvas: HTMLCanvasElement): HTMLDivElement | null {
+  if (!canvas || typeof document === 'undefined') return null;
+  const host = canvas.parentElement;
+  if (!host) return null;
+  let overlay = host.querySelector<HTMLDivElement>('.hlsf-cluster-zoom-box');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'hlsf-cluster-zoom-box';
+    overlay.setAttribute('aria-hidden', 'true');
+    host.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function getCanvasRelativePosition(canvas: HTMLCanvasElement, event: MouseEvent) {
+  const rect = canvas.getBoundingClientRect();
+  const width = rect.width || canvas.clientWidth || canvas.width || 1;
+  const height = rect.height || canvas.clientHeight || canvas.height || 1;
+  const rawX = event.clientX - rect.left;
+  const rawY = event.clientY - rect.top;
+  const clampedX = Math.max(0, Math.min(width, rawX));
+  const clampedY = Math.max(0, Math.min(height, rawY));
+  return { x: clampedX, y: clampedY };
+}
+
+function buildClusterSelectionRect(
+  canvas: HTMLCanvasElement,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+) {
+  const width = canvas.clientWidth || canvas.width || 1;
+  const height = canvas.clientHeight || canvas.height || 1;
+  const minX = Math.max(0, Math.min(width, Math.min(start.x, end.x)));
+  const minY = Math.max(0, Math.min(height, Math.min(start.y, end.y)));
+  const maxX = Math.max(0, Math.min(width, Math.max(start.x, end.x)));
+  const maxY = Math.max(0, Math.min(height, Math.max(start.y, end.y)));
+  const rectWidth = Math.max(1, maxX - minX);
+  const rectHeight = Math.max(1, maxY - minY);
+  return { x: minX, y: minY, width: rectWidth, height: rectHeight };
+}
+
+function screenToWorldFromCanvas(canvas: HTMLCanvasElement, point: { x: number; y: number }) {
+  window.HLSF = window.HLSF || {};
+  window.HLSF.view = window.HLSF.view || { x: 0, y: 0, scale: 1 };
+  const view = window.HLSF.view;
+  const scale = Number.isFinite(view.scale) ? view.scale : 1;
+  const vx = Number.isFinite(view.x) ? view.x : 0;
+  const vy = Number.isFinite(view.y) ? view.y : 0;
+  return {
+    x: (point.x - vx) / scale,
+    y: (point.y - vy) / scale,
+  };
+}
+
+function applyClusterZoomSelection(
+  canvas: HTMLCanvasElement,
+  rect: { x: number; y: number; width: number; height: number },
+) {
+  if (!canvas || rect.width <= 0 || rect.height <= 0) return;
+  const viewWidth = canvas.clientWidth || canvas.width || 1;
+  const viewHeight = canvas.clientHeight || canvas.height || 1;
+  const padding = 0.85;
+  const startWorld = screenToWorldFromCanvas(canvas, { x: rect.x, y: rect.y });
+  const endWorld = screenToWorldFromCanvas(canvas, {
+    x: rect.x + rect.width,
+    y: rect.y + rect.height,
+  });
+  const worldWidth = Math.max(1e-4, Math.abs(endWorld.x - startWorld.x));
+  const worldHeight = Math.max(1e-4, Math.abs(endWorld.y - startWorld.y));
+  const scaleByWidth = (viewWidth * padding) / worldWidth;
+  const scaleByHeight = (viewHeight * padding) / worldHeight;
+  const targetScale = Math.min(48, Math.max(0.1, Math.min(scaleByWidth, scaleByHeight)));
+  const centerWorldX = startWorld.x + worldWidth / 2;
+  const centerWorldY = startWorld.y + worldHeight / 2;
+  const target = {
+    scale: targetScale,
+    x: viewWidth / 2 - centerWorldX * targetScale,
+    y: viewHeight / 2 - centerWorldY * targetScale,
+  };
+  const travel = Math.hypot(rect.width, rect.height);
+  const duration = Math.min(650, Math.max(220, travel * 1.2));
+  animateViewport(target, duration);
+}
+
+function installClusterZoom(canvas: HTMLCanvasElement | null) {
+  if (!canvas || canvas.dataset.clusterZoomBound === 'true') return;
+  const overlay = ensureClusterZoomOverlay(canvas);
+  if (!overlay) {
+    canvas.dataset.clusterZoomBound = 'true';
+    return;
+  }
+
+  const minSelectionSize = 64;
+  let selecting = false;
+  let startPoint = { x: 0, y: 0 };
+  let currentRect: { x: number; y: number; width: number; height: number } | null = null;
+
+  function resetOverlay() {
+    overlay.style.left = '0px';
+    overlay.style.top = '0px';
+    overlay.style.width = '0px';
+    overlay.style.height = '0px';
+    overlay.setAttribute('aria-hidden', 'true');
+    currentRect = null;
+  }
+
+  function updateOverlayRect(endPoint: { x: number; y: number }) {
+    currentRect = buildClusterSelectionRect(canvas, startPoint, endPoint);
+    overlay.style.left = `${currentRect.x}px`;
+    overlay.style.top = `${currentRect.y}px`;
+    overlay.style.width = `${currentRect.width}px`;
+    overlay.style.height = `${currentRect.height}px`;
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+
+  function cancelSelection() {
+    selecting = false;
+    canvas.classList.remove('hlsf-selecting');
+    overlay.classList.remove('is-active');
+    resetOverlay();
+  }
+
+  const onMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0) return;
+    if (!shouldStartClusterZoom(event)) return;
+    selecting = true;
+    startPoint = getCanvasRelativePosition(canvas, event);
+    updateOverlayRect(startPoint);
+    overlay.classList.add('is-active');
+    canvas.classList.add('hlsf-selecting');
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  };
+
+  const onMouseMove = (event: MouseEvent) => {
+    if (!selecting) return;
+    const pos = getCanvasRelativePosition(canvas, event);
+    updateOverlayRect(pos);
+    event.preventDefault();
+  };
+
+  const onMouseUp = (event: MouseEvent) => {
+    if (!selecting) return;
+    const canvasSize = {
+      width: canvas.clientWidth || canvas.width || 1,
+      height: canvas.clientHeight || canvas.height || 1,
+    };
+    selecting = false;
+    canvas.classList.remove('hlsf-selecting');
+    overlay.classList.remove('is-active');
+    const endPoint = event ? getCanvasRelativePosition(canvas, event) : startPoint;
+    updateOverlayRect(endPoint);
+    const rect = currentRect || buildClusterSelectionRect(canvas, startPoint, endPoint);
+    resetOverlay();
+    if (!rect) return;
+    const effectiveWidth = Math.max(rect.width, Math.min(minSelectionSize, canvasSize.width));
+    const effectiveHeight = Math.max(rect.height, Math.min(minSelectionSize, canvasSize.height));
+    let normalizedRect = { ...rect };
+    if (rect.width < minSelectionSize || rect.height < minSelectionSize) {
+      const centerX = rect.x + rect.width / 2;
+      const centerY = rect.y + rect.height / 2;
+      const halfW = Math.min(effectiveWidth / 2, canvasSize.width / 2);
+      const halfH = Math.min(effectiveHeight / 2, canvasSize.height / 2);
+      const left = Math.max(0, Math.min(canvasSize.width - effectiveWidth, centerX - halfW));
+      const top = Math.max(0, Math.min(canvasSize.height - effectiveHeight, centerY - halfH));
+      normalizedRect = {
+        x: left,
+        y: top,
+        width: Math.min(canvasSize.width, Math.max(effectiveWidth, minSelectionSize)),
+        height: Math.min(canvasSize.height, Math.max(effectiveHeight, minSelectionSize)),
+      };
+    }
+    applyClusterZoomSelection(canvas, normalizedRect);
+  };
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && selecting) {
+      cancelSelection();
+    }
+  };
+
+  canvas.addEventListener('mousedown', onMouseDown, { capture: true });
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('blur', cancelSelection);
+  canvas.dataset.clusterZoomBound = 'true';
+  resetOverlay();
+}
 
 const MEMBERSHIP_LEVELS = {
   DEMO: 'demo',
@@ -4240,8 +4488,9 @@ function bindHlsfControls(wrapper) {
     });
   }
 
-  const canvasEl = wrapper.querySelector('#hlsf-canvas');
+  const canvasEl = wrapper.querySelector('#hlsf-canvas') as HTMLCanvasElement | null;
   if (canvasEl) {
+    installClusterZoom(canvasEl);
     let isDragging = false;
     let lastX = 0;
     let lastY = 0;
@@ -12384,7 +12633,12 @@ function initHLSFCanvas() {
 
   // Initialize canvas
   window.HLSF.canvas = document.getElementById('hlsf-canvas');
-  window.HLSF.ctx = window.HLSF.canvas.getContext('2d');
+  if (window.HLSF.canvas) {
+    installClusterZoom(window.HLSF.canvas as HTMLCanvasElement);
+    window.HLSF.ctx = window.HLSF.canvas.getContext('2d');
+  } else {
+    window.HLSF.ctx = null;
+  }
 
   console.log('Canvas initialized:', window.HLSF.canvas ? 'success' : 'failed');
 
@@ -19548,7 +19802,8 @@ initialize();
 
     const PRESETS = PERFORMANCE_PROFILES;
 
-    function applyHlsfLimitsFromControls() {
+    function applyHlsfLimitsFromControls(options = {}) {
+      const forceDefaults = Boolean(options && options.forceDefaults);
       const cfg = (window as any).SETTINGS || ((window as any).SETTINGS = {});
       const selectedId = perfSel ? perfSel.value.toLowerCase() : String(cfg.performanceProfileId || '').toLowerCase();
       const profile = resolvePerformanceProfile(selectedId || cfg.performanceProfileId);
@@ -19559,27 +19814,28 @@ initialize();
         perfSel.value = profile.id;
       }
 
-      if (maxNodes) {
-        if (!maxNodes.value) maxNodes.value = String(profile.maxNodes);
-        cfg.maxNodes = Number(maxNodes.value || profile.maxNodes);
-      } else {
-        cfg.maxNodes = profile.maxNodes;
-      }
-      if (maxEdges) {
-        if (!maxEdges.value) maxEdges.value = String(profile.maxEdges);
-        cfg.maxEdges = Number(maxEdges.value || profile.maxEdges);
-      } else {
-        cfg.maxEdges = profile.maxEdges;
-      }
-      if (maxRel) {
-        if (!maxRel.value) maxRel.value = String(profile.maxRelationships);
-        cfg.maxRelationships = Number(maxRel.value || profile.maxRelationships);
-      } else {
-        cfg.maxRelationships = profile.maxRelationships;
-      }
-      cfg.maxRelationTypes = profile.maxRelationTypes;
+      const resolveNumericInput = (input, fallback) => {
+        if (!input) return fallback;
+        if (forceDefaults) {
+          input.value = String(fallback);
+          return fallback;
+        }
+        if (!input.value) input.value = String(fallback);
+        const value = Number(input.value);
+        return Number.isFinite(value) ? value : fallback;
+      };
+
+      cfg.maxNodes = resolveNumericInput(maxNodes, profile.maxNodes);
+      cfg.maxEdges = resolveNumericInput(maxEdges, profile.maxEdges);
+      cfg.maxRelationships = resolveNumericInput(maxRel, profile.maxRelationships);
+      const profileRelationTypes = Math.max(50, profile.maxRelationTypes);
+      cfg.maxRelationTypes = profileRelationTypes;
       if (prune) {
-        if (!prune.value) prune.value = String(profile.pruneWeightThreshold);
+        if (forceDefaults) {
+          prune.value = String(profile.pruneWeightThreshold);
+        } else if (!prune.value) {
+          prune.value = String(profile.pruneWeightThreshold);
+        }
         cfg.pruneWeightThreshold = Number(prune.value || profile.pruneWeightThreshold);
       } else {
         cfg.pruneWeightThreshold = profile.pruneWeightThreshold;
@@ -19587,6 +19843,11 @@ initialize();
       if (pruneVal) pruneVal.textContent = Number(cfg.pruneWeightThreshold).toFixed(2);
 
       applyPerformanceCaps(cfg);
+      try {
+        notifyHlsfAdjacencyChange('performance-profile-change', { immediate: true });
+      } catch (err) {
+        console.warn('Unable to refresh HLSF after profile update:', err);
+      }
     }
 
     function applyMentalStateSelection() {
@@ -19616,7 +19877,7 @@ initialize();
       iterSlider?.dispatchEvent(new Event('input'));
     }
 
-    perfSel?.addEventListener('change', applyHlsfLimitsFromControls);
+    perfSel?.addEventListener('change', () => applyHlsfLimitsFromControls({ forceDefaults: true }));
     maxNodes?.addEventListener('change', applyHlsfLimitsFromControls);
     maxEdges?.addEventListener('change', applyHlsfLimitsFromControls);
     maxRel?.addEventListener('change', applyHlsfLimitsFromControls);
@@ -19624,7 +19885,7 @@ initialize();
     mentalSel?.addEventListener('change', applyMentalStateSelection);
 
     // initialize on load
-    applyHlsfLimitsFromControls();
+    applyHlsfLimitsFromControls({ forceDefaults: true });
     applyMentalStateSelection();
     (window as any).applyHlsfLimitsFromControls = applyHlsfLimitsFromControls;
   } catch (err) {
