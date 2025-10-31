@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint \"src/graph/**/*.{ts,tsx}\" src/engine/pipeline.ts src/engine/pipeline.test.ts src/saas/**/*.ts src/settings.ts",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,css,md}\"",
-    "test": "tsc --project tsconfig.test.json && node --test build/test"
+    "test": "tsc --project tsconfig.test.json && node --test build/test",
+    "postinstall": "node ./scripts/patch-typescript-eslint.mjs"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^7.1.1",
