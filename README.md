@@ -121,6 +121,11 @@ npm run dev
 ```
 Open `http://localhost:5173` to launch the shell with hot reload.
 
+> **Tip:** Use `./scripts/npm-run.sh <script>` instead of `npm run <script>` when
+> you want to avoid npm's deprecated `http-proxy` environment warning. The
+> wrapper clears the legacy variables while forwarding standard `HTTP_PROXY`/
+> `HTTPS_PROXY` settings so existing network requirements continue to work.
+
 ### Production build
 ```bash
 npm run build
