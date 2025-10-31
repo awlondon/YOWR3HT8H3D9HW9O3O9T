@@ -18,16 +18,23 @@ export interface AvatarMetrics {
   lastUpdated: number | null;
 }
 
+export interface AvatarProfile {
+  name: string;
+}
+
 export interface UserAvatarState {
   entries: AvatarInteraction[];
   metrics: AvatarMetrics;
+  profile: AvatarProfile;
 }
 
 export interface UserAvatarStore {
   getState(): UserAvatarState;
   recordInteraction(entry: Partial<Omit<AvatarInteraction, 'id' | 'timestamp'>> & { prompt: string; tokens?: string[]; }): AvatarInteraction;
   updateInteraction(id: string, updates: Partial<Omit<AvatarInteraction, 'id' | 'timestamp'>>): AvatarInteraction | null;
-  reset(options?: { notify?: boolean }): void;
+  updateProfile(profile: Partial<AvatarProfile>, options?: { notify?: boolean }): AvatarProfile;
+  replace(state: Partial<UserAvatarState>, options?: { notify?: boolean }): UserAvatarState;
+  reset(options?: { notify?: boolean; clearProfile?: boolean }): void;
   subscribe(listener: (state: UserAvatarState) => void): () => void;
 }
 
@@ -37,41 +44,73 @@ interface InternalState extends UserAvatarState {
 
 const STORAGE_KEY = 'hlsf-user-avatar-v1';
 
-function safeParse(raw: string | null): AvatarInteraction[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map(entry => {
-        if (!entry || typeof entry !== 'object') return null;
-        const prompt = typeof entry.prompt === 'string' ? entry.prompt : '';
-        if (!prompt) return null;
-        const tokens = Array.isArray(entry.tokens)
-          ? entry.tokens.map(token => (typeof token === 'string' ? token : '')).filter(Boolean)
-          : [];
-        const status: AvatarStatus = entry.status === 'completed'
-          || entry.status === 'processing'
-          || entry.status === 'failed'
-          ? entry.status
-          : 'idle';
-        const timestamp = Number.isFinite(entry.timestamp) ? Number(entry.timestamp) : Date.now();
-        const responseSummary = typeof entry.responseSummary === 'string' ? entry.responseSummary : undefined;
-        const newTokenCount = Number.isFinite(entry.newTokenCount) ? Number(entry.newTokenCount) : undefined;
-        return {
-          id: typeof entry.id === 'string' && entry.id ? entry.id : cryptoSafeUuid(),
-          prompt,
-          tokens,
-          status,
-          timestamp,
-          responseSummary,
-          newTokenCount,
-        } satisfies AvatarInteraction;
-      })
-      .filter((entry): entry is AvatarInteraction => Boolean(entry));
-  } catch {
-    return [];
+function defaultAvatarProfile(): AvatarProfile {
+  return { name: '' };
+}
+
+function normalizeProfile(raw: unknown): AvatarProfile {
+  const profile = defaultAvatarProfile();
+  if (!raw || typeof raw !== 'object') {
+    return profile;
   }
+  const name = (raw as { name?: unknown }).name;
+  if (typeof name === 'string') {
+    profile.name = name.trim();
+  }
+  return profile;
+}
+
+function normalizeEntries(entries: unknown): AvatarInteraction[] {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map(entry => {
+      if (!entry || typeof entry !== 'object') return null;
+      const prompt = typeof (entry as any).prompt === 'string' ? (entry as any).prompt : '';
+      if (!prompt) return null;
+      const tokens = Array.isArray((entry as any).tokens)
+        ? (entry as any).tokens.map((token: unknown) => (typeof token === 'string' ? token : '')).filter(Boolean)
+        : [];
+      const status: AvatarStatus = (entry as any).status === 'completed'
+        || (entry as any).status === 'processing'
+        || (entry as any).status === 'failed'
+        ? (entry as any).status
+        : 'idle';
+      const timestamp = Number.isFinite((entry as any).timestamp) ? Number((entry as any).timestamp) : Date.now();
+      const responseSummary = typeof (entry as any).responseSummary === 'string' ? (entry as any).responseSummary : undefined;
+      const newTokenCount = Number.isFinite((entry as any).newTokenCount) ? Number((entry as any).newTokenCount) : undefined;
+      return {
+        id: typeof (entry as any).id === 'string' && (entry as any).id ? (entry as any).id : cryptoSafeUuid(),
+        prompt,
+        tokens,
+        status,
+        timestamp,
+        responseSummary,
+        newTokenCount,
+      } satisfies AvatarInteraction;
+    })
+    .filter((entry): entry is AvatarInteraction => Boolean(entry));
+}
+
+function loadPersistedState(): { entries: AvatarInteraction[]; profile: AvatarProfile } {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return { entries: [], profile: defaultAvatarProfile() };
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { entries: [], profile: defaultAvatarProfile() };
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return { entries: normalizeEntries(parsed), profile: defaultAvatarProfile() };
+    }
+    if (parsed && typeof parsed === 'object') {
+      const entries = normalizeEntries((parsed as any).entries);
+      const profile = normalizeProfile((parsed as any).profile);
+      return { entries, profile };
+    }
+  } catch (error) {
+    console.warn('Unable to read persisted UserAvatar state:', error);
+  }
+  return { entries: [], profile: defaultAvatarProfile() };
 }
 
 function cryptoSafeUuid(): string {
@@ -81,10 +120,15 @@ function cryptoSafeUuid(): string {
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
-function persistEntries(entries: AvatarInteraction[]): void {
+function persistState(state: InternalState): void {
   if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    const payload = {
+      version: 2,
+      entries: state.entries,
+      profile: state.profile,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch (error) {
     console.warn('Unable to persist UserAvatar entries:', error);
   }
@@ -137,18 +181,18 @@ function cloneState(state: InternalState): UserAvatarState {
   return {
     entries: state.entries.map(entry => ({ ...entry })),
     metrics: { ...state.metrics },
+    profile: { ...state.profile },
   };
 }
 
 export function initializeUserAvatarStore(): UserAvatarStore {
-  const initialEntries = (() => {
-    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return [];
-    return safeParse(window.localStorage.getItem(STORAGE_KEY));
-  })();
+  const initialState = loadPersistedState();
+  const sortedEntries = [...initialState.entries].sort((a, b) => a.timestamp - b.timestamp);
 
   const state: InternalState = {
-    entries: [...initialEntries].sort((a, b) => a.timestamp - b.timestamp),
-    metrics: recalcMetrics(initialEntries),
+    entries: sortedEntries,
+    metrics: recalcMetrics(sortedEntries),
+    profile: initialState.profile,
     listeners: new Set(),
   };
 
@@ -165,7 +209,7 @@ export function initializeUserAvatarStore(): UserAvatarStore {
 
   function commit(): void {
     state.metrics = recalcMetrics(state.entries);
-    persistEntries(state.entries);
+    persistState(state);
     notify();
   }
 
@@ -232,11 +276,46 @@ export function initializeUserAvatarStore(): UserAvatarStore {
     };
   }
 
-  function reset(options?: { notify?: boolean }): void {
+  function updateProfile(profile: Partial<AvatarProfile>, options?: { notify?: boolean }): AvatarProfile {
     const shouldNotify = options?.notify !== false;
-    state.entries.length = 0;
+    if (profile && typeof profile === 'object') {
+      if (profile.name !== undefined) {
+        state.profile.name = typeof profile.name === 'string' ? profile.name.trim() : state.profile.name;
+      }
+      persistState(state);
+      if (shouldNotify) {
+        notify();
+      }
+    }
+    return { ...state.profile };
+  }
+
+  function replace(nextState: Partial<UserAvatarState>, options?: { notify?: boolean }): UserAvatarState {
+    const shouldNotify = options?.notify !== false;
+    const nextEntries = normalizeEntries(nextState?.entries);
+    state.entries = nextEntries.sort((a, b) => a.timestamp - b.timestamp);
+    state.profile = normalizeProfile(nextState?.profile);
     state.metrics = recalcMetrics(state.entries);
-    clearPersistedEntries();
+    persistState(state);
+    if (shouldNotify) {
+      notify();
+    }
+    return cloneState(state);
+  }
+
+  function reset(options?: { notify?: boolean; clearProfile?: boolean }): void {
+    const shouldNotify = options?.notify !== false;
+    const clearProfile = options?.clearProfile === true;
+    state.entries.length = 0;
+    if (clearProfile) {
+      state.profile = defaultAvatarProfile();
+    }
+    state.metrics = recalcMetrics(state.entries);
+    if (clearProfile) {
+      clearPersistedEntries();
+    } else {
+      persistState(state);
+    }
     if (shouldNotify) {
       notify();
     }
@@ -246,6 +325,8 @@ export function initializeUserAvatarStore(): UserAvatarStore {
     getState,
     recordInteraction,
     updateInteraction,
+    updateProfile,
+    replace,
     reset,
     subscribe,
   };
