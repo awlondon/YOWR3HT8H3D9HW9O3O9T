@@ -74,6 +74,46 @@ test('runPipeline builds bounded recursive adjacency graph', () => {
   assert.equal(metadataLevels.size >= 2, true, 'expanded edges should include higher-level metadata');
 });
 
+test('single token prompt seeds cached highest-weight adjacencies', () => {
+  const token = 'solo';
+  const cachedRecord = {
+    token,
+    relationships: {
+      '⇄': [
+        { token: 'Alpha', weight: 0.9 },
+        { token: 'Gamma', weight: 0.8 },
+      ],
+      '∼': [
+        { token: 'Beta', weight: 0.4 },
+        { token: 'alpha', weight: 0.6 },
+      ],
+    },
+  };
+
+  const cache = new Map<string, unknown>();
+  cache.set(token, cachedRecord);
+  cache.set(token.toLowerCase(), cachedRecord);
+  (globalThis as any).__HLSF_ADJ_CACHE__ = cache;
+
+  try {
+    const result = runPipeline(token, { ...SETTINGS, tokenizeSymbols: false });
+    const nodeTokens = result.graph.nodes.map(node => node.token);
+
+    assert.equal(nodeTokens.includes('Alpha'), true, 'top adjacency token should be promoted to node');
+    assert.equal(nodeTokens.includes('Gamma'), true, 'second highest adjacency token should be promoted to node');
+
+    const cachedEdges = result.edges.filter(edge => edge.type === 'adjacency:cached');
+    const soloEdges = cachedEdges.filter(edge => edge.source === token);
+    const neighborTargets = new Set(soloEdges.map(edge => edge.target));
+
+    assert.equal(neighborTargets.has('Alpha'), true, 'solo should connect to highest-weight neighbor');
+    assert.equal(neighborTargets.has('Gamma'), true, 'solo should connect to next highest-weight neighbor');
+    assert.equal(soloEdges.length >= 2, true, 'solo should emit at least two cached adjacency edges');
+  } finally {
+    delete (globalThis as any).__HLSF_ADJ_CACHE__;
+  }
+});
+
 test('runPipeline synthesizes a consciousness workspace with recurrent monitoring', () => {
   const input = 'Global workspace integration enables conscious broadcasting!';
   const result = runPipeline(input, { ...SETTINGS, tokenizeSymbols: true });
