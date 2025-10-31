@@ -1338,6 +1338,26 @@
       cursor: grab;
     }
 
+    #hlsf-canvas.hlsf-selecting,
+    #hlsf-canvas.hlsf-selecting:active {
+      cursor: crosshair;
+    }
+
+    .hlsf-cluster-zoom-box {
+      position: absolute;
+      border: 1px dashed rgba(0, 255, 136, 0.75);
+      background: rgba(0, 255, 136, 0.12);
+      border-radius: 6px;
+      display: none;
+      pointer-events: none;
+      z-index: 4;
+      box-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+    }
+
+    .hlsf-cluster-zoom-box.is-active {
+      display: block;
+    }
+
     .hlsf-overlay {
       position: absolute;
       bottom: 1.25rem;
@@ -1459,6 +1479,37 @@
     .hlsf-control-group.hlsf-control-legend {
       grid-column: 1 / -1;
       gap: 0.35rem;
+    }
+
+    .hlsf-limit-summary {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      background: rgba(0, 255, 136, 0.08);
+      border: 1px solid rgba(0, 255, 136, 0.24);
+      font-size: 0.85rem;
+      line-height: 1.4;
+      box-shadow: inset 0 0 20px rgba(0, 255, 136, 0.12);
+    }
+
+    .hlsf-limit-summary__metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      font-family: 'Fira Code', monospace;
+      color: var(--accent);
+    }
+
+    .hlsf-limit-summary__hint {
+      flex: 1 1 220px;
+      text-align: right;
+      color: rgba(255, 255, 255, 0.65);
+      font-size: 0.75rem;
     }
 
     .hlsf-mental-state {
