@@ -20004,7 +20004,7 @@ setupLandingExperience();
 initialize();
 
 
-/* ===== HLSF limit controls and mental state dropdown wiring ===== */
+/* ===== HLSF limit controls wiring ===== */
 (function initHlsfLimitControls(){
   try {
     const root = document;
@@ -20014,7 +20014,6 @@ initialize();
     const maxRel = root.getElementById('hlsf-max-rel') as HTMLInputElement | null;
     const prune = root.getElementById('hlsf-prune-thresh') as HTMLInputElement | null;
     const pruneVal = root.getElementById('hlsf-prune-thresh-val') as HTMLElement | null;
-    const mentalSel = root.getElementById('hlsf-mental-state') as HTMLSelectElement | null;
 
     const PRESETS = PERFORMANCE_PROFILES;
 
@@ -20066,43 +20065,14 @@ initialize();
       }
     }
 
-    function applyMentalStateSelection() {
-      if (!mentalSel) return;
-      const name = mentalSel.value;
-      const map: any = {
-        'Focused':     { threshold: 0.45, iterations: 6,  desc: 'Sustained attention on salient paths' },
-        'Exploratory': { threshold: 0.35, iterations: 8,  desc: 'Broaden search with moderate gating' },
-        'Divergent':   { threshold: 0.25, iterations: 12, desc: 'Fan out aggressively for novelty' },
-        'Reflective':  { threshold: 0.40, iterations: 14, desc: 'Deeper cycling over known structure' },
-        'Agitated':    { threshold: 0.55, iterations: 4,  desc: 'Spike on strongest cues only' },
-      };
-      const picked = map[name] || map['Exploratory'];
-      const wrapper = document;
-      const thr = picked.threshold;
-      const iters = picked.iterations;
-      const thresholdSlider = wrapper.querySelector('#hlsf-aff-thresh') as HTMLInputElement | null;
-      const thresholdVal = wrapper.querySelector('#hlsf-aff-thresh-val') as HTMLElement | null;
-      const iterSlider = wrapper.querySelector('#hlsf-aff-iters') as HTMLInputElement | null;
-      const iterVal = wrapper.querySelector('#hlsf-aff-iters-val') as HTMLElement | null;
-      if (thresholdSlider) thresholdSlider.value = thr.toFixed(2);
-      if (thresholdVal) thresholdVal.textContent = thr.toFixed(2);
-      if (iterSlider) iterSlider.value = String(iters);
-      if (iterVal) iterVal.textContent = String(iters);
-      // trigger any existing listeners
-      thresholdSlider?.dispatchEvent(new Event('input'));
-      iterSlider?.dispatchEvent(new Event('input'));
-    }
-
     perfSel?.addEventListener('change', () => applyHlsfLimitsFromControls({ forceDefaults: true }));
     maxNodes?.addEventListener('change', applyHlsfLimitsFromControls);
     maxEdges?.addEventListener('change', applyHlsfLimitsFromControls);
     maxRel?.addEventListener('change', applyHlsfLimitsFromControls);
     prune?.addEventListener('input', applyHlsfLimitsFromControls);
-    mentalSel?.addEventListener('change', applyMentalStateSelection);
 
     // initialize on load
     applyHlsfLimitsFromControls({ forceDefaults: true });
-    applyMentalStateSelection();
     (window as any).applyHlsfLimitsFromControls = applyHlsfLimitsFromControls;
   } catch (err) {
     console.warn('HLSF limit controls init failed:', err);
