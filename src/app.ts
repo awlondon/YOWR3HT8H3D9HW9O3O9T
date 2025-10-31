@@ -8675,6 +8675,150 @@ const CacheBatch = (() => {
   return { begin, end, cancel, record, isActive, getBaseline, getPending, resolvedBase, total, format, listen };
 })();
 
+const DEFAULT_REMOTE_DB_MIN_RELATION_WEIGHT = 0.1;
+const REMOTE_DB_RELATION_WEIGHT_OVERRIDES = new Map([['seed-link', 0]]);
+
+function resolveRemoteDbPruneThreshold(override) {
+  if (Number.isFinite(override) && override >= 0) {
+    return Math.max(0, Number(override));
+  }
+  if (typeof window !== 'undefined') {
+    const config = window?.HLSF?.config || {};
+    const candidates = [
+      config.remoteDbPruneWeightMin,
+      config.remoteDbMinRelationshipWeight,
+      config.remoteDbPruneWeightThreshold,
+    ];
+    for (const candidate of candidates) {
+      const numeric = Number(candidate);
+      if (Number.isFinite(numeric) && numeric >= 0) {
+        return Math.max(0, numeric);
+      }
+    }
+  }
+  return DEFAULT_REMOTE_DB_MIN_RELATION_WEIGHT;
+}
+
+function pruneRemoteRecordRelationships(record, options = {}) {
+  if (!record || typeof record !== 'object') return false;
+  const relationshipsSource = record.relationships;
+  const relationships = relationshipsSource && typeof relationshipsSource === 'object'
+    ? relationshipsSource
+    : {};
+  if (relationshipsSource !== relationships) {
+    record.relationships = relationships;
+  }
+
+  const overrides = options.relationThresholds instanceof Map
+    ? options.relationThresholds
+    : REMOTE_DB_RELATION_WEIGHT_OVERRIDES;
+  const defaultThreshold = resolveRemoteDbPruneThreshold(options.threshold);
+
+  let changed = false;
+  let totalEdges = 0;
+
+  for (const rel of Object.keys(relationships)) {
+    const edges = Array.isArray(relationships[rel]) ? relationships[rel] : null;
+    const override = overrides.has(rel) ? overrides.get(rel) : undefined;
+    const minWeight = Number.isFinite(override)
+      ? Math.max(0, Number(override))
+      : defaultThreshold;
+
+    if (!edges || edges.length === 0) {
+      if (relationships[rel] != null) {
+        delete relationships[rel];
+        changed = true;
+      }
+      continue;
+    }
+
+    let writeIndex = 0;
+    let mutated = false;
+
+    for (let i = 0; i < edges.length; i += 1) {
+      const edge = edges[i];
+      if (!edge || typeof edge.token !== 'string') {
+        mutated = true;
+        continue;
+      }
+      const token = edge.token.trim();
+      if (!token) {
+        mutated = true;
+        continue;
+      }
+      const numericWeight = Number(edge.weight);
+      if (!Number.isFinite(numericWeight) || numericWeight < minWeight) {
+        mutated = true;
+        continue;
+      }
+      if (edge.token !== token) {
+        edge.token = token;
+        mutated = true;
+      }
+      if (edge.weight !== numericWeight) {
+        edge.weight = numericWeight;
+        mutated = true;
+      }
+      if (writeIndex !== i) {
+        edges[writeIndex] = edge;
+        mutated = true;
+      }
+      writeIndex += 1;
+    }
+
+    if (writeIndex === 0) {
+      delete relationships[rel];
+      changed = true;
+      continue;
+    }
+
+    if (writeIndex !== edges.length) {
+      edges.length = writeIndex;
+      mutated = true;
+    }
+
+    edges.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+    if (mutated) changed = true;
+    totalEdges += edges.length;
+  }
+
+  const relationKeys = Object.keys(relationships);
+  if (record.total_relationships !== totalEdges) {
+    record.total_relationships = totalEdges;
+    changed = true;
+  }
+
+  if ('relationshipTypes' in record) {
+    if (typeof record.relationshipTypes === 'number') {
+      if (record.relationshipTypes !== relationKeys.length) {
+        record.relationshipTypes = relationKeys.length;
+        changed = true;
+      }
+    } else if (!Array.isArray(record.relationshipTypes)
+      || record.relationshipTypes.length !== relationKeys.length
+      || record.relationshipTypes.some((value, idx) => value !== relationKeys[idx])) {
+      record.relationshipTypes = relationKeys.slice();
+      changed = true;
+    }
+  }
+
+  if ('relationship_types' in record) {
+    if (typeof record.relationship_types === 'number') {
+      if (record.relationship_types !== relationKeys.length) {
+        record.relationship_types = relationKeys.length;
+        changed = true;
+      }
+    } else if (!Array.isArray(record.relationship_types)
+      || record.relationship_types.length !== relationKeys.length
+      || record.relationship_types.some((value, idx) => value !== relationKeys[idx])) {
+      record.relationship_types = relationKeys.slice();
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 const RemoteDbRecorder = (() => {
   const STORAGE_KEY = 'HLSF_REMOTE_DB_CHUNKS_V1';
   const META_KEY = 'HLSF_REMOTE_DB_META_V1';
@@ -8969,6 +9113,8 @@ const RemoteDbRecorder = (() => {
     const existing = bucket.get(key);
     const sanitized = cloneRecord(normalized);
     if (!sanitized) return false;
+    pruneRemoteRecordRelationships(sanitized);
+    if (existing) pruneRemoteRecordRelationships(existing);
     if (existing?.cached_at && !sanitized.cached_at) {
       sanitized.cached_at = existing.cached_at;
     }
@@ -9720,6 +9866,144 @@ const RemoteDbStore = (() => {
 
   const normalizeToken = (token) => (token == null ? '' : String(token)).toLowerCase();
 
+  const REMOTE_DB_PRUNE_INTERVAL_MS = 120000;
+  let remotePruneIntervalId = null;
+  let remotePruneSchedule = null;
+
+  const cancelScheduledRemotePrune = () => {
+    if (!remotePruneSchedule) return;
+    if (remotePruneSchedule.type === 'idle') {
+      const cancelIdle = typeof window !== 'undefined' ? window.cancelIdleCallback : null;
+      if (typeof cancelIdle === 'function') {
+        try { cancelIdle(remotePruneSchedule.id); }
+        catch (err) { console.warn('Failed to cancel remote prune idle callback:', err); }
+      }
+    } else {
+      clearTimeout(remotePruneSchedule.id);
+    }
+    remotePruneSchedule = null;
+  };
+
+  const pruneRemoteCaches = (options = {}) => {
+    const { persist = false } = options || {};
+    const pruneOptions = {
+      threshold: options.threshold,
+      relationThresholds: options.relationThresholds,
+    };
+
+    const dirtyTokens = new Set();
+
+    const applyPrune = (tokenKey, record) => {
+      if (!record || typeof record !== 'object') return;
+      const normalized = normalizeToken(tokenKey || record.token);
+      if (!normalized) return;
+      const changed = pruneRemoteRecordRelationships(record, pruneOptions);
+      if (changed) dirtyTokens.add(normalized);
+    };
+
+    for (const chunk of chunkCache.values()) {
+      if (!(chunk instanceof Map)) continue;
+      for (const [tokenKey, record] of chunk.entries()) {
+        applyPrune(tokenKey, record);
+      }
+    }
+
+    for (const [tokenKey, record] of tokenCache.entries()) {
+      applyPrune(tokenKey, record);
+    }
+
+    let persisted = 0;
+    if (persist && dirtyTokens.size) {
+      for (const token of dirtyTokens) {
+        if (!token || !isTokenCached(token)) continue;
+        let record = tokenCache.get(token);
+        if (!record) {
+          for (const chunk of chunkCache.values()) {
+            if (!(chunk instanceof Map)) continue;
+            if (chunk.has(token)) {
+              record = chunk.get(token);
+              break;
+            }
+          }
+        }
+        if (!record || typeof record !== 'object') {
+          const cachedRecord = getCachedRecordForToken(token);
+          if (cachedRecord && typeof cachedRecord === 'object') {
+            record = cachedRecord;
+            pruneRemoteRecordRelationships(record, pruneOptions);
+            tokenCache.set(token, record);
+          } else {
+            continue;
+          }
+        }
+        pruneRemoteRecordRelationships(record, pruneOptions);
+        try {
+          const payload = JSON.stringify(record);
+          const cacheKey = getCacheKey(record.token || token);
+          const persistedOk = safeStorageSet(cacheKey, payload);
+          if (!persistedOk) memoryStorageFallback.set(cacheKey, payload);
+        } catch (err) {
+          console.warn('Failed to persist pruned remote DB record:', err);
+        }
+        try {
+          refreshDbReference(record, { deferReload: true, persist: false });
+        } catch (err) {
+          console.warn('Failed to refresh DB snapshot after pruning remote record:', err);
+        }
+        persisted += 1;
+      }
+    }
+
+    return { pruned: dirtyTokens.size, persisted };
+  };
+
+  const runRemotePruneNow = (options = {}) => {
+    const result = pruneRemoteCaches(Object.assign({ persist: true }, options));
+    if (result.pruned > 0) {
+      updateHeaderCounts();
+    }
+    return result;
+  };
+
+  const ensureRemotePruneTicker = () => {
+    if (remotePruneIntervalId != null) return;
+    if (typeof setInterval !== 'function') return;
+    remotePruneIntervalId = setInterval(() => {
+      scheduleRemotePruneRun();
+    }, REMOTE_DB_PRUNE_INTERVAL_MS);
+  };
+
+  const scheduleRemotePruneRun = (options = {}) => {
+    ensureRemotePruneTicker();
+    if (options.immediate === true) {
+      cancelScheduledRemotePrune();
+      return runRemotePruneNow(options);
+    }
+    if (remotePruneSchedule) return null;
+
+    const idle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback.bind(window)
+      : null;
+
+    const execute = () => {
+      remotePruneSchedule = null;
+      try {
+        runRemotePruneNow(options);
+      } catch (err) {
+        console.warn('Remote DB relationship pruning failed:', err);
+      }
+    };
+
+    if (idle) {
+      const id = idle(execute, { timeout: 1500 });
+      remotePruneSchedule = { type: 'idle', id };
+    } else {
+      const id = setTimeout(execute, 800);
+      remotePruneSchedule = { type: 'timeout', id };
+    }
+    return null;
+  };
+
   const hasMetadata = () => metadata != null || recorderSource != null;
 
   const fallbackPrefix = () => {
@@ -9772,11 +10056,13 @@ const RemoteDbStore = (() => {
       for (const entry of list) {
         const normalized = normalizeRecord(entry);
         if (!normalized) continue;
+        pruneRemoteRecordRelationships(normalized);
         const tokenKey = normalizeToken(normalized.token);
         if (!tokenKey) continue;
         entries.set(tokenKey, normalized);
       }
       chunkCache.set(key, entries);
+      scheduleRemotePruneRun();
       return entries;
     }
 
@@ -9789,16 +10075,19 @@ const RemoteDbStore = (() => {
     for (const entry of list) {
       const normalized = normalizeRecord(entry);
       if (!normalized) continue;
+      pruneRemoteRecordRelationships(normalized);
       const tokenKey = normalizeToken(normalized.token);
       if (!tokenKey) continue;
       entries.set(tokenKey, normalized);
     }
     chunkCache.set(key, entries);
+    scheduleRemotePruneRun();
     return entries;
   };
 
   const ingestRecord = (record) => {
     if (!record || !record.token) return false;
+    pruneRemoteRecordRelationships(record);
     const cacheKey = getCacheKey(record.token);
     const alreadyCached = isTokenCached(record.token);
     let changed = false;
@@ -9823,6 +10112,7 @@ const RemoteDbStore = (() => {
     }
 
     refreshDbReference(record, { deferReload: true, persist: false });
+    scheduleRemotePruneRun();
     return changed;
   };
 
@@ -9949,6 +10239,7 @@ const RemoteDbStore = (() => {
     window.HLSF.dbMeta = metadata;
     updateHeaderCounts();
     scheduleRemoteCacheWarmup({ remote: RemoteDbStore, limit: CONFIG.CACHE_SEED_LIMIT, reason: 'configure' });
+    scheduleRemotePruneRun({ immediate: true });
     return metadata;
   };
 
@@ -9993,6 +10284,7 @@ const RemoteDbStore = (() => {
     }
     updateHeaderCounts();
     scheduleRemoteCacheWarmup({ remote: RemoteDbStore, limit: CONFIG.CACHE_SEED_LIMIT, reason: 'recorder', force: true });
+    scheduleRemotePruneRun({ immediate: true });
     return manifest;
   };
 
@@ -10017,7 +10309,12 @@ const RemoteDbStore = (() => {
       console.warn('Remote DB reset failed to clear HLSF state:', err);
     }
     updateHeaderCounts();
+    cancelScheduledRemotePrune();
+    scheduleRemotePruneRun({ immediate: true });
   };
+
+  ensureRemotePruneTicker();
+  scheduleRemotePruneRun({ immediate: true });
 
   return {
     configure,
@@ -10028,6 +10325,7 @@ const RemoteDbStore = (() => {
     chunkForToken: chunkKeyFor,
     attachRecorder,
     reset,
+    pruneRelationships: (options = {}) => runRemotePruneNow(options),
   };
 })();
 
