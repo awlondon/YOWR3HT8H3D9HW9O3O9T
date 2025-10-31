@@ -428,6 +428,9 @@ const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/help', description: 'Show this command catalog', requiresMembership: false },
   { command: '/clear', description: 'Clear log history', requiresMembership: true },
   { command: '/reset', description: 'Clear cache and database snapshots', requiresMembership: true },
+  { command: '/del-avatar', description: 'Delete avatar conversation log and voice', requiresMembership: true },
+  { command: '/sv-avatar', description: 'Save avatar archive', requiresMembership: true },
+  { command: '/ld-avatar', description: 'Load avatar archive', requiresMembership: true },
   { command: '/stats', description: 'Session statistics overview', requiresMembership: true },
   { command: '/database', description: 'View database metadata', requiresMembership: true },
   { command: '/db', description: 'Alias for /database', requiresMembership: true },
@@ -5914,6 +5917,7 @@ const elements = {
   cachedTokens: document.getElementById('cached-tokens'),
   sessionCost: document.getElementById('session-cost'),
   dbFileInput: document.getElementById('db-file'),
+  avatarBundleInput: document.getElementById('avatar-bundle-input'),
   readFileInput: document.getElementById('read-file'),
 };
 
@@ -5924,6 +5928,42 @@ function sanitize(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function slugifyName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+function stripBase64Prefix(data) {
+  if (typeof data !== 'string') return '';
+  const trimmed = data.trim();
+  if (!trimmed) return '';
+  const comma = trimmed.indexOf(',');
+  return comma >= 0 ? trimmed.slice(comma + 1) : trimmed;
+}
+
+function ensureDataUrl(base64, mime = 'audio/webm') {
+  if (typeof base64 !== 'string') return '';
+  const trimmed = base64.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:')) return trimmed;
+  const type = typeof mime === 'string' && mime ? mime : 'audio/webm';
+  return `data:${type};base64,${trimmed}`;
+}
+
+function audioExtensionForMime(mime) {
+  const normalized = typeof mime === 'string' ? mime.toLowerCase() : '';
+  if (normalized.includes('mpeg') || normalized.includes('mp3')) return 'mp3';
+  if (normalized.includes('wav')) return 'wav';
+  if (normalized.includes('ogg')) return 'ogg';
+  if (normalized.includes('mp4')) return 'm4a';
+  if (normalized.includes('aac')) return 'aac';
+  return 'webm';
 }
 
 function getMembershipLevel() {
@@ -15305,6 +15345,335 @@ function cmdDecrypt(rest) {
   logFinal(`🔓 ${decrypted}\nCoverage: ${coverage}%`);
 }
 
+function selectVoiceTokenForPlayback(store) {
+  if (!store || typeof store !== 'object') return '';
+  const assignments = store.assignments && typeof store.assignments === 'object'
+    ? Object.keys(store.assignments).filter(Boolean)
+    : [];
+  if (assignments.length) return assignments[0];
+  if (Array.isArray(store.recordings) && store.recordings.length) {
+    const first = store.recordings[0];
+    if (first && typeof first.token === 'string' && first.token.trim()) {
+      return first.token.trim();
+    }
+  }
+  return '';
+}
+
+
+async function cmdSaveAvatar(rawArgs = []) {
+  const args = Array.isArray(rawArgs) ? rawArgs : [rawArgs];
+  const requestedName = args.map(part => String(part || '')).join(' ').trim();
+  if (requestedName) {
+    userAvatarStore.updateProfile({ name: requestedName }, { notify: true });
+  }
+
+  let avatarState = userAvatarStore.getState();
+  if (!avatarState.profile.name) {
+    try {
+      const inputName = typeof window.prompt === 'function'
+        ? window.prompt('Name this avatar archive:', '')
+        : '';
+      if (inputName && inputName.trim()) {
+        userAvatarStore.updateProfile({ name: inputName.trim() }, { notify: true });
+        avatarState = userAvatarStore.getState();
+      }
+    } catch (err) {
+      console.warn('Avatar naming prompt failed:', err);
+    }
+  }
+
+  const avatarName = avatarState.profile.name || 'Avatar';
+  let JSZipLib = null;
+  try {
+    JSZipLib = await ExternalLoaders.loadJsZip();
+  } catch (err) {
+    logError(`Avatar save failed: ${err?.message || err}`);
+    return;
+  }
+  if (!JSZipLib || typeof JSZipLib !== 'function') {
+    logError('Avatar save failed: compression library unavailable.');
+    return;
+  }
+
+  const zip = new JSZipLib();
+  const nowIso = new Date().toISOString();
+  const conversationSnapshot = snapshotConversationLog();
+  const voiceApi = window.CognitionEngine?.voice;
+  const voiceStore = voiceApi?.getStore?.();
+  const dbSnapshot = getDb();
+  const consciousnessSnapshot = state?.symbolMetrics?.lastPipeline?.consciousness ?? null;
+
+  const avatarFolder = zip.folder('avatar');
+  if (avatarFolder) {
+    avatarFolder.file('profile.json', JSON.stringify(avatarState.profile, null, 2));
+    avatarFolder.file('interactions.json', JSON.stringify(avatarState.entries, null, 2));
+    avatarFolder.file('metrics.json', JSON.stringify(avatarState.metrics, null, 2));
+    avatarFolder.file('meta.json', JSON.stringify({
+      version: '1.0',
+      name: avatarName,
+      savedAt: nowIso,
+      conversationEntryCount: Array.isArray(conversationSnapshot?.entries) ? conversationSnapshot.entries.length : 0,
+      voiceRecordingCount: Array.isArray(voiceStore?.recordings) ? voiceStore.recordings.length : 0,
+    }, null, 2));
+  }
+
+  const conversationFolder = zip.folder('conversation');
+  if (conversationFolder) {
+    conversationFolder.file('log.json', JSON.stringify(conversationSnapshot, null, 2));
+    conversationFolder.file('log.html', conversationSnapshot?.html || '');
+  }
+
+  if (voiceStore) {
+    const recordingsFolder = zip.folder('voice/recordings');
+    if (recordingsFolder && Array.isArray(voiceStore.recordings)) {
+      voiceStore.recordings.forEach((recording, index) => {
+        if (!recording || typeof recording !== 'object') return;
+        const audioType = typeof recording.audioType === 'string' && recording.audioType ? recording.audioType : 'audio/webm';
+        const rawAudio = stripBase64Prefix(recording.audioBase64 || '');
+        if (!rawAudio) return;
+        const tokenSlug = slugifyName(recording.token || `sample-${index + 1}`) || `sample-${index + 1}`;
+        const ext = audioExtensionForMime(audioType);
+        const fileName = `${tokenSlug}-${index + 1}.${ext}`;
+        try {
+          recordingsFolder.file(fileName, rawAudio, { base64: true });
+          recording.file = `voice/recordings/${fileName}`;
+          recording.audioBase64 = ensureDataUrl(rawAudio, audioType);
+        } catch (err) {
+          console.warn('Failed to attach voice recording to archive:', err);
+        }
+      });
+    }
+    zip.folder('voice')?.file('store.json', JSON.stringify(voiceStore, null, 2));
+  }
+
+  if (dbSnapshot && typeof dbSnapshot === 'object') {
+    zip.folder('hlsf')?.file('database.json', JSON.stringify(dbSnapshot, null, 2));
+  }
+  zip.folder('hlsf')?.file('consciousness.json', JSON.stringify(consciousnessSnapshot ?? null, null, 2));
+
+  const slug = slugifyName(avatarName) || 'avatar';
+  const timestamp = nowIso.replace(/[:]/g, '-');
+  const downloadName = `${slug}_${timestamp}_avatar.zip`;
+
+  try {
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = downloadName;
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(link.href);
+      link.remove();
+    }, 4000);
+    logOK(`Avatar archive saved as ${sanitize(downloadName)}.`);
+  } catch (err) {
+    logError(`Avatar save failed: ${err?.message || err}`);
+  }
+}
+
+
+async function cmdLoadAvatar() {
+  const input = elements.avatarBundleInput;
+  if (!input) {
+    logError('Avatar loader unavailable.');
+    return;
+  }
+  input.value = '';
+  input.accept = '.zip,application/zip';
+  input.onchange = async event => {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+    try {
+      const JSZipLib = await ExternalLoaders.loadJsZip();
+      if (!JSZipLib || typeof JSZipLib.loadAsync !== 'function') {
+        throw new Error('Compression library unavailable');
+      }
+      const zip = await JSZipLib.loadAsync(file);
+      const readJson = async (path, fallback = null) => {
+        try {
+          const entry = zip.file(path);
+          if (!entry) return fallback;
+          const text = await entry.async('string');
+          return JSON.parse(text);
+        } catch (err) {
+          console.warn(`Failed to read ${path} from avatar archive:`, err);
+          return fallback;
+        }
+      };
+
+      const meta = await readJson('avatar/meta.json', {});
+      const profile = await readJson('avatar/profile.json', {});
+      const interactions = await readJson('avatar/interactions.json', []);
+      const metrics = await readJson('avatar/metrics.json', null);
+      const conversationSnapshot = await readJson('conversation/log.json', null);
+      const voiceStore = await readJson('voice/store.json', null);
+      const dbSnapshot = await readJson('hlsf/database.json', null);
+      const consciousnessSnapshot = await readJson('hlsf/consciousness.json', null);
+
+      if (Array.isArray(voiceStore?.recordings)) {
+        await Promise.all(voiceStore.recordings.map(async recording => {
+          if (!recording || typeof recording !== 'object') return;
+          if (typeof recording.audioBase64 === 'string' && recording.audioBase64.trim()) {
+            recording.audioBase64 = ensureDataUrl(recording.audioBase64, recording.audioType || 'audio/webm');
+            return;
+          }
+          const reference = typeof recording.file === 'string' ? recording.file : null;
+          if (!reference) return;
+          const entry = zip.file(reference) || zip.file(reference.replace(/^\//, ''));
+          if (!entry) return;
+          try {
+            const base64 = await entry.async('base64');
+            recording.audioBase64 = ensureDataUrl(base64, recording.audioType || 'audio/webm');
+          } catch (err) {
+            console.warn('Failed to restore audio for recording:', err);
+          }
+        }));
+      }
+
+      if (voiceStore && typeof voiceStore === 'object') {
+        voiceStore.metrics = voiceStore.metrics || metrics || undefined;
+        const voiceApi = window.CognitionEngine?.voice;
+        if (voiceApi?.replaceStore) {
+          voiceApi.replaceStore(voiceStore, {
+            persist: true,
+            notify: true,
+            reason: 'avatar-loaded',
+            status: 'success',
+            message: 'Voice profile restored from avatar archive.',
+          });
+        } else if (voiceApi?.resetStore) {
+          voiceApi.resetStore({ persist: true, notify: true });
+        }
+        if (window.Session && typeof window.Session === 'object') {
+          window.Session.voiceProfile = voiceStore;
+          if (voiceStore?.profileClone) {
+            window.Session.voiceProfileClone = voiceStore.profileClone;
+          } else {
+            delete window.Session.voiceProfileClone;
+          }
+        }
+      }
+
+      if (conversationSnapshot) {
+        restoreConversationLog(conversationSnapshot);
+      }
+
+      const resolvedName = typeof profile?.name === 'string' && profile.name.trim()
+        ? profile.name.trim()
+        : (typeof meta?.name === 'string' ? meta.name : '');
+      userAvatarStore.replace({
+        entries: Array.isArray(interactions) ? interactions : [],
+        profile: { name: resolvedName },
+      }, { notify: true });
+
+      if (dbSnapshot && typeof dbSnapshot === 'object') {
+        await loadDbObject(dbSnapshot, { replace: true });
+        loadGlyphMaps(getDb());
+        updateStats();
+        updateHeaderCounts();
+      }
+
+      if (consciousnessSnapshot && typeof consciousnessSnapshot === 'object') {
+        state.symbolMetrics = state.symbolMetrics || { history: [], last: null, lastRunGraph: null, topNodes: [], lastTokens: [], lastPipeline: null };
+        state.symbolMetrics.lastPipeline = state.symbolMetrics.lastPipeline || {};
+        state.symbolMetrics.lastPipeline.consciousness = consciousnessSnapshot;
+      }
+
+      try {
+        cmdSpin('on');
+        if (window.HLSF?.currentGraph) {
+          animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
+        } else {
+          requestRender();
+        }
+      } catch (err) {
+        console.warn('Failed to activate emergent rotation after avatar load:', err);
+      }
+
+      const voiceApi = window.CognitionEngine?.voice;
+      let voiceAcknowledged = false;
+      if (voiceApi?.getStore) {
+        const storeState = voiceApi.getStore();
+        const token = selectVoiceTokenForPlayback(storeState);
+        if (token) {
+          if (storeState?.profileSynthesis?.available && typeof voiceApi.playTts === 'function') {
+            try {
+              voiceApi.playTts(token);
+              voiceAcknowledged = true;
+            } catch (err) {
+              console.warn('Synthesized playback failed:', err);
+            }
+          }
+          if (!voiceAcknowledged && typeof voiceApi.playToken === 'function') {
+            try {
+              voiceApi.playToken(token);
+              voiceAcknowledged = true;
+            } catch (err) {
+              console.warn('Voice playback failed:', err);
+            }
+          }
+        }
+      }
+      if (!voiceAcknowledged && typeof window !== 'undefined' && typeof window.SpeechSynthesisUtterance === 'function') {
+        try {
+          const utterance = new window.SpeechSynthesisUtterance(`Avatar ${resolvedName || ''} restored.`.trim());
+          window.speechSynthesis?.speak?.(utterance);
+        } catch (err) {
+          console.warn('Fallback speech synthesis failed:', err);
+        }
+      }
+
+      logOK(`Avatar ${sanitize(resolvedName || 'archive')} loaded from ${sanitize(file.name)}.`);
+    } catch (err) {
+      logError(`Avatar load failed: ${err?.message || err}`);
+    } finally {
+      event.target.value = '';
+      input.onchange = null;
+    }
+  };
+  input.click();
+}
+
+function cmdDeleteAvatar() {
+  const confirmed = window.confirm?.('Delete avatar conversation log and voice samples? This cannot be undone.');
+  if (!confirmed) {
+    logStatus('Avatar deletion cancelled.');
+    return;
+  }
+
+  clearConversationLog({ resetBatchLog: true });
+  try {
+    userAvatarStore.reset({ notify: true, clearProfile: true });
+  } catch (err) {
+    console.warn('User avatar reset failed during deletion:', err);
+  }
+
+  try {
+    const voiceApi = window.CognitionEngine?.voice;
+    if (voiceApi?.replaceStore) {
+      voiceApi.replaceStore({}, {
+        persist: true,
+        notify: true,
+        reason: 'avatar-deleted',
+        status: 'warning',
+        message: 'Voice profile cleared.',
+      });
+    } else if (voiceApi?.resetStore) {
+      voiceApi.resetStore({ persist: true, notify: true });
+    }
+  } catch (err) {
+    console.warn('Voice store reset failed during avatar deletion:', err);
+  }
+
+  if (window.Session && typeof window.Session === 'object') {
+    delete window.Session.voiceProfile;
+    delete window.Session.voiceProfileClone;
+  }
+
+  logOK('Avatar conversation history and voice samples deleted.');
+}
 
 async function cmdImport() {
   const input = document.getElementById('db-file');
@@ -17742,6 +18111,9 @@ registerCommand('/remotestats', () => cmd_remotestats());
 registerCommand('/remotedb', () => cmd_remotestats());
 registerCommand('/maphidden', cmd_hidden);
 registerCommand('/hidden', cmd_hidden);
+registerCommand('/sv-avatar', args => cmdSaveAvatar(args));
+registerCommand('/ld-avatar', () => cmdLoadAvatar());
+registerCommand('/del-avatar', () => cmdDeleteAvatar());
 window.COMMANDS = COMMANDS;
 // Router guard (prevents duplicate logs)
 if (!COMMANDS.__hlsf_bound) {
@@ -17980,21 +18352,6 @@ async function handleCommand(cmd) {
         } catch (err) {
           console.warn('Remote DB cache reset failed:', err);
         }
-        try {
-          resetVoiceCloneStore({ persist: true, notify: false });
-        } catch (err) {
-          console.warn('Voice clone reset failed:', err);
-        }
-        if (window.Session && typeof window.Session === 'object') {
-          delete window.Session.voiceProfile;
-          delete window.Session.voiceProfileClone;
-        }
-        clearConversationLog({ resetBatchLog: true });
-        try {
-          userAvatarStore.reset({ notify: true });
-        } catch (err) {
-          console.warn('User avatar reset failed:', err);
-        }
         restoreLocalHlsfMemory({});
         if (state?.tokenSources instanceof Map) {
           state.tokenSources.clear();
@@ -18039,8 +18396,20 @@ async function handleCommand(cmd) {
         const clearedMsg = hadDbSnapshot
           ? `Cleared ${keys.length} tokens and database snapshot`
           : `Cleared ${keys.length} tokens`;
-        logOK(clearedMsg);
+        logOK(`${clearedMsg}. Avatar voice samples and conversation history preserved.`);
       }
+      break;
+    case 'del-avatar':
+      trackCommandExecution(normalized, args, 'handler');
+      cmdDeleteAvatar();
+      break;
+    case 'sv-avatar':
+      trackCommandExecution(normalized, args, 'handler');
+      await cmdSaveAvatar(args);
+      break;
+    case 'ld-avatar':
+      trackCommandExecution(normalized, args, 'handler');
+      await cmdLoadAvatar();
       break;
     case 'stats':
       trackCommandExecution(normalized, args, 'handler');
