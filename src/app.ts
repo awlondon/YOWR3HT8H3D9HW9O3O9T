@@ -1,4 +1,4 @@
-import { SETTINGS } from './settings';
+import { SETTINGS, PERFORMANCE_PROFILES, resolvePerformanceProfile } from './settings';
 import { runPipeline } from './engine/pipeline';
 import { createRemoteDbFileWriter, type RemoteDbDirectoryStats } from './engine/remoteDbWriter';
 import { tokenizeWithSymbols } from './tokens/tokenize';
@@ -73,6 +73,65 @@ const CONFIG: EngineConfig = {
   ADJACENCY_RELATIONSHIPS_PER_NODE: 8,
   NETWORK_RETRY_BACKOFF_MS: 5000,
 };
+
+function activeSettings() {
+  if (typeof window !== 'undefined' && window && (window as any).SETTINGS) {
+    return (window as any).SETTINGS;
+  }
+  return SETTINGS;
+}
+
+function applyPerformanceCaps(settingsOverride = null) {
+  const source = settingsOverride || activeSettings() || {};
+  const branching = Math.max(2, Math.floor(Number(source.branchingFactor) || 2));
+  const nodeCap = Math.max(1, Math.floor(Number(source.maxNodes) || 1600));
+  const edgeCap = Math.max(branching * 2, Math.floor(Number(source.maxEdges) || 6400));
+  const relationCap = Math.max(2, Math.floor(Number(source.maxRelationTypes) || 40));
+  const rawRelationship = source.maxRelationships;
+  const numericRelationship = Number(rawRelationship);
+  const relationshipBudget = resolveHlsfRelationshipBudget(
+    Number.isFinite(numericRelationship) ? numericRelationship : rawRelationship ?? null,
+  );
+  const pruneThreshold = Number.isFinite(Number(source.pruneWeightThreshold))
+    ? Math.max(0, Number(source.pruneWeightThreshold))
+    : 0.18;
+
+  CONFIG.ADJACENCY_SPAWN_LIMIT = branching;
+  CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE = relationCap;
+  const derivedEdgesPerLevel = Math.max(
+    branching,
+    Math.floor(edgeCap / Math.max(1, nodeCap)),
+  );
+  CONFIG.ADJACENCY_EDGES_PER_LEVEL = derivedEdgesPerLevel;
+
+  if (typeof window !== 'undefined') {
+    window.HLSF = window.HLSF || {};
+    const runtime = (window.HLSF.config = window.HLSF.config || {});
+    runtime.liveTokenCap = nodeCap;
+    runtime.maxNodeCount = nodeCap;
+    runtime.maxEdgeCount = edgeCap;
+    runtime.maxRelationshipCount = relationshipBudget;
+    runtime.maxRelationTypes = relationCap;
+    runtime.pruneWeightThreshold = pruneThreshold;
+    runtime.liveEdgeWeightMin = pruneThreshold;
+    runtime.localMemoryEdgeWeightMin = pruneThreshold;
+    runtime.relationshipBudget = relationshipBudget;
+    runtime.relationshipLimit = relationshipBudget;
+  }
+
+  if (typeof window !== 'undefined') {
+    window.SETTINGS = Object.assign(window.SETTINGS || {}, source, {
+      branchingFactor: branching,
+      maxNodes: nodeCap,
+      maxEdges: edgeCap,
+      maxRelationships: rawRelationship ?? numericRelationship ?? relationshipBudget,
+      maxRelationTypes: relationCap,
+      pruneWeightThreshold: pruneThreshold,
+    });
+  }
+}
+
+applyPerformanceCaps();
 
 const MEMBERSHIP_LEVELS = {
   DEMO: 'demo',
@@ -192,6 +251,8 @@ const DEFAULT_LIVE_TOKEN_CAP = 160;
 const DEFAULT_LIVE_EDGE_WEIGHT_MIN = 0.02;
 const DEFAULT_LOCAL_MEMORY_EDGE_WEIGHT_MIN = 0.02;
 const DEFAULT_HLSF_RELATIONSHIP_LIMIT = 1000;
+
+const SYNTHETIC_BRANCH_CACHE: Map<string, Array<{ token: string; weight: number }>> = new Map();
 
 // Canonical 50-type display names
 const REL_EN = {
@@ -6934,7 +6995,16 @@ function pruneRelationshipEdgesByWeight(relationships, minWeight = 0) {
   const result = {};
   let totalWeight = 0;
   let totalEdges = 0;
-  const threshold = Number.isFinite(minWeight) && minWeight > 0 ? minWeight : 0;
+  const configuredThreshold = (() => {
+    const runtime = typeof window !== 'undefined' ? window?.HLSF?.config : null;
+    const candidate = runtime?.pruneWeightThreshold ?? activeSettings()?.pruneWeightThreshold;
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+    return 0.18;
+  })();
+  const threshold = Number.isFinite(minWeight) && minWeight > 0
+    ? Math.max(minWeight, configuredThreshold)
+    : configuredThreshold;
 
   if (!relationships || typeof relationships !== 'object') {
     return { relationships: result, totalWeight, totalEdges };
@@ -10550,6 +10620,194 @@ function selectHighAttentionNeighbors(entry, limit = 2) {
   return candidates.slice(0, max);
 }
 
+function countEntryRelationships(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return { edgeCount: 0, relationTypes: 0 };
+  }
+  const rels = entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
+  let relationTypes = 0;
+  let edgeCount = 0;
+  for (const edges of Object.values(rels)) {
+    if (!Array.isArray(edges) || edges.length === 0) continue;
+    relationTypes += 1;
+    edgeCount += edges.length;
+  }
+  return { edgeCount, relationTypes };
+}
+
+function deterministicSyntheticNeighbors(token, needed, excludeSet, baseWeight) {
+  if (!needed || needed <= 0) return [];
+  const base = (token || '').trim() || 'thought';
+  const suffixes = ['α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ', 'ν'];
+  const proposals = [];
+  let index = 0;
+  while (proposals.length < needed) {
+    const suffix = index < suffixes.length ? suffixes[index] : String(index + 1);
+    const candidate = `${base} ${suffix}`.trim();
+    const normalized = candidate.toLowerCase();
+    if (!excludeSet.has(normalized)) {
+      excludeSet.add(normalized);
+      proposals.push({ token: candidate, weight: baseWeight });
+    }
+    index += 1;
+    if (index > 64) break;
+  }
+  return proposals.slice(0, needed);
+}
+
+async function requestSyntheticNeighbors(token, context, needed, excludeSet, baseWeight) {
+  if (!token || needed <= 0 || !state.apiKey) {
+    return [];
+  }
+
+  const safeContext = (context || '').slice(0, 320);
+  const prompt = `Seed token: "${token}"
+Context: "${safeContext}"
+Generate ${Math.max(needed * 2, 4)} unique adjacency expansions that would connect bi-directionally with the seed token inside the Hierarchical Latent Semantic Framework. Prefer concise single or dual-word tokens.
+Respond strictly with JSON: {"seed":"${token}","expansions":[{"token":"...","weight":0.42}]}`;
+
+  const content = await safeAsync(
+    () => callOpenAI([
+      { role: 'system', content: 'You expand the HLSF adjacency lattice by proposing tightly-coupled tokens.' },
+      { role: 'user', content: prompt },
+    ], { temperature: 0.35, max_tokens: 220 }),
+    `Adjacency expansion synthesis failed for ${token}`,
+    { fallbackValue: null },
+  );
+
+  if (!content) return [];
+
+  try {
+    const start = content.indexOf('{');
+    const end = content.lastIndexOf('}');
+    if (start === -1 || end === -1) return [];
+    const parsed = JSON.parse(content.slice(start, end + 1));
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.expansions)) {
+      return [];
+    }
+    const expansions = [];
+    for (const entry of parsed.expansions) {
+      if (!entry || typeof entry !== 'object' || typeof entry.token !== 'string') continue;
+      const candidate = entry.token.trim();
+      if (!candidate) continue;
+      const normalized = candidate.toLowerCase();
+      if (excludeSet.has(normalized)) continue;
+      excludeSet.add(normalized);
+      const weight = Number(entry.weight);
+      expansions.push({ token: candidate, weight: Number.isFinite(weight) ? weight : baseWeight });
+    }
+    return expansions.slice(0, needed);
+  } catch (err) {
+    console.warn('Failed to parse synthetic adjacency expansion for', token, err);
+  }
+
+  return [];
+}
+
+function mergeSyntheticRelationships(entry, syntheticEdges, minWeight) {
+  if (!syntheticEdges.length) return entry;
+  const relationships = entry?.relationships && typeof entry.relationships === 'object'
+    ? Object.fromEntries(Object.entries(entry.relationships).map(([rel, edges]) => [
+      rel,
+      Array.isArray(edges)
+        ? edges.map(edge => ({ token: String(edge.token || '').trim(), weight: Number(edge.weight) || 0 }))
+        : [],
+    ]))
+    : {};
+
+  const targetRel = GLOBAL_CONNECTION_RELATION;
+  const existing = Array.isArray(relationships[targetRel])
+    ? relationships[targetRel].slice()
+    : [];
+  const seen = new Set(existing.map(edge => (edge?.token || '').toLowerCase()));
+  for (const edge of syntheticEdges) {
+    const rawToken = typeof edge.token === 'string' ? edge.token.trim() : '';
+    if (!rawToken) continue;
+    const normalized = rawToken.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    const weight = Number.isFinite(edge.weight)
+      ? Math.max(minWeight, edge.weight)
+      : minWeight;
+    existing.push({ token: rawToken, weight });
+  }
+  if (existing.length) {
+    existing.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+    relationships[targetRel] = existing;
+  }
+  return { ...entry, relationships };
+}
+
+async function synthesizeBranchNeighbors(entry, needed, context, excludeSet, minWeight) {
+  if (!entry || needed <= 0) return [];
+  const token = typeof entry.token === 'string' ? entry.token.trim() : '';
+  if (!token) return [];
+  const normalizedToken = token.toLowerCase();
+  const contextKey = (context || '').slice(0, 96).toLowerCase();
+  const cacheKey = `${normalizedToken}|${contextKey}`;
+
+  if (!SYNTHETIC_BRANCH_CACHE.has(cacheKey)) {
+    SYNTHETIC_BRANCH_CACHE.set(cacheKey, []);
+  }
+
+  const cached = SYNTHETIC_BRANCH_CACHE.get(cacheKey) || [];
+  const available = cached.filter(item => !excludeSet.has(item.token.toLowerCase()));
+
+  let remaining = needed - available.length;
+  let generated = [];
+
+  if (remaining > 0) {
+    const llmGenerated = await requestSyntheticNeighbors(token, context, remaining, excludeSet, minWeight);
+    if (llmGenerated.length) {
+      cached.push(...llmGenerated);
+      generated.push(...llmGenerated);
+      remaining -= llmGenerated.length;
+    }
+  }
+
+  if (remaining > 0) {
+    const deterministic = deterministicSyntheticNeighbors(token, remaining, excludeSet, minWeight);
+    if (deterministic.length) {
+      cached.push(...deterministic);
+      generated.push(...deterministic);
+      remaining -= deterministic.length;
+    }
+  }
+
+  const combined = cached.filter(item => !excludeSet.has(item.token.toLowerCase()))
+    .slice(0, needed);
+
+  return { neighbors: combined, generated };
+}
+
+async function enforceEntryBranching(entry, spawnLimit, context) {
+  const limit = Math.max(2, Math.floor(spawnLimit || 2));
+  const existingNeighbors = collectNeighborCandidates(entry);
+  const minWeight = Number(activeSettings().pruneWeightThreshold) || 0.18;
+  const exclude = new Set(existingNeighbors.map(item => item.token.toLowerCase()));
+  const tokenKey = typeof entry.token === 'string' ? entry.token.toLowerCase() : '';
+  if (tokenKey) exclude.add(tokenKey);
+
+  let updatedEntry = entry;
+  let syntheticNeighbors = [];
+
+  if (existingNeighbors.length < limit) {
+    const needed = limit - existingNeighbors.length;
+    const { neighbors, generated } = await synthesizeBranchNeighbors(entry, needed, context, exclude, minWeight);
+    syntheticNeighbors = generated;
+    if (neighbors.length) {
+      updatedEntry = mergeSyntheticRelationships(entry, neighbors, minWeight);
+    }
+  }
+
+  const finalNeighbors = collectNeighborCandidates(updatedEntry);
+  return {
+    entry: updatedEntry,
+    neighbors: finalNeighbors.slice(0, Math.max(limit, finalNeighbors.length ? limit : 0)),
+    syntheticNeighbors,
+  };
+}
+
 async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
   CacheBatch.begin();
   try {
@@ -10584,6 +10842,15 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const requireCompleteGraph = options.requireCompleteGraph !== false;
     const remoteDbStore = window.HLSF?.remoteDb;
     const remoteDb = preferDb ? remoteDbStore : null;
+    const settingsCaps = activeSettings();
+    const nodeCap = Math.max(1, Math.floor(Number(settingsCaps?.maxNodes) || 1600));
+    const edgeCap = Math.max(0, Math.floor(Number(settingsCaps?.maxEdges) || 0));
+    const relationshipCapSetting = resolveHlsfRelationshipBudget(settingsCaps?.maxRelationships ?? null);
+    const relationshipCap = relationshipCapSetting === Infinity
+      ? Infinity
+      : Math.max(0, Number(relationshipCapSetting) || 0);
+    let totalEdgeCount = 0;
+    let totalRelationTypes = 0;
 
     const seedTokensForPreload = normalized
       .map(entry => (entry && entry.token ? String(entry.token).trim() : ''))
@@ -10617,6 +10884,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const llmGeneratedTokens = new Set();
     const offlineTokens = new Set();
     const errorTokens = new Set();
+    const syntheticNeighborsGenerated = new Set();
     const stats = {
       seedCount: queue.length,
       depth,
@@ -10625,6 +10893,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       apiCalls: 0,
       fetchCount: 0,
       visitedTokens: 0,
+      syntheticExpansions: 0,
     };
 
     const checkConnectivity = stopWhenConnected;
@@ -10752,11 +11021,26 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
           }
 
           const limited = limitAdjacencyEntryEdges(result, edgesPerLevel, normalized);
-          results.set(limited.token, limited);
+          const enforced = await enforceEntryBranching(limited, spawnLimit, context);
+          const entryRecord = enforced.entry;
+          results.set(entryRecord.token, entryRecord);
+
+          const counts = countEntryRelationships(entryRecord);
+          totalEdgeCount += counts.edgeCount;
+          totalRelationTypes += counts.relationTypes;
+
+          if (enforced.syntheticNeighbors.length) {
+            stats.syntheticExpansions += enforced.syntheticNeighbors.length;
+            for (const synthetic of enforced.syntheticNeighbors) {
+              if (!synthetic || !synthetic.token) continue;
+              syntheticNeighborsGenerated.add(synthetic.token);
+              llmGeneratedTokens.add(synthetic.token);
+            }
+          }
 
           if (onTokenLoaded) {
             try {
-              onTokenLoaded(limited);
+              onTokenLoaded(entryRecord);
             } catch (err) {
               console.warn('Adjacency listener failed:', err);
             }
@@ -10764,11 +11048,16 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
 
           const nextDepth = item.depthRemaining - 1;
           if (nextDepth > 0 && item.entry.kind !== 'sym') {
-            const candidates = selectHighAttentionNeighbors(limited, spawnLimit);
+            const candidates = enforced.neighbors.length
+              ? enforced.neighbors
+              : selectHighAttentionNeighbors(entryRecord, spawnLimit);
             let enqueuedCount = 0;
             for (const candidate of candidates) {
               const nextKey = candidate.token.toLowerCase();
               if (visited.has(nextKey) || enqueued.has(nextKey)) continue;
+              if (nodeCap > 0 && (results.size + queue.length + enqueuedCount) >= nodeCap) {
+                break;
+              }
               queue.push({ entry: { token: candidate.token, kind: 'word' }, depthRemaining: nextDepth });
               enqueued.add(nextKey);
               enqueuedCount += 1;
@@ -10777,6 +11066,13 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
               progress.addTotal(enqueuedCount);
               stats.expansions += enqueuedCount;
             }
+          }
+
+          if (edgeCap > 0 && totalEdgeCount >= edgeCap) {
+            queue.length = 0;
+          }
+          if (relationshipCap !== Infinity && relationshipCap > 0 && totalEdgeCount >= relationshipCap) {
+            queue.length = 0;
           }
         } else if (response.error && item.token) {
           errorTokens.add(item.token);
@@ -10823,6 +11119,9 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
         apiCalls: stats.apiCalls,
         fetchCount: stats.fetchCount,
         visitedTokens: visited.size,
+        edgeCount: totalEdgeCount,
+        relationTypes: totalRelationTypes,
+        syntheticExpansions: stats.syntheticExpansions,
         connectivity: finalConnectivity,
         completeGraph: finalCompleteGraph,
       },
@@ -10833,6 +11132,7 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
         llmGenerated: Array.from(llmGeneratedTokens),
         offline: Array.from(offlineTokens),
         errors: Array.from(errorTokens),
+        synthetic: Array.from(syntheticNeighborsGenerated),
       },
     };
   } finally {
@@ -10860,7 +11160,7 @@ async function ensureSymbolicAdjacencyConnectivity(matrices, seedEntries, chunkL
       depth: CONFIG.ADJACENCY_RECURSION_DEPTH,
       edgesPerLevel: CONFIG.ADJACENCY_EDGES_PER_LEVEL,
       stopWhenConnected: true,
-      requireCompleteGraph: false,
+      requireCompleteGraph: true,
       preferDb: true,
     },
   );
@@ -11046,7 +11346,7 @@ function isCompleteAdjacencyGraph(matrices) {
       const b = nodes[j];
       const aNeighbors = adjacencyMap.get(a) || new Set();
       const bNeighbors = adjacencyMap.get(b) || new Set();
-      if (!(aNeighbors.has(b) || bNeighbors.has(a))) {
+      if (!(aNeighbors.has(b) && bNeighbors.has(a))) {
         return false;
       }
     }
@@ -11161,6 +11461,8 @@ function analyzeAdjacencyConnectivity(matrices, seeds) {
     ? true
     : connectedSeedKeys.size === seedKeys.size && disconnectedSeedKeys.length === 0;
 
+  const bidirectionalComplete = isCompleteAdjacencyGraph(matrices);
+
   return {
     componentCount: componentSummaries.length,
     components: componentSummaries,
@@ -11169,6 +11471,7 @@ function analyzeAdjacencyConnectivity(matrices, seeds) {
     allSeedsConnected,
     disconnectedSeeds: disconnectedSeedKeys.map(key => tokenForKey.get(key) || key),
     isolatedSeeds: isolatedSeedKeys.map(key => tokenForKey.get(key) || key),
+    bidirectionalComplete,
   };
 }
 
@@ -19243,35 +19546,47 @@ initialize();
     const pruneVal = root.getElementById('hlsf-prune-thresh-val') as HTMLElement | null;
     const mentalSel = root.getElementById('hlsf-mental-state') as HTMLSelectElement | null;
 
-    const PRESETS: Record<string, {branchingFactor:number;maxNodes:number;maxEdges:number;maxRelationTypes:number;pruneWeightThreshold:number}> = {
-      'Featherweight': { branchingFactor: 2, maxNodes: 600,  maxEdges: 1800,  maxRelationTypes: 24, pruneWeightThreshold: 0.22 },
-      'Balanced':     { branchingFactor: 2, maxNodes: 1600, maxEdges: 6400,  maxRelationTypes: 40, pruneWeightThreshold: 0.18 },
-      'Research':     { branchingFactor: 2, maxNodes: 2400, maxEdges: 9600,  maxRelationTypes: 50, pruneWeightThreshold: 0.16 },
-      'Maximalist':   { branchingFactor: 2, maxNodes: 3200, maxEdges: 12800, maxRelationTypes: 50, pruneWeightThreshold: 0.15 },
-      'ChaosLab':     { branchingFactor: 3, maxNodes: 1400, maxEdges: 5600,  maxRelationTypes: 50, pruneWeightThreshold: 0.26 },
-    };
+    const PRESETS = PERFORMANCE_PROFILES;
 
     function applyHlsfLimitsFromControls() {
       const cfg = (window as any).SETTINGS || ((window as any).SETTINGS = {});
-      cfg.branchingFactor = Number(cfg.branchingFactor ?? 2);
-      if (perfSel && PRESETS[perfSel.value]) {
-        const p = PRESETS[perfSel.value];
-        cfg.branchingFactor = p.branchingFactor;
-        cfg.maxNodes = p.maxNodes;
-        cfg.maxEdges = p.maxEdges;
-        cfg.maxRelationTypes = p.maxRelationTypes;
-        cfg.pruneWeightThreshold = p.pruneWeightThreshold;
-        if (maxNodes) maxNodes.value = String(p.maxNodes);
-        if (maxEdges) maxEdges.value = String(p.maxEdges);
-        if (maxRel)   maxRel.value   = String(p.maxRelationTypes);
-        if (prune)    prune.value    = String(p.pruneWeightThreshold);
-        if (pruneVal) pruneVal.textContent = String(p.pruneWeightThreshold);
+      const selectedId = perfSel ? perfSel.value.toLowerCase() : String(cfg.performanceProfileId || '').toLowerCase();
+      const profile = resolvePerformanceProfile(selectedId || cfg.performanceProfileId);
+      cfg.performanceProfileId = profile.id;
+      cfg.branchingFactor = profile.branchingFactor;
+
+      if (perfSel && perfSel.value.toLowerCase() !== profile.id) {
+        perfSel.value = profile.id;
       }
-      if (maxNodes) cfg.maxNodes = Number(maxNodes.value || cfg.maxNodes || 1600);
-      if (maxEdges) cfg.maxEdges = Number(maxEdges.value || cfg.maxEdges || 6400);
-      if (maxRel)   cfg.maxRelationTypes = Number(maxRel.value || cfg.maxRelationTypes || 40);
-      if (prune)    cfg.pruneWeightThreshold = Number(prune.value || cfg.pruneWeightThreshold || 0.18);
+
+      if (maxNodes) {
+        if (!maxNodes.value) maxNodes.value = String(profile.maxNodes);
+        cfg.maxNodes = Number(maxNodes.value || profile.maxNodes);
+      } else {
+        cfg.maxNodes = profile.maxNodes;
+      }
+      if (maxEdges) {
+        if (!maxEdges.value) maxEdges.value = String(profile.maxEdges);
+        cfg.maxEdges = Number(maxEdges.value || profile.maxEdges);
+      } else {
+        cfg.maxEdges = profile.maxEdges;
+      }
+      if (maxRel) {
+        if (!maxRel.value) maxRel.value = String(profile.maxRelationships);
+        cfg.maxRelationships = Number(maxRel.value || profile.maxRelationships);
+      } else {
+        cfg.maxRelationships = profile.maxRelationships;
+      }
+      cfg.maxRelationTypes = profile.maxRelationTypes;
+      if (prune) {
+        if (!prune.value) prune.value = String(profile.pruneWeightThreshold);
+        cfg.pruneWeightThreshold = Number(prune.value || profile.pruneWeightThreshold);
+      } else {
+        cfg.pruneWeightThreshold = profile.pruneWeightThreshold;
+      }
       if (pruneVal) pruneVal.textContent = Number(cfg.pruneWeightThreshold).toFixed(2);
+
+      applyPerformanceCaps(cfg);
     }
 
     function applyMentalStateSelection() {
