@@ -520,7 +520,6 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
       edges.shift();
     }
     // 2) drop isolated nodes if over cap
-    const nodeSet = new Set(nodes.map(n => n.token));
     const connected = new Set<string>();
     for (const e of edges) {
       if (e.source) connected.add(e.source);
