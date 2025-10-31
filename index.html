@@ -576,11 +576,11 @@
               <div class="hlsf-control-group">
                 <label for="hlsf-performance">Performance profile</label>
                 <select id="hlsf-performance">
-                  <option>Featherweight</option>
-                  <option selected>Balanced</option>
-                  <option>Research</option>
-                  <option>Maximalist</option>
-                  <option>ChaosLab</option>
+                  <option value="featherweight">Featherweight</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="research">Research</option>
+                  <option value="maximalist">Maximalist</option>
+                  <option value="chaoslab">ChaosLab</option>
                 </select>
               </div>
               <div class="hlsf-control-group">
@@ -592,8 +592,8 @@
                 <input id="hlsf-max-edges" type="number" min="300" step="100" value="6400">
               </div>
               <div class="hlsf-control-group">
-                <label for="hlsf-max-rel">Max relation types</label>
-                <input id="hlsf-max-rel" type="number" min="1" max="50" step="1" value="40">
+                <label for="hlsf-max-rel">Max relationships</label>
+                <input id="hlsf-max-rel" type="number" min="500" step="100" value="4200">
               </div>
               <div class="hlsf-control-group">
                 <label for="hlsf-prune-thresh">Pruning weight threshold <span id="hlsf-prune-thresh-val">0.18</span></label>
