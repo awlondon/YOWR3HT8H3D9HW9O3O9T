@@ -8197,10 +8197,149 @@ function batchLogUpdates(entries) {
   elements.log.scrollTop = elements.log.scrollHeight;
 }
 
+const LOG_TTS_SECTION_TARGETS = [
+  { match: /document reflection/i, selector: '.thought-stream' },
+  { match: /self-reflection/i, selector: '.thought-stream' },
+  { match: /stream of consciousness/i, selector: 'pre' },
+  { match: /structural summary/i, selector: 'pre' },
+];
+
+let activeTtsButton: HTMLButtonElement | null = null;
+let activeTtsUtterance: SpeechSynthesisUtterance | null = null;
+
+function canUseSpeechSynthesis() {
+  return typeof window !== 'undefined'
+    && typeof window.speechSynthesis !== 'undefined'
+    && typeof window.SpeechSynthesisUtterance !== 'undefined';
+}
+
+function stopActiveSpeech() {
+  if (typeof window !== 'undefined' && window.speechSynthesis) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch (err) {
+      console.warn('Unable to cancel speech synthesis:', err);
+    }
+  }
+  if (activeTtsButton instanceof HTMLButtonElement) {
+    activeTtsButton.dataset.ttsState = 'idle';
+    activeTtsButton.classList.remove('is-playing');
+    activeTtsButton.setAttribute('aria-pressed', 'false');
+  }
+  activeTtsButton = null;
+  activeTtsUtterance = null;
+}
+
+function toggleTtsPlayback(button, text) {
+  if (!(button instanceof HTMLButtonElement)) return;
+  const spokenText = typeof text === 'string' ? text.trim() : '';
+  if (!spokenText) return;
+  if (!canUseSpeechSynthesis()) return;
+
+  if (activeTtsButton === button && button.dataset.ttsState === 'playing') {
+    stopActiveSpeech();
+    return;
+  }
+
+  stopActiveSpeech();
+
+  const synth = window.speechSynthesis;
+  try {
+    const utterance = new window.SpeechSynthesisUtterance(spokenText);
+    activeTtsUtterance = utterance;
+    activeTtsButton = button;
+    button.dataset.ttsState = 'playing';
+    button.classList.add('is-playing');
+    button.setAttribute('aria-pressed', 'true');
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.onend = () => {
+      if (activeTtsUtterance === utterance) {
+        stopActiveSpeech();
+      }
+    };
+    utterance.onerror = () => {
+      if (activeTtsUtterance === utterance) {
+        stopActiveSpeech();
+      }
+    };
+    synth.cancel();
+    synth.speak(utterance);
+  } catch (err) {
+    console.warn('Speech synthesis failed:', err);
+    stopActiveSpeech();
+  }
+}
+
+function createTtsButton(getText) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tts-button';
+  button.innerText = '🔊';
+  button.title = 'Play synthesized narration';
+  button.setAttribute('aria-label', 'Play synthesized narration');
+  button.setAttribute('aria-pressed', 'false');
+  button.dataset.ttsState = 'idle';
+  if (!canUseSpeechSynthesis()) {
+    button.disabled = true;
+  }
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!canUseSpeechSynthesis()) return;
+    const value = typeof getText === 'function' ? getText() : '';
+    toggleTtsPlayback(button, value);
+  });
+  return button;
+}
+
+function findSectionNarrationTarget(titleEl, selector) {
+  if (!(titleEl instanceof HTMLElement)) return null;
+  let node = titleEl.nextElementSibling;
+  while (node) {
+    if (node instanceof HTMLElement && node.matches(selector)) {
+      return node;
+    }
+    node = node.nextElementSibling;
+  }
+  const parent = titleEl.parentElement;
+  if (parent) {
+    const fallback = parent.querySelector(selector);
+    if (fallback instanceof HTMLElement) {
+      return fallback;
+    }
+  }
+  return null;
+}
+
+function attachTtsButtons(entry) {
+  if (!(entry instanceof HTMLElement)) return;
+  const titles = entry.querySelectorAll('.section-title');
+  if (!titles.length) return;
+  titles.forEach((titleEl) => {
+    const titleText = (titleEl.textContent || '').trim();
+    if (!titleText) return;
+    const config = LOG_TTS_SECTION_TARGETS.find(target => target.match.test(titleText));
+    if (!config) return;
+    if (titleEl.querySelector('.tts-button')) return;
+    const target = findSectionNarrationTarget(titleEl, config.selector);
+    if (!target) return;
+    const narration = (target.textContent || '').trim();
+    if (!narration) return;
+    const button = createTtsButton(() => target.textContent || '');
+    titleEl.appendChild(button);
+  });
+}
+
+function enhanceLogEntry(entry) {
+  attachTtsButtons(entry);
+}
+
 function addLog(content, type = 'info') {
   const entry = document.createElement('div');
   entry.className = `log-entry ${type}`;
   entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>${content}`;
+  enhanceLogEntry(entry);
   batchLogUpdates([entry]);
   return entry;
 }
@@ -12029,9 +12168,18 @@ function buildRecursiveAdjacencyWalk(matrices, options = {}) {
 
 function generateLocalHlsfOutput(matrices, options = {}) {
   const opts = options || {};
-  const wordLimit = Number.isFinite(opts.wordLimit) && opts.wordLimit > 0
+  const inputWordCount = Number.isFinite(opts.inputWordCount) && opts.inputWordCount > 0
+    ? Math.floor(opts.inputWordCount)
+    : null;
+  const desiredResponseWordCount = inputWordCount != null
+    ? Math.max(0, inputWordCount * 2)
+    : null;
+  const baseWordLimit = Number.isFinite(opts.wordLimit) && opts.wordLimit > 0
     ? Math.floor(opts.wordLimit)
     : CONFIG.LOCAL_OUTPUT_WORD_LIMIT;
+  const wordLimit = desiredResponseWordCount != null
+    ? Math.max(baseWordLimit, desiredResponseWordCount)
+    : baseWordLimit;
 
   const affinityThreshold = Number.isFinite(opts.threshold) ? opts.threshold : undefined;
   const affinityIterations = Number.isFinite(opts.iterations) && opts.iterations > 0
@@ -12117,9 +12265,12 @@ function generateLocalHlsfOutput(matrices, options = {}) {
     const depth = sequence.steps.length + 1;
     return depth > max ? depth : max;
   }, 0);
-  const responseTokenLimit = Number.isFinite(opts.responseTokenLimit) && opts.responseTokenLimit > 0
+  let responseTokenLimit = Number.isFinite(opts.responseTokenLimit) && opts.responseTokenLimit > 0
     ? Math.floor(opts.responseTokenLimit)
     : 4;
+  if (desiredResponseWordCount != null) {
+    responseTokenLimit = Math.max(responseTokenLimit, desiredResponseWordCount);
+  }
   const responseTokenCount = Math.max(
     1,
     Math.min(
@@ -12129,13 +12280,60 @@ function generateLocalHlsfOutput(matrices, options = {}) {
   );
   const chosenTokens = orderedThoughtTokens.slice(0, responseTokenCount);
   const responseTextRaw = chosenTokens.join(' ').trim();
-  const responseWordLimit = Math.max(
+  let responseWordLimit = Math.max(
     responseTokenCount,
     Math.min(wordLimit, Number.isFinite(opts.responseWordLimit) && opts.responseWordLimit > 0
       ? Math.floor(opts.responseWordLimit)
       : 12),
   );
+  if (desiredResponseWordCount != null) {
+    responseWordLimit = Math.max(responseWordLimit, desiredResponseWordCount);
+  }
   const responseLimited = limitWords(responseTextRaw || baseThought, responseWordLimit);
+  let responseText = responseLimited.text;
+  let responseWordCount = responseLimited.wordCount;
+  let responseTokens = chosenTokens.slice();
+
+  if (desiredResponseWordCount != null && desiredResponseWordCount > 0) {
+    const initialTokens = (responseText.match(/\S+/g) || []).filter(Boolean);
+    let workingTokens = initialTokens.length ? initialTokens.slice() : responseTokens.slice();
+    if (!workingTokens.length) {
+      workingTokens = orderedThoughtTokens.slice();
+    }
+    const fillerPool = orderedThoughtTokens.length
+      ? orderedThoughtTokens
+      : (focusTokens.length ? focusTokens : []);
+    if (!workingTokens.length && fillerPool.length) {
+      workingTokens = fillerPool.slice();
+    }
+    if (!workingTokens.length && baseThought) {
+      workingTokens = (baseThought.match(/\S+/g) || []).slice();
+    }
+    if (!workingTokens.length && responseText) {
+      workingTokens = [responseText];
+    }
+
+    let fillerIndex = 0;
+    const safeFillerPool = fillerPool.length
+      ? fillerPool
+      : (workingTokens.length ? workingTokens : ['…']);
+    while (workingTokens.length < desiredResponseWordCount) {
+      const filler = safeFillerPool[fillerIndex % safeFillerPool.length] || '…';
+      workingTokens.push(filler);
+      fillerIndex += 1;
+      if (fillerIndex > desiredResponseWordCount * 4) break;
+    }
+
+    if (workingTokens.length > desiredResponseWordCount) {
+      workingTokens = workingTokens.slice(0, desiredResponseWordCount);
+    }
+
+    if (workingTokens.length) {
+      responseText = workingTokens.join(' ');
+      responseWordCount = workingTokens.length;
+      responseTokens = workingTokens.slice();
+    }
+  }
 
   return {
     text: thoughtLimited.text,
@@ -12146,10 +12344,10 @@ function generateLocalHlsfOutput(matrices, options = {}) {
     thoughtWordCount: thoughtLimited.wordCount,
     thoughtTrimmed: thoughtLimited.trimmed,
     thoughtTokens: orderedThoughtTokens,
-    responseText: responseLimited.text,
-    responseWordCount: responseLimited.wordCount,
+    responseText,
+    responseWordCount,
     responseTrimmed: responseLimited.trimmed,
-    responseTokens: chosenTokens,
+    responseTokens,
     narrative: narrativeText,
     walk: walkResult.steps,
     focusTokens,
@@ -18356,6 +18554,7 @@ async function processPrompt(prompt) {
       mentalState,
       topTokens,
       keyRelationships: keyRels,
+      inputWordCount: limitedPrompt.wordCount || tokens.length,
     });
 
     let localThought = localOutputData.thoughtText || localOutputData.text || '';
@@ -18951,6 +19150,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     mentalState,
     topTokens,
     keyRelationships: keyRels,
+    inputWordCount: promptWordInfo.wordCount || promptTokens.length,
   });
 
   let localThought = localOutputData.thoughtText || localOutputData.text || 'Adjacency walk could not assemble a local output with the available data.';
@@ -19165,8 +19365,6 @@ Instructions: Produce a grammatically coherent rewrite that incorporates adjacen
     }
   }
 
-  rebuildLiveGraph({ render: false });
-
   const metaUnique = Number(chunkMeta.uniqueTokens);
   const fallbackUnique = (() => {
     const uniqueSet = new Set();
@@ -19219,6 +19417,28 @@ Instructions: Produce a grammatically coherent rewrite that incorporates adjacen
       newInputTokensBefore: newBefore,
     },
   };
+}
+
+function updateVisualizationAfterChunk(matrices, focusTokens, chunkIndex, totalChunks) {
+  if (!(matrices instanceof Map)) return;
+  const index = Number.isFinite(chunkIndex) ? Math.max(0, Math.floor(chunkIndex)) : null;
+  const total = Number.isFinite(totalChunks) ? Math.max(1, Math.floor(totalChunks)) : null;
+  if (focusTokens) {
+    const tokenList = focusTokens instanceof Set ? Array.from(focusTokens) : focusTokens;
+    if (tokenList && tokenList.length) {
+      setDocumentFocusTokens(tokenList);
+    }
+  }
+  rebuildLiveGraph();
+  if (index != null && total != null) {
+    notifyHlsfAdjacencyChange('document-chunk', {
+      immediate: true,
+      chunkIndex: index + 1,
+      totalChunks: total,
+    });
+  } else {
+    notifyHlsfAdjacencyChange('document-chunk', { immediate: true });
+  }
 }
 
 
@@ -19477,6 +19697,7 @@ async function processDocumentFile(file) {
           chunkResults.push(result);
           mergeAdjacencyMaps(aggregateMatrices, result.matrices);
           if (estimator) estimator.recordChunk(chunkIndex, result.metrics || {}, chunkMeta);
+          updateVisualizationAfterChunk(aggregateMatrices, focusTokens, chunkIndex, chunks.length);
         }
       }
 
