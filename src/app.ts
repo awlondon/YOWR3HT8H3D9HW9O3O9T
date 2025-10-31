@@ -20529,18 +20529,22 @@ document.addEventListener('click', (event) => {
   }
 });
 
-async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } = {}) {
-  const raw = typeof input === 'string' ? input : String(input || '');
+async function submitPromptThroughEngine(
+  input,
+  options: { annotateLog?: boolean; source?: 'input-field' | 'voice' } = {},
+) {
+  const raw = typeof input === 'string' ? input : String(input ?? '');
   const trimmed = raw.trim();
-  const annotate = Boolean(options?.annotateLog);
   if (!trimmed) {
     return { success: false, tokens: [], kind: 'prompt', error: new Error('Prompt cannot be empty') };
   }
 
+  const annotate = Boolean(options?.annotateLog);
+  const source = options?.source === 'voice' ? 'voice' : 'input-field';
   const isCmd = isCommand(trimmed);
   let committedTokens = [];
   if (!isCmd) {
-    committedTokens = commitInputTokensFromText(trimmed, { source: 'voice', render: false });
+    committedTokens = commitInputTokensFromText(raw, { source, render: false });
   }
 
   setInputPreviewTokens([], { render: false });
@@ -20557,31 +20561,30 @@ async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } 
     await processPrompt(trimmed);
     return { success: true, tokens: committedTokens, kind: 'prompt' as const };
   } catch (error) {
-    return { success: false, tokens: committedTokens, kind: 'prompt' as const, error };
+    if (source === 'voice') {
+      return { success: false, tokens: committedTokens, kind: 'prompt' as const, error };
+    }
+    throw error;
   }
+}
+
+async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } = {}) {
+  return submitPromptThroughEngine(input, { annotateLog: options?.annotateLog, source: 'voice' });
 }
 
 elements.sendBtn.addEventListener('click', () => {
   const rawValue = elements.input.value;
-  const input = rawValue.trim();
-  if (!input) return;
+  if (!rawValue || !rawValue.trim()) return;
 
-  const isCmd = isCommand(input);
-  if (!isCmd) {
-    const committedTokens = commitInputTokensFromText(rawValue, { source: 'input-field', render: false });
-  }
-  setInputPreviewTokens([], { render: false });
-  rebuildLiveGraph();
-
-  addLog(`> ${sanitize(input)}`);
-
-  if (isCmd) {
-    handleCommand(input);
-    elements.input.value = '';
-  } else {
-    onUserPromptSubmitted(input);
-    processPrompt(input);
-  }
+  void submitPromptThroughEngine(rawValue, { source: 'input-field' })
+    .then(result => {
+      if (result.kind === 'command') {
+        elements.input.value = '';
+      }
+    })
+    .catch(error => {
+      console.error('Prompt submission failed:', error);
+    });
 });
 
 elements.cancelBtn.addEventListener('click', () => {
