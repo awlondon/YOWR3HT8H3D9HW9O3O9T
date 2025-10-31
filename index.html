@@ -369,9 +369,19 @@
       <section id="voice-model-window" class="voice-model-window">
         <header class="voice-window-header">
           <div class="section-title">🧬 Voice Model Interface</div>
-          <div class="voice-window-actions"></div>
+          <div class="voice-window-actions">
+            <button
+              id="voice-model-minimize"
+              class="btn btn-secondary btn-compact"
+              type="button"
+              aria-expanded="true"
+              aria-controls="voice-model-content"
+            >
+              Minimize
+            </button>
+          </div>
         </header>
-        <div class="voice-model-content">
+        <div id="voice-model-content" class="voice-model-content">
           <div class="voice-model-main" role="region" aria-label="Voice model controls">
             <div class="voice-model-orb" id="voice-model-orb" aria-hidden="true">
               <div class="voice-model-wave voice-model-wave--outer"></div>
@@ -607,19 +617,8 @@
                 <label for="hlsf-prune-thresh">Pruning weight threshold <span id="hlsf-prune-thresh-val">0.18</span></label>
                 <input id="hlsf-prune-thresh" type="range" min="0.10" max="0.30" step="0.01" value="0.18">
               </div>
-              <div class="hlsf-control-group">
-                <label for="hlsf-mental-state">Mental state</label>
-                <select id="hlsf-mental-state">
-                  <option>Focused</option>
-                  <option selected>Exploratory</option>
-                  <option>Divergent</option>
-                  <option>Reflective</option>
-                  <option>Agitated</option>
-                </select>
-              </div>
-
-              </div>
-              <div class="hlsf-control-group">
+                </div>
+                <div class="hlsf-control-group">
                 <label for="hlsf-layout">Layout</label>
                 <select id="hlsf-layout">
                   <option value="dimension">Dimension NAM</option>

@@ -8197,10 +8197,149 @@ function batchLogUpdates(entries) {
   elements.log.scrollTop = elements.log.scrollHeight;
 }
 
+const LOG_TTS_SECTION_TARGETS = [
+  { match: /document reflection/i, selector: '.thought-stream' },
+  { match: /self-reflection/i, selector: '.thought-stream' },
+  { match: /stream of consciousness/i, selector: 'pre' },
+  { match: /structural summary/i, selector: 'pre' },
+];
+
+let activeTtsButton: HTMLButtonElement | null = null;
+let activeTtsUtterance: SpeechSynthesisUtterance | null = null;
+
+function canUseSpeechSynthesis() {
+  return typeof window !== 'undefined'
+    && typeof window.speechSynthesis !== 'undefined'
+    && typeof window.SpeechSynthesisUtterance !== 'undefined';
+}
+
+function stopActiveSpeech() {
+  if (typeof window !== 'undefined' && window.speechSynthesis) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch (err) {
+      console.warn('Unable to cancel speech synthesis:', err);
+    }
+  }
+  if (activeTtsButton instanceof HTMLButtonElement) {
+    activeTtsButton.dataset.ttsState = 'idle';
+    activeTtsButton.classList.remove('is-playing');
+    activeTtsButton.setAttribute('aria-pressed', 'false');
+  }
+  activeTtsButton = null;
+  activeTtsUtterance = null;
+}
+
+function toggleTtsPlayback(button, text) {
+  if (!(button instanceof HTMLButtonElement)) return;
+  const spokenText = typeof text === 'string' ? text.trim() : '';
+  if (!spokenText) return;
+  if (!canUseSpeechSynthesis()) return;
+
+  if (activeTtsButton === button && button.dataset.ttsState === 'playing') {
+    stopActiveSpeech();
+    return;
+  }
+
+  stopActiveSpeech();
+
+  const synth = window.speechSynthesis;
+  try {
+    const utterance = new window.SpeechSynthesisUtterance(spokenText);
+    activeTtsUtterance = utterance;
+    activeTtsButton = button;
+    button.dataset.ttsState = 'playing';
+    button.classList.add('is-playing');
+    button.setAttribute('aria-pressed', 'true');
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.onend = () => {
+      if (activeTtsUtterance === utterance) {
+        stopActiveSpeech();
+      }
+    };
+    utterance.onerror = () => {
+      if (activeTtsUtterance === utterance) {
+        stopActiveSpeech();
+      }
+    };
+    synth.cancel();
+    synth.speak(utterance);
+  } catch (err) {
+    console.warn('Speech synthesis failed:', err);
+    stopActiveSpeech();
+  }
+}
+
+function createTtsButton(getText) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tts-button';
+  button.innerText = '🔊';
+  button.title = 'Play synthesized narration';
+  button.setAttribute('aria-label', 'Play synthesized narration');
+  button.setAttribute('aria-pressed', 'false');
+  button.dataset.ttsState = 'idle';
+  if (!canUseSpeechSynthesis()) {
+    button.disabled = true;
+  }
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!canUseSpeechSynthesis()) return;
+    const value = typeof getText === 'function' ? getText() : '';
+    toggleTtsPlayback(button, value);
+  });
+  return button;
+}
+
+function findSectionNarrationTarget(titleEl, selector) {
+  if (!(titleEl instanceof HTMLElement)) return null;
+  let node = titleEl.nextElementSibling;
+  while (node) {
+    if (node instanceof HTMLElement && node.matches(selector)) {
+      return node;
+    }
+    node = node.nextElementSibling;
+  }
+  const parent = titleEl.parentElement;
+  if (parent) {
+    const fallback = parent.querySelector(selector);
+    if (fallback instanceof HTMLElement) {
+      return fallback;
+    }
+  }
+  return null;
+}
+
+function attachTtsButtons(entry) {
+  if (!(entry instanceof HTMLElement)) return;
+  const titles = entry.querySelectorAll('.section-title');
+  if (!titles.length) return;
+  titles.forEach((titleEl) => {
+    const titleText = (titleEl.textContent || '').trim();
+    if (!titleText) return;
+    const config = LOG_TTS_SECTION_TARGETS.find(target => target.match.test(titleText));
+    if (!config) return;
+    if (titleEl.querySelector('.tts-button')) return;
+    const target = findSectionNarrationTarget(titleEl, config.selector);
+    if (!target) return;
+    const narration = (target.textContent || '').trim();
+    if (!narration) return;
+    const button = createTtsButton(() => target.textContent || '');
+    titleEl.appendChild(button);
+  });
+}
+
+function enhanceLogEntry(entry) {
+  attachTtsButtons(entry);
+}
+
 function addLog(content, type = 'info') {
   const entry = document.createElement('div');
   entry.className = `log-entry ${type}`;
   entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>${content}`;
+  enhanceLogEntry(entry);
   batchLogUpdates([entry]);
   return entry;
 }
@@ -8536,6 +8675,150 @@ const CacheBatch = (() => {
   return { begin, end, cancel, record, isActive, getBaseline, getPending, resolvedBase, total, format, listen };
 })();
 
+const DEFAULT_REMOTE_DB_MIN_RELATION_WEIGHT = 0.1;
+const REMOTE_DB_RELATION_WEIGHT_OVERRIDES = new Map([['seed-link', 0]]);
+
+function resolveRemoteDbPruneThreshold(override) {
+  if (Number.isFinite(override) && override >= 0) {
+    return Math.max(0, Number(override));
+  }
+  if (typeof window !== 'undefined') {
+    const config = window?.HLSF?.config || {};
+    const candidates = [
+      config.remoteDbPruneWeightMin,
+      config.remoteDbMinRelationshipWeight,
+      config.remoteDbPruneWeightThreshold,
+    ];
+    for (const candidate of candidates) {
+      const numeric = Number(candidate);
+      if (Number.isFinite(numeric) && numeric >= 0) {
+        return Math.max(0, numeric);
+      }
+    }
+  }
+  return DEFAULT_REMOTE_DB_MIN_RELATION_WEIGHT;
+}
+
+function pruneRemoteRecordRelationships(record, options = {}) {
+  if (!record || typeof record !== 'object') return false;
+  const relationshipsSource = record.relationships;
+  const relationships = relationshipsSource && typeof relationshipsSource === 'object'
+    ? relationshipsSource
+    : {};
+  if (relationshipsSource !== relationships) {
+    record.relationships = relationships;
+  }
+
+  const overrides = options.relationThresholds instanceof Map
+    ? options.relationThresholds
+    : REMOTE_DB_RELATION_WEIGHT_OVERRIDES;
+  const defaultThreshold = resolveRemoteDbPruneThreshold(options.threshold);
+
+  let changed = false;
+  let totalEdges = 0;
+
+  for (const rel of Object.keys(relationships)) {
+    const edges = Array.isArray(relationships[rel]) ? relationships[rel] : null;
+    const override = overrides.has(rel) ? overrides.get(rel) : undefined;
+    const minWeight = Number.isFinite(override)
+      ? Math.max(0, Number(override))
+      : defaultThreshold;
+
+    if (!edges || edges.length === 0) {
+      if (relationships[rel] != null) {
+        delete relationships[rel];
+        changed = true;
+      }
+      continue;
+    }
+
+    let writeIndex = 0;
+    let mutated = false;
+
+    for (let i = 0; i < edges.length; i += 1) {
+      const edge = edges[i];
+      if (!edge || typeof edge.token !== 'string') {
+        mutated = true;
+        continue;
+      }
+      const token = edge.token.trim();
+      if (!token) {
+        mutated = true;
+        continue;
+      }
+      const numericWeight = Number(edge.weight);
+      if (!Number.isFinite(numericWeight) || numericWeight < minWeight) {
+        mutated = true;
+        continue;
+      }
+      if (edge.token !== token) {
+        edge.token = token;
+        mutated = true;
+      }
+      if (edge.weight !== numericWeight) {
+        edge.weight = numericWeight;
+        mutated = true;
+      }
+      if (writeIndex !== i) {
+        edges[writeIndex] = edge;
+        mutated = true;
+      }
+      writeIndex += 1;
+    }
+
+    if (writeIndex === 0) {
+      delete relationships[rel];
+      changed = true;
+      continue;
+    }
+
+    if (writeIndex !== edges.length) {
+      edges.length = writeIndex;
+      mutated = true;
+    }
+
+    edges.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+    if (mutated) changed = true;
+    totalEdges += edges.length;
+  }
+
+  const relationKeys = Object.keys(relationships);
+  if (record.total_relationships !== totalEdges) {
+    record.total_relationships = totalEdges;
+    changed = true;
+  }
+
+  if ('relationshipTypes' in record) {
+    if (typeof record.relationshipTypes === 'number') {
+      if (record.relationshipTypes !== relationKeys.length) {
+        record.relationshipTypes = relationKeys.length;
+        changed = true;
+      }
+    } else if (!Array.isArray(record.relationshipTypes)
+      || record.relationshipTypes.length !== relationKeys.length
+      || record.relationshipTypes.some((value, idx) => value !== relationKeys[idx])) {
+      record.relationshipTypes = relationKeys.slice();
+      changed = true;
+    }
+  }
+
+  if ('relationship_types' in record) {
+    if (typeof record.relationship_types === 'number') {
+      if (record.relationship_types !== relationKeys.length) {
+        record.relationship_types = relationKeys.length;
+        changed = true;
+      }
+    } else if (!Array.isArray(record.relationship_types)
+      || record.relationship_types.length !== relationKeys.length
+      || record.relationship_types.some((value, idx) => value !== relationKeys[idx])) {
+      record.relationship_types = relationKeys.slice();
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 const RemoteDbRecorder = (() => {
   const STORAGE_KEY = 'HLSF_REMOTE_DB_CHUNKS_V1';
   const META_KEY = 'HLSF_REMOTE_DB_META_V1';
@@ -8830,6 +9113,8 @@ const RemoteDbRecorder = (() => {
     const existing = bucket.get(key);
     const sanitized = cloneRecord(normalized);
     if (!sanitized) return false;
+    pruneRemoteRecordRelationships(sanitized);
+    if (existing) pruneRemoteRecordRelationships(existing);
     if (existing?.cached_at && !sanitized.cached_at) {
       sanitized.cached_at = existing.cached_at;
     }
@@ -9581,6 +9866,144 @@ const RemoteDbStore = (() => {
 
   const normalizeToken = (token) => (token == null ? '' : String(token)).toLowerCase();
 
+  const REMOTE_DB_PRUNE_INTERVAL_MS = 120000;
+  let remotePruneIntervalId = null;
+  let remotePruneSchedule = null;
+
+  const cancelScheduledRemotePrune = () => {
+    if (!remotePruneSchedule) return;
+    if (remotePruneSchedule.type === 'idle') {
+      const cancelIdle = typeof window !== 'undefined' ? window.cancelIdleCallback : null;
+      if (typeof cancelIdle === 'function') {
+        try { cancelIdle(remotePruneSchedule.id); }
+        catch (err) { console.warn('Failed to cancel remote prune idle callback:', err); }
+      }
+    } else {
+      clearTimeout(remotePruneSchedule.id);
+    }
+    remotePruneSchedule = null;
+  };
+
+  const pruneRemoteCaches = (options = {}) => {
+    const { persist = false } = options || {};
+    const pruneOptions = {
+      threshold: options.threshold,
+      relationThresholds: options.relationThresholds,
+    };
+
+    const dirtyTokens = new Set();
+
+    const applyPrune = (tokenKey, record) => {
+      if (!record || typeof record !== 'object') return;
+      const normalized = normalizeToken(tokenKey || record.token);
+      if (!normalized) return;
+      const changed = pruneRemoteRecordRelationships(record, pruneOptions);
+      if (changed) dirtyTokens.add(normalized);
+    };
+
+    for (const chunk of chunkCache.values()) {
+      if (!(chunk instanceof Map)) continue;
+      for (const [tokenKey, record] of chunk.entries()) {
+        applyPrune(tokenKey, record);
+      }
+    }
+
+    for (const [tokenKey, record] of tokenCache.entries()) {
+      applyPrune(tokenKey, record);
+    }
+
+    let persisted = 0;
+    if (persist && dirtyTokens.size) {
+      for (const token of dirtyTokens) {
+        if (!token || !isTokenCached(token)) continue;
+        let record = tokenCache.get(token);
+        if (!record) {
+          for (const chunk of chunkCache.values()) {
+            if (!(chunk instanceof Map)) continue;
+            if (chunk.has(token)) {
+              record = chunk.get(token);
+              break;
+            }
+          }
+        }
+        if (!record || typeof record !== 'object') {
+          const cachedRecord = getCachedRecordForToken(token);
+          if (cachedRecord && typeof cachedRecord === 'object') {
+            record = cachedRecord;
+            pruneRemoteRecordRelationships(record, pruneOptions);
+            tokenCache.set(token, record);
+          } else {
+            continue;
+          }
+        }
+        pruneRemoteRecordRelationships(record, pruneOptions);
+        try {
+          const payload = JSON.stringify(record);
+          const cacheKey = getCacheKey(record.token || token);
+          const persistedOk = safeStorageSet(cacheKey, payload);
+          if (!persistedOk) memoryStorageFallback.set(cacheKey, payload);
+        } catch (err) {
+          console.warn('Failed to persist pruned remote DB record:', err);
+        }
+        try {
+          refreshDbReference(record, { deferReload: true, persist: false });
+        } catch (err) {
+          console.warn('Failed to refresh DB snapshot after pruning remote record:', err);
+        }
+        persisted += 1;
+      }
+    }
+
+    return { pruned: dirtyTokens.size, persisted };
+  };
+
+  const runRemotePruneNow = (options = {}) => {
+    const result = pruneRemoteCaches(Object.assign({ persist: true }, options));
+    if (result.pruned > 0) {
+      updateHeaderCounts();
+    }
+    return result;
+  };
+
+  const ensureRemotePruneTicker = () => {
+    if (remotePruneIntervalId != null) return;
+    if (typeof setInterval !== 'function') return;
+    remotePruneIntervalId = setInterval(() => {
+      scheduleRemotePruneRun();
+    }, REMOTE_DB_PRUNE_INTERVAL_MS);
+  };
+
+  const scheduleRemotePruneRun = (options = {}) => {
+    ensureRemotePruneTicker();
+    if (options.immediate === true) {
+      cancelScheduledRemotePrune();
+      return runRemotePruneNow(options);
+    }
+    if (remotePruneSchedule) return null;
+
+    const idle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback.bind(window)
+      : null;
+
+    const execute = () => {
+      remotePruneSchedule = null;
+      try {
+        runRemotePruneNow(options);
+      } catch (err) {
+        console.warn('Remote DB relationship pruning failed:', err);
+      }
+    };
+
+    if (idle) {
+      const id = idle(execute, { timeout: 1500 });
+      remotePruneSchedule = { type: 'idle', id };
+    } else {
+      const id = setTimeout(execute, 800);
+      remotePruneSchedule = { type: 'timeout', id };
+    }
+    return null;
+  };
+
   const hasMetadata = () => metadata != null || recorderSource != null;
 
   const fallbackPrefix = () => {
@@ -9633,11 +10056,13 @@ const RemoteDbStore = (() => {
       for (const entry of list) {
         const normalized = normalizeRecord(entry);
         if (!normalized) continue;
+        pruneRemoteRecordRelationships(normalized);
         const tokenKey = normalizeToken(normalized.token);
         if (!tokenKey) continue;
         entries.set(tokenKey, normalized);
       }
       chunkCache.set(key, entries);
+      scheduleRemotePruneRun();
       return entries;
     }
 
@@ -9650,16 +10075,19 @@ const RemoteDbStore = (() => {
     for (const entry of list) {
       const normalized = normalizeRecord(entry);
       if (!normalized) continue;
+      pruneRemoteRecordRelationships(normalized);
       const tokenKey = normalizeToken(normalized.token);
       if (!tokenKey) continue;
       entries.set(tokenKey, normalized);
     }
     chunkCache.set(key, entries);
+    scheduleRemotePruneRun();
     return entries;
   };
 
   const ingestRecord = (record) => {
     if (!record || !record.token) return false;
+    pruneRemoteRecordRelationships(record);
     const cacheKey = getCacheKey(record.token);
     const alreadyCached = isTokenCached(record.token);
     let changed = false;
@@ -9684,6 +10112,7 @@ const RemoteDbStore = (() => {
     }
 
     refreshDbReference(record, { deferReload: true, persist: false });
+    scheduleRemotePruneRun();
     return changed;
   };
 
@@ -9810,6 +10239,7 @@ const RemoteDbStore = (() => {
     window.HLSF.dbMeta = metadata;
     updateHeaderCounts();
     scheduleRemoteCacheWarmup({ remote: RemoteDbStore, limit: CONFIG.CACHE_SEED_LIMIT, reason: 'configure' });
+    scheduleRemotePruneRun({ immediate: true });
     return metadata;
   };
 
@@ -9854,6 +10284,7 @@ const RemoteDbStore = (() => {
     }
     updateHeaderCounts();
     scheduleRemoteCacheWarmup({ remote: RemoteDbStore, limit: CONFIG.CACHE_SEED_LIMIT, reason: 'recorder', force: true });
+    scheduleRemotePruneRun({ immediate: true });
     return manifest;
   };
 
@@ -9878,7 +10309,12 @@ const RemoteDbStore = (() => {
       console.warn('Remote DB reset failed to clear HLSF state:', err);
     }
     updateHeaderCounts();
+    cancelScheduledRemotePrune();
+    scheduleRemotePruneRun({ immediate: true });
   };
+
+  ensureRemotePruneTicker();
+  scheduleRemotePruneRun({ immediate: true });
 
   return {
     configure,
@@ -9889,6 +10325,7 @@ const RemoteDbStore = (() => {
     chunkForToken: chunkKeyFor,
     attachRecorder,
     reset,
+    pruneRelationships: (options = {}) => runRemotePruneNow(options),
   };
 })();
 
@@ -12029,9 +12466,18 @@ function buildRecursiveAdjacencyWalk(matrices, options = {}) {
 
 function generateLocalHlsfOutput(matrices, options = {}) {
   const opts = options || {};
-  const wordLimit = Number.isFinite(opts.wordLimit) && opts.wordLimit > 0
+  const inputWordCount = Number.isFinite(opts.inputWordCount) && opts.inputWordCount > 0
+    ? Math.floor(opts.inputWordCount)
+    : null;
+  const desiredResponseWordCount = inputWordCount != null
+    ? Math.max(0, inputWordCount * 2)
+    : null;
+  const baseWordLimit = Number.isFinite(opts.wordLimit) && opts.wordLimit > 0
     ? Math.floor(opts.wordLimit)
     : CONFIG.LOCAL_OUTPUT_WORD_LIMIT;
+  const wordLimit = desiredResponseWordCount != null
+    ? Math.max(baseWordLimit, desiredResponseWordCount)
+    : baseWordLimit;
 
   const affinityThreshold = Number.isFinite(opts.threshold) ? opts.threshold : undefined;
   const affinityIterations = Number.isFinite(opts.iterations) && opts.iterations > 0
@@ -12117,9 +12563,12 @@ function generateLocalHlsfOutput(matrices, options = {}) {
     const depth = sequence.steps.length + 1;
     return depth > max ? depth : max;
   }, 0);
-  const responseTokenLimit = Number.isFinite(opts.responseTokenLimit) && opts.responseTokenLimit > 0
+  let responseTokenLimit = Number.isFinite(opts.responseTokenLimit) && opts.responseTokenLimit > 0
     ? Math.floor(opts.responseTokenLimit)
     : 4;
+  if (desiredResponseWordCount != null) {
+    responseTokenLimit = Math.max(responseTokenLimit, desiredResponseWordCount);
+  }
   const responseTokenCount = Math.max(
     1,
     Math.min(
@@ -12129,13 +12578,60 @@ function generateLocalHlsfOutput(matrices, options = {}) {
   );
   const chosenTokens = orderedThoughtTokens.slice(0, responseTokenCount);
   const responseTextRaw = chosenTokens.join(' ').trim();
-  const responseWordLimit = Math.max(
+  let responseWordLimit = Math.max(
     responseTokenCount,
     Math.min(wordLimit, Number.isFinite(opts.responseWordLimit) && opts.responseWordLimit > 0
       ? Math.floor(opts.responseWordLimit)
       : 12),
   );
+  if (desiredResponseWordCount != null) {
+    responseWordLimit = Math.max(responseWordLimit, desiredResponseWordCount);
+  }
   const responseLimited = limitWords(responseTextRaw || baseThought, responseWordLimit);
+  let responseText = responseLimited.text;
+  let responseWordCount = responseLimited.wordCount;
+  let responseTokens = chosenTokens.slice();
+
+  if (desiredResponseWordCount != null && desiredResponseWordCount > 0) {
+    const initialTokens = (responseText.match(/\S+/g) || []).filter(Boolean);
+    let workingTokens = initialTokens.length ? initialTokens.slice() : responseTokens.slice();
+    if (!workingTokens.length) {
+      workingTokens = orderedThoughtTokens.slice();
+    }
+    const fillerPool = orderedThoughtTokens.length
+      ? orderedThoughtTokens
+      : (focusTokens.length ? focusTokens : []);
+    if (!workingTokens.length && fillerPool.length) {
+      workingTokens = fillerPool.slice();
+    }
+    if (!workingTokens.length && baseThought) {
+      workingTokens = (baseThought.match(/\S+/g) || []).slice();
+    }
+    if (!workingTokens.length && responseText) {
+      workingTokens = [responseText];
+    }
+
+    let fillerIndex = 0;
+    const safeFillerPool = fillerPool.length
+      ? fillerPool
+      : (workingTokens.length ? workingTokens : ['…']);
+    while (workingTokens.length < desiredResponseWordCount) {
+      const filler = safeFillerPool[fillerIndex % safeFillerPool.length] || '…';
+      workingTokens.push(filler);
+      fillerIndex += 1;
+      if (fillerIndex > desiredResponseWordCount * 4) break;
+    }
+
+    if (workingTokens.length > desiredResponseWordCount) {
+      workingTokens = workingTokens.slice(0, desiredResponseWordCount);
+    }
+
+    if (workingTokens.length) {
+      responseText = workingTokens.join(' ');
+      responseWordCount = workingTokens.length;
+      responseTokens = workingTokens.slice();
+    }
+  }
 
   return {
     text: thoughtLimited.text,
@@ -12146,10 +12642,10 @@ function generateLocalHlsfOutput(matrices, options = {}) {
     thoughtWordCount: thoughtLimited.wordCount,
     thoughtTrimmed: thoughtLimited.trimmed,
     thoughtTokens: orderedThoughtTokens,
-    responseText: responseLimited.text,
-    responseWordCount: responseLimited.wordCount,
+    responseText,
+    responseWordCount,
     responseTrimmed: responseLimited.trimmed,
-    responseTokens: chosenTokens,
+    responseTokens,
     narrative: narrativeText,
     walk: walkResult.steps,
     focusTokens,
@@ -18356,6 +18852,7 @@ async function processPrompt(prompt) {
       mentalState,
       topTokens,
       keyRelationships: keyRels,
+      inputWordCount: limitedPrompt.wordCount || tokens.length,
     });
 
     let localThought = localOutputData.thoughtText || localOutputData.text || '';
@@ -18951,6 +19448,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     mentalState,
     topTokens,
     keyRelationships: keyRels,
+    inputWordCount: promptWordInfo.wordCount || promptTokens.length,
   });
 
   let localThought = localOutputData.thoughtText || localOutputData.text || 'Adjacency walk could not assemble a local output with the available data.';
@@ -19059,16 +19557,12 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
   const safeResponse = sanitize(localOutput);
 
   addLog(`<div class="section-divider"></div>
-    <div class="section-title">🤖 Local HLSF AGI Output</div>
+    <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
     <div class="thought-stream"><strong>Thought stream:</strong> ${safeThought}</div>
     <div class="local-response"><strong>Actual output:</strong> ${safeResponse}</div>
     <div class="adjacency-insight">${mentalSummary}</div>
     ${visitedSummary}
     ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
-  `);
-
-  addLog(`<div class="section-divider"></div>
-    <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
     <div class="final-output">
       <details open>
         <summary>Local HLSF AGI thought stream (${localThoughtWordCount} words)</summary>
@@ -19157,7 +19651,6 @@ Instructions: Produce a grammatically coherent rewrite that incorporates adjacen
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🧮 Coherence Evaluation</div>
         <div class="adjacency-insight"><strong>Local HLSF AGI coherence score:</strong> ${sanitize(decimalScoreLabel)} (${sanitize(scoreLabel)})<br><strong>Adjacency lexicon:</strong> ${sanitize(lexiconLabel)}<br><strong>Historical refinement lexicon:</strong> ${sanitize(historicalLexiconLabel)}<br>${sanitize(summaryLabel)}${avgScoreLabel ? `<br>${sanitize(avgScoreLabel)}` : ''}</div>
-        <details open><summary>Refined LLM output</summary><pre>${safeCoherent || 'No coherent rewrite returned.'}</pre></details>
       `);
 
       coherenceAssessment = {
@@ -19169,8 +19662,6 @@ Instructions: Produce a grammatically coherent rewrite that incorporates adjacen
       };
     }
   }
-
-  rebuildLiveGraph({ render: false });
 
   const metaUnique = Number(chunkMeta.uniqueTokens);
   const fallbackUnique = (() => {
@@ -19224,6 +19715,28 @@ Instructions: Produce a grammatically coherent rewrite that incorporates adjacen
       newInputTokensBefore: newBefore,
     },
   };
+}
+
+function updateVisualizationAfterChunk(matrices, focusTokens, chunkIndex, totalChunks) {
+  if (!(matrices instanceof Map)) return;
+  const index = Number.isFinite(chunkIndex) ? Math.max(0, Math.floor(chunkIndex)) : null;
+  const total = Number.isFinite(totalChunks) ? Math.max(1, Math.floor(totalChunks)) : null;
+  if (focusTokens) {
+    const tokenList = focusTokens instanceof Set ? Array.from(focusTokens) : focusTokens;
+    if (tokenList && tokenList.length) {
+      setDocumentFocusTokens(tokenList);
+    }
+  }
+  rebuildLiveGraph();
+  if (index != null && total != null) {
+    notifyHlsfAdjacencyChange('document-chunk', {
+      immediate: true,
+      chunkIndex: index + 1,
+      totalChunks: total,
+    });
+  } else {
+    notifyHlsfAdjacencyChange('document-chunk', { immediate: true });
+  }
 }
 
 
@@ -19482,6 +19995,7 @@ async function processDocumentFile(file) {
           chunkResults.push(result);
           mergeAdjacencyMaps(aggregateMatrices, result.matrices);
           if (estimator) estimator.recordChunk(chunkIndex, result.metrics || {}, chunkMeta);
+          updateVisualizationAfterChunk(aggregateMatrices, focusTokens, chunkIndex, chunks.length);
         }
       }
 
@@ -19788,7 +20302,7 @@ setupLandingExperience();
 initialize();
 
 
-/* ===== HLSF limit controls and mental state dropdown wiring ===== */
+/* ===== HLSF limit controls wiring ===== */
 (function initHlsfLimitControls(){
   try {
     const root = document;
@@ -19798,7 +20312,6 @@ initialize();
     const maxRel = root.getElementById('hlsf-max-rel') as HTMLInputElement | null;
     const prune = root.getElementById('hlsf-prune-thresh') as HTMLInputElement | null;
     const pruneVal = root.getElementById('hlsf-prune-thresh-val') as HTMLElement | null;
-    const mentalSel = root.getElementById('hlsf-mental-state') as HTMLSelectElement | null;
 
     const PRESETS = PERFORMANCE_PROFILES;
 
@@ -19850,43 +20363,14 @@ initialize();
       }
     }
 
-    function applyMentalStateSelection() {
-      if (!mentalSel) return;
-      const name = mentalSel.value;
-      const map: any = {
-        'Focused':     { threshold: 0.45, iterations: 6,  desc: 'Sustained attention on salient paths' },
-        'Exploratory': { threshold: 0.35, iterations: 8,  desc: 'Broaden search with moderate gating' },
-        'Divergent':   { threshold: 0.25, iterations: 12, desc: 'Fan out aggressively for novelty' },
-        'Reflective':  { threshold: 0.40, iterations: 14, desc: 'Deeper cycling over known structure' },
-        'Agitated':    { threshold: 0.55, iterations: 4,  desc: 'Spike on strongest cues only' },
-      };
-      const picked = map[name] || map['Exploratory'];
-      const wrapper = document;
-      const thr = picked.threshold;
-      const iters = picked.iterations;
-      const thresholdSlider = wrapper.querySelector('#hlsf-aff-thresh') as HTMLInputElement | null;
-      const thresholdVal = wrapper.querySelector('#hlsf-aff-thresh-val') as HTMLElement | null;
-      const iterSlider = wrapper.querySelector('#hlsf-aff-iters') as HTMLInputElement | null;
-      const iterVal = wrapper.querySelector('#hlsf-aff-iters-val') as HTMLElement | null;
-      if (thresholdSlider) thresholdSlider.value = thr.toFixed(2);
-      if (thresholdVal) thresholdVal.textContent = thr.toFixed(2);
-      if (iterSlider) iterSlider.value = String(iters);
-      if (iterVal) iterVal.textContent = String(iters);
-      // trigger any existing listeners
-      thresholdSlider?.dispatchEvent(new Event('input'));
-      iterSlider?.dispatchEvent(new Event('input'));
-    }
-
     perfSel?.addEventListener('change', () => applyHlsfLimitsFromControls({ forceDefaults: true }));
     maxNodes?.addEventListener('change', applyHlsfLimitsFromControls);
     maxEdges?.addEventListener('change', applyHlsfLimitsFromControls);
     maxRel?.addEventListener('change', applyHlsfLimitsFromControls);
     prune?.addEventListener('input', applyHlsfLimitsFromControls);
-    mentalSel?.addEventListener('change', applyMentalStateSelection);
 
     // initialize on load
     applyHlsfLimitsFromControls({ forceDefaults: true });
-    applyMentalStateSelection();
     (window as any).applyHlsfLimitsFromControls = applyHlsfLimitsFromControls;
   } catch (err) {
     console.warn('HLSF limit controls init failed:', err);
