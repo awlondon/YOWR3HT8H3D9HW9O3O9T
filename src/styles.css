@@ -1578,6 +1578,15 @@
       gap: 1.25rem;
     }
 
+    .voice-model-window.is-minimized {
+      padding: 1rem 1.25rem;
+      gap: 0.75rem;
+    }
+
+    .voice-model-window.is-minimized .voice-model-content {
+      display: none;
+    }
+
     .voice-window-header {
       display: flex;
       align-items: center;
