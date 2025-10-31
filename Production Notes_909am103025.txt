@@ -1,0 +1,21 @@
+Production Notes:
+
+After document ingest, in document reflection, present ** bounding tags as bold color. Assign a color based on token context mood.
+
+When choosing a different performance profile, the nodes, edges, and relationships do not change. Please make sure they do.
+
+It seems that the document ingest is not actually pulling content from what I gave it. 
+
+During document ingest, the HLSF seems to easily overload. Gradually load larger sections in batches as there's more nodes, edges, and relationships within the HLSF matrix visualizer.
+
+Loading login button panels takes 5-10 seconds, which is far too long.
+
+Put in functionality for examining an individual cluster within an HLSF. Enable this by changing the zoom so that you can get a micro-level zoom box in clusters. Enable this by changing the zoom so that you can get a micro-level zoom box for clusters. 
+
+What it will be, hopefully. When we process it at high levels and high dimensional relational graphs. It will be emergent without imitation.
+
+Local HLSF AGI chosen responses should be between 1 and 50 words, depending on the choices of the local avatar AGI.
+
+Go back to using the 50 adjacency relationships between tokens. Make it so that any 8 token ingest shall be connected to each other through adjacent tokens. That's it. That's how you create a comprehensive, complete graph for any input so that the HLSF can function properly.
+
+The blur does not fade with the alpha, leaving it on the screen. This is a mistake.
