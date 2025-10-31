@@ -10,6 +10,119 @@ import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 import { buildConsciousnessState, type ConsciousnessState } from './consciousness.js';
 
+const TOKEN_CACHE_PREFIX = 'hlsf_token_';
+
+interface CachedAdjacencyRecord {
+  token?: string;
+  relationships?: Record<string, Array<{ token?: string; weight?: number }>>;
+}
+
+interface CachedNeighbor {
+  token: string;
+  weight: number;
+  relation?: string;
+}
+
+const normalizeToken = (value: unknown): string => {
+  if (typeof value === 'string') return value.trim();
+  if (value == null) return '';
+  return String(value).trim();
+};
+
+const lowerKey = (value: string): string => value.toLowerCase();
+
+function safeParseRecord(raw: unknown): CachedAdjacencyRecord | null {
+  if (!raw) return null;
+  if (typeof raw === 'object') {
+    return raw as CachedAdjacencyRecord;
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as CachedAdjacencyRecord;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function readCachedAdjacencyRecord(token: string): CachedAdjacencyRecord | null {
+  const normalized = normalizeToken(token);
+  if (!normalized) return null;
+  const lower = lowerKey(normalized);
+
+  const globalCache = (globalThis as any).__HLSF_ADJ_CACHE__;
+  if (globalCache && typeof globalCache.get === 'function') {
+    const record = globalCache.get(lower) ?? globalCache.get(normalized);
+    const parsed = safeParseRecord(record);
+    if (parsed) return parsed;
+  }
+
+  const storage: Storage | null = (() => {
+    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
+    const globalStorage = (globalThis as any).localStorage;
+    if (globalStorage && typeof globalStorage.getItem === 'function') {
+      return globalStorage as Storage;
+    }
+    return null;
+  })();
+
+  if (storage) {
+    const key = `${TOKEN_CACHE_PREFIX}${lower}`;
+    try {
+      const raw = storage.getItem(key);
+      const parsed = safeParseRecord(raw);
+      if (parsed) return parsed;
+    } catch {
+      // ignore storage access errors
+    }
+  }
+
+  return null;
+}
+
+function gatherTopCachedNeighbors(token: string, limit = 2): CachedNeighbor[] {
+  const record = readCachedAdjacencyRecord(token);
+  if (!record || !record.relationships) return [];
+
+  const neighborWeights = new Map<string, CachedNeighbor>();
+
+  for (const [relationKey, entries] of Object.entries(record.relationships)) {
+    if (!Array.isArray(entries) || !entries.length) continue;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') continue;
+      const neighborToken = normalizeToken(entry.token);
+      if (!neighborToken) continue;
+      if (neighborToken.toLowerCase() === normalizeToken(token).toLowerCase()) continue;
+      const weightValue = Number(entry.weight);
+      const weight = Number.isFinite(weightValue) ? weightValue : 0;
+      const key = lowerKey(neighborToken);
+      const existing = neighborWeights.get(key);
+      if (!existing || weight > existing.weight) {
+        neighborWeights.set(key, {
+          token: neighborToken,
+          weight,
+          relation: relationKey,
+        });
+      }
+    }
+  }
+
+  const ranked = Array.from(neighborWeights.values())
+    .sort((a, b) => {
+      if (b.weight === a.weight) {
+        return a.token.localeCompare(b.token);
+      }
+      return b.weight - a.weight;
+    })
+    .slice(0, Math.max(0, limit));
+
+  return ranked;
+}
+
 
 /** ===== Synthetic branching expansion helpers (guaranteed growth from 1 token) ===== */
 
@@ -71,24 +184,109 @@ function stronglyConnectedFromEdges(nodes: Array<{token:string}>, edges: Array<{
 }
 
 function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, seeds: string[], limits: Limits) {
-  const seen = new Set(nodes.map(n => n.token));
-  const queue = [...seeds];
+  const seen = new Set(nodes.map(n => n.token.toLowerCase()));
+  const queue = seeds.map(token => normalizeToken(token)).filter(Boolean);
+  const edgeKeys = new Set<string>();
+  for (const edge of acc.edges as Array<{ source?: string; target?: string; type?: string }>) {
+    const key = `${edge.source || ''}->${edge.target || ''}|${edge.type || ''}`;
+    edgeKeys.add(key);
+  }
+
+  const addNode = (token: string, weight: number): boolean => {
+    const normalized = normalizeToken(token);
+    if (!normalized) return false;
+    const lower = normalized.toLowerCase();
+    if (seen.has(lower)) return false;
+    if (nodes.length >= limits.maxNodes) return false;
+    seen.add(lower);
+    const safeWeight = Number.isFinite(weight) ? Math.max(0.5, Math.abs(weight)) : 1;
+    nodes.push({ token: normalized, kind: 'word', rawScore: safeWeight, index: nodes.length, cat: null });
+    return true;
+  };
+
+  const addEdge = (
+    source: string,
+    target: string,
+    type: string,
+    weight: number,
+    meta: Record<string, unknown>,
+  ) => {
+    if (!source || !target) return;
+    const key = `${source}->${target}|${type}`;
+    if (edgeKeys.has(key)) return;
+    if (acc.edges.length >= limits.maxEdges) return;
+    edgeKeys.add(key);
+    const safeWeight = Number.isFinite(weight) ? weight : 0;
+    acc.edges.push({ source, target, type, w: safeWeight, meta });
+  };
+
   while (queue.length) {
     if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
     const parent = queue.shift()!;
-    const kids = generateChildrenForToken(parent, limits.branchingFactor);
-    for (const k of kids) {
-      if (!seen.has(k)) {
-        seen.add(k);
-        nodes.push({ token: k, kind: 'word' });
-        queue.push(k);
+    const cachedNeighbors = gatherTopCachedNeighbors(parent, Math.max(2, limits.branchingFactor));
+    const addedNeighbors: CachedNeighbor[] = [];
+
+    if (cachedNeighbors.length) {
+      for (const neighbor of cachedNeighbors) {
+        if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
+        const wasAdded = addNode(neighbor.token, neighbor.weight || 1);
+        const normalizedNeighbor = normalizeToken(neighbor.token);
+        if (!normalizedNeighbor) continue;
+        if (wasAdded) {
+          if (!queue.includes(normalizedNeighbor)) {
+            queue.push(normalizedNeighbor);
+          }
+          addedNeighbors.push(neighbor);
+        } else {
+          addedNeighbors.push(neighbor);
+        }
+        addEdge(parent, normalizedNeighbor, 'adjacency:cached', neighbor.weight || 0, {
+          synthetic: true,
+          source: 'cached-adjacency',
+          relation: neighbor.relation || null,
+        });
+        addEdge(normalizedNeighbor, parent, 'adjacency:cached', neighbor.weight || 0, {
+          synthetic: true,
+          source: 'cached-adjacency',
+          relation: neighbor.relation || null,
+        });
       }
-      // bidirectional edges
-      acc.edges.push({ source: parent, target: k, type: 'seed-expansion', w: 1, meta: { synthetic: true } });
-      acc.edges.push({ source: k, target: parent, type: 'seed-expansion', w: 1, meta: { synthetic: true } });
-      if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
+
+      for (let i = 0; i < addedNeighbors.length - 1; i += 1) {
+        if (acc.edges.length >= limits.maxEdges) break;
+        const a = normalizeToken(addedNeighbors[i]?.token);
+        const b = normalizeToken(addedNeighbors[i + 1]?.token);
+        if (!a || !b) continue;
+        const bridgeWeight = Math.max(
+          0,
+          Math.min(addedNeighbors[i]?.weight ?? 0, addedNeighbors[i + 1]?.weight ?? 0),
+        );
+        addEdge(a, b, 'adjacency:cached-bridge', bridgeWeight, {
+          synthetic: true,
+          source: 'cached-adjacency-bridge',
+        });
+        addEdge(b, a, 'adjacency:cached-bridge', bridgeWeight, {
+          synthetic: true,
+          source: 'cached-adjacency-bridge',
+        });
+      }
     }
-    // early exit if strongly connected
+
+    if (!cachedNeighbors.length) {
+      const kids = generateChildrenForToken(parent, limits.branchingFactor);
+      for (const k of kids) {
+        if (!seen.has(k.toLowerCase())) {
+          addNode(k, 1);
+          if (!queue.includes(k)) {
+            queue.push(k);
+          }
+        }
+        addEdge(parent, k, 'seed-expansion', 1, { synthetic: true });
+        addEdge(k, parent, 'seed-expansion', 1, { synthetic: true });
+        if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
+      }
+    }
+
     if (stronglyConnectedFromEdges(nodes, acc.edges)) break;
   }
 }
@@ -296,7 +494,8 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     const limits = resolveLimitsFromSettings(cfg);
     const currentEdgeCount = accumulator.edges.length;
     if (tokens.length <= 1 || currentEdgeCount === 0) {
-      const seedText = tokens.length ? String(tokens[0].t || tokens[0].token || '') : '';
+      const firstToken = tokens[0];
+      const seedText = firstToken ? String(firstToken.t ?? '') : '';
       const seeds = seedText ? [seedText] : [];
       if (seeds.length) {
         syntheticBranchingExpansion(nodes, accumulator, seeds, limits);
