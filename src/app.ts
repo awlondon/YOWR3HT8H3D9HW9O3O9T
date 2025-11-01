@@ -76,6 +76,45 @@ const CONFIG: EngineConfig = {
   NETWORK_RETRY_BACKOFF_MS: 5000,
 };
 
+const MAX_RECURSION_DEPTH = 8;
+const MAX_LEVEL_UP_SEEDS = 64;
+
+function clampRecursionDepth(value: unknown): number {
+  if (value === Infinity || value === 'Infinity') {
+    return MAX_RECURSION_DEPTH;
+  }
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric)) {
+    const fallback = Math.floor(Number(CONFIG.ADJACENCY_RECURSION_DEPTH));
+    if (!Number.isFinite(fallback)) {
+      return 0;
+    }
+    return Math.min(MAX_RECURSION_DEPTH, Math.max(0, fallback));
+  }
+  return Math.min(MAX_RECURSION_DEPTH, Math.max(0, numeric));
+}
+
+function applyRecursionDepthSetting(nextDepth: unknown): number {
+  const clamped = clampRecursionDepth(nextDepth);
+  if (typeof window !== 'undefined') {
+    (window as any).HLSF = (window as any).HLSF || {};
+    const config = ((window as any).HLSF.config = (window as any).HLSF.config || {});
+    config.adjacencyRecursionDepth = clamped;
+  }
+  CONFIG.ADJACENCY_RECURSION_DEPTH = clamped;
+  return clamped;
+}
+
+function getRecursionDepthSetting(): number {
+  if (typeof window !== 'undefined' && window && (window as any).HLSF) {
+    const config = (window as any).HLSF.config;
+    if (config && Object.prototype.hasOwnProperty.call(config, 'adjacencyRecursionDepth')) {
+      return clampRecursionDepth(config.adjacencyRecursionDepth);
+    }
+  }
+  return clampRecursionDepth(CONFIG.ADJACENCY_RECURSION_DEPTH);
+}
+
 function activeSettings() {
   if (typeof window !== 'undefined' && window && (window as any).SETTINGS) {
     return (window as any).SETTINGS;
@@ -824,7 +863,7 @@ function buildHLSFMatrices(db) {
 }
 
 function parseHlsfArgs(str) {
-  const out = { mode: 'full', tokens: [], glyphs: [], depth: 3.0 };
+  const out = { mode: 'full', tokens: [], glyphs: [], depth: CONFIG.ADJACENCY_RECURSION_DEPTH };
   const s = (str || '').trim();
   if (!s) return out;
   if (/^--conversation$/i.test(s)) { out.mode = 'conversation'; return out; }
@@ -4091,6 +4130,22 @@ function ensureHLSFCanvas() {
           <input id="hlsf-edges-per-type" type="number" min="1" max="${MAX_EDGES_PER_TYPE}" step="1" value="3">
         </div>
         <div class="hlsf-control-group">
+          <label for="hlsf-recursion-depth">
+            Recursion depth <span id="hlsf-recursion-depth-val">${CONFIG.ADJACENCY_RECURSION_DEPTH}</span>
+          </label>
+          <input
+            id="hlsf-recursion-depth"
+            type="number"
+            min="0"
+            max="${MAX_RECURSION_DEPTH}"
+            step="1"
+            value="${CONFIG.ADJACENCY_RECURSION_DEPTH}"
+          >
+          <button id="hlsf-level-up" class="btn btn-primary" type="button" title="Expand the current graph using recursive adjacency exploration">
+            Complete Graph Level Up
+          </button>
+        </div>
+        <div class="hlsf-control-group">
           <label>Display options</label>
           <div class="hlsf-button-row">
             <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
@@ -4306,6 +4361,22 @@ function bindHlsfControls(wrapper) {
     });
   }
 
+  const recursionInput = wrapper.querySelector('#hlsf-recursion-depth');
+  const recursionVal = wrapper.querySelector('#hlsf-recursion-depth-val');
+  if (recursionInput) {
+    recursionInput.addEventListener('input', () => {
+      const prev = getRecursionDepthSetting();
+      const next = applyRecursionDepthSetting(recursionInput.value);
+      recursionInput.value = String(next);
+      if (recursionVal) recursionVal.textContent = String(next);
+      if (next === prev) return;
+      if (window.HLSF?.lastCommand) {
+        window.HLSF.lastCommand.depth = next;
+      }
+      rebuildHlsfFromLastCommand(true);
+    });
+  }
+
   const presetSelect = wrapper.querySelector('#hlsf-mental-preset');
   if (presetSelect && !presetSelect.dataset.populated) {
     populateMentalStatePresetOptions(presetSelect);
@@ -4467,6 +4538,21 @@ function bindHlsfControls(wrapper) {
     });
   }
 
+  const levelUpBtn = wrapper.querySelector('#hlsf-level-up');
+  if (levelUpBtn) {
+    levelUpBtn.addEventListener('click', () => {
+      if (levelUpBtn.disabled) return;
+      levelUpBtn.disabled = true;
+      Promise.resolve(levelUpHlsfGraph({ root: wrapper }))
+        .catch(err => {
+          console.warn('Failed to level up graph:', err);
+        })
+        .finally(() => {
+          levelUpBtn.disabled = false;
+        });
+    });
+  }
+
   const labelsBtn = wrapper.querySelector('#hlsf-toggle-labels');
   if (labelsBtn) {
     labelsBtn.addEventListener('click', () => {
@@ -4591,6 +4677,15 @@ function syncHlsfControls(wrapper) {
 
   syncViewToConfig();
   const config = window.HLSF.config || {};
+  const recursionDepth = applyRecursionDepthSetting(
+    Object.prototype.hasOwnProperty.call(config, 'adjacencyRecursionDepth')
+      ? config.adjacencyRecursionDepth
+      : CONFIG.ADJACENCY_RECURSION_DEPTH,
+  );
+  const recursionInput = wrapper.querySelector('#hlsf-recursion-depth');
+  const recursionVal = wrapper.querySelector('#hlsf-recursion-depth-val');
+  if (recursionInput) recursionInput.value = String(recursionDepth);
+  if (recursionVal) recursionVal.textContent = String(recursionDepth);
   const showAllAdj = isAdjacencyExpansionEnabled();
   const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
   const speedVal = wrapper.querySelector('#hlsf-speed-val');
@@ -4812,6 +4907,9 @@ const existingConfig = window.HLSF.config || {};
 // the actual JSON artifact checked into version control so the visualizer can
 // bootstrap immediately without requiring a manual import.
 const DEFAULT_BOOTSTRAP_DB = 'remote-db/metadata.json';
+const desiredRecursionDepth = clampRecursionDepth(
+  (existingConfig as any).adjacencyRecursionDepth ?? CONFIG.ADJACENCY_RECURSION_DEPTH,
+);
 window.HLSF.config = Object.assign({
   bootstrapDbUrl: typeof existingConfig.bootstrapDbUrl === 'string' ? existingConfig.bootstrapDbUrl : DEFAULT_BOOTSTRAP_DB,
   rotationOmega: 0.30,
@@ -4846,6 +4944,7 @@ window.HLSF.config = Object.assign({
   showAllAdjacencies: existingConfig.showAllAdjacencies !== false,
   affinity: { threshold: 0.35, iterations: 8 },
   relationshipBudget: DEFAULT_HLSF_RELATIONSHIP_LIMIT,
+  adjacencyRecursionDepth: desiredRecursionDepth,
 }, existingConfig);
 const initialRelationCap = window.HLSF.config.relationTypeCap;
 window.HLSF.config.relationTypeCap = initialRelationCap === Infinity
@@ -4858,6 +4957,7 @@ window.HLSF.config.edgesPerType = initialEdgesPerType === Infinity
 window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
 window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
 window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
+applyRecursionDepthSetting(window.HLSF.config.adjacencyRecursionDepth);
 window.HLSF.config.relationshipBudget = resolveHlsfRelationshipBudget(window.HLSF.config.relationshipBudget);
 if ('relationshipLimit' in window.HLSF.config) {
   window.HLSF.config.relationshipLimit = window.HLSF.config.relationshipBudget;
@@ -11201,6 +11301,197 @@ function formatTokenList(tokens, limit = 12) {
   return extra > 0 ? `${base} +${extra} more` : base;
 }
 
+function gatherLevelUpSeeds(graph: any, anchors: string[], maxSeeds: number): string[] {
+  const limit = Math.max(maxSeeds, anchors.length);
+  const seen = new Set<string>();
+  const seeds: string[] = [];
+
+  const addSeed = (token: unknown) => {
+    const value = typeof token === 'string' ? token.trim() : '';
+    if (!value) return;
+    const key = value.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    seeds.push(value);
+  };
+
+  for (const anchor of anchors) addSeed(anchor);
+
+  const adjacency = new Map<string, { token: string; weight: number }[]>();
+  const pushNeighbor = (source: unknown, target: unknown, weight: number) => {
+    const from = typeof source === 'string' ? source.trim() : '';
+    const to = typeof target === 'string' ? target.trim() : '';
+    if (!from || !to) return;
+    if (!adjacency.has(from)) adjacency.set(from, []);
+    adjacency.get(from)!.push({ token: to, weight });
+  };
+
+  const links = Array.isArray(graph?.links) ? graph.links : [];
+  for (const link of links) {
+    if (!link) continue;
+    const weight = Number(link.w);
+    const normalizedWeight = Number.isFinite(weight) ? weight : 0;
+    pushNeighbor(link.from, link.to, normalizedWeight);
+    pushNeighbor(link.to, link.from, normalizedWeight);
+  }
+
+  for (const list of adjacency.values()) {
+    list.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+  }
+
+  const spawnLimit = Math.max(1, Math.floor(CONFIG.ADJACENCY_SPAWN_LIMIT) || 1);
+  for (const anchor of anchors) {
+    const list = adjacency.get(anchor) || [];
+    for (let i = 0; i < list.length && i < spawnLimit; i += 1) {
+      addSeed(list[i].token);
+      if (seeds.length >= limit) break;
+    }
+    if (seeds.length >= limit) break;
+  }
+
+  if (seeds.length < limit) {
+    const global: { token: string; weight: number }[] = [];
+    adjacency.forEach(list => {
+      for (const entry of list) global.push(entry);
+    });
+    global.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+    for (const entry of global) {
+      addSeed(entry.token);
+      if (seeds.length >= limit) break;
+    }
+  }
+
+  if (seeds.length < limit && graph?.nodes instanceof Map) {
+    const nodes = Array.from(graph.nodes.values());
+    nodes.sort((a, b) => (Number(b?.degree) || 0) - (Number(a?.degree) || 0));
+    for (const node of nodes) {
+      const token = typeof node?.token === 'string'
+        ? node.token
+        : typeof node?.id === 'string'
+          ? node.id
+          : '';
+      addSeed(token);
+      if (seeds.length >= limit) break;
+    }
+  }
+
+  return seeds.slice(0, limit);
+}
+
+const levelUpState = { running: false };
+
+async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
+  if (levelUpState.running) {
+    logWarning('Complete graph level up already running.');
+    return;
+  }
+
+  levelUpState.running = true;
+  const root = options.root instanceof HTMLElement ? options.root : document.getElementById('hlsf-canvas-container');
+  let status: HTMLElement | null = null;
+
+  try {
+    const graph = window.HLSF?.currentGraph;
+    const last = window.HLSF?.lastCommand;
+    if (!graph || !last) {
+      logWarning('No active HLSF graph to level up. Run /hlsf first.');
+      return;
+    }
+
+    let index = last.idx;
+    if (!(index instanceof Map)) {
+      try {
+        index = await loadOrGetIndex();
+      } catch (err) {
+        console.warn('Level up index refresh failed:', err);
+      }
+    }
+    if (!(index instanceof Map)) {
+      logWarning('Unable to access HLSF index for level up.');
+      return;
+    }
+    last.idx = index;
+
+    const currentDepth = Number.isFinite(last.depth) ? Math.floor(last.depth) : getRecursionDepthSetting();
+    const nextDepth = clampRecursionDepth(currentDepth + 1);
+    if (nextDepth <= currentDepth) {
+      logStatus(`Recursion depth already at ${currentDepth}. Increase the depth value to expand further.`);
+      return;
+    }
+
+    const appliedDepth = applyRecursionDepthSetting(nextDepth);
+    if (root) {
+      const input = root.querySelector<HTMLInputElement>('#hlsf-recursion-depth');
+      const label = root.querySelector<HTMLElement>('#hlsf-recursion-depth-val');
+      if (input) input.value = String(appliedDepth);
+      if (label) label.textContent = String(appliedDepth);
+    }
+    last.depth = appliedDepth;
+
+    const anchors = Array.isArray(last.anchors)
+      ? last.anchors.map(anchor => (typeof anchor === 'string' ? anchor.trim() : '')).filter(Boolean)
+      : [];
+    const seeds = gatherLevelUpSeeds(graph, anchors, MAX_LEVEL_UP_SEEDS);
+    if (!seeds.length) {
+      logWarning('No candidate tokens available for level up.');
+      return;
+    }
+
+    const normalizedSeeds = normalizeAdjacencyInputs(seeds);
+    if (!normalizedSeeds.length) {
+      logWarning('No valid seeds available for level up.');
+      return;
+    }
+
+    const anchorPreview = anchors.length ? formatTokenList(anchors, 6) : '';
+    const contextPieces = [
+      `Level-up from depth ${currentDepth} to ${appliedDepth}`,
+      anchorPreview ? `Anchors: ${anchorPreview}` : '',
+    ].filter(Boolean);
+    const context = contextPieces.join('. ');
+    const label = `graph level-up depth ${appliedDepth}`;
+    status = logStatus(`Leveling graph to depth ${appliedDepth} (${normalizedSeeds.length} seed${normalizedSeeds.length === 1 ? '' : 's'})…`);
+
+    const recursionResult = await fetchRecursiveAdjacencies(
+      normalizedSeeds,
+      context,
+      label,
+      {
+        depth: appliedDepth,
+        normalizedSeeds,
+        preferDb: true,
+        onTokenLoaded: () => queueLiveGraphUpdate(48),
+        requireCompleteGraph: false,
+      },
+    );
+
+    if (recursionResult?.matrices instanceof Map && recursionResult.matrices.size) {
+      window.HLSF.matrices = mergeAdjacencyMaps(window.HLSF.matrices, recursionResult.matrices);
+    }
+
+    const stats = recursionResult?.stats || {};
+    const summaryParts = [
+      `visited ${stats.visitedTokens ?? 0}`,
+      `expansions ${stats.expansions ?? 0}`,
+      `API ${stats.apiCalls ?? 0}`,
+    ];
+    addLog(`<div class="adjacency-insight"><strong>🔺 Graph level up:</strong> ${sanitize(summaryParts.join(' · '))}</div>`);
+
+    if (status) {
+      status.textContent = `✅ Level up complete at depth ${appliedDepth}.`;
+    }
+
+    await rebuildHlsfFromLastCommand(true);
+  } catch (err) {
+    if (status) {
+      status.textContent = `❌ Level up failed: ${err?.message || err}`;
+    }
+    logError(`Complete graph level up failed: ${err?.message || err}`);
+  } finally {
+    levelUpState.running = false;
+  }
+}
+
 function limitAdjacencyEntryEdges(
   entry,
   maxEdges,
@@ -15891,9 +16182,10 @@ async function cmdHlsf(rawArgs) {
       return;
     }
 
-    let depth = Number.isFinite(args.depth) ? args.depth : 3;
+    let depth = Number.isFinite(args.depth) ? args.depth : getRecursionDepthSetting();
     if (Number.isFinite(flags.depth)) depth = flags.depth;
     if (metricScope === METRIC_SCOPE.DB) depth = 0;
+    else depth = applyRecursionDepthSetting(depth);
 
     let graph = null;
     let runMetrics = { nodes: 0, edges: 0, relationships: 0, anchors: 0 };
@@ -16049,7 +16341,8 @@ async function rebuildHlsfFromLastCommand(logUpdate = false) {
 
     last.anchors = anchors.slice();
 
-    const depth = Number.isFinite(last.depth) ? last.depth : 3;
+    const depth = applyRecursionDepthSetting(Number.isFinite(last.depth) ? last.depth : getRecursionDepthSetting());
+    last.depth = depth;
     const graph = await assembleGraphFromAnchorsLogged(anchors, depth, index, { silent: true });
     applyAffinityClusters(graph, index);
     const layout = computeLayout(graph, index, { scope: window.HLSF?.config?.hlsfScope, focusTokens });
