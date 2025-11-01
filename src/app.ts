@@ -28,6 +28,7 @@ interface EngineConfig {
   PROMPT_LOG_LIMIT: number;
   ORIGINAL_OUTPUT_WORD_LIMIT: number;
   LOCAL_OUTPUT_WORD_LIMIT: number;
+  LOCAL_RESPONSE_WORD_LIMIT: number;
   MAX_CONCURRENCY: number;
   MAX_RETRY_ATTEMPTS: number;
   RETRY_BASE_DELAY_MS: number;
@@ -52,6 +53,7 @@ const CONFIG: EngineConfig = {
   PROMPT_LOG_LIMIT: 250,
   ORIGINAL_OUTPUT_WORD_LIMIT: 200,
   LOCAL_OUTPUT_WORD_LIMIT: 100,
+  LOCAL_RESPONSE_WORD_LIMIT: 20,
   MAX_CONCURRENCY: 5,
   MAX_RETRY_ATTEMPTS: 3,
   RETRY_BASE_DELAY_MS: 500,
@@ -19193,6 +19195,7 @@ async function processPrompt(prompt) {
 
     const localOutputData = generateLocalHlsfOutput(allMatrices, {
       wordLimit: CONFIG.LOCAL_OUTPUT_WORD_LIMIT,
+      responseWordLimit: CONFIG.LOCAL_RESPONSE_WORD_LIMIT,
       threshold: affinityThreshold,
       iterations: affinityIterations,
       mentalState,
@@ -19217,12 +19220,12 @@ async function processPrompt(prompt) {
 
     let localOutput = localOutputData.responseText || localThought;
     if (localOutputData.responseTrimmed) {
-      logWarning(`Local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+      logWarning(`Local output truncated to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
     }
     localOutput = DbLexicon.rewriteText(localOutput);
-    const localLimited = limitWords(localOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+    const localLimited = limitWords(localOutput, CONFIG.LOCAL_RESPONSE_WORD_LIMIT);
     if (localLimited.trimmed && !localOutputData.responseTrimmed) {
-      logWarning(`Local output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+      logWarning(`Local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
     }
     localOutput = localLimited.text;
     const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
@@ -19789,6 +19792,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
 
   const localOutputData = generateLocalHlsfOutput(allMatrices, {
     wordLimit: CONFIG.LOCAL_OUTPUT_WORD_LIMIT,
+    responseWordLimit: CONFIG.LOCAL_RESPONSE_WORD_LIMIT,
     threshold: affinityThreshold,
     iterations: affinityIterations,
     mentalState,
@@ -19810,12 +19814,12 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
 
   let localOutput = localOutputData.responseText || localThought;
   if (localOutputData.responseTrimmed) {
-    logWarning(`${chunkLabel}: local output truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+    logWarning(`${chunkLabel}: local output truncated to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
   }
   localOutput = DbLexicon.rewriteText(localOutput);
-  const localLimited = limitWords(localOutput, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
+  const localLimited = limitWords(localOutput, CONFIG.LOCAL_RESPONSE_WORD_LIMIT);
   if (localLimited.trimmed && !localOutputData.responseTrimmed) {
-    logWarning(`${chunkLabel}: local output trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words for archival.`);
+    logWarning(`${chunkLabel}: local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words for archival.`);
   }
   localOutput = localLimited.text;
   const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
