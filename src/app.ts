@@ -2981,6 +2981,17 @@ function renderNodeLabelOverlay(ctx, text, centerX, baselineY, radius, theme, no
 }
 
 function drawComposite(graph, opts = {}) {
+  if (!window.HLSF || typeof window.HLSF !== 'object') window.HLSF = {};
+  if (!window.HLSF.state || typeof window.HLSF.state !== 'object') {
+    window.HLSF.state = {};
+  }
+  if (!(window.HLSF.state.patches instanceof Map)) {
+    window.HLSF.state.patches = new Map();
+  }
+  if (!Number.isFinite(window.HLSF.state.emergentRot)) {
+    window.HLSF.state.emergentRot = 0;
+  }
+
   const cfg = window.HLSF.config;
   const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
   if (!canvas) {
