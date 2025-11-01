@@ -16465,49 +16465,51 @@ function craftSelfThoughtStream(options) {
     clusterInfo,
   } = options || {};
 
-  const fragments = [];
-  const moodLabel = typeof moodName === 'string' ? moodName : 'Adaptive clustering';
+  const moodLabel = typeof moodName === 'string' && moodName.trim()
+    ? moodName.trim()
+    : 'Adaptive clustering';
   const moodLower = moodLabel.toLowerCase();
-  const baseOpening = `I slip into ${moodLower} currents tuned to ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`;
-  fragments.push(baseOpening);
+  const focusTokens = Array.isArray(tokenPool) ? tokenPool.filter(Boolean) : [];
+  const primaryFocus = focusTokens.slice(0, 6);
+  const secondaryFocus = focusTokens.slice(6, 10);
+
+  const segments: string[] = [];
+  segments.push(`Deep-diving the remote-db, I settle into ${moodLower} currents calibrated to ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`);
 
   if (mentalState?.desc) {
-    fragments.push(mentalState.desc.trim());
+    segments.push(mentalState.desc.trim());
   }
 
   if (mechanics) {
     const mechanicsText = mechanics.trim().replace(/\.$/, '');
     if (mechanicsText) {
       const normalized = mechanicsText.charAt(0).toLowerCase() + mechanicsText.slice(1);
-      fragments.push(`Mechanics hum as ${normalized}.`);
+      segments.push(`Mechanics surface as ${normalized} during the dive.`);
     }
   }
 
-  if (Array.isArray(tokenPool) && tokenPool.length) {
-    const mainChain = tokenPool.slice(0, Math.min(6, tokenPool.length)).join(' ⟶ ');
-    fragments.push(`I trace ${mainChain}, letting adjacency threads breathe.`);
+  if (primaryFocus.length) {
+    segments.push(`Primary strata reveal ${joinWithAnd(primaryFocus)}.`);
+  }
 
-    if (tokenPool.length > 6) {
-      const whispers = tokenPool.slice(6, Math.min(12, tokenPool.length)).join(', ');
-      fragments.push(`${whispers} whisper at the periphery.`);
-    }
-    if (tokenPool.length > 12) {
-      const echoes = tokenPool.slice(12, tokenPool.length).join(', ');
-      fragments.push(`Echoes of ${echoes} drift behind me.`);
-    }
-  } else {
-    fragments.push('The database rests quiet, waiting for tokens to surface.');
+  if (secondaryFocus.length) {
+    segments.push(`Secondary traces echo ${joinWithAnd(secondaryFocus)}.`);
+  }
+
+  if (!primaryFocus.length && !secondaryFocus.length) {
+    segments.push('Remote adjacency remains sparse, so I sweep archival layers for signals.');
   }
 
   if (Number.isFinite(dbStats?.anchors) && dbStats.anchors > 0) {
-    fragments.push(`${dbStats.anchors} anchors pulse softly to keep coherence.`);
+    segments.push(`${dbStats.anchors} anchors mark the descent path.`);
   }
 
-  if (clusterInfo?.clusterCount > 0) {
-    fragments.push(`${clusterInfo.clusterCount} clusters glow in the current frame.`);
+  if (Number.isFinite(clusterInfo?.clusterCount) && clusterInfo.clusterCount > 0) {
+    segments.push(`${clusterInfo.clusterCount} clusters pulse within the repository frame.`);
   }
 
-  return fragments.join(' ').replace(/\s+/g, ' ').trim();
+  const narrative = segments.join(' ').replace(/\s+/g, ' ').trim();
+  return limitWords(narrative, 100).text;
 }
 
 function joinWithAnd(items) {
@@ -16538,156 +16540,93 @@ function craftMentalStateStream(options = {}) {
     requestedTokens = [],
   } = options;
 
-  const moodName = mentalState.name || 'Undefined mental state';
-  const paragraphs = [];
-  const introSegments = [];
-  introSegments.push(`I settle into the ${moodName} state calibrated at threshold ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`);
-  if (mentalState.desc) {
-    introSegments.push(mentalState.desc.trim());
+  const moodName = mentalState.name || 'undefined mental state';
+  const focusList = Array.isArray(focusTokens) ? focusTokens.filter(Boolean) : [];
+  const requestedList = Array.isArray(requestedTokens) ? requestedTokens.filter(Boolean) : [];
+  const highlightTokens = Array.isArray(tokenHighlights)
+    ? tokenHighlights.map(entry => entry?.token).filter(Boolean)
+    : [];
+
+  const relationSamples = Array.isArray(relationTypes)
+    ? relationTypes.slice(0, 2).map(rel => {
+      const label = relDisplay(rel?.type);
+      const count = Number.isFinite(rel?.count) ? rel.count : 0;
+      return `${label}×${count}`;
+    }).filter(Boolean)
+    : [];
+
+  const connectionSamples = Array.isArray(topConnections)
+    ? topConnections.slice(0, 2).map(conn => `${conn?.source}↔${conn?.target}`).filter(Boolean)
+    : [];
+
+  const adjacencyLines = typeof adjacencyExcerpt === 'string'
+    ? adjacencyExcerpt.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2)
+    : [];
+
+  const clusterHighlights: string[] = [];
+  if (Number.isFinite(clusterInfo?.clusterCount)) {
+    clusterHighlights.push(`${clusterInfo.clusterCount} clusters`);
   }
+  if (Number.isFinite(clusterInfo?.anchorCount)) {
+    clusterHighlights.push(`${clusterInfo.anchorCount} anchors`);
+  }
+
+  const segments: string[] = [];
+  segments.push(`Affinities in emergent rotation steady the ${moodName} frame at threshold ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`);
+
+  if (mentalState.desc) {
+    segments.push(mentalState.desc.trim());
+  }
+
   if (mentalState.mechanics) {
     const mechanicsText = mentalState.mechanics.trim().replace(/\.$/, '');
     if (mechanicsText) {
       const normalized = mechanicsText.charAt(0).toLowerCase() + mechanicsText.slice(1);
-      introSegments.push(`Mechanics circulate as ${normalized}.`);
+      segments.push(`Mechanics circulate as ${normalized}.`);
     }
   }
-  paragraphs.push(introSegments.join(' '));
 
-  const focusList = Array.isArray(focusTokens) ? focusTokens.filter(Boolean) : [];
-  const requestedList = Array.isArray(requestedTokens) ? requestedTokens.filter(Boolean) : [];
   if (focusList.length) {
-    const primary = focusList.slice(0, 6);
-    const tail = focusList.slice(6, 12);
-    const focusParts = [`Focus threads follow ${joinWithAnd(primary)}.`];
-    if (tail.length) {
-      focusParts.push(`Peripheral signals include ${joinWithAnd(tail)}.`);
-    }
-    if (requestedList.length) {
-      focusParts.push(`Requested attention centers on ${joinWithAnd(requestedList.slice(0, 6))}.`);
-    }
-    paragraphs.push(focusParts.join(' '));
+    segments.push(`Primary affinities: ${joinWithAnd(focusList.slice(0, 5))}.`);
   } else if (requestedList.length) {
-    paragraphs.push(`I orient toward the requested tokens ${joinWithAnd(requestedList.slice(0, 8))} while the global matrix guides the rest.`);
-  } else {
-    paragraphs.push('Focus threads remain undefined, so I lean on global adjacency pressure to frame the walkthrough.');
+    segments.push(`Requested affinities: ${joinWithAnd(requestedList.slice(0, 5))}.`);
   }
 
-  const highlightTokens = Array.isArray(tokenHighlights)
-    ? tokenHighlights.map(entry => entry?.token).filter(Boolean)
-    : [];
   if (highlightTokens.length) {
-    const highlightParts = [`Highest weighted highlights gravitate toward ${joinWithAnd(highlightTokens.slice(0, 6))}.`];
-    const neighborPreview = tokenHighlights.find(entry => Array.isArray(entry?.neighbors) && entry.neighbors.length);
-    if (neighborPreview) {
-      highlightParts.push(`They cohere with neighbors like ${joinWithAnd(neighborPreview.neighbors.slice(0, 4))}.`);
-    }
-    paragraphs.push(highlightParts.join(' '));
+    segments.push(`Highlights gravitate toward ${joinWithAnd(highlightTokens.slice(0, 4))}.`);
   } else if (tokenHighlightSummary) {
-    paragraphs.push(`Global highlight summary reports: ${tokenHighlightSummary.replace(/\n+/g, '; ')}.`);
+    segments.push(`Highlight scan: ${tokenHighlightSummary.split('\n')[0]}.`);
   }
 
-  if (Array.isArray(topConnections) && topConnections.length) {
-    const connectionSamples = topConnections.slice(0, 4).map(conn => {
-      const label = relDisplay(conn?.type);
-      const weight = Number.isFinite(conn?.weight) ? conn.weight.toFixed(3) : '—';
-      return `${conn?.source} ↔ ${conn?.target} (${label}, ${weight})`;
-    }).filter(Boolean);
-    if (connectionSamples.length) {
-      paragraphs.push(`Strongest edges pulse through ${joinWithAnd(connectionSamples)}.`);
-    }
-  }
-
-  if (Array.isArray(relationTypes) && relationTypes.length) {
-    const relationSamples = relationTypes.slice(0, 3).map(rel => {
-      const label = relDisplay(rel?.type);
-      const count = Number.isFinite(rel?.count) ? rel.count : 0;
-      const weight = Number.isFinite(rel?.weight) ? rel.weight.toFixed(3) : '0.000';
-      return `${label} (${count} edges, Σ=${weight})`;
-    }).filter(Boolean);
-    if (relationSamples.length) {
-      paragraphs.push(`Relationship distribution leans on ${joinWithAnd(relationSamples)}.`);
-    }
+  if (relationSamples.length) {
+    segments.push(`Relations balance ${joinWithAnd(relationSamples)}.`);
   } else if (relationTypeSummary) {
-    paragraphs.push(`Relationship summary indicates: ${relationTypeSummary.replace(/\n+/g, '; ')}.`);
+    segments.push(`Relation ledger notes ${relationTypeSummary.split('\n')[0]}.`);
   }
 
-  const clusterLines = [];
-  if (Number.isFinite(clusterInfo?.clusterCount)) {
-    clusterLines.push(`${clusterInfo.clusterCount} clusters stay active`);
+  if (connectionSamples.length) {
+    segments.push(`Edges pulse through ${joinWithAnd(connectionSamples)}.`);
   }
-  if (Number.isFinite(clusterInfo?.anchorCount)) {
-    clusterLines.push(`${clusterInfo.anchorCount} anchors stabilize attention`);
-  }
-  if (Number.isFinite(clusterInfo?.totalNodes)) {
-    clusterLines.push(`${clusterInfo.totalNodes} nodes participate in the current frame`);
-  }
-  if (clusterLines.length) {
-    paragraphs.push(`${clusterLines.join(', ')}, reinforcing the mood.`);
+
+  if (clusterHighlights.length) {
+    segments.push(`Clusters report ${joinWithAnd(clusterHighlights)}.`);
   }
 
   if (clusterSummaryText) {
-    const summaryLines = clusterSummaryText.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 3);
-    if (summaryLines.length) {
-      paragraphs.push(`Cluster synopsis notes ${summaryLines.join('; ')}.`);
+    const summaryLine = clusterSummaryText.split('\n').map(line => line.trim()).filter(Boolean)[0];
+    if (summaryLine) {
+      segments.push(`Cluster synopsis: ${summaryLine}.`);
     }
   }
 
-  const adjacencyLines = typeof adjacencyExcerpt === 'string'
-    ? adjacencyExcerpt.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 3)
-    : [];
   if (adjacencyLines.length) {
-    paragraphs.push(`Adjacency excerpt surfaces ${adjacencyLines.join('; ')}.`);
+    segments.push(`Adjacency excerpt: ${joinWithAnd(adjacencyLines)}.`);
   }
 
-  paragraphs.push(`Reported database metrics read ${dbSummary}, while computed scan totals show ${computedSummary}.`);
-  paragraphs.push('I weave these signals into a continuous stream, letting weighted edges and clusters reinforce the declared mental state.');
+  segments.push(`Cached metrics: ${dbSummary}; computed: ${computedSummary}.`);
 
-  let streamText = paragraphs.filter(Boolean).join('\n\n');
-
-  const filler = [];
-  if (highlightTokens.length > 6) {
-    filler.push(`Additional highlights ripple from ${joinWithAnd(highlightTokens.slice(6, 12))}.`);
-  }
-  if (Array.isArray(tokenHighlights)) {
-    const scored = tokenHighlights.slice(0, 5).map(entry => {
-      if (!entry?.token) return '';
-      const score = Number.isFinite(entry?.score) ? entry.score.toFixed(3) : '0.000';
-      return `${entry.token} at ${score}`;
-    }).filter(Boolean);
-    if (scored.length) {
-      filler.push(`Scoreboard whispers ${joinWithAnd(scored)}.`);
-    }
-  }
-  if (relationTypes.length > 3) {
-    filler.push(`Secondary relationship currents mention ${joinWithAnd(relationTypes.slice(3, 6).map(rel => relDisplay(rel?.type)).filter(Boolean))}.`);
-  }
-  if (adjacencyLines.length >= 3 && typeof adjacencyExcerpt === 'string') {
-    const extraAdj = adjacencyExcerpt.split('\n').map(line => line.trim()).filter(Boolean).slice(3, 6);
-    if (extraAdj.length) {
-      filler.push(`Extended adjacency trace notes ${extraAdj.join('; ')}.`);
-    }
-  }
-  if (!filler.length && tokenHighlightSummary) {
-    filler.push(`Full highlight ledger: ${tokenHighlightSummary.replace(/\n+/g, '; ')}.`);
-  }
-  if (!filler.length && relationTypeSummary) {
-    filler.push(`Full relationship ledger: ${relationTypeSummary.replace(/\n+/g, '; ')}.`);
-  }
-
-  let fillerIdx = 0;
-  while (countWords(streamText) < 190 && fillerIdx < filler.length) {
-    streamText = `${streamText}\n\n${filler[fillerIdx]}`;
-    fillerIdx += 1;
-  }
-
-  if (countWords(streamText) < 190) {
-    const padding = `I continue to circulate through stored adjacency memory, letting every weighted edge confirm the present mood until the stream feels saturated.`;
-    streamText = `${streamText}\n\n${padding}`;
-  }
-
-  const limited = limitWords(streamText, 220);
-  return limited.text;
+  const narrative = segments.join(' ').replace(/\s+/g, ' ').trim();
+  return limitWords(narrative, 50).text;
 }
 
 function craftMentalStateStructure(options = {}) {
