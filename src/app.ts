@@ -11427,19 +11427,30 @@ async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
     last.idx = index;
 
     const currentDepth = Number.isFinite(last.depth) ? Math.floor(last.depth) : getRecursionDepthSetting();
-    const nextDepth = clampRecursionDepth(currentDepth + 1);
-    if (nextDepth <= currentDepth) {
+    let desiredDepth = clampRecursionDepth(currentDepth + 1);
+
+    const input = root?.querySelector<HTMLInputElement>('#hlsf-recursion-depth') || null;
+    const label = root?.querySelector<HTMLElement>('#hlsf-recursion-depth-val') || null;
+    if (input) {
+      const requested = clampRecursionDepth(input.value);
+      if (String(requested) !== input.value) {
+        input.value = String(requested);
+      }
+      if (requested > currentDepth) {
+        desiredDepth = requested;
+      }
+    }
+
+    if (desiredDepth <= currentDepth) {
       logStatus(`Recursion depth already at ${currentDepth}. Increase the depth value to expand further.`);
+      if (input) input.value = String(currentDepth);
+      if (label) label.textContent = String(currentDepth);
       return;
     }
 
-    const appliedDepth = applyRecursionDepthSetting(nextDepth);
-    if (root) {
-      const input = root.querySelector<HTMLInputElement>('#hlsf-recursion-depth');
-      const label = root.querySelector<HTMLElement>('#hlsf-recursion-depth-val');
-      if (input) input.value = String(appliedDepth);
-      if (label) label.textContent = String(appliedDepth);
-    }
+    const appliedDepth = applyRecursionDepthSetting(desiredDepth);
+    if (input) input.value = String(appliedDepth);
+    if (label) label.textContent = String(appliedDepth);
     last.depth = appliedDepth;
 
     const anchors = Array.isArray(last.anchors)
