@@ -17078,12 +17078,6 @@ function formatRelationTypeSummaryForPrompt(entries) {
 }
 
 function cmd_self() {
-  const affinityCfg = window.HLSF?.config?.affinity || {};
-  const threshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
-  const iterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
-  const mentalState = describeAffinityMentalState(threshold, iterations) || {};
-  const moodName = mentalState.name || 'Adaptive clustering';
-  const mechanics = mentalState.mechanics || '';
   const { entries } = resolveCachedAdjacencyEntries();
   if (!entries.length) {
     logError('No cached adjacency tokens available for self-reflection. Run a prompt to populate the AGI cache.');
@@ -17099,18 +17093,18 @@ function cmd_self() {
     return;
   }
 
-  const reflection = craftSelfThoughtStream({
-    moodName,
-    threshold,
-    iterations,
-    mentalState,
-    mechanics,
-    tokenPool,
-    dbStats,
-    clusterInfo,
-  });
-  const safeReflection = sanitize(reflection);
-  addLog(`<div class="section-divider"></div><div class="section-title">🪞 HLSF Self-Reflection</div><div class="thought-stream"><em>${safeReflection}</em></div>`);
+  const uniqueTokens = Array.from(new Set(
+    tokenPool
+      .map(token => (typeof token === 'string' ? token.trim() : ''))
+      .filter(Boolean),
+  ));
+  if (!uniqueTokens.length) {
+    logError('Cached adjacency snapshot did not yield any usable tokens for self-reflection.');
+    return;
+  }
+
+  const safeTokens = sanitize(uniqueTokens.join('\n'));
+  addLog(`<div class="section-divider"></div><div class="section-title">🪞 HLSF Self Tokens</div><pre>${safeTokens}</pre>`);
 }
 
 async function cmd_import() {
@@ -17739,24 +17733,23 @@ async function cmd_state(args = []) {
   if (!enterProcessingState()) return;
 
   const start = performance.now();
-  let statusEl = null;
 
   try {
-    const affinityCfg = window.HLSF?.config?.affinity || {};
-    const threshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
-    const iterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
-    const mentalState = describeAffinityMentalState(threshold, iterations) || {};
     const manualTokens = parseStateTokens(args);
 
-    const { record: adjacencyRecord, entries } = resolveCachedAdjacencyEntries();
+    const { entries } = resolveCachedAdjacencyEntries();
     if (!entries.length) {
       logError('No cached adjacency tokens available. Run a prompt to populate the AGI cache before using /state.');
       return;
     }
 
-    const summary = summarizeCachedAdjacency(entries, { neighborLimit: 6, connectionLimit: 32 });
+    const sortedEntries = entries.slice().sort((a, b) => {
+      const attA = Number.isFinite(a.attention) ? a.attention : 0;
+      const attB = Number.isFinite(b.attention) ? b.attention : 0;
+      return attB - attA;
+    });
     const entryMap = new Map<string, LocalHlsfAdjacencyTokenSummary>();
-    for (const entry of summary.sortedEntries) {
+    for (const entry of sortedEntries) {
       if (!entry || typeof entry.token !== 'string') continue;
       const token = entry.token.trim();
       if (!token) continue;
@@ -17800,7 +17793,7 @@ async function cmd_state(args = []) {
       if (focusEntries.length >= focusLimit) break;
     }
 
-    for (const entry of summary.sortedEntries) {
+    for (const entry of sortedEntries) {
       if (focusEntries.length >= focusLimit) break;
       pushFocusEntry(entry);
     }
@@ -17817,163 +17810,37 @@ async function cmd_state(args = []) {
     const focusTokens = focusEntries
       .map(entry => (entry && typeof entry.token === 'string' ? entry.token : null))
       .filter(Boolean) as string[];
-    const adjacencyExcerpt = buildCachedAdjacencyExcerpt(focusEntries, { maxRelations: 5, maxNeighbors: 6 });
-    const clusterInfo = buildCachedClusterInfo(summary.sortedEntries);
+    const combinedTokens: string[] = [];
+    const seen = new Set<string>();
+    const pushToken = (token: string | null | undefined) => {
+      if (!token) return;
+      const normalized = token.trim();
+      if (!normalized) return;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      combinedTokens.push(normalized);
+    };
 
-    const tokenHighlights = summary.tokenHighlights;
-    const relationTypes = summary.relationTypes;
-    const topConnections = summary.topConnections;
-
-    const tokenHighlightSummary = formatTokenHighlightsForPrompt(tokenHighlights);
-    const relationTypeSummary = formatRelationTypeSummaryForPrompt(relationTypes);
-    const clusterSummary = formatClusterSummaryForPrompt(clusterInfo, { limit: 10 });
-    const topConnectionsSummary = formatTopConnectionsForPrompt(topConnections);
-
-    const dbSummaryParts: string[] = [];
-    if (adjacencyRecord?.label) dbSummaryParts.push(`label=${adjacencyRecord.label}`);
-    if (Number.isFinite(adjacencyRecord?.tokenCount)) dbSummaryParts.push(`snapshot_tokens=${adjacencyRecord.tokenCount}`);
-    dbSummaryParts.push(`cached_tokens=${summary.sortedEntries.length}`);
-    if (Number.isFinite(summary.totals.totalEdges)) dbSummaryParts.push(`relationships=${summary.totals.totalEdges}`);
-    if (adjacencyRecord?.updatedAt) {
-      const updatedDate = new Date(adjacencyRecord.updatedAt);
-      if (!Number.isNaN(updatedDate.getTime())) {
-        dbSummaryParts.push(`updated=${updatedDate.toLocaleString()}`);
-      }
-    }
-    const dbSummary = dbSummaryParts.length ? dbSummaryParts.join(', ') : 'unavailable';
-
-    const computedSummaryParts = [
-      `total_tokens=${summary.sortedEntries.length}`,
-    ];
-    if (Number.isFinite(summary.totals.totalEdges)) {
-      computedSummaryParts.push(`cached_edges=${summary.totals.totalEdges}`);
-    }
-    if (Number.isFinite(summary.totals.totalWeighted)) {
-      computedSummaryParts.push(`total_weight=${summary.totals.totalWeighted.toFixed(3)}`);
-    }
-    if (Number.isFinite(summary.totals.attentionSum)) {
-      computedSummaryParts.push(`attention_sum=${summary.totals.attentionSum.toFixed(3)}`);
-    }
-    const computedSummary = computedSummaryParts.length ? computedSummaryParts.join(', ') : 'unavailable';
-
-    const safeName = sanitize(mentalState.name || '');
-    const safeDesc = sanitize(mentalState.desc || '').replace(/\n/g, '<br>');
-    const safeMechanics = sanitize(mentalState.mechanics || '').replace(/\n/g, '<br>');
-    const safeFocus = sanitize(focusTokens.join(', '));
-    const safeCacheSummary = sanitize(dbSummary);
-    const safeComputed = sanitize(computedSummary);
-    const safeHighlights = sanitize(tokenHighlightSummary || '');
-    const safeRelationTypes = sanitize(relationTypeSummary || '');
-    const safeConnections = sanitize(topConnectionsSummary || '');
-    const safeClusterSummary = sanitize(clusterSummary || '');
-
-    const contextPieces = [
-      '<div class="section-divider"></div>',
-      '<div class="section-title">🧭 Mental State Context</div>',
-      `<div class="adjacency-insight"><strong>${safeName}</strong><br>${safeDesc}<br><em>${safeMechanics}</em><br>Threshold: ${threshold.toFixed(2)} · Iterations: ${iterations}</div>`,
-      '<div class="adjacency-insight">Source: recursively selected AGI tokens cached in local memory.</div>',
-      `<div class="adjacency-insight"><strong>Cached adjacency snapshot:</strong> ${safeCacheSummary}</div>`,
-      `<div class="adjacency-insight">Computed cache scan: ${safeComputed}</div>`,
-      `<div class="adjacency-insight"><strong>Focus tokens:</strong> ${safeFocus}</div>`,
-    ];
-
-    if (resolvedManual.length) {
-      contextPieces.splice(4, 0, `<div class="adjacency-insight"><strong>Requested tokens:</strong> ${sanitize(resolvedManual.join(', '))}</div>`);
+    for (const token of resolvedManual) {
+      pushToken(token);
     }
 
-    if (tokenHighlightSummary) {
-      contextPieces.push(`<details><summary>Cached token highlights (${tokenHighlights.length})</summary><pre>${safeHighlights}</pre></details>`);
-    }
-    if (relationTypeSummary) {
-      contextPieces.push(`<details><summary>Relationship type distribution</summary><pre>${safeRelationTypes}</pre></details>`);
-    }
-    if (adjacencyExcerpt) {
-      contextPieces.push(`<details><summary>Adjacency excerpt (${focusTokens.length} tokens)</summary><pre>${sanitize(adjacencyExcerpt)}</pre></details>`);
-    }
-    if (topConnectionsSummary) {
-      contextPieces.push(`<details><summary>Top cached connections</summary><pre>${safeConnections}</pre></details>`);
-    }
-    if (clusterSummary) {
-      contextPieces.push(`<details><summary>Cluster summary</summary><pre>${safeClusterSummary}</pre></details>`);
+    for (const token of focusTokens) {
+      pushToken(token);
     }
 
-    addLog(contextPieces.join(''));
-
-    statusEl = logStatus('🔄 Synthesizing offline mental state stream from cached adjacency...');
-    const stream = craftMentalStateStream({
-      mentalState,
-      threshold,
-      iterations,
-      focusTokens,
-      tokenHighlights,
-      relationTypes,
-      topConnections,
-      clusterInfo,
-      adjacencyExcerpt,
-      dbSummary,
-      computedSummary,
-      clusterSummaryText: clusterSummary,
-      tokenHighlightSummary,
-      relationTypeSummary,
-      requestedTokens: resolvedManual,
-    });
-    const structure = craftMentalStateStructure({
-      mentalState,
-      threshold,
-      iterations,
-      focusTokens,
-      tokenHighlights,
-      relationTypes,
-      topConnections,
-      clusterInfo,
-      dbSummary,
-      computedSummary,
-      clusterSummaryText: clusterSummary,
-      relationTypeSummary,
-      tokenHighlightSummary,
-      adjacencyExcerpt,
-      requestedTokens: resolvedManual,
-    });
-
-    if (statusEl) statusEl.innerHTML = '✅ Offline mental state stream ready';
-
-    const safeStream = sanitize(stream || '').replace(/\n{3,}/g, '\n\n');
-    addLog(`<div class="section-divider"></div><div class="section-title">🧠 Stream of Consciousness</div><pre>${safeStream}</pre>`);
-
-    const safeStructure = sanitize(structure || '').replace(/\n{3,}/g, '\n\n');
-    addLog(`<div class="section-divider"></div><div class="section-title">🧱 Structural Summary</div><pre>${safeStructure}</pre>`);
-
-    let streamAdjacency = null;
-    const streamTokens = tokenize(stream || '');
-    if (streamTokens.length) {
-      addConversationTokens(streamTokens);
-      addOutputTokens(streamTokens, { render: false });
-      const streamAdjTokens = collectSymbolAwareTokens(stream, streamTokens, 'mental-state-stream');
-      streamAdjacency = await batchFetchAdjacencies(streamAdjTokens, stream, 'mental state stream adjacencies');
-      calculateAttention(streamAdjacency);
+    if (!combinedTokens.length) {
+      logError('No mental state tokens available to display.');
+      return;
     }
 
-    let structureAdjacency = null;
-    const structureTokens = tokenize(structure || '');
-    if (structureTokens.length) {
-      addConversationTokens(structureTokens);
-      addOutputTokens(structureTokens, { render: false });
-      const structureAdjTokens = collectSymbolAwareTokens(structure, structureTokens, 'mental-state-structure');
-      structureAdjacency = await batchFetchAdjacencies(structureAdjTokens, structure, 'mental state structure adjacencies');
-      calculateAttention(structureAdjacency);
-    }
-
-    const streamReload = streamAdjacency ? hasNewAdjacencyData(streamAdjacency) : false;
-    const structureReload = structureAdjacency ? hasNewAdjacencyData(structureAdjacency) : false;
-    if (streamReload || structureReload) {
-      notifyHlsfAdjacencyChange('mental-state', { immediate: true });
-    }
-    rebuildLiveGraph();
+    const safeTokens = sanitize(combinedTokens.join('\n'));
+    addLog(`<div class="section-divider"></div><div class="section-title">🧭 Mental State Tokens</div><pre>${safeTokens}</pre>`);
 
     const elapsed = ((performance.now() - start) / 1000).toFixed(1);
-    logOK(`Mental state response ready (${elapsed}s)`);
+    logOK(`Mental state tokens ready (${elapsed}s)`);
   } catch (err) {
-    if (statusEl) statusEl.innerHTML = '❌ Mental state narrative failed';
     if (err?.name === 'AbortError') {
       logWarning('Mental state walkthrough cancelled');
     } else {
