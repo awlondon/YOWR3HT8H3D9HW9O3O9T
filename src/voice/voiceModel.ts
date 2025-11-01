@@ -156,6 +156,8 @@ function speakText(text: string): void {
   }
 }
 
+const PLAYBACK_TOKEN_LIMIT = 20;
+
 type LocalVoiceOutputs = {
   prompt?: string;
   localThought?: string;
@@ -198,6 +200,15 @@ function resolveLocalPlaybackText(): string {
   return localThought;
 }
 
+function limitPlaybackTokens(text: string, limit = PLAYBACK_TOKEN_LIMIT): string {
+  if (!text) return '';
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (tokens.length <= limit) {
+    return text;
+  }
+  return tokens.slice(0, limit).join(' ');
+}
+
 export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModelDockController | null {
   if (!options || typeof options.submitPrompt !== 'function' || !options.userAvatar) {
     console.warn('Voice model dock requires submitPrompt and userAvatar options.');
@@ -210,6 +221,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   const orb = root.querySelector<HTMLElement>('#voice-model-orb');
   const micButton = root.querySelector<HTMLButtonElement>('#voice-model-mic');
   const speakerButton = root.querySelector<HTMLButtonElement>('#voice-model-speaker');
+  const muteButton = root.querySelector<HTMLButtonElement>('#voice-model-mute');
   const windowContent = root.querySelector<HTMLElement>('#voice-model-content');
   const minimizeButton = root.querySelector<HTMLButtonElement>('#voice-model-minimize');
   const promptInput = document.getElementById('command-input') as
@@ -258,6 +270,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   let resumeListeningAfterSend = false;
   let loadingTimer: number | null = null;
   let lastPlaybackText = '';
+  let playbackMuted = false;
   let settings = readSettings();
   let currentInteractionId: string | null = null;
   let inFlight = false;
@@ -304,12 +317,21 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     });
   }
 
+  if (muteButton) {
+    muteButton.addEventListener('click', () => {
+      const next = !playbackMuted;
+      setPlaybackMuted(next, { announce: true });
+    });
+  }
+
   if (latencyInput) {
     latencyInput.value = String(settings.latency);
   }
   if (fftInput) {
     fftInput.value = String(settings.fftSensitivity);
   }
+
+  setPlaybackMuted(false);
 
   function updateStatus(message: string): void {
     if (statusEl) {
@@ -320,6 +342,27 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
   function updateOrbActive(active: boolean): void {
     if (!orb) return;
     orb.classList.toggle('is-active', active);
+  }
+
+  function setPlaybackMuted(
+    muted: boolean,
+    { announce = false }: { announce?: boolean } = {},
+  ): void {
+    playbackMuted = muted;
+    if (muteButton) {
+      muteButton.textContent = muted ? 'Unmute output' : 'Mute output';
+      muteButton.setAttribute('aria-pressed', muted ? 'true' : 'false');
+    }
+    if (muted && typeof window !== 'undefined' && typeof window.speechSynthesis !== 'undefined') {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (error) {
+        console.warn('Unable to cancel speech synthesis during mute toggle:', error);
+      }
+    }
+    if (announce) {
+      updateStatus(muted ? 'Local HLSF AGI output muted.' : 'Local HLSF AGI output unmuted.');
+    }
   }
 
   function getSpeechRecognitionConstructor(): GenericSpeechRecognitionConstructor | null {
@@ -1043,7 +1086,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     });
 
     if (result.success) {
-      const playbackText = resolveLocalPlaybackText();
+      const playbackText = limitPlaybackTokens(resolveLocalPlaybackText());
       lastPlaybackText = playbackText;
 
       if (options.onTokensCommitted) {
@@ -1056,8 +1099,12 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
 
       if (result.kind !== 'command') {
         if (playbackText) {
-          updateStatus('Playing local HLSF AGI output.');
-          speakText(playbackText);
+          if (playbackMuted) {
+            updateStatus('Local HLSF AGI output muted.');
+          } else {
+            updateStatus('Playing local HLSF AGI output.');
+            speakText(playbackText);
+          }
         } else {
           updateStatus('Local HLSF AGI output unavailable for playback.');
         }
@@ -1139,6 +1186,10 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     speakerButton.addEventListener('click', () => {
       if (!lastPlaybackText) {
         updateStatus('No local HLSF AGI output available for playback.');
+        return;
+      }
+      if (playbackMuted) {
+        updateStatus('Local HLSF AGI output muted. Unmute to play.');
         return;
       }
       speakText(lastPlaybackText);
