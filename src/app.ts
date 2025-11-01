@@ -246,14 +246,21 @@ function screenToWorldFromCanvas(canvas: HTMLCanvasElement, point: { x: number; 
   };
 }
 
+type ClusterZoomMode = 'in' | 'out';
+
 function applyClusterZoomSelection(
   canvas: HTMLCanvasElement,
   rect: { x: number; y: number; width: number; height: number },
+  mode: ClusterZoomMode = 'in',
 ) {
   if (!canvas || rect.width <= 0 || rect.height <= 0) return;
   const viewWidth = canvas.clientWidth || canvas.width || 1;
   const viewHeight = canvas.clientHeight || canvas.height || 1;
   const padding = 0.85;
+  window.HLSF = window.HLSF || {};
+  window.HLSF.view = window.HLSF.view || { x: 0, y: 0, scale: 1 };
+  const currentView = window.HLSF.view;
+  const currentScale = Number.isFinite(currentView.scale) ? currentView.scale : 1;
   const startWorld = screenToWorldFromCanvas(canvas, { x: rect.x, y: rect.y });
   const endWorld = screenToWorldFromCanvas(canvas, {
     x: rect.x + rect.width,
@@ -263,7 +270,12 @@ function applyClusterZoomSelection(
   const worldHeight = Math.max(1e-4, Math.abs(endWorld.y - startWorld.y));
   const scaleByWidth = (viewWidth * padding) / worldWidth;
   const scaleByHeight = (viewHeight * padding) / worldHeight;
-  const targetScale = Math.min(48, Math.max(0.1, Math.min(scaleByWidth, scaleByHeight)));
+  const scaleCandidate = Math.min(scaleByWidth, scaleByHeight);
+  const zoomRatio = scaleCandidate / Math.max(currentScale, 1e-4);
+  const targetScale =
+    mode === 'out'
+      ? Math.min(48, Math.max(0.1, currentScale / Math.max(zoomRatio, 1e-4)))
+      : Math.min(48, Math.max(0.1, scaleCandidate));
   const centerWorldX = startWorld.x + worldWidth / 2;
   const centerWorldY = startWorld.y + worldHeight / 2;
   const target = {
@@ -346,6 +358,8 @@ function installClusterZoom(canvas: HTMLCanvasElement | null) {
     const endPoint = event ? getCanvasRelativePosition(canvas, event) : startPoint;
     updateOverlayRect(endPoint);
     const rect = currentRect || buildClusterSelectionRect(canvas, startPoint, endPoint);
+    const dragVector = { x: endPoint.x - startPoint.x, y: endPoint.y - startPoint.y };
+    const shouldZoomOut = dragVector.x < 0 && dragVector.y < 0;
     resetOverlay();
     if (!rect) return;
     const effectiveWidth = Math.max(rect.width, Math.min(minSelectionSize, canvasSize.width));
@@ -365,7 +379,7 @@ function installClusterZoom(canvas: HTMLCanvasElement | null) {
         height: Math.min(canvasSize.height, Math.max(effectiveHeight, minSelectionSize)),
       };
     }
-    applyClusterZoomSelection(canvas, normalizedRect);
+    applyClusterZoomSelection(canvas, normalizedRect, shouldZoomOut ? 'out' : 'in');
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
