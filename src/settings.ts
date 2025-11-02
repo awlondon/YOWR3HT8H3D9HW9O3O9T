@@ -71,9 +71,35 @@ export const PERFORMANCE_PROFILES: Record<PerformanceProfileId, PerformanceProfi
   },
 };
 
+function normalizePerformanceProfileId(id?: string | null): PerformanceProfileId | null {
+  if (typeof id !== 'string') {
+    return null;
+  }
+
+  const trimmed = id.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+
+  const directMatch = trimmed as PerformanceProfileId;
+  if (PERFORMANCE_PROFILES[directMatch]) {
+    return directMatch;
+  }
+
+  const sanitized = trimmed.replace(/[^a-z]/g, '') as PerformanceProfileId;
+  if (sanitized && PERFORMANCE_PROFILES[sanitized]) {
+    return sanitized;
+  }
+
+  return null;
+}
+
 export function resolvePerformanceProfile(id?: string | null): PerformanceProfileConfig {
-  const normalized = (id || '').toLowerCase() as PerformanceProfileId;
-  return PERFORMANCE_PROFILES[normalized] || PERFORMANCE_PROFILES.balanced;
+  const normalized = normalizePerformanceProfileId(id);
+  if (normalized) {
+    return PERFORMANCE_PROFILES[normalized];
+  }
+  return PERFORMANCE_PROFILES.balanced;
 }
 
 export function pickPerformanceProfileForDevice(): PerformanceProfileConfig {

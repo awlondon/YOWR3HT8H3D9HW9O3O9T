@@ -24,6 +24,7 @@
     "src/analytics/commandUsage.ts",
     "src/analytics/commandUsage.test.ts",
     "src/settings.ts",
+    "src/settings.test.ts",
     "src/onboarding/loginFlow.ts",
     "src/onboarding/loginFlow.test.ts",
     "types/node-test.d.ts"
