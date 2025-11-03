@@ -23,6 +23,8 @@
     "src/analytics/telemetry.test.ts",
     "src/analytics/commandUsage.ts",
     "src/analytics/commandUsage.test.ts",
+    "src/controllers/commandRegistry.ts",
+    "src/controllers/commandRegistry.test.ts",
     "src/settings.ts",
     "src/settings.test.ts",
     "src/onboarding/loginFlow.ts",
