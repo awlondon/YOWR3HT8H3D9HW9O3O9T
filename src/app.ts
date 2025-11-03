@@ -101,6 +101,202 @@ const DEFAULT_HIDDEN_ATTENTION_PER_TOKEN = 6;
 const DEFAULT_HIDDEN_ADJACENCY_DEPTH = 2;
 const DEFAULT_HIDDEN_ADJACENCY_CAP = 128;
 
+const memoryStorageFallback = new Map<string, string>();
+const TOKEN_CACHE_PREFIX = 'hlsf_token_';
+const DB_INDEX_KEY = 'hlsf_token_index';
+const DB_RAW_KEY = 'hlsf_db_snapshot';
+const API_KEY_STORAGE_KEY = 'hlsf_api_key';
+
+const saasPlatform = initializeSaasPlatform();
+const userAvatarStore = initializeUserAvatarStore();
+
+let voiceDockController: ReturnType<typeof initializeVoiceModelDock> = null;
+let remotedir = false;
+
+function parseStoredValue(raw: string | null, fallback: unknown): unknown {
+  if (raw == null) return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed) return fallback;
+  if (trimmed === 'undefined') return undefined;
+  if (trimmed === 'null') return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return raw;
+  }
+}
+
+function safeStorageGet(key: string, fallback: unknown = null): unknown {
+  if (!key) return fallback;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(key);
+      if (raw != null) {
+        memoryStorageFallback.set(key, raw);
+        return parseStoredValue(raw, fallback);
+      }
+    }
+  } catch {
+    // ignore access errors and fall back to in-memory cache
+  }
+
+  if (memoryStorageFallback.has(key)) {
+    return parseStoredValue(memoryStorageFallback.get(key) ?? null, fallback);
+  }
+
+  return fallback;
+}
+
+function safeStorageSet(key: string, value: string | null): boolean {
+  if (!key) return false;
+  let persisted = false;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (value === null) {
+        localStorage.removeItem(key);
+      } else {
+        localStorage.setItem(key, value);
+      }
+      persisted = true;
+    }
+  } catch {
+    persisted = false;
+  }
+
+  if (value === null) {
+    memoryStorageFallback.delete(key);
+  } else {
+    memoryStorageFallback.set(key, value);
+  }
+
+  return persisted;
+}
+
+function safeStorageRemove(key: string): boolean {
+  if (!key) return false;
+  let removed = false;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(key);
+      removed = true;
+    }
+  } catch {
+    removed = false;
+  }
+
+  memoryStorageFallback.delete(key);
+  return removed;
+}
+
+function safeStorageKeys(prefix = ''): string[] {
+  const keys = new Set<string>();
+  const normalizedPrefix = typeof prefix === 'string' ? prefix : '';
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        if (!normalizedPrefix || key.startsWith(normalizedPrefix)) {
+          keys.add(key);
+        }
+      }
+    }
+  } catch {
+    // ignore storage access errors
+  }
+
+  for (const key of memoryStorageFallback.keys()) {
+    if (!normalizedPrefix || key.startsWith(normalizedPrefix)) {
+      keys.add(key);
+    }
+  }
+
+  return Array.from(keys);
+}
+
+function getDb(): any | null {
+  if (typeof window === 'undefined') return null;
+  const root = ((window as any).HLSF = (window as any).HLSF || {});
+  if (root.dbCache && typeof root.dbCache === 'object') {
+    return root.dbCache;
+  }
+
+  const persisted = safeStorageGet(DB_RAW_KEY, null);
+  if (!persisted) return null;
+
+  if (typeof persisted === 'string') {
+    try {
+      root.dbCache = JSON.parse(persisted);
+      return root.dbCache;
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof persisted === 'object') {
+    root.dbCache = persisted;
+    return root.dbCache;
+  }
+
+  return null;
+}
+
+function sanitize(value: string): string {
+  const raw = value == null ? '' : String(value);
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function setRemotedirFlag(connected: boolean): void {
+  const flag = Boolean(connected);
+  remotedir = flag;
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.toggle('remotedir-connected', flag);
+    document.body.setAttribute('data-remotedir', flag ? 'connected' : 'disconnected');
+  }
+  if (typeof window !== 'undefined') {
+    const root = (window as any).CognitionEngine || ((window as any).CognitionEngine = {});
+    root.remoteDirectoryConnected = flag;
+  }
+}
+
+const elements = typeof document !== 'undefined'
+  ? {
+      log: document.getElementById('log'),
+      cachedTokens: document.getElementById('cached-tokens'),
+      cacheHitRate: document.getElementById('cache-hit-rate'),
+      sessionCost: document.getElementById('session-cost'),
+      sendBtn: document.getElementById('send-btn'),
+      cancelBtn: document.getElementById('cancel-btn'),
+      input: document.getElementById('command-input') as HTMLInputElement | null,
+      apiModal: document.getElementById('api-modal'),
+      apiKeyInput: document.getElementById('api-key-input') as HTMLInputElement | null,
+      apiConfirmBtn: document.getElementById('api-confirm'),
+      apiCancelBtn: document.getElementById('api-cancel'),
+      avatarBundleInput: document.getElementById('avatar-bundle-input') as HTMLInputElement | null,
+      readFileInput: document.getElementById('read-file') as HTMLInputElement | null,
+    }
+  : {
+      log: null,
+      cachedTokens: null,
+      cacheHitRate: null,
+      sessionCost: null,
+      sendBtn: null,
+      cancelBtn: null,
+      input: null,
+      apiModal: null,
+      apiKeyInput: null,
+      apiConfirmBtn: null,
+      apiCancelBtn: null,
+      avatarBundleInput: null,
+      readFileInput: null,
+    };
+
 const sessionManager = new SessionManager({
   resolveLocalMemoryEdgeWeightFloor,
   limitAdjacencyEntryEdges,
@@ -201,6 +397,84 @@ function activeSettings() {
     return (window as any).SETTINGS;
   }
   return SETTINGS;
+}
+
+function deriveRelationshipBudgetFallback(): number {
+  const settings = activeSettings() || {};
+
+  const fromSettings = (settings as Record<string, unknown>).maxRelationships;
+  if (typeof fromSettings === 'number' && Number.isFinite(fromSettings)) {
+    return Math.max(0, Math.floor(fromSettings));
+  }
+  if (typeof fromSettings === 'string') {
+    const normalized = fromSettings.trim();
+    if (normalized) {
+      const numeric = Number(normalized.replace(/[_,\s]/g, ''));
+      if (Number.isFinite(numeric)) {
+        return Math.max(0, Math.floor(numeric));
+      }
+    }
+  }
+
+  const edgeCap = Number((settings as Record<string, unknown>).maxEdges);
+  if (Number.isFinite(edgeCap) && edgeCap > 0) {
+    return Math.max(0, Math.floor(edgeCap));
+  }
+
+  const nodeCap = Number((settings as Record<string, unknown>).maxNodes);
+  if (Number.isFinite(nodeCap) && nodeCap > 0) {
+    return Math.max(0, Math.floor(nodeCap * 2));
+  }
+
+  const defaultBudget = Number.isFinite(CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE)
+    ? Math.max(0, Math.floor(CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE) * 2)
+    : 0;
+  return defaultBudget || 0;
+}
+
+function resolveHlsfRelationshipBudget(input: unknown): number {
+  if (input === null || typeof input === 'undefined') {
+    return deriveRelationshipBudgetFallback();
+  }
+
+  if (input === Infinity) {
+    return Infinity;
+  }
+
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input)) {
+      return deriveRelationshipBudgetFallback();
+    }
+    return Math.max(0, Math.floor(input));
+  }
+
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      return deriveRelationshipBudgetFallback();
+    }
+    const normalized = trimmed.toLowerCase();
+    if (['infinity', 'inf', '∞', 'all', 'unbounded', 'unlimited'].includes(normalized)) {
+      return Infinity;
+    }
+    if (['auto', 'default', 'dynamic', 'adaptive', 'recommended'].includes(normalized)) {
+      return deriveRelationshipBudgetFallback();
+    }
+
+    const suffix = normalized.slice(-1);
+    const multiplier = suffix === 'k'
+      ? 1_000
+      : suffix === 'm'
+        ? 1_000_000
+        : 1;
+    const numericPortion = multiplier === 1 ? normalized : normalized.slice(0, -1);
+    const numeric = Number(numericPortion.replace(/[_,\s]/g, ''));
+    if (Number.isFinite(numeric)) {
+      return Math.max(0, Math.floor(numeric * multiplier));
+    }
+  }
+
+  return deriveRelationshipBudgetFallback();
 }
 
 function applyPerformanceCaps(settingsOverride = null) {
@@ -550,6 +824,55 @@ const COMMAND_RESTRICTIONS: Partial<Record<MembershipLevel, Set<string>>> = {
       })
       .map(entry => entry.command.toLowerCase()),
   ),
+};
+
+type ProcessingStatus = {
+  isActive?: () => boolean;
+  update?: (info: Record<string, unknown>) => void;
+  fail?: (summary?: string) => void;
+  cancel?: (summary?: string) => void;
+  complete?: (info?: Record<string, unknown>) => void;
+} | null;
+
+const state = {
+  membership: {
+    level: MEMBERSHIP_LEVELS.DEMO,
+    plan: 'demo',
+    trial: false,
+    demoMode: 'api',
+    name: '',
+    email: '',
+  },
+  focusTokens: [] as string[],
+  tokens: new Set<string>(),
+  tokenSources: new Map<string, any>(),
+  tokenOrder: [] as string[],
+  documentCacheBaseline: 0,
+  documentCacheBaselineManuallyCleared: false,
+  lastComputedCacheBase: 0,
+  hlsfReady: false,
+  liveGraphMode: false,
+  liveGraphUpdateTimer: null as ReturnType<typeof setTimeout> | null,
+  liveGraph: { nodes: new Map<string, any>(), links: [] as Array<any> },
+  pendingPromptReviews: new Map<string, any>(),
+  sessionStats: { totalApiCalls: 0, totalCacheHits: 0, totalCostUsd: 0 },
+  networkOffline: false,
+  lastNetworkErrorTime: 0,
+  networkErrorNotified: false,
+  symbolMetrics: null as null | {
+    history: unknown[];
+    last: unknown;
+    lastRunGraph: unknown;
+    topNodes: unknown[];
+    lastTokens: unknown[];
+    lastPipeline: unknown;
+  },
+  apiKey: '',
+  processingStatus: null as ProcessingStatus,
+  processingStart: 0,
+  processingAverageMs: 0,
+  processingSamples: 0,
+  isProcessing: false,
 };
 
 function getMembershipLevel(): MembershipLevel {
@@ -3546,6 +3869,7 @@ function exportGlyphLedger() {
   return exportData;
 }
 
+window.GlyphSystem = window.GlyphSystem || {};
 window.GlyphSystem.ledger = null;
 window.GlyphSystem.encode = function encode(message) {
   const result = encryptTextToGlyphs(message || '');
