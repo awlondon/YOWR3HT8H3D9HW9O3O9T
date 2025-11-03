@@ -14294,6 +14294,7 @@ function setupLandingExperience() {
   if (!landingRoot) return;
 
   const tabButtons = Array.from(landingRoot.querySelectorAll('.landing-tab'));
+  const adminBypassLink = landingRoot.querySelector('[data-admin-bypass]');
   const forms = {
     signup: document.getElementById('landing-signup-form'),
     login: document.getElementById('landing-login-form'),
@@ -14722,6 +14723,24 @@ function setupLandingExperience() {
     initializeLoginForm(forms.login, {
       finalizeOnboarding,
       membershipLevels: MEMBERSHIP_LEVELS,
+    });
+  }
+
+  if (adminBypassLink instanceof HTMLAnchorElement) {
+    adminBypassLink.addEventListener('click', (event) => {
+      event.preventDefault();
+      finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
+        plan: 'admin',
+        name: 'System Administrator',
+        email: 'admin@local.dev',
+        role: 'admin',
+        admin: true,
+        authProvider: 'bypass',
+      });
+      const logOk = (window as any).logOK;
+      if (typeof logOk === 'function') {
+        logOk('Admin bypass activated. Full access granted.');
+      }
     });
   }
 
