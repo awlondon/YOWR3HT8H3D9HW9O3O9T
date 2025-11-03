@@ -95,6 +95,12 @@ const vectorSemanticStore = new VectorSemanticStore();
 const pipelineClient = new PipelineWorkerClient({ embeddingStore: vectorSemanticStore });
 const commandRegistry = globalCommandRegistry;
 
+const HIDDEN_EDGE_MIN_WEIGHT = 0.05;
+const HIDDEN_ADJACENCY_RELATION = 'hidden-adjacency';
+const DEFAULT_HIDDEN_ATTENTION_PER_TOKEN = 6;
+const DEFAULT_HIDDEN_ADJACENCY_DEPTH = 2;
+const DEFAULT_HIDDEN_ADJACENCY_CAP = 128;
+
 const sessionManager = new SessionManager({
   resolveLocalMemoryEdgeWeightFloor,
   limitAdjacencyEntryEdges,
@@ -2227,46 +2233,255 @@ function ensureFullHiddenConnectivity(hiddenMap, nodeIterator, scoreMap) {
 function buildHiddenAdjacencyNetwork(graph, index, lowerMap, ensureNode, options = {}) {
   if (!(graph?.nodes instanceof Map) || !(index instanceof Map)) return null;
 
-  async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default') {
-  const baseList = Array.isArray(baseTokens) ? baseTokens : [];
-  if (!SETTINGS.tokenizeSymbols) return baseList;
+  const limit = Math.max(1, Number(options?.limit) || DEFAULT_HIDDEN_ATTENTION_PER_TOKEN);
+  const maxDepth = Math.max(0, Number.isFinite(options?.depth) ? Math.floor(options.depth) : DEFAULT_HIDDEN_ADJACENCY_DEPTH);
+  const cap = Math.max(limit, Number.isFinite(options?.cap) ? Math.floor(options.cap) : DEFAULT_HIDDEN_ADJACENCY_CAP);
 
-  const pipelineResult = await pipelineClient.run(text || '', SETTINGS);
-  const map = new Map();
+  const adjacency = new Map();
+  const scoreMap = new Map();
+  const visited = new Map();
+  const queue = [];
 
-  for (const token of baseList) {
-    if (!token) continue;
-    const normalized = String(token).toLowerCase();
-    if (!normalized || map.has(`word:${normalized}`)) continue;
-    map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
+  const seeds = gatherHiddenAdjacencySeeds(graph, index, lowerMap, cap);
+  if (!seeds.length) {
+    return {
+      adjacency,
+      scores: scoreMap,
+      stats: {
+        seeds: 0,
+        expansions: 0,
+        visitedTokens: 0,
+        limit,
+        depth: maxDepth,
+        cap,
+        edgeCount: 0,
+        hiddenTokens: 0,
+        componentCount: 0,
+        allSeedsConnected: true,
+      },
+    };
   }
 
-  for (const token of pipelineResult.tokens) {
-    if (!token) continue;
-    if (token.kind === 'word') {
-      const normalized = token.t.toLowerCase();
-      if (!normalized || map.has(`word:${normalized}`)) continue;
-      map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
-    } else if (token.kind === 'sym') {
-      const key = `sym:${token.t}`;
-      if (map.has(key)) continue;
-      map.set(key, {
-        token: token.t,
-        kind: 'sym',
-        cat: token.cat || null,
-        index: token.i,
-        span: token.n,
-      });
+  for (const seed of seeds) {
+    if (!seed || visited.has(seed)) continue;
+    visited.set(seed, 0);
+    queue.push({ token: seed, depth: 0 });
+    if (typeof ensureNode === 'function') {
+      ensureNode(seed, 0);
     }
   }
 
-  const combined = Array.from(map.values());
-  recordSymbolMetrics(label, pipelineResult, baseList.length);
-  if (state.symbolMetrics) {
-    state.symbolMetrics.lastTokens = combined;
-    state.symbolMetrics.lastPipeline = pipelineResult;
+  let expansions = 0;
+
+  while (queue.length) {
+    const next = queue.shift();
+    if (!next) continue;
+    const { token, depth } = next;
+    if (!token) continue;
+    const record = index.get(token);
+    if (!record) continue;
+
+    const neighbors = topAttentionNeighborsForRecord(record, index, lowerMap, limit);
+    if (!Array.isArray(neighbors) || neighbors.length === 0) continue;
+
+    expansions += 1;
+
+    const ensureAdjacencySet = (key) => {
+      let bucket = adjacency.get(key);
+      if (!(bucket instanceof Set)) {
+        bucket = new Set();
+        adjacency.set(key, bucket);
+      }
+      return bucket;
+    };
+
+    for (const neighbor of neighbors) {
+      const neighborToken = typeof neighbor?.token === 'string' ? neighbor.token : null;
+      if (!neighborToken || neighborToken === token) continue;
+
+      ensureAdjacencySet(token).add(neighborToken);
+      ensureAdjacencySet(neighborToken).add(token);
+
+      const rawWeight = Number.isFinite(neighbor?.score) ? neighbor.score : HIDDEN_EDGE_MIN_WEIGHT;
+      const normalizedWeight = normalizeHiddenWeight(rawWeight);
+      const key = token < neighborToken ? `${token}|${neighborToken}` : `${neighborToken}|${token}`;
+      const previous = scoreMap.get(key) ?? 0;
+      scoreMap.set(key, previous ? Math.max(previous, normalizedWeight) : normalizedWeight);
+
+      if (typeof ensureNode === 'function') {
+        ensureNode(neighborToken, depth + 1);
+      }
+
+      if (!visited.has(neighborToken) && depth < maxDepth && visited.size < cap) {
+        visited.set(neighborToken, depth + 1);
+        queue.push({ token: neighborToken, depth: depth + 1 });
+      }
+    }
   }
-  return combined;
+
+  const adjacencyNodes = Array.from(adjacency.keys());
+  ensureFullHiddenConnectivity(adjacency, adjacencyNodes, scoreMap);
+
+  const seen = new Set();
+  let componentCount = 0;
+  for (const node of adjacencyNodes) {
+    if (!node || seen.has(node)) continue;
+    componentCount += 1;
+    const stack = [node];
+    while (stack.length) {
+      const current = stack.pop();
+      if (!current || seen.has(current)) continue;
+      seen.add(current);
+      const neighbors = adjacency.get(current);
+      if (!(neighbors instanceof Set)) continue;
+      for (const neighbor of neighbors) {
+        if (!neighbor || seen.has(neighbor)) continue;
+        stack.push(neighbor);
+      }
+    }
+  }
+
+  const stats = {
+    seeds: seeds.length,
+    expansions,
+    visitedTokens: visited.size,
+    limit,
+    depth: maxDepth,
+    cap,
+    edgeCount: scoreMap.size,
+    hiddenTokens: adjacency.size,
+    componentCount,
+    allSeedsConnected: componentCount <= 1,
+  };
+
+  return { adjacency, scores: scoreMap, stats };
+}
+
+async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default') {
+  const baseList = Array.isArray(baseTokens) ? baseTokens : [];
+  if (!SETTINGS.tokenizeSymbols) return baseList;
+
+  try {
+    const pipelineResult = await pipelineClient.run(text || '', SETTINGS);
+    const map = new Map();
+
+    for (const token of baseList) {
+      if (!token) continue;
+      const normalized = String(token).toLowerCase();
+      if (!normalized || map.has(`word:${normalized}`)) continue;
+      map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
+    }
+
+    for (const token of pipelineResult.tokens) {
+      if (!token) continue;
+      if (token.kind === 'word') {
+        const normalized = token.t.toLowerCase();
+        if (!normalized || map.has(`word:${normalized}`)) continue;
+        map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
+      } else if (token.kind === 'sym') {
+        const key = `sym:${token.t}`;
+        if (map.has(key)) continue;
+        map.set(key, {
+          token: token.t,
+          kind: 'sym',
+          cat: token.cat || null,
+          index: token.i,
+          span: token.n,
+        });
+      }
+    }
+
+    const combined = Array.from(map.values());
+    const metricsBucket = recordSymbolMetrics(label, pipelineResult, baseList.length);
+    if (metricsBucket) {
+      metricsBucket.lastTokens = combined;
+      metricsBucket.lastPipeline = pipelineResult;
+    } else {
+      const fallbackState = typeof globalThis !== 'undefined' ? (globalThis as any).state : undefined;
+      if (fallbackState?.symbolMetrics) {
+        fallbackState.symbolMetrics.lastTokens = combined;
+        fallbackState.symbolMetrics.lastPipeline = pipelineResult;
+      }
+    }
+    return combined;
+  } catch (error) {
+    console.warn('Symbol-aware tokenization failed:', error);
+    return baseList;
+  }
+}
+
+function recordSymbolMetrics(label, pipelineResult, baseTokenCount = 0) {
+  if (!pipelineResult || typeof pipelineResult !== 'object') return null;
+
+  const globalState = typeof globalThis !== 'undefined' ? (globalThis as any).state : undefined;
+  const rootState = (globalState && typeof globalState === 'object') ? globalState : window.CognitionEngine?.state;
+  if (!rootState || typeof rootState !== 'object') return null;
+
+  const bucket = (rootState.symbolMetrics = rootState.symbolMetrics || {
+    history: [],
+    last: null,
+    lastRunGraph: null,
+    topNodes: [],
+    lastTokens: [],
+    lastPipeline: null,
+  });
+
+  const metrics = pipelineResult.metrics || {};
+  const tokens = Array.isArray(pipelineResult.tokens) ? pipelineResult.tokens : [];
+  const tokenCount = Number.isFinite(metrics.tokenCount) ? metrics.tokenCount : tokens.length;
+  const wordCount = Number.isFinite(metrics.wordCount)
+    ? metrics.wordCount
+    : tokens.filter(tok => tok?.kind === 'word').length;
+  const symbolCount = Number.isFinite(metrics.symbolCount)
+    ? metrics.symbolCount
+    : tokens.filter(tok => tok?.kind === 'sym').length;
+  const symbolDensity = Number.isFinite(metrics.symbolDensity)
+    ? metrics.symbolDensity
+    : (tokenCount ? symbolCount / tokenCount : 0);
+  const edgeCount = Number.isFinite(metrics.edgeCount)
+    ? metrics.edgeCount
+    : (Array.isArray(pipelineResult.edges) ? pipelineResult.edges.length : 0);
+  const symbolEdgeCount = Number.isFinite(metrics.symbolEdgeCount)
+    ? metrics.symbolEdgeCount
+    : 0;
+  const weightSum = Number.isFinite(metrics.weightSum) ? metrics.weightSum : 0;
+  const baseCount = Number.isFinite(baseTokenCount) ? baseTokenCount : 0;
+  const uniqueTokens = tokens.reduce((acc, tok) => {
+    const key = typeof tok?.t === 'string' ? tok.t : typeof tok?.token === 'string' ? tok.token : '';
+    if (!key) return acc;
+    acc.add(key);
+    return acc;
+  }, new Set());
+
+  const entry = {
+    label,
+    timestamp: Date.now(),
+    tokenCount,
+    wordCount,
+    symbolCount,
+    symbolDensity,
+    edgeCount,
+    symbolEdgeCount,
+    weightSum,
+    baseTokenCount: baseCount,
+    deltaTokens: tokenCount - baseCount,
+    uniqueTokens: uniqueTokens.size,
+  };
+
+  if (!Array.isArray(bucket.history)) bucket.history = [];
+  bucket.history.push(entry);
+  const maxHistory = 32;
+  if (bucket.history.length > maxHistory) {
+    bucket.history.splice(0, bucket.history.length - maxHistory);
+  }
+
+  bucket.last = entry;
+  bucket.lastRunGraph = pipelineResult.graph || null;
+  bucket.topNodes = Array.isArray(pipelineResult.top) ? pipelineResult.top.slice(0, 12) : [];
+  bucket.lastTokens = Array.isArray(pipelineResult.tokens) ? pipelineResult.tokens : [];
+  bucket.lastPipeline = pipelineResult;
+
+  return bucket;
 }
 
 function syncSettings() {
