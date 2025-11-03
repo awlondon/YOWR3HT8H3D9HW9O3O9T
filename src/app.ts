@@ -552,6 +552,32 @@ const COMMAND_RESTRICTIONS: Partial<Record<MembershipLevel, Set<string>>> = {
   ),
 };
 
+function getMembershipLevel(): MembershipLevel {
+  const rawLevel = typeof state?.membership?.level === 'string'
+    ? state.membership.level.toLowerCase()
+    : '';
+  if (rawLevel === MEMBERSHIP_LEVELS.MEMBER) {
+    return MEMBERSHIP_LEVELS.MEMBER;
+  }
+  return MEMBERSHIP_LEVELS.DEMO;
+}
+
+function applyMembershipUi(): void {
+  const level = getMembershipLevel();
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.toggle('membership-member', level === MEMBERSHIP_LEVELS.MEMBER);
+    document.body.classList.toggle('membership-demo', level !== MEMBERSHIP_LEVELS.MEMBER);
+    document.body.setAttribute('data-membership', level);
+  }
+  if (typeof window !== 'undefined') {
+    const root = (window as any).CognitionEngine || ((window as any).CognitionEngine = {});
+    const current = (state && typeof state === 'object' && state.membership)
+      ? state.membership
+      : {};
+    root.membership = { ...current, level };
+  }
+}
+
 const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
 const DATABASE_READY_EVENT = 'hlsf:database-ready';
 
