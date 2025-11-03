@@ -19227,11 +19227,19 @@ async function processPrompt(prompt) {
       logWarning(`Local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
     }
     localOutput = localLimited.text;
-    const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
+    const responseWasTrimmed = Boolean(localOutputData.responseTrimmed) || localLimited.trimmed;
+    const limitedWordCount = localLimited.wordCount ?? countWords(localOutput);
+    const localWordCount = responseWasTrimmed
+      ? limitedWordCount
+      : (typeof localOutputData.responseWordCount === 'number'
+        ? localOutputData.responseWordCount
+        : limitedWordCount);
 
-    const localResponseTokens = Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
-      ? localOutputData.responseTokens
-      : tokenize(localOutput);
+    const localResponseTokens = responseWasTrimmed
+      ? tokenize(localOutput)
+      : (Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
+        ? localOutputData.responseTokens
+        : tokenize(localOutput));
 
     if (localResponseTokens.length) {
       addConversationTokens(localResponseTokens);
@@ -19820,11 +19828,19 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     logWarning(`${chunkLabel}: local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words for archival.`);
   }
   localOutput = localLimited.text;
-  const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
+  const responseWasTrimmed = Boolean(localOutputData.responseTrimmed) || localLimited.trimmed;
+  const limitedWordCount = localLimited.wordCount ?? countWords(localOutput);
+  const localWordCount = responseWasTrimmed
+    ? limitedWordCount
+    : (typeof localOutputData.responseWordCount === 'number'
+      ? localOutputData.responseWordCount
+      : limitedWordCount);
 
-  const localResponseTokens = Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
-    ? localOutputData.responseTokens
-    : tokenize(localOutput);
+  const localResponseTokens = responseWasTrimmed
+    ? tokenize(localOutput)
+    : (Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
+      ? localOutputData.responseTokens
+      : tokenize(localOutput));
 
   if (localResponseTokens.length) {
     addConversationTokens(localResponseTokens);
