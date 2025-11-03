@@ -14702,7 +14702,9 @@ function setupLandingExperience() {
   if (forms.signup instanceof HTMLFormElement) {
     forms.signup.addEventListener('submit', (event) => {
       event.preventDefault();
-      if (!forms.signup.reportValidity()) return;
+      if (typeof forms.signup.reportValidity === 'function' && !forms.signup.reportValidity()) {
+        return;
+      }
       const data = new FormData(forms.signup);
       openPaymentIntake(MEMBERSHIP_LEVELS.MEMBER, {
         name: String(data.get('fullName') || '').trim(),
@@ -14726,7 +14728,9 @@ function setupLandingExperience() {
   if (forms.demo instanceof HTMLFormElement) {
     forms.demo.addEventListener('submit', (event) => {
       event.preventDefault();
-      if (!forms.demo.reportValidity()) return;
+      if (typeof forms.demo.reportValidity === 'function' && !forms.demo.reportValidity()) {
+        return;
+      }
       const data = new FormData(forms.demo);
       const demoMode = String(data.get('demoMode') || 'api').toLowerCase() === 'offline' ? 'offline' : 'api';
       finalizeOnboarding(MEMBERSHIP_LEVELS.DEMO, {
@@ -16459,6 +16463,150 @@ window.addEventListener('beforeunload', () => {
   state.apiKey = '';
   stopHLSFAnimation();
 });
+
+function bindHlsfControls(container: HTMLElement | null): void {
+  const root = container instanceof HTMLElement
+    ? container
+    : document.getElementById('hlsf-canvas-container');
+
+  if (!(root instanceof HTMLElement)) {
+    return;
+  }
+
+  if (root.dataset.hlsfControlsBound === 'true') {
+    syncHlsfControls(root);
+    return;
+  }
+
+  root.dataset.hlsfControlsBound = 'true';
+  syncHlsfControls(root);
+}
+
+function syncHlsfControls(container: HTMLElement | null): void {
+  const root = container instanceof HTMLElement
+    ? container
+    : document.getElementById('hlsf-canvas-container');
+
+  if (!(root instanceof HTMLElement)) {
+    return;
+  }
+
+  const hlsf = (window as any).HLSF;
+  const config = hlsf?.config ?? null;
+  if (!config) {
+    return;
+  }
+
+  const ownerDocument = root.ownerDocument ?? document;
+
+  const updateNumericControl = (
+    inputId: string,
+    valueId: string,
+    rawValue: unknown,
+    options: { digits?: number } = {},
+  ) => {
+    const input = ownerDocument.getElementById(inputId) as HTMLInputElement | null;
+    if (!input) return;
+    const digits = options.digits ?? (input.type === 'range' ? 2 : 0);
+    const numeric = Number(rawValue);
+    if (!Number.isFinite(numeric)) return;
+    const formatted = digits > 0 ? numeric.toFixed(digits) : String(Math.round(numeric));
+    if (input.value !== formatted) {
+      input.value = formatted;
+    }
+    const valueEl = ownerDocument.getElementById(valueId) as HTMLElement | null;
+    if (valueEl) {
+      valueEl.textContent = formatted;
+    }
+  };
+
+  updateNumericControl('hlsf-rotation-speed', 'hlsf-speed-val', config.rotationOmega, { digits: 2 });
+  updateNumericControl('hlsf-alpha', 'hlsf-alpha-val', config.alpha, { digits: 2 });
+  updateNumericControl('hlsf-node-size', 'hlsf-node-size-val', config.nodeSize, { digits: 1 });
+
+  const affinity = (config.affinity ?? {}) as { threshold?: unknown; iterations?: unknown };
+  updateNumericControl('hlsf-aff-thresh', 'hlsf-aff-thresh-val', affinity.threshold, { digits: 2 });
+  updateNumericControl('hlsf-aff-iters', 'hlsf-aff-iters-val', affinity.iterations, { digits: 0 });
+
+  const updateIntegerField = (inputId: string, valueId: string, rawValue: unknown) => {
+    const input = ownerDocument.getElementById(inputId) as HTMLInputElement | null;
+    if (!input) return;
+    const numeric = Number(rawValue);
+    if (!Number.isFinite(numeric)) return;
+    const formatted = String(Math.round(numeric));
+    if (input.value !== formatted) {
+      input.value = formatted;
+    }
+    const valueEl = ownerDocument.getElementById(valueId) as HTMLElement | null;
+    if (valueEl) {
+      valueEl.textContent = formatted;
+    }
+  };
+
+  const relationCap = getRelationTypeCap();
+  if (Number.isFinite(relationCap)) {
+    updateIntegerField('hlsf-relation-cap', 'hlsf-relation-cap-val', relationCap);
+  }
+
+  const edgesPerType = getEdgesPerType();
+  if (Number.isFinite(edgesPerType)) {
+    updateIntegerField('hlsf-edges-per-type', 'hlsf-edges-per-type-val', edgesPerType);
+  }
+
+  const syncSelectValue = (id: string, desired: unknown) => {
+    if (typeof desired !== 'string' || !desired) return;
+    const select = ownerDocument.getElementById(id) as HTMLSelectElement | null;
+    if (!select) return;
+    const normalized = desired.toLowerCase();
+    for (const option of Array.from(select.options)) {
+      if (option.value.toLowerCase() === normalized) {
+        if (select.value !== option.value) {
+          select.value = option.value;
+        }
+        break;
+      }
+    }
+  };
+
+  syncSelectValue('hlsf-edge-color-mode', config.edgeColorMode);
+  syncSelectValue('hlsf-layout', config.layout);
+
+  const setToggleState = (id: string, active: boolean, onLabel: string, offLabel: string) => {
+    const button = ownerDocument.getElementById(id) as HTMLButtonElement | null;
+    if (!button) return;
+    button.textContent = active ? onLabel : offLabel;
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  };
+
+  setToggleState('hlsf-toggle-edges', config.showEdges !== false, 'Edges: On', 'Edges: Off');
+  setToggleState('hlsf-toggle-labels', config.showLabels !== false, 'Labels: On', 'Labels: Off');
+  setToggleState('hlsf-toggle-glow', config.showNodeGlow === true, 'Glow: On', 'Glow: Off');
+  setToggleState('hlsf-toggle-bg', config.whiteBg === true, 'BG: Light', 'BG: Dark');
+  setToggleState('hlsf-toggle-emergent', config.emergentActive === true, 'Stop Emergence', 'Start Emergence');
+
+  const adjacencyButton = ownerDocument.getElementById('hlsf-toggle-adjacency') as HTMLButtonElement | null;
+  if (adjacencyButton) {
+    const expanded = isAdjacencyExpansionEnabled();
+    adjacencyButton.textContent = expanded ? 'Adjacency: Expanded' : 'Adjacency: Compact';
+    adjacencyButton.setAttribute('aria-pressed', expanded ? 'true' : 'false');
+  }
+
+  const affinitySummary = ownerDocument.getElementById('hlsf-affinity-summary') as HTMLElement | null;
+  if (affinitySummary) {
+    const threshold = Number(affinity.threshold);
+    const iterations = Number(affinity.iterations);
+    if (Number.isFinite(threshold) || Number.isFinite(iterations)) {
+      const parts: string[] = [];
+      if (Number.isFinite(threshold)) {
+        parts.push(`threshold ${threshold.toFixed(2)}`);
+      }
+      if (Number.isFinite(iterations)) {
+        parts.push(`iterations ${Math.round(iterations)}`);
+      }
+      affinitySummary.textContent = `Current mental state: ${parts.join(', ')}`;
+    }
+  }
+}
 
 async function initialize() {
   let cachedCount = getCachedTokenCount();
