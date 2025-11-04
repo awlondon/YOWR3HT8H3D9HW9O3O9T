@@ -16320,43 +16320,62 @@ async function processDocumentFile(file) {
 // EVENTS
 // ============================================
 function showApiModal() {
-  if (!elements.apiModal) return;
-  elements.apiModal.classList.remove('hidden');
+  const modal = elements.apiModal;
+  if (!(modal instanceof HTMLElement)) return;
+  modal.classList.remove('hidden');
   setTimeout(() => {
-    if (elements.apiKeyInput instanceof HTMLElement) {
-      elements.apiKeyInput.focus();
+    const input = elements.apiKeyInput;
+    if (input instanceof HTMLElement) {
+      input.focus();
     }
   }, 80);
 }
 
 function applyApiKeyFromModal() {
-  const key = elements.apiKeyInput.value.trim();
+  const input = elements.apiKeyInput;
+  if (!(input instanceof HTMLInputElement)) {
+    logError('API key input not available');
+    return;
+  }
+  const key = input.value.trim();
   if (!isValidApiKey(key)) {
     logError('Invalid API key format');
     return;
   }
   state.apiKey = key.trim();
   const persisted = safeStorageSet(API_KEY_STORAGE_KEY, state.apiKey);
-  elements.apiModal.classList.add('hidden');
+  const modal = elements.apiModal;
+  if (modal instanceof HTMLElement) {
+    modal.classList.add('hidden');
+  }
   if (!persisted) {
     logWarning('API key configured but not saved to storage');
   }
   logOK('API key configured');
 }
 
-elements.apiConfirmBtn.addEventListener('click', applyApiKeyFromModal);
+if (elements.apiConfirmBtn instanceof HTMLButtonElement) {
+  elements.apiConfirmBtn.addEventListener('click', applyApiKeyFromModal);
+}
 
-elements.apiKeyInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    applyApiKeyFromModal();
-  }
-});
+if (elements.apiKeyInput instanceof HTMLInputElement) {
+  elements.apiKeyInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applyApiKeyFromModal();
+    }
+  });
+}
 
-elements.apiCancelBtn.addEventListener('click', () => {
-  elements.apiModal.classList.add('hidden');
-  logWarning('Offline mode - limited functionality');
-});
+if (elements.apiCancelBtn instanceof HTMLButtonElement) {
+  elements.apiCancelBtn.addEventListener('click', () => {
+    const modal = elements.apiModal;
+    if (modal instanceof HTMLElement) {
+      modal.classList.add('hidden');
+    }
+    logWarning('Offline mode - limited functionality');
+  });
+}
 
 document.addEventListener('click', (event) => {
   const target = event.target instanceof HTMLElement ? event.target.closest('.command-upgrade-link') : null;
@@ -16442,38 +16461,48 @@ async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } 
   return submitPromptThroughEngine(input, { annotateLog: options?.annotateLog, source: 'voice' });
 }
 
-elements.sendBtn.addEventListener('click', () => {
-  const rawValue = elements.input.value;
-  if (!rawValue || !rawValue.trim()) return;
+const sendButton = elements.sendBtn instanceof HTMLButtonElement ? elements.sendBtn : null;
+const cancelButton = elements.cancelBtn instanceof HTMLButtonElement ? elements.cancelBtn : null;
+const inputField = elements.input instanceof HTMLInputElement ? elements.input : null;
 
-  void submitPromptThroughEngine(rawValue, { source: 'input-field' })
-    .then(result => {
-      if (result.kind === 'command') {
-        elements.input.value = '';
-      }
-    })
-    .catch(error => {
-      console.error('Prompt submission failed:', error);
-    });
-});
+if (sendButton && inputField) {
+  sendButton.addEventListener('click', () => {
+    const rawValue = inputField.value;
+    if (!rawValue || !rawValue.trim()) return;
 
-elements.cancelBtn.addEventListener('click', () => {
-  if (currentAbortController) {
-    currentAbortController.abort();
-    logWarning('Cancelling...');
-  }
-});
+    void submitPromptThroughEngine(rawValue, { source: 'input-field' })
+      .then(result => {
+        if (result.kind === 'command') {
+          inputField.value = '';
+        }
+      })
+      .catch(error => {
+        console.error('Prompt submission failed:', error);
+      });
+  });
+}
 
-elements.input.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    elements.sendBtn.click();
-  }
-});
+if (cancelButton) {
+  cancelButton.addEventListener('click', () => {
+    if (currentAbortController) {
+      currentAbortController.abort();
+      logWarning('Cancelling...');
+    }
+  });
+}
 
-elements.input.addEventListener('input', (e) => {
-  handleLiveInputChange(e.target.value);
-});
+if (inputField) {
+  inputField.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      sendButton?.click();
+    }
+  });
+
+  inputField.addEventListener('input', () => {
+    handleLiveInputChange(inputField.value);
+  });
+}
 
 // ============================================
 // INIT
