@@ -91,6 +91,16 @@ const CONFIG: EngineConfig = {
 const MAX_RECURSION_DEPTH = 8;
 const MAX_LEVEL_UP_SEEDS = 64;
 
+// Automatically promote visitors to the main application without showing the landing/login flow.
+const AUTO_BYPASS_ONBOARDING = true;
+const AUTO_BYPASS_MEMBERSHIP_DETAILS = {
+  plan: 'admin',
+  name: 'Local Operator',
+  email: 'operator@local.dev',
+  role: 'admin',
+  authProvider: 'auto-bypass',
+} as const;
+
 const vectorSemanticStore = new VectorSemanticStore();
 const pipelineClient = new PipelineWorkerClient({ embeddingStore: vectorSemanticStore });
 const commandRegistry = globalCommandRegistry;
@@ -14584,6 +14594,11 @@ function setupLandingExperience() {
         elements.input.focus();
       }
     }, 180);
+  }
+
+  if (AUTO_BYPASS_ONBOARDING) {
+    finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, AUTO_BYPASS_MEMBERSHIP_DETAILS);
+    return;
   }
 
   if (googleSigninButton instanceof HTMLButtonElement) {
