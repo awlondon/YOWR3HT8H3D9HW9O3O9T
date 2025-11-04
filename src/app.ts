@@ -14726,21 +14726,67 @@ function setupLandingExperience() {
     });
   }
 
+  let adminBypassActivated = false;
+
+  const triggerAdminBypass = (source: 'click' | 'hash') => {
+    if (adminBypassActivated && getMembershipLevel() === MEMBERSHIP_LEVELS.MEMBER) {
+      return;
+    }
+    adminBypassActivated = true;
+    finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
+      plan: 'admin',
+      name: 'System Administrator',
+      email: 'admin@local.dev',
+      role: 'admin',
+      admin: true,
+      authProvider: 'bypass',
+    });
+    const logOk = (window as any).logOK;
+    if (typeof logOk === 'function') {
+      const suffix = source === 'hash'
+        ? ' via URL hash. Full access granted.'
+        : '. Full access granted.';
+      logOk(`Admin bypass activated${suffix}`);
+    }
+  };
+
+  const clearAdminBypassHash = () => {
+    if (typeof window === 'undefined') return;
+    const { hash, pathname, search } = window.location;
+    if (typeof hash === 'string' && hash.trim().toLowerCase() === '#admin-bypass') {
+      const nextUrl = `${pathname}${search}`;
+      if (typeof window.history?.replaceState === 'function') {
+        window.history.replaceState(null, '', nextUrl);
+      } else {
+        window.location.hash = '';
+      }
+    }
+  };
+
+  const maybeHandleAdminBypassFromHash = (hash?: string) => {
+    if (typeof hash !== 'string') return false;
+    const normalized = hash.trim().toLowerCase();
+    if (normalized === '#admin-bypass') {
+      triggerAdminBypass('hash');
+      clearAdminBypassHash();
+      return true;
+    }
+    return false;
+  };
+
   if (adminBypassLink instanceof HTMLAnchorElement) {
     adminBypassLink.addEventListener('click', (event) => {
       event.preventDefault();
-      finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
-        plan: 'admin',
-        name: 'System Administrator',
-        email: 'admin@local.dev',
-        role: 'admin',
-        admin: true,
-        authProvider: 'bypass',
-      });
-      const logOk = (window as any).logOK;
-      if (typeof logOk === 'function') {
-        logOk('Admin bypass activated. Full access granted.');
-      }
+      triggerAdminBypass('click');
+      clearAdminBypassHash();
+    });
+  }
+
+  maybeHandleAdminBypassFromHash(window.location?.hash);
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('hashchange', () => {
+      maybeHandleAdminBypassFromHash(window.location.hash);
     });
   }
 
