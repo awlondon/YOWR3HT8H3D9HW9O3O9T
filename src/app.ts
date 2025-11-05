@@ -91,8 +91,36 @@ const CONFIG: EngineConfig = {
 const MAX_RECURSION_DEPTH = 8;
 const MAX_LEVEL_UP_SEEDS = 64;
 
+function resolveAutoBypassOnboarding(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const { location } = window;
+  const globalOverride = (window as any).AUTO_BYPASS_ONBOARDING;
+
+  if (typeof globalOverride === 'boolean') {
+    return globalOverride;
+  }
+
+  if (typeof globalOverride === 'string') {
+    const normalized = globalOverride.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+
+  const hostname = typeof location?.hostname === 'string' ? location.hostname : '';
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+
+  const isDev = typeof import.meta !== 'undefined'
+    && typeof (import.meta as any).env === 'object'
+    && Boolean((import.meta as any).env?.DEV);
+
+  return Boolean(isDev && isLocalhost);
+}
+
 // Automatically promote visitors to the main application without showing the landing/login flow.
-const AUTO_BYPASS_ONBOARDING = true;
+const AUTO_BYPASS_ONBOARDING = resolveAutoBypassOnboarding();
 const AUTO_BYPASS_MEMBERSHIP_DETAILS = {
   plan: 'admin',
   name: 'Local Operator',
