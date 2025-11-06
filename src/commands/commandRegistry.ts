@@ -40,7 +40,15 @@ export class CommandRegistry {
   get(name: string): CommandHandler | undefined {
     try {
       const normalized = normalizeCommandName(name);
-      return this.handlers.get(normalized);
+      const handler = this.handlers.get(normalized);
+      if (handler) return handler;
+
+      const legacyHandler = legacyCommandMap[normalized];
+      if (typeof legacyHandler === 'function') {
+        this.handlers.set(normalized, legacyHandler);
+        return legacyHandler;
+      }
+      return undefined;
     } catch {
       return undefined;
     }
