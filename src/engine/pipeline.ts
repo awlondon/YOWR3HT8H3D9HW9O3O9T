@@ -8,9 +8,15 @@ import {
 } from '../graph/recursive_adjacency.js';
 import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
+import type { PipelineStage, TelemetryHook } from '../types/pipeline-messages.js';
 import { buildConsciousnessState, type ConsciousnessState } from './consciousness.js';
 
 const TOKEN_CACHE_PREFIX = 'hlsf_token_';
+
+export interface PipelineRunHooks {
+  telemetry?: TelemetryHook;
+  shouldAbort?: () => boolean;
+}
 
 interface CachedAdjacencyRecord {
   token?: string;
@@ -439,13 +445,52 @@ function buildChunkedAdjacency(
   return edges;
 }
 
-export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineResult {
+export function runPipeline(
+  input: string,
+  cfg: Settings = SETTINGS,
+  hooks: PipelineRunHooks = {},
+): PipelineResult {
+  const telemetry = hooks.telemetry;
+  const hasPerformanceNow = typeof performance !== 'undefined' && typeof performance.now === 'function';
+  const now = hasPerformanceNow ? () => performance.now() : () => Date.now();
+  const stageStartTimes = new Map<PipelineStage, number>();
+
+  const ensureNotAborted = () => {
+    if (hooks.shouldAbort?.()) {
+      const error = new Error('Pipeline aborted');
+      error.name = 'AbortError';
+      throw error;
+    }
+  };
+
+  const startStage = (stage: PipelineStage) => {
+    ensureNotAborted();
+    stageStartTimes.set(stage, now());
+    telemetry?.onStage?.(stage, 0);
+  };
+
+  const finishStage = (stage: PipelineStage, meta?: Record<string, unknown>) => {
+    const startedAt = stageStartTimes.get(stage);
+    const duration = typeof startedAt === 'number' ? Math.max(0, now() - startedAt) : undefined;
+    const enrichedMeta = duration != null ? { ...(meta ?? {}), durationMs: duration } : meta;
+    telemetry?.onStage?.(stage, 1, enrichedMeta);
+  };
+
+  const guardedLoopCheck = (index: number) => {
+    if ((index & 63) === 0) {
+      ensureNotAborted();
+    }
+  };
+
+  startStage('tokenize');
   const tokens = cfg.tokenizeSymbols ? tokenizeWithSymbols(input) : legacyTokenizeDetailed(input);
   const nodes = buildGraphNodes(tokens);
 
   let wordCount = 0;
   let symbolCount = 0;
-  for (const token of tokens) {
+  for (let i = 0; i < tokens.length; i += 1) {
+    guardedLoopCheck(i);
+    const token = tokens[i];
     if (!token) continue;
     if (token.kind === 'sym') {
       symbolCount += 1;
@@ -453,6 +498,11 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
       wordCount += 1;
     }
   }
+  finishStage('tokenize', {
+    tokenCount: tokens.length,
+    wordCount,
+    symbolCount,
+  });
 
   const symbolEdgeLimit = symbolCount === 0
     ? 0
@@ -460,6 +510,7 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
 
   const accumulator = createEdgeAccumulator(tokens, symbolEdgeLimit);
 
+  startStage('adjacency');
   if (cfg.tokenizeSymbols) {
     const neighborMap = computeWordNeighborMap(tokens);
     emitSymbolEdges(
@@ -481,15 +532,18 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     ),
   };
   const adjacencyEdges = buildChunkedAdjacency(tokens, adjacencyChunkSize, adjacencyOptions);
-  for (const edge of adjacencyEdges) {
+  for (let i = 0; i < adjacencyEdges.length; i += 1) {
+    guardedLoopCheck(i);
+    const edge = adjacencyEdges[i];
     accumulator.addEdgeByIndices(edge.sourceIndex, edge.targetIndex, {
       type: edge.type,
       w: edge.weight,
       meta: edge.meta,
     });
   }
+  finishStage('adjacency', { edgeCount: accumulator.edges.length });
 
-  // Ensure growth even for single-token prompts by synthetic branching
+  startStage('propagate');
   try {
     const limits = resolveLimitsFromSettings(cfg);
     const currentEdgeCount = accumulator.edges.length;
@@ -504,31 +558,34 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
   } catch (e) {
     console.warn('Synthetic branching expansion skipped:', e);
   }
+  finishStage('propagate', { nodeCount: nodes.length, edgeCount: accumulator.edges.length });
 
   const { edges, edgeHistogram, symbolEdgeCount, weightSum } = accumulator;
 
-
-  // Prune to limits if configured
+  startStage('prune');
   try {
+    ensureNotAborted();
     const limits = resolveLimitsFromSettings(cfg);
-    // 1) prune low-weight edges if over cap
-    edges.sort((a,b) => (a.w ?? 0) - (b.w ?? 0));
+    edges.sort((a, b) => (a.w ?? 0) - (b.w ?? 0));
     while (edges.length > limits.maxEdges) {
+      ensureNotAborted();
       if (!edges.length) break;
       const candidate = edges[0];
       if ((candidate.w ?? 0) > limits.pruneWeightThreshold) break;
       edges.shift();
     }
-    // 2) drop isolated nodes if over cap
     const connected = new Set<string>();
-    for (const e of edges) {
+    for (let i = 0; i < edges.length; i += 1) {
+      guardedLoopCheck(i);
+      const e = edges[i];
       if (e.source) connected.add(e.source);
       if (e.target) connected.add(e.target);
     }
     if (nodes.length > limits.maxNodes) {
       const keep = nodes.filter(n => n?.token && connected.has(n.token));
       if (keep.length) {
-        nodes.length = 0; nodes.push(...keep.slice(0, limits.maxNodes));
+        nodes.length = 0;
+        nodes.push(...keep.slice(0, limits.maxNodes));
       } else {
         nodes.length = limits.maxNodes;
       }
@@ -536,10 +593,13 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
   } catch (e) {
     console.warn('Prune-to-limits skipped:', e);
   }
+  finishStage('prune', { edgeCount: edges.length, nodeCount: nodes.length });
 
-  const graph: PipelineGraph = { nodes, edges };
+  startStage('rank');
   const top = rankNodes(nodes, 20);
+  finishStage('rank', { topCount: top.length });
 
+  startStage('finalize');
   const metrics = {
     tokenCount: tokens.length,
     wordCount,
@@ -550,6 +610,7 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
     weightSum,
   };
 
+  const graph: PipelineGraph = { nodes, edges };
   const consciousness = buildConsciousnessState(tokens, graph);
 
   if (cfg.tokenizeSymbols) {
@@ -566,6 +627,12 @@ export function runPipeline(input: string, cfg: Settings = SETTINGS): PipelineRe
       consciousness,
     });
   }
+  finishStage('finalize', {
+    edgeCount: edges.length,
+    nodeCount: nodes.length,
+  });
+
+  ensureNotAborted();
 
   return {
     tokens,
