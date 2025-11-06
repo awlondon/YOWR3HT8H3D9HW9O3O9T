@@ -24,6 +24,12 @@ import { demoGoogleSignIn } from './auth/google';
 import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
 import { initializeLoginForm } from './onboarding/loginFlow';
 import { recordCommandUsage } from './analytics/commandUsage';
+
+declare global {
+  interface Window {
+    CognitionEngine?: Record<string, unknown>;
+  }
+}
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -14852,7 +14858,14 @@ function setupLandingExperience() {
 
   setActiveView('signup');
   landingRoot.setAttribute('aria-hidden', 'false');
-  window.CognitionEngine.openLanding = openLanding;
+
+  if (typeof window !== 'undefined') {
+    const engineRoot = (window.CognitionEngine ||= {});
+    engineRoot.openLanding = openLanding;
+    engineRoot.finalizeOnboarding = finalizeOnboarding;
+    engineRoot.membershipLevels = MEMBERSHIP_LEVELS;
+    engineRoot.landingInitialized = true;
+  }
 }
 
 function exitProcessingState(options = {}) {
