@@ -2080,6 +2080,184 @@ function defaultAnchors(idx, k = 64) {
   return recs.slice(0, k).map(r => r.token);
 }
 
+function applyConversationOverlay(index) {
+  if (!(index instanceof Map)) {
+    return { index, focusTokens: [] };
+  }
+
+  const memory = ensureLocalHlsfMemory();
+  if (!memory) {
+    return { index, focusTokens: [] };
+  }
+
+  const idxLower = new Map();
+  for (const key of index.keys()) {
+    if (typeof key !== 'string') continue;
+    idxLower.set(key.toLowerCase(), key);
+  }
+
+  const seen = new Set();
+  const focusTokens = [];
+  const pushToken = (candidate) => {
+    if (typeof candidate !== 'string') return;
+    const trimmed = candidate.trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    const resolved = index.has(trimmed)
+      ? trimmed
+      : idxLower.get(lower) || null;
+    if (!resolved) return;
+    if (seen.has(lower)) return;
+    seen.add(lower);
+    focusTokens.push(resolved);
+  };
+
+  const recentPrompts = Array.isArray(memory.prompts) ? memory.prompts.slice(-3) : [];
+
+  if (Array.isArray(memory.lastPrompt?.tokens)) {
+    memory.lastPrompt.tokens.forEach(pushToken);
+  }
+  if (Array.isArray(memory.lastPrompt?.adjacencySeeds)) {
+    memory.lastPrompt.adjacencySeeds.forEach(pushToken);
+  }
+  if (Array.isArray(memory.lastAdjacency?.summary)) {
+    memory.lastAdjacency.summary.forEach(entry => pushToken(entry?.token));
+  }
+
+  for (let i = recentPrompts.length - 1; i >= 0 && focusTokens.length < 24; i--) {
+    const entry = recentPrompts[i];
+    if (!entry) continue;
+    if (Array.isArray(entry.tokens)) entry.tokens.forEach(pushToken);
+    if (Array.isArray(entry.adjacencySeeds)) entry.adjacencySeeds.forEach(pushToken);
+  }
+
+  return { index, focusTokens };
+}
+
+async function anchorsForMode(args, index) {
+  const overlay = applyConversationOverlay(index);
+  const effectiveIndex = overlay.index instanceof Map ? overlay.index : index;
+  const idx = effectiveIndex instanceof Map ? effectiveIndex : null;
+
+  const focusFromOverlay = Array.isArray(overlay.focusTokens) ? overlay.focusTokens : [];
+  if (!idx) {
+    return {
+      anchors: [],
+      idx: effectiveIndex,
+      glyphOnly: args?.mode === 'glyphs',
+      focusTokens: focusFromOverlay,
+    };
+  }
+
+  const idxLower = new Map();
+  for (const key of idx.keys()) {
+    if (typeof key !== 'string') continue;
+    idxLower.set(key.toLowerCase(), key);
+  }
+
+  const resolveToken = (candidate) => {
+    if (typeof candidate !== 'string') return null;
+    const trimmed = candidate.trim();
+    if (!trimmed) return null;
+    if (idx.has(trimmed)) return trimmed;
+    const lower = trimmed.toLowerCase();
+    if (idxLower.has(lower)) return idxLower.get(lower);
+    const record = idx.get(trimmed);
+    if (record && typeof record.token === 'string' && idx.has(record.token)) {
+      return record.token;
+    }
+    return null;
+  };
+
+  const anchorCap = getAnchorCap(idx) || 0;
+  const seenAnchors = new Set();
+  let anchors = [];
+  const missingTokens = [];
+  const addAnchor = (candidate, trackMissing = false) => {
+    const resolved = resolveToken(candidate);
+    if (!resolved) {
+      if (trackMissing && typeof candidate === 'string') {
+        missingTokens.push(candidate.trim());
+      }
+      return;
+    }
+    const key = resolved.toLowerCase();
+    if (seenAnchors.has(key)) return;
+    seenAnchors.add(key);
+    anchors.push(resolved);
+  };
+
+  if (args?.mode === 'tokens' && Array.isArray(args.tokens)) {
+    for (const token of args.tokens) addAnchor(token, true);
+  } else if (args?.mode === 'glyphs' && Array.isArray(args.glyphs)) {
+    loadLedger();
+    for (const glyph of args.glyphs) {
+      if (typeof glyph !== 'string' || !glyph.trim()) continue;
+      const mapped = GlyphToToken.get(glyph) || new Set();
+      if (mapped instanceof Set && mapped.size) {
+        for (const token of mapped) {
+          addAnchor(token, true);
+          if (anchorCap > 0 && anchors.length >= anchorCap) break;
+        }
+      } else {
+        addAnchor(glyph, true);
+      }
+      if (anchorCap > 0 && anchors.length >= anchorCap) break;
+    }
+  } else if (args?.mode === 'conversation') {
+    for (const token of focusFromOverlay) {
+      addAnchor(token, false);
+      if (anchorCap > 0 && anchors.length >= anchorCap) break;
+    }
+  }
+
+  if ((!Array.isArray(anchors) || !anchors.length) && idx instanceof Map) {
+    anchors = defaultAnchors(idx, anchorCap > 0 ? anchorCap : undefined);
+  }
+
+  if ((!Array.isArray(anchors) || !anchors.length) && idx instanceof Map) {
+    const fallback = Array.from(idx.keys());
+    anchors = anchorCap > 0 ? fallback.slice(0, anchorCap) : fallback;
+  }
+
+  if (anchorCap > 0 && anchors.length > anchorCap) {
+    anchors = anchors.slice(0, anchorCap);
+  }
+
+  const focusSet = new Set();
+  const focusTokens = [];
+  const addFocus = (candidate) => {
+    const resolved = resolveToken(candidate);
+    if (!resolved) return;
+    const key = resolved.toLowerCase();
+    if (focusSet.has(key)) return;
+    focusSet.add(key);
+    focusTokens.push(resolved);
+  };
+
+  focusFromOverlay.forEach(addFocus);
+  if (!focusTokens.length) {
+    anchors.slice(0, 12).forEach(addFocus);
+  }
+
+  if (missingTokens.length) {
+    const missingDisplay = missingTokens
+      .filter(Boolean)
+      .map(token => token.trim())
+      .filter(Boolean);
+    if (missingDisplay.length) {
+      logWarning(`Some requested tokens were not found in the index: ${missingDisplay.join(', ')}`);
+    }
+  }
+
+  return {
+    anchors,
+    idx: effectiveIndex,
+    glyphOnly: args?.mode === 'glyphs',
+    focusTokens,
+  };
+}
+
 function signatureFor(rec) {
   const S = { weights: new Map(), neigh: new Set() };
   for (const arr of Object.values(rec?.relationships || {})) {
@@ -9989,13 +10167,15 @@ function initHLSFCanvas() {
   try {
     // Build nodes first to check if we have data
     hlsfNodes = buildHLSFNodes();
+    window.HLSF = window.HLSF || {};
+    window.HLSF.nodes = Array.isArray(hlsfNodes) ? hlsfNodes : [];
 
-    if (hlsfNodes.length === 0) {
+    if (!window.HLSF.nodes.length) {
       logWarning('No cached tokens found for HLSF. Process some queries first to populate the database.');
       return;
     }
 
-    console.log(`Creating canvas UI for ${hlsfNodes.length} nodes`);
+    console.log(`Creating canvas UI for ${window.HLSF.nodes.length} nodes`);
 
     const container = document.createElement('div');
     container.className = 'hlsf-canvas-container';
@@ -10386,6 +10566,7 @@ function renderLegacyHLSF() {
     const ctx = window.HLSF.ctx;
     const width = window.HLSF.canvas.width;
     const height = window.HLSF.canvas.height;
+    const nodes = Array.isArray(window.HLSF?.nodes) ? window.HLSF.nodes : [];
     const theme = window.HLSF.config.whiteBg
       ? { bg: '#ffffff', fg: '#000000', grid: 'rgba(0, 0, 0, 0.05)' }
       : { bg: '#0a0a0a', fg: '#ffffff', grid: 'rgba(0, 255, 136, 0.05)' };
@@ -10424,7 +10605,7 @@ function renderLegacyHLSF() {
       /* intentionally unused now */
     }
 
-    for (const node of window.HLSF.nodes) {
+    for (const node of nodes) {
       let triangles = Array.isArray(node.triangles) ? node.triangles : [];
       let vertices = Array.isArray(node.vertices) ? node.vertices : [];
       const nodeColor = Array.isArray(node.color) ? node.color : [0, 255, 136];
@@ -10515,7 +10696,7 @@ function renderLegacyHLSF() {
     ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 255, 136, 0.8)';
     ctx.font = '12px Fira Code, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`Nodes: ${window.HLSF.nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`, 10, 20);
+    ctx.fillText(`Nodes: ${nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`, 10, 20);
 
   } catch (err) {
     console.error('Error rendering HLSF:', err);
