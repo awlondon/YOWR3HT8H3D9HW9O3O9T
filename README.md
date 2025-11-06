@@ -41,6 +41,17 @@ flows over the core cognition experience.
 - Causal impact estimates highlight tokens that meaningfully change integration scores when removed.
 - Results can be surfaced inside the `/state` and `/self` console commands for debugging sessions (`src/app.ts`).
 
+### Knowledge base storage
+- `src/kb/` hosts the pluggable knowledge base used by the engine and UI caches. The facade (`src/kb/index.ts`)
+  exposes a typed `KBStore` API while adapters implement concrete storage backends.
+- The default IndexedDB adapter (`src/kb/adapters/idb.ts`) persists columnar edge blocks with gzip
+  compression, prefix sharding, and background-safe transactions. A memory adapter is provided for tests
+  and headless environments, while a SQLite-WASM adapter stub documents the optional WASM driver.
+- Edge blocks (`src/kb/schema.ts`, `src/kb/encode.ts`) store adjacency columns in typed arrays, enabling
+  fast lookups and future compression/GC policies (`src/kb/gc.ts`, `src/kb/shard.ts`).
+- A dedicated worker (`src/workers/kb.worker.ts`) fans heavy GC, compaction, and bulk imports off the main
+  thread. `src/state/kbStore.ts` provides a singleton initialiser that picks the best adapter at runtime.
+
 ### Remote database and persistence
 - Sharded adjacency data lives under `remote-db/<A–Z>/<AA–ZZ>.json` and can be refreshed with `hlsf_partition.py`.
 - The browser File System Access API writer coordinates background chunk syncs and emits progress signals
