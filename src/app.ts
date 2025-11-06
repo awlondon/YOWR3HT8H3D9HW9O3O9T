@@ -14865,6 +14865,22 @@ function setupLandingExperience() {
     engineRoot.finalizeOnboarding = finalizeOnboarding;
     engineRoot.membershipLevels = MEMBERSHIP_LEVELS;
     engineRoot.landingInitialized = true;
+
+    const queueKey = '__hlsfPendingOnboarding__';
+    const pending = Array.isArray((window as any)[queueKey])
+      ? (window as any)[queueKey].splice(0)
+      : [];
+
+    if (pending.length) {
+      pending.forEach((payload: any) => {
+        if (!payload || !payload.level) return;
+        try {
+          finalizeOnboarding(payload.level, payload.details || {});
+        } catch (err) {
+          console.warn('Deferred onboarding finalization failed:', err);
+        }
+      });
+    }
   }
 }
 
