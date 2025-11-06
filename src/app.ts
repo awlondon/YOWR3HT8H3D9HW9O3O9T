@@ -16839,8 +16839,26 @@ window.addEventListener('load', () => {
   tryBootstrapDb();
 });
 
-setupLandingExperience();
-initialize();
+function runAfterDomReady(task: () => void): void {
+  if (typeof document === 'undefined') {
+    task();
+    return;
+  }
+  if (document.readyState === 'loading') {
+    const invoke = () => {
+      document.removeEventListener('DOMContentLoaded', invoke);
+      task();
+    };
+    document.addEventListener('DOMContentLoaded', invoke);
+    return;
+  }
+  task();
+}
+
+runAfterDomReady(() => {
+  setupLandingExperience();
+  void initialize();
+});
 
 
 /* ===== HLSF limit controls wiring ===== */
