@@ -15,6 +15,9 @@ import { demoGoogleSignIn } from './auth/google';
 import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
 import { initializeLoginForm } from './onboarding/loginFlow';
 import { recordCommandUsage } from './analytics/commandUsage';
+import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
+import { sessionState as state } from './state/sessionState';
+import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -488,13 +491,6 @@ function installClusterZoom(canvas: HTMLCanvasElement | null) {
   canvas.dataset.clusterZoomBound = 'true';
   resetOverlay();
 }
-
-const MEMBERSHIP_LEVELS = {
-  DEMO: 'demo',
-  MEMBER: 'member',
-} as const;
-
-type MembershipLevel = typeof MEMBERSHIP_LEVELS[keyof typeof MEMBERSHIP_LEVELS];
 
 interface CommandHelpEntry {
   command: string;
@@ -6013,50 +6009,6 @@ const RELATIONSHIP_PRIORITIES = new Map([
 // ============================================
 // STATE
 // ============================================
-const state = {
-  apiKey: '',
-  isProcessing: false,
-  processingStatus: null,
-  processingStart: 0,
-  processingAverageMs: 0,
-  processingSamples: 0,
-  sessionStats: {
-    totalApiCalls: 0,
-    totalCacheHits: 0,
-    totalCostUsd: 0,
-  },
-  saas: null,
-  hlsfReady: false,
-  tokenSources: new Map(),
-  tokenOrder: [],
-  liveGraph: { nodes: new Map(), links: [] },
-  liveGraphMode: true,
-  liveGraphUpdateTimer: null,
-  documentCacheBaseline: 0,
-  documentCacheBaselineManuallyCleared: false,
-  networkOffline: false,
-  networkErrorNotified: false,
-  lastNetworkErrorTime: 0,
-  lastComputedCacheBase: 0,
-  pendingPromptReviews: new Map(),
-  symbolMetrics: {
-    history: [],
-    last: null,
-    lastRunGraph: null,
-    topNodes: [],
-    lastTokens: [],
-    lastPipeline: null,
-  },
-  membership: {
-    level: MEMBERSHIP_LEVELS.DEMO,
-    name: '',
-    email: '',
-    plan: null,
-    trial: true,
-    demoMode: 'api',
-  },
-};
-
 state.hlsfReady = false;
 let remotedir = false;
 
@@ -15203,14 +15155,6 @@ async function importDatabaseData(data, source = 'file') {
 // ============================================
 // COMMANDS
 // ============================================
-const COMMANDS = window.COMMANDS = window.COMMANDS || Object.create(null);
-
-function registerCommand(name, handler) {
-  if (!name || typeof handler !== 'function') return;
-  const key = name.startsWith('/') ? name.toLowerCase() : `/${name.toLowerCase()}`;
-  COMMANDS[key] = handler;
-}
-
 async function fetchBootstrapText(href) {
   try {
     const res = await fetch(href, { cache: 'no-store' });
@@ -18302,31 +18246,32 @@ async function cmd_hlsf(arg = '') {
   await runHlsfSafely(raw);
 }
 
-registerCommand('/self', cmd_self);
-registerCommand('/state', cmd_state);
-registerCommand('/import', cmd_import);
-registerCommand('/read', () => cmdRead());
-registerCommand('/ingest', () => cmdRead());
-registerCommand('/load', cmd_load);
-registerCommand('/loaddb', cmd_loaddb);
-registerCommand('/remotedir', cmd_remotedir);
-registerCommand('/remotestats', () => cmd_remotestats());
-registerCommand('/remotedb', () => cmd_remotestats());
-registerCommand('/maphidden', cmd_hidden);
-registerCommand('/hidden', cmd_hidden);
-registerCommand('/sv-avatar', args => cmdSaveAvatar(args));
-registerCommand('/ld-avatar', () => cmdLoadAvatar());
-registerCommand('/del-avatar', () => cmdDeleteAvatar());
-window.COMMANDS = COMMANDS;
+commandRegistry.register('/self', cmd_self);
+commandRegistry.register('/state', cmd_state);
+commandRegistry.register('/import', cmd_import);
+commandRegistry.register('/read', () => cmdRead());
+commandRegistry.register('/ingest', () => cmdRead());
+commandRegistry.register('/load', cmd_load);
+commandRegistry.register('/loaddb', cmd_loaddb);
+commandRegistry.register('/remotedir', cmd_remotedir);
+commandRegistry.register('/remotestats', () => cmd_remotestats());
+commandRegistry.register('/remotedb', () => cmd_remotestats());
+commandRegistry.register('/maphidden', cmd_hidden);
+commandRegistry.register('/hidden', cmd_hidden);
+commandRegistry.register('/sv-avatar', args => cmdSaveAvatar(args));
+commandRegistry.register('/ld-avatar', () => cmdLoadAvatar());
+commandRegistry.register('/del-avatar', () => cmdDeleteAvatar());
 // Router guard (prevents duplicate logs)
-if (!COMMANDS.__hlsf_bound) {
-  COMMANDS['/hlsf'] = cmd_hlsf;
-  COMMANDS.__hlsf_bound = true;
+if (!(legacyCommands as Record<string, unknown>).__hlsf_bound) {
+  commandRegistry.register('/hlsf', cmd_hlsf);
+  (legacyCommands as Record<string, unknown>).__hlsf_bound = true;
+} else if (!commandRegistry.has('/hlsf') && typeof legacyCommands['/hlsf'] === 'function') {
+  commandRegistry.register('/hlsf', legacyCommands['/hlsf'] as CommandHandler);
 }
-registerCommand('/visualize', cmd_hlsf);
+commandRegistry.register('/visualize', cmd_hlsf);
 
 registerSaasCommands(saasPlatform, {
-  registerCommand,
+  registerCommand: (name, handler) => commandRegistry.register(name, handler),
   addLog: html => addLog(html),
   logError,
   logSuccess: message => {
@@ -18481,7 +18426,7 @@ async function handleCommand(cmd) {
 
   const normalized = `/${command.toLowerCase()}`;
   if (!ensureCommandAvailable(normalized)) return;
-  const mapped = COMMANDS[normalized];
+  const mapped = commandRegistry.get(normalized);
   if (mapped) {
     trackCommandExecution(normalized, args, 'handler');
     await mapped(args, trimmed);
