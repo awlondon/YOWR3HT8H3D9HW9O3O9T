@@ -309,37 +309,152 @@ function setRemotedirFlag(connected: boolean): void {
   }
 }
 
-const elements = typeof document !== 'undefined'
-  ? {
-      log: document.getElementById('log'),
-      cachedTokens: document.getElementById('cached-tokens'),
-      cacheHitRate: document.getElementById('cache-hit-rate'),
-      sessionCost: document.getElementById('session-cost'),
-      sendBtn: document.getElementById('send-btn'),
-      cancelBtn: document.getElementById('cancel-btn'),
-      input: document.getElementById('command-input') as HTMLInputElement | null,
-      apiModal: document.getElementById('api-modal'),
-      apiKeyInput: document.getElementById('api-key-input') as HTMLInputElement | null,
-      apiConfirmBtn: document.getElementById('api-confirm'),
-      apiCancelBtn: document.getElementById('api-cancel'),
-      avatarBundleInput: document.getElementById('avatar-bundle-input') as HTMLInputElement | null,
-      readFileInput: document.getElementById('read-file') as HTMLInputElement | null,
-    }
-  : {
-      log: null,
-      cachedTokens: null,
-      cacheHitRate: null,
-      sessionCost: null,
-      sendBtn: null,
-      cancelBtn: null,
-      input: null,
-      apiModal: null,
-      apiKeyInput: null,
-      apiConfirmBtn: null,
-      apiCancelBtn: null,
-      avatarBundleInput: null,
-      readFileInput: null,
-    };
+interface AppElements {
+  log: HTMLElement | null;
+  cachedTokens: HTMLElement | null;
+  cacheHitRate: HTMLElement | null;
+  sessionCost: HTMLElement | null;
+  sendBtn: HTMLElement | null;
+  cancelBtn: HTMLElement | null;
+  input: HTMLInputElement | null;
+  apiModal: HTMLElement | null;
+  apiKeyInput: HTMLInputElement | null;
+  apiConfirmBtn: HTMLElement | null;
+  apiCancelBtn: HTMLElement | null;
+  avatarBundleInput: HTMLInputElement | null;
+  readFileInput: HTMLInputElement | null;
+}
+
+const elements: AppElements = {
+  log: null,
+  cachedTokens: null,
+  cacheHitRate: null,
+  sessionCost: null,
+  sendBtn: null,
+  cancelBtn: null,
+  input: null,
+  apiModal: null,
+  apiKeyInput: null,
+  apiConfirmBtn: null,
+  apiCancelBtn: null,
+  avatarBundleInput: null,
+  readFileInput: null,
+};
+
+function hydrateAppElements(root: Document | null = typeof document !== 'undefined' ? document : null): void {
+  if (!root) return;
+  elements.log = root.getElementById('log');
+  elements.cachedTokens = root.getElementById('cached-tokens');
+  elements.cacheHitRate = root.getElementById('cache-hit-rate');
+  elements.sessionCost = root.getElementById('session-cost');
+  elements.sendBtn = root.getElementById('send-btn');
+  elements.cancelBtn = root.getElementById('cancel-btn');
+  elements.input = root.getElementById('command-input') as HTMLInputElement | null;
+  elements.apiModal = root.getElementById('api-modal');
+  elements.apiKeyInput = root.getElementById('api-key-input') as HTMLInputElement | null;
+  elements.apiConfirmBtn = root.getElementById('api-confirm');
+  elements.apiCancelBtn = root.getElementById('api-cancel');
+  elements.avatarBundleInput = root.getElementById('avatar-bundle-input') as HTMLInputElement | null;
+  elements.readFileInput = root.getElementById('read-file') as HTMLInputElement | null;
+}
+
+if (typeof document !== 'undefined') {
+  hydrateAppElements(document);
+}
+
+let sendButtonBound = false;
+let cancelButtonBound = false;
+let inputFieldBound = false;
+let apiConfirmBound = false;
+let apiCancelBound = false;
+let apiKeyInputBound = false;
+let logClickBound = false;
+
+function bindCoreUiEvents(): void {
+  const sendButton = elements.sendBtn instanceof HTMLButtonElement ? elements.sendBtn : null;
+  const cancelButton = elements.cancelBtn instanceof HTMLButtonElement ? elements.cancelBtn : null;
+  const inputField = elements.input instanceof HTMLInputElement ? elements.input : null;
+  const apiConfirmBtn = elements.apiConfirmBtn instanceof HTMLButtonElement ? elements.apiConfirmBtn : null;
+  const apiCancelBtn = elements.apiCancelBtn instanceof HTMLButtonElement ? elements.apiCancelBtn : null;
+  const apiKeyInput = elements.apiKeyInput instanceof HTMLInputElement ? elements.apiKeyInput : null;
+  const logElement = elements.log instanceof HTMLElement ? elements.log : null;
+
+  if (sendButton && inputField && !sendButtonBound) {
+    sendButton.addEventListener('click', () => {
+      const rawValue = inputField.value;
+      if (!rawValue || !rawValue.trim()) return;
+
+      void submitPromptThroughEngine(rawValue, { source: 'input-field' })
+        .then(result => {
+          if (result.kind === 'command') {
+            inputField.value = '';
+          }
+        })
+        .catch(error => {
+          console.error('Prompt submission failed:', error);
+        });
+    });
+    sendButtonBound = true;
+  }
+
+  if (cancelButton && !cancelButtonBound) {
+    cancelButton.addEventListener('click', () => {
+      if (currentAbortController) {
+        currentAbortController.abort();
+        logWarning('Cancelling...');
+      }
+    });
+    cancelButtonBound = true;
+  }
+
+  if (inputField && !inputFieldBound) {
+    inputField.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        sendButton?.click();
+      }
+    });
+
+    inputField.addEventListener('input', () => {
+      handleLiveInputChange(inputField.value);
+    });
+
+    inputFieldBound = true;
+  }
+
+  if (apiConfirmBtn && !apiConfirmBound) {
+    apiConfirmBtn.addEventListener('click', () => {
+      applyApiKeyFromModal();
+    });
+    apiConfirmBound = true;
+  }
+
+  if (apiCancelBtn && !apiCancelBound) {
+    apiCancelBtn.addEventListener('click', () => {
+      const modal = elements.apiModal;
+      if (modal instanceof HTMLElement) {
+        modal.classList.add('hidden');
+      }
+      logWarning('Offline mode - limited functionality');
+    });
+    apiCancelBound = true;
+  }
+
+  if (apiKeyInput && !apiKeyInputBound) {
+    apiKeyInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        applyApiKeyFromModal();
+      }
+    });
+    apiKeyInputBound = true;
+  }
+
+  if (logElement && !logClickBound) {
+    logElement.addEventListener('click', handlePromptReviewClick);
+    logClickBound = true;
+  }
+}
 
 const sessionManager = new SessionManager({
   resolveLocalMemoryEdgeWeightFloor,
@@ -4028,6 +4143,9 @@ function showGlyphLedger() {
 // LOGGING
 // ============================================
 function batchLogUpdates(entries) {
+  if (!(elements.log instanceof HTMLElement)) {
+    return;
+  }
   const fragment = document.createDocumentFragment();
   entries.forEach(entry => fragment.appendChild(entry));
   elements.log.appendChild(fragment);
@@ -5149,12 +5267,16 @@ setRemotedirFlag(typeof remoteDbFileWriter?.hasDirectory === 'function' && remot
 function updateCachedTokenDisplay(baseCount) {
   const normalizedBase = Number.isFinite(baseCount) ? Math.max(0, Math.floor(baseCount)) : 0;
   const displayValue = CacheBatch.format(normalizedBase);
-  elements.cachedTokens.textContent = displayValue;
+  const cachedTokensEl = elements.cachedTokens;
+  if (!(cachedTokensEl instanceof HTMLElement)) {
+    return;
+  }
+  cachedTokensEl.textContent = displayValue;
   const total = CacheBatch.total(normalizedBase);
   if (total > 0) {
-    elements.cachedTokens.style.color = total > 50 ? '#00ff88' : '#ffd54f';
+    cachedTokensEl.style.color = total > 50 ? '#00ff88' : '#ffd54f';
   } else {
-    elements.cachedTokens.style.removeProperty('color');
+    cachedTokensEl.style.removeProperty('color');
   }
 }
 
@@ -5204,9 +5326,13 @@ function updateStats() {
   cachedCount = Math.max(0, Math.floor(Number.isFinite(cachedCount) ? cachedCount : 0));
   state.lastComputedCacheBase = cachedCount;
 
-  elements.cacheHitRate.textContent = hitRate;
+  if (elements.cacheHitRate instanceof HTMLElement) {
+    elements.cacheHitRate.textContent = hitRate;
+  }
   updateCachedTokenDisplay(state.lastComputedCacheBase);
-  elements.sessionCost.textContent = formatCurrency(totalCostUsd);
+  if (elements.sessionCost instanceof HTMLElement) {
+    elements.sessionCost.textContent = formatCurrency(totalCostUsd);
+  }
 }
 
 function updateHeaderCounts() {
@@ -5669,10 +5795,6 @@ function handlePromptReviewClick(event) {
     default:
       break;
   }
-}
-
-if (elements.log) {
-  elements.log.addEventListener('click', handlePromptReviewClick);
 }
 
 const RemoteDbStore = (() => {
@@ -9164,8 +9286,11 @@ function initHLSFCanvas() {
   entry.className = 'log-entry';
   entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
   entry.appendChild(container);
-  elements.log.appendChild(entry);
-  elements.log.scrollTop = elements.log.scrollHeight;
+  const logContainer = elements.log instanceof HTMLElement ? elements.log : null;
+  if (logContainer) {
+    logContainer.appendChild(entry);
+    logContainer.scrollTop = logContainer.scrollHeight;
+  }
 
   // Initialize canvas
   window.HLSF.canvas = document.getElementById('hlsf-canvas');
@@ -16472,29 +16597,6 @@ function applyApiKeyFromModal() {
   logOK('API key configured');
 }
 
-if (elements.apiConfirmBtn instanceof HTMLButtonElement) {
-  elements.apiConfirmBtn.addEventListener('click', applyApiKeyFromModal);
-}
-
-if (elements.apiKeyInput instanceof HTMLInputElement) {
-  elements.apiKeyInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      applyApiKeyFromModal();
-    }
-  });
-}
-
-if (elements.apiCancelBtn instanceof HTMLButtonElement) {
-  elements.apiCancelBtn.addEventListener('click', () => {
-    const modal = elements.apiModal;
-    if (modal instanceof HTMLElement) {
-      modal.classList.add('hidden');
-    }
-    logWarning('Offline mode - limited functionality');
-  });
-}
-
 document.addEventListener('click', (event) => {
   const target = event.target instanceof HTMLElement ? event.target.closest('.command-upgrade-link') : null;
   if (!target) return;
@@ -16577,49 +16679,6 @@ if (typeof window !== 'undefined') {
 
 async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } = {}) {
   return submitPromptThroughEngine(input, { annotateLog: options?.annotateLog, source: 'voice' });
-}
-
-const sendButton = elements.sendBtn instanceof HTMLButtonElement ? elements.sendBtn : null;
-const cancelButton = elements.cancelBtn instanceof HTMLButtonElement ? elements.cancelBtn : null;
-const inputField = elements.input instanceof HTMLInputElement ? elements.input : null;
-
-if (sendButton && inputField) {
-  sendButton.addEventListener('click', () => {
-    const rawValue = inputField.value;
-    if (!rawValue || !rawValue.trim()) return;
-
-    void submitPromptThroughEngine(rawValue, { source: 'input-field' })
-      .then(result => {
-        if (result.kind === 'command') {
-          inputField.value = '';
-        }
-      })
-      .catch(error => {
-        console.error('Prompt submission failed:', error);
-      });
-  });
-}
-
-if (cancelButton) {
-  cancelButton.addEventListener('click', () => {
-    if (currentAbortController) {
-      currentAbortController.abort();
-      logWarning('Cancelling...');
-    }
-  });
-}
-
-if (inputField) {
-  inputField.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      sendButton?.click();
-    }
-  });
-
-  inputField.addEventListener('input', () => {
-    handleLiveInputChange(inputField.value);
-  });
 }
 
 // ============================================
@@ -16821,8 +16880,12 @@ async function initialize() {
   const storedKey = safeStorageGet(API_KEY_STORAGE_KEY, '');
   if (isValidApiKey(storedKey)) {
     state.apiKey = storedKey.trim();
-    elements.apiKeyInput.value = state.apiKey;
-    elements.apiModal.classList.add('hidden');
+    if (elements.apiKeyInput instanceof HTMLInputElement) {
+      elements.apiKeyInput.value = state.apiKey;
+    }
+    if (elements.apiModal instanceof HTMLElement) {
+      elements.apiModal.classList.add('hidden');
+    }
     logOK('Loaded stored API key');
   } else if (storedKey) {
     safeStorageRemove(API_KEY_STORAGE_KEY);
@@ -16861,7 +16924,9 @@ async function initialize() {
   }
 
   initializeVoiceClonePanel();
-  elements.input.focus();
+  if (elements.input instanceof HTMLElement) {
+    elements.input.focus();
+  }
 }
 
 window.addEventListener('load', () => {
@@ -16885,6 +16950,8 @@ function runAfterDomReady(task: () => void): void {
 }
 
 runAfterDomReady(() => {
+  hydrateAppElements(document);
+  bindCoreUiEvents();
   setupLandingExperience();
   void initialize();
 });
