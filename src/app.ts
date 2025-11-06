@@ -158,6 +158,19 @@ const userAvatarStore = initializeUserAvatarStore();
 let voiceDockController: ReturnType<typeof initializeVoiceModelDock> = null;
 let remotedir = false;
 
+function isValidApiKey(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (trimmed.length < 24) return false;
+
+  const knownPrefixes = ['sk-', 'rk-', 'sess-', 'ft-', 'oa-', 'gpt-'];
+  if (knownPrefixes.some(prefix => trimmed.startsWith(prefix))) {
+    return /^[A-Za-z0-9_-]+$/.test(trimmed);
+  }
+
+  return /^[A-Za-z0-9_-]{24,}$/.test(trimmed);
+}
+
 function parseStoredValue(raw: string | null, fallback: unknown): unknown {
   if (raw == null) return fallback;
   const trimmed = raw.trim();
@@ -436,6 +449,11 @@ function bindCoreUiEvents(): void {
       if (modal instanceof HTMLElement) {
         modal.classList.add('hidden');
       }
+      state.apiKey = '';
+      state.networkOffline = true;
+      state.networkErrorNotified = true;
+      state.lastNetworkErrorTime = Date.now();
+      safeStorageRemove(API_KEY_STORAGE_KEY);
       logWarning('Offline mode - limited functionality');
     });
     apiCancelBound = true;
