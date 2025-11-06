@@ -622,7 +622,8 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     tokens: string[],
     context: { prompt?: string; kind?: 'prompt' | 'command' },
   ): Promise<void> {
-    if (!capturedAudioPayload || !tokens.length) {
+    const payloadSource = capturedAudioPayload;
+    if (!payloadSource || !tokens.length) {
       clearCapturedAudio();
       return;
     }
@@ -637,7 +638,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
     }
 
     try {
-      const clips = await generateTokenRecordingsFromCapture(tokens, capturedAudioPayload, {
+      const clips = await generateTokenRecordingsFromCapture(tokens, payloadSource, {
         preRoll: SEGMENT_PRE_ROLL_SEC,
         postRoll: SEGMENT_POST_ROLL_SEC,
         minimumTokenDuration: MIN_TOKEN_DURATION_SEC,
@@ -660,8 +661,8 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
           token: clip.token,
           transcript: clip.transcript,
           audioBase64: base64,
-          audioType: clip.blob.type || capturedAudioPayload.mimeType || 'audio/webm',
-          capturedAt: capturedAudioPayload.capturedAt,
+          audioType: clip.blob.type || payloadSource.mimeType || 'audio/webm',
+          capturedAt: payloadSource.capturedAt,
         });
       }
       if (!payload.length) {
@@ -670,7 +671,7 @@ export function initializeVoiceModelDock(options: VoiceModelOptions): VoiceModel
       }
       voiceApi.saveTokenRecordings(payload, {
         source: 'voice-model',
-        prompt: context.prompt ?? capturedAudioPayload.originalTranscript,
+        prompt: context.prompt ?? payloadSource.originalTranscript,
         kind: context.kind,
       });
     } catch (error) {

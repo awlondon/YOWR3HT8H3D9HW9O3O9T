@@ -7240,12 +7240,12 @@ async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default'
   const baseList = Array.isArray(baseTokens) ? baseTokens : [];
   if (!SETTINGS.tokenizeSymbols) return baseList;
 
-  let pipelineResult;
+  let pipelineResult = null;
   try {
     const { result } = await executePipeline(text || '', SETTINGS, {
       signal: currentAbortController?.signal ?? undefined,
     });
-    pipelineResult = result;
+    pipelineResult = result && typeof result === 'object' ? result : null;
   } catch (err) {
     if (err && typeof err === 'object' && (err as Error).name === 'AbortError') {
       return baseList;
@@ -7255,9 +7255,10 @@ async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default'
   }
 
   const map = new Map();
-  const pipelineTokens = Array.isArray(pipelineResult?.tokens)
-    ? pipelineResult.tokens
-    : [];
+  let pipelineTokens: Array<any> = [];
+  if (pipelineResult && Array.isArray((pipelineResult as any).tokens)) {
+    pipelineTokens = (pipelineResult as any).tokens;
+  }
 
   for (const token of baseList) {
     if (!token) continue;
