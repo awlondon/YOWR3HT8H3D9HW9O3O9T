@@ -29,6 +29,7 @@ import { recordCommandUsage } from './analytics/commandUsage';
 declare global {
   interface Window {
     CognitionEngine?: Record<string, unknown>;
+    animateComposite?: (graph: unknown, glyphOnly?: boolean) => unknown;
   }
 }
 // ============================================
@@ -3070,6 +3071,35 @@ function splitIntoSentences(text) {
   const matches = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g);
   if (!matches) return [normalized];
   return matches.map(sentence => sentence.trim()).filter(Boolean);
+}
+
+function tokenize(text) {
+  if (!text) return [];
+
+  const source = String(text);
+
+  const fallback = () =>
+    source
+      .split(/\s+/)
+      .map(token => token.trim())
+      .filter(Boolean);
+
+  if (!SETTINGS.tokenizeSymbols) {
+    return fallback();
+  }
+
+  try {
+    const result = tokenizeWithSymbols(source, { keepOffsets: false });
+    if (!Array.isArray(result) || result.length === 0) {
+      return fallback();
+    }
+    return result
+      .map(entry => (entry?.t ?? '').toString().trim())
+      .filter(Boolean);
+  } catch (err) {
+    console.warn('Symbol tokenization failed, falling back to whitespace tokenization:', err);
+    return fallback();
+  }
 }
 
 function estimateTokensForText(text) {
@@ -6630,6 +6660,59 @@ function forcePromptLiveGraphPruning() {
     }
   } catch (err) {
     console.warn('Prompt adjacency pruning failed:', err);
+  }
+}
+
+let activeCompositeAnimation = null;
+
+function stopHLSFAnimation() {
+  try {
+    if (activeCompositeAnimation !== null && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(activeCompositeAnimation);
+    }
+  } catch (err) {
+    console.warn('Failed to cancel HLSF animation frame:', err);
+  } finally {
+    activeCompositeAnimation = null;
+  }
+
+  try {
+    const renderer = window.HLSF?.rendering;
+    if (renderer && typeof renderer.stop === 'function') {
+      renderer.stop();
+    } else {
+      stopLegacyHLSFAnimation();
+    }
+  } catch (err) {
+    console.warn('Error while stopping HLSF animation:', err);
+  }
+}
+
+function animateHLSF(graph, glyphOnly = false) {
+  try {
+    const renderer = window.HLSF?.rendering;
+    if (renderer && typeof renderer.animate === 'function') {
+      const result = renderer.animate(graph, glyphOnly === true);
+      if (typeof result === 'number') {
+        activeCompositeAnimation = result;
+      }
+      return;
+    }
+
+    const compositeAnimator = window?.animateComposite;
+    if (typeof compositeAnimator === 'function') {
+      const result = compositeAnimator(graph, glyphOnly === true);
+      if (typeof result === 'number') {
+        activeCompositeAnimation = result;
+      }
+      return;
+    }
+
+    if (typeof requestAnimationFrame === 'function') {
+      activeCompositeAnimation = requestAnimationFrame(animateLegacyHLSF);
+    }
+  } catch (err) {
+    console.warn('Unable to start HLSF animation:', err);
   }
 }
 
