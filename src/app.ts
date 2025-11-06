@@ -1135,6 +1135,89 @@ function applyMembershipUi(): void {
 const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
 const DATABASE_READY_EVENT = 'hlsf:database-ready';
 
+const databaseReadyState = {
+  lastReason: '',
+  lastTokenCount: -1,
+  lastTimestamp: 0,
+};
+
+function announceDatabaseReady(reason: string): void {
+  if (typeof window === 'undefined') return;
+
+  const normalizedReason = typeof reason === 'string' && reason.trim()
+    ? reason.trim()
+    : 'ready';
+  const now = Date.now();
+  const db = getDb();
+  const dbTokenCount = Array.isArray(db?.full_token_data)
+    ? db.full_token_data.length
+    : null;
+  const cachedTokenCountRaw = getCachedTokenCount();
+  const cachedTokenCount = Number.isFinite(cachedTokenCountRaw)
+    ? Number(cachedTokenCountRaw)
+    : null;
+
+  const detail = {
+    reason: normalizedReason,
+    timestamp: now,
+    isoTimestamp: new Date(now).toISOString(),
+    tokens: {
+      database: dbTokenCount,
+      cached: cachedTokenCount,
+    },
+  } as const;
+
+  const messageParts: string[] = [];
+  if (typeof dbTokenCount === 'number' && Number.isFinite(dbTokenCount)) {
+    messageParts.push(`${dbTokenCount} tokens`);
+  } else if (typeof cachedTokenCount === 'number' && Number.isFinite(cachedTokenCount)) {
+    messageParts.push(`${cachedTokenCount} cached tokens`);
+  }
+  messageParts.push(`source: ${normalizedReason}`);
+
+  const rootEngine = (window as any).CognitionEngine || ((window as any).CognitionEngine = {});
+  const previousState = (rootEngine.database && typeof rootEngine.database === 'object')
+    ? rootEngine.database
+    : {};
+  rootEngine.database = {
+    ...previousState,
+    ready: true,
+    reason: normalizedReason,
+    lastReadyAt: detail.isoTimestamp,
+    tokens: detail.tokens,
+  };
+
+  const nextTokenCount = typeof dbTokenCount === 'number'
+    ? dbTokenCount
+    : (typeof cachedTokenCount === 'number' ? cachedTokenCount : -1);
+  if (databaseReadyState.lastReason !== normalizedReason
+    || databaseReadyState.lastTokenCount !== nextTokenCount) {
+    const logOk = (window as any).logOK;
+    if (typeof logOk === 'function') {
+      logOk(`HLSF database ready (${messageParts.join(', ')})`);
+    }
+  }
+
+  if (typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+    try {
+      window.dispatchEvent(new CustomEvent(DATABASE_READY_EVENT, { detail }));
+    } catch (err) {
+      console.warn('Failed to dispatch database ready event:', err);
+    }
+  }
+
+  databaseReadyState.lastReason = normalizedReason;
+  databaseReadyState.lastTokenCount = nextTokenCount;
+  databaseReadyState.lastTimestamp = now;
+
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.setAttribute('data-hlsf-db', 'ready');
+  }
+
+  window.HLSF = window.HLSF || {};
+  window.HLSF.databaseReady = detail;
+}
+
 const GLOBAL_CONNECTION_RELATION = '∼';
 const GLOBAL_CONNECTION_WEIGHT = 0.05;
 
@@ -1419,6 +1502,58 @@ function resolveVisualizerElements() {
     overlay: overlay instanceof HTMLElement ? overlay : null,
     emptyState: emptyState instanceof HTMLElement ? emptyState : null,
   };
+}
+
+function ensureHLSFCanvas(): HTMLCanvasElement | null {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return null;
+  }
+
+  const existingCanvas = window.HLSF?.canvas;
+  if (existingCanvas instanceof HTMLCanvasElement) {
+    return existingCanvas;
+  }
+
+  const { container, canvas } = resolveVisualizerElements();
+  let targetCanvas: HTMLCanvasElement | null = null;
+
+  if (canvas instanceof HTMLCanvasElement) {
+    targetCanvas = canvas;
+  } else if (container instanceof HTMLElement) {
+    targetCanvas = document.createElement('canvas');
+    targetCanvas.id = 'hlsf-canvas';
+    targetCanvas.setAttribute('aria-hidden', 'true');
+    const overlay = container.querySelector('#hlsf-overlay');
+    if (overlay instanceof HTMLElement) {
+      container.insertBefore(targetCanvas, overlay);
+    } else {
+      container.appendChild(targetCanvas);
+    }
+  }
+
+  if (!(targetCanvas instanceof HTMLCanvasElement)) {
+    return null;
+  }
+
+  const bounds = (container instanceof HTMLElement)
+    ? container.getBoundingClientRect()
+    : targetCanvas.getBoundingClientRect();
+  const resolvedWidth = Math.max(1, Math.round(bounds.width || targetCanvas.clientWidth || targetCanvas.width || 0));
+  const resolvedHeight = Math.max(1, Math.round(bounds.height || targetCanvas.clientHeight || targetCanvas.height || 0));
+
+  if (!targetCanvas.width || Math.abs(targetCanvas.width - resolvedWidth) > 2) {
+    targetCanvas.width = resolvedWidth || 1200;
+  }
+  if (!targetCanvas.height || Math.abs(targetCanvas.height - resolvedHeight) > 2) {
+    targetCanvas.height = resolvedHeight || 600;
+  }
+
+  window.HLSF = window.HLSF || {};
+  window.HLSF.canvas = targetCanvas;
+  const ctx = targetCanvas.getContext('2d');
+  window.HLSF.ctx = ctx || null;
+
+  return targetCanvas;
 }
 
 function showVisualizer(): void {
