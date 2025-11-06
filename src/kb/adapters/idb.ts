@@ -3,9 +3,10 @@ import type { AdjQuery, EdgeRow, KBAdapter, TokenId } from '../index';
 import { BLOCK_MAX, hashPrefix } from '../shard';
 import { KB_SCHEMA_VERSION } from '../schema';
 import type { EdgeBlock } from '../schema';
+import { notifyGraphUpdated, notifyTokenObserved } from '../../vector/globals';
 
 const DB_NAME = 'hlsf_kb';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 type EdgeRecord = {
   key: string;
@@ -29,6 +30,9 @@ function openDatabase(): Promise<IDBDatabase> {
         const edgeBlocks = db.createObjectStore('edgeBlocks', { keyPath: 'key' });
         edgeBlocks.createIndex('by_token', 'tokenId');
         edgeBlocks.createIndex('by_prefix', 'prefix');
+      }
+      if (!db.objectStoreNames.contains('embeddings')) {
+        db.createObjectStore('embeddings', { keyPath: 'key' });
       }
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta');
@@ -148,11 +152,18 @@ export class IdbAdapter implements KBAdapter {
       request.onsuccess = () => resolve(request.result?.id);
       request.onerror = () => reject(request.error);
     });
-    if (existing != null) return existing;
+    if (existing != null) {
+      notifyTokenObserved(existing, normalized);
+      return existing;
+    }
     return await new Promise<TokenId>((resolve, reject) => {
       const tx = this.transaction(['tokens'], 'readwrite');
       const request = tx.objectStore('tokens').add({ s: normalized });
-      request.onsuccess = () => resolve(request.result as number);
+      request.onsuccess = () => {
+        const id = request.result as number;
+        notifyTokenObserved(id, normalized);
+        resolve(id);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -297,6 +308,14 @@ export class IdbAdapter implements KBAdapter {
       tx.onabort = () => reject(tx.error || new Error('KB upsert aborted'));
       tx.onerror = () => reject(tx.error || new Error('KB upsert failed'));
     });
+
+    const changed = new Set<TokenId>([tokenId]);
+    for (const edge of edges) {
+      if (typeof edge.neighborId === 'number') {
+        changed.add(edge.neighborId);
+      }
+    }
+    notifyGraphUpdated(Array.from(changed));
   }
 
   async bulkImport(stream: AsyncIterable<any>): Promise<void> {

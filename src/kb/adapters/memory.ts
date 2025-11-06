@@ -1,6 +1,7 @@
 import { BLOCK_MAX } from '../shard';
 import type { AdjQuery, EdgeRow, KBAdapter, TokenId } from '../index';
 import type { EdgeBlock } from '../schema';
+import { notifyGraphUpdated, notifyTokenObserved } from '../../vector/globals';
 
 function matchType(value: number, expected?: number | number[]): boolean {
   if (expected == null) return true;
@@ -66,9 +67,12 @@ export class MemoryAdapter implements KBAdapter {
       const id = this.tokenList.length + 1;
       this.tokens.set(key, id);
       this.tokenList.push(key);
+      notifyTokenObserved(id, key);
       return id;
     }
-    return this.tokens.get(key)!;
+    const id = this.tokens.get(key)!;
+    notifyTokenObserved(id, key);
+    return id;
   }
 
   async getToken(id: TokenId): Promise<string> {
@@ -100,6 +104,8 @@ export class MemoryAdapter implements KBAdapter {
     if (!opts?.merge) {
       this.edges.set(tokenId, new EdgeAccumulator(edges));
       this.recomputeSize();
+      const changed = new Set<TokenId>([tokenId, ...edges.map(edge => edge.neighborId)]);
+      notifyGraphUpdated(Array.from(changed));
       return;
     }
     const acc = this.ensureAccumulator(tokenId);
@@ -107,6 +113,8 @@ export class MemoryAdapter implements KBAdapter {
       acc.add(row);
     }
     this.recomputeSize();
+    const changed = new Set<TokenId>([tokenId, ...edges.map(edge => edge.neighborId)]);
+    notifyGraphUpdated(Array.from(changed));
   }
 
   async bulkImport(stream: AsyncIterable<any>): Promise<void> {

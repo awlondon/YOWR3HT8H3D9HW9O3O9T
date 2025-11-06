@@ -18,10 +18,12 @@ import { recordCommandUsage } from './analytics/commandUsage';
 import { AgentKernel } from './agent';
 import type { AgentConfig, AgentContext } from './agent/types';
 import { registerAgentCommands } from './app/commands/agent';
+import { registerVectorCommand } from './app/commands/vector';
 import { recordAgentTelemetryEvent } from './analytics/agentTelemetry';
 import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
 import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
+import { ensureKBReady } from './state/kbStore';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -18347,6 +18349,21 @@ registerAgentCommands(commandRegistry, agent, {
   info: line => agentLog(line),
   error: line => agentLogError(line),
 });
+
+registerVectorCommand(
+  commandRegistry,
+  {
+    info: message => addLog(sanitize(String(message))),
+    error: message => logError(String(message)),
+  },
+  {
+    ensureToken: async text => {
+      const kb = await ensureKBReady();
+      return kb.ensureToken(text);
+    },
+    getKnowledgeBase: async () => ensureKBReady(),
+  },
+);
 
 registerSaasCommands(saasPlatform, {
   registerCommand: (name, handler) => commandRegistry.register(name, handler),
