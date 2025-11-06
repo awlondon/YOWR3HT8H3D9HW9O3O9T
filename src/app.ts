@@ -10581,9 +10581,25 @@ function nodeEdgeStrokeColor(node, vertexIndex: number, mode: EdgeColorMode): st
   return rgbTupleToString(baseTuple);
 }
 
+function getHlsfScale(): number {
+  const hlsf = (window as any)?.HLSF;
+  const raw = Number(hlsf?.config?.scale);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 1;
+  }
+  return raw;
+}
+
 function worldToScreen(x, y) {
-  const sx = x * (200 * window.HLSF.config.scale) + window.HLSF.config.tx;
-  const sy = -y * (200 * window.HLSF.config.scale) + window.HLSF.config.ty;
+  const scale = getHlsfScale();
+  const hlsf = (window as any)?.HLSF;
+  const config = (hlsf?.config ?? {}) as Record<string, unknown>;
+  const txValue = Number((config as any).tx);
+  const tyValue = Number((config as any).ty);
+  const tx = Number.isFinite(txValue) ? txValue : 0;
+  const ty = Number.isFinite(tyValue) ? tyValue : 0;
+  const sx = x * (200 * scale) + tx;
+  const sy = -y * (200 * scale) + ty;
   return [sx, sy];
 }
 
@@ -10598,13 +10614,14 @@ function renderLegacyHLSF() {
     const width = window.HLSF.canvas.width;
     const height = window.HLSF.canvas.height;
     const nodes = Array.isArray(window.HLSF?.nodes) ? window.HLSF.nodes : [];
+    const scale = getHlsfScale();
     const theme = window.HLSF.config.whiteBg
       ? { bg: '#ffffff', fg: '#000000', grid: 'rgba(0, 0, 0, 0.05)' }
       : { bg: '#0a0a0a', fg: '#ffffff', grid: 'rgba(0, 255, 136, 0.05)' };
     const nodeScale = clampNodeSize(window.HLSF.config.nodeSize);
     const edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
     const edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
-    const effectiveEdgeWidth = edgeWidth * Math.max(0.6, window.HLSF.config.scale || 1);
+    const effectiveEdgeWidth = edgeWidth * Math.max(0.6, scale || 1);
     const focusSet = window.HLSF?.state?.documentFocus instanceof Set
       ? window.HLSF.state.documentFocus
       : null;
@@ -10669,7 +10686,7 @@ function renderLegacyHLSF() {
       if (window.HLSF.config.showNodeGlow) {
         const glowColor = inFocus ? `rgba(0, 255, 200, 0.65)` : `rgba(${r}, ${g}, ${b}, 0.35)`;
         ctx.shadowColor = glowColor;
-        ctx.shadowBlur = (inFocus ? 28 : 16) * Math.max(1, window.HLSF.config.scale || 1);
+        ctx.shadowBlur = (inFocus ? 28 : 16) * Math.max(1, scale || 1);
       }
 
       strokePolygon(ctx, screenVertices);
@@ -10704,11 +10721,11 @@ function renderLegacyHLSF() {
         if (window.HLSF.config.showNodeGlow) {
           const glowColor = inFocus ? 'rgba(0, 255, 200, 0.75)' : `rgba(${r}, ${g}, ${b}, 0.45)`;
           ctx.shadowColor = glowColor;
-          ctx.shadowBlur = (inFocus ? 32 : 18) * Math.max(1, window.HLSF.config.scale || 1);
+          ctx.shadowBlur = (inFocus ? 32 : 18) * Math.max(1, scale || 1);
         }
         ctx.globalAlpha = baseAlpha();
         ctx.fillStyle = inFocus ? 'rgba(0, 255, 204, 0.9)' : `rgba(${r}, ${g}, ${b}, 0.9)`;
-        ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
+        ctx.font = `${Math.max(12, 20 * scale)}px Arial`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(node.glyph, sx, sy);
@@ -10717,8 +10734,8 @@ function renderLegacyHLSF() {
         ctx.fillStyle = inFocus
           ? (window.HLSF.config.whiteBg ? 'rgba(0, 128, 128, 0.8)' : 'rgba(0, 255, 204, 0.8)')
           : window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
-        ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
-        ctx.fillText(node.token, sx, sy + 25 * window.HLSF.config.scale);
+        ctx.font = `${Math.max(9, 11 * scale)}px Fira Code, monospace`;
+        ctx.fillText(node.token, sx, sy + 25 * scale);
         ctx.globalAlpha = 1.0;
       }
     }
@@ -10727,7 +10744,7 @@ function renderLegacyHLSF() {
     ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 255, 136, 0.8)';
     ctx.font = '12px Fira Code, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`Nodes: ${nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`, 10, 20);
+    ctx.fillText(`Nodes: ${nodes.length} | Zoom: ${scale.toFixed(2)}x`, 10, 20);
 
   } catch (err) {
     console.error('Error rendering HLSF:', err);
@@ -15311,6 +15328,30 @@ function cmdAgent(args = []) {
     return;
   }
   addLog('Usage: /agent start|stop|status');
+}
+
+function trackCommandExecution(
+  command: string,
+  args: unknown,
+  source: 'dispatch' | 'handler' = 'handler',
+): void {
+  const argList = Array.isArray(args)
+    ? args.map(item => (typeof item === 'string' ? item : String(item)))
+    : typeof args === 'string' && args.trim()
+      ? args.trim().split(/\s+/)
+      : [];
+
+  try {
+    recordCommandUsage({
+      command,
+      args: argList,
+      membership: getMembershipLevel(),
+      source,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('Failed to track command execution:', err);
+  }
 }
 
 async function dispatchCommand(input) {
