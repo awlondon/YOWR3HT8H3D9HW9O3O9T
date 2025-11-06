@@ -1,5 +1,8 @@
 import { SETTINGS, PERFORMANCE_PROFILES, resolvePerformanceProfile } from './settings';
+import type { Settings } from './settings';
 import { runPipeline } from './engine/pipeline';
+import { PipelineWorkerClient } from './engine/pipelineClient';
+import type { TelemetryHook } from './types/pipeline-messages';
 import { createRemoteDbFileWriter, type RemoteDbDirectoryStats } from './engine/remoteDbWriter';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
@@ -78,6 +81,56 @@ const CONFIG: EngineConfig = {
 
 const MAX_RECURSION_DEPTH = 8;
 const MAX_LEVEL_UP_SEEDS = 64;
+
+let pipelineWorkerClientInstance: PipelineWorkerClient | null = null;
+
+function getPipelineWorkerClient(): PipelineWorkerClient | null {
+  if (pipelineWorkerClientInstance) {
+    return pipelineWorkerClientInstance;
+  }
+  if (typeof Worker === 'undefined') {
+    return null;
+  }
+  try {
+    pipelineWorkerClientInstance = new PipelineWorkerClient();
+  } catch (err) {
+    console.warn('Pipeline worker initialization failed:', err);
+    pipelineWorkerClientInstance = null;
+  }
+  return pipelineWorkerClientInstance;
+}
+
+interface PipelineRunOptions {
+  signal?: AbortSignal | null;
+  telemetry?: TelemetryHook;
+}
+
+async function executePipeline(
+  text: string,
+  cfg: Settings,
+  options: PipelineRunOptions = {},
+) {
+  const client = getPipelineWorkerClient();
+  if (client) {
+    return client.run(
+      { text, options: cfg },
+      { telemetry: options.telemetry, signal: options.signal ?? undefined },
+    );
+  }
+
+  if (options.signal?.aborted) {
+    const abortError = new Error('Pipeline aborted');
+    abortError.name = 'AbortError';
+    throw abortError;
+  }
+
+  const result = runPipeline(text, cfg, {
+    telemetry: options.telemetry,
+    shouldAbort: () => options.signal?.aborted === true,
+  });
+
+  return { result };
+}
 
 function clampRecursionDepth(value: unknown): number {
   if (value === Infinity || value === 'Infinity') {
@@ -7166,11 +7219,24 @@ function recordLocalAdjacencySummary(
   return record;
 }
 
-function collectSymbolAwareTokens(text, baseTokens = [], label = 'default') {
+async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default') {
   const baseList = Array.isArray(baseTokens) ? baseTokens : [];
   if (!SETTINGS.tokenizeSymbols) return baseList;
 
-  const pipelineResult = runPipeline(text || '', SETTINGS);
+  let pipelineResult;
+  try {
+    const { result } = await executePipeline(text || '', SETTINGS, {
+      signal: currentAbortController?.signal ?? undefined,
+    });
+    pipelineResult = result;
+  } catch (err) {
+    if (err && typeof err === 'object' && (err as Error).name === 'AbortError') {
+      return baseList;
+    }
+    console.warn('Symbol-aware token collection failed:', err);
+    return baseList;
+  }
+
   const map = new Map();
 
   for (const token of baseList) {
@@ -19202,7 +19268,7 @@ async function processPrompt(prompt) {
       • Targeted edges: ${CONFIG.ADJACENCY_RECURSION_DEPTH} × ${CONFIG.ADJACENCY_EDGES_PER_LEVEL} = ${CONFIG.ADJACENCY_RECURSION_DEPTH * CONFIG.ADJACENCY_EDGES_PER_LEVEL} potential adjacencies per seed token.
     </div>`);
 
-    const inputAdjTokens = collectSymbolAwareTokens(normalizedPrompt, tokens, 'prompt-input');
+    const inputAdjTokens = await collectSymbolAwareTokens(normalizedPrompt, tokens, 'prompt-input');
     const promptMemoryEntry = recordLocalPromptMemory(
       promptReviewId,
       normalizedPrompt,
@@ -19426,7 +19492,7 @@ async function processPrompt(prompt) {
 
     let localAdjacency = null;
     if (localResponseTokens.length) {
-      const localAdjTargets = collectSymbolAwareTokens(localOutput, localResponseTokens, 'prompt-local-output');
+      const localAdjTargets = await collectSymbolAwareTokens(localOutput, localResponseTokens, 'prompt-local-output');
       if (localAdjTargets.length) {
         const localAdjStatus = logStatus('⏳ Caching local HLSF AGI adjacencies');
         try {
@@ -19946,7 +20012,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     return { result, duration: performance.now() - startTime };
   };
 
-  const promptAdjTokens = collectSymbolAwareTokens(promptText, promptTokens, `${chunkLabel}-prompt`);
+  const promptAdjTokens = await collectSymbolAwareTokens(promptText, promptTokens, `${chunkLabel}-prompt`);
   const inputData = await measure(() => batchFetchAdjacencies(promptAdjTokens, promptText, `${chunkLabel} prompt adjacencies`));
 
   if (adjacencyStatus) {
@@ -20021,7 +20087,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
   let localAdjacency = null;
   let localAdjTargets = [];
   if (localResponseTokens.length) {
-    localAdjTargets = collectSymbolAwareTokens(localOutput, localResponseTokens, `${chunkLabel}-local-output`);
+    localAdjTargets = await collectSymbolAwareTokens(localOutput, localResponseTokens, `${chunkLabel}-local-output`);
     if (localAdjTargets.length) {
       const localAdjStatus = logStatus(`⏳ ${chunkLabel}: caching local HLSF AGI adjacencies`);
       const localAdjStart = performance.now();
@@ -20331,7 +20397,7 @@ async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, foc
   if (reflectionTokens.length) {
     addConversationTokens(reflectionTokens);
     addOutputTokens(reflectionTokens, { render: false });
-    const reflectionAdjTokens = collectSymbolAwareTokens(finalReflection, reflectionTokens, 'document-reflection');
+    const reflectionAdjTokens = await collectSymbolAwareTokens(finalReflection, reflectionTokens, 'document-reflection');
     const reflectionAdjacency = await batchFetchAdjacencies(reflectionAdjTokens, finalReflection, 'document reflection adjacencies');
     calculateAttention(reflectionAdjacency);
     if (hasNewAdjacencyData(reflectionAdjacency)) {
