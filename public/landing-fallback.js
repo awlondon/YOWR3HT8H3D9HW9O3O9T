@@ -72,11 +72,21 @@
       ? engine.membershipLevels.DEMO || 'demo'
       : 'demo';
 
+    const enqueuePendingFinalization = (payload) => {
+      if (!payload || !payload.level) return;
+      const root = window;
+      const queueKey = '__hlsfPendingOnboarding__';
+      const queue = Array.isArray(root[queueKey]) ? root[queueKey] : (root[queueKey] = []);
+      queue.push({ level: payload.level, details: payload.details || {} });
+    };
+
     const finalize = (level, details) => {
+      const normalizedDetails = details || {};
       if (engine && typeof engine.finalizeOnboarding === 'function') {
-        engine.finalizeOnboarding(level, details || {});
+        engine.finalizeOnboarding(level, normalizedDetails);
         return;
       }
+      enqueuePendingFinalization({ level, details: normalizedDetails });
       document.body.classList.remove('onboarding-active');
       landingRoot.setAttribute('aria-hidden', 'true');
       if (level === memberLevel) {
