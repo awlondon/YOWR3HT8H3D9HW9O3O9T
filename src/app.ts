@@ -158,6 +158,41 @@ const TOKEN_CACHE_PREFIX = 'hlsf_token_';
 const DB_INDEX_KEY = 'hlsf_token_index';
 const DB_RAW_KEY = 'hlsf_db_snapshot';
 const API_KEY_STORAGE_KEY = 'hlsf_api_key';
+const GLYPH_LEDGER_STORAGE_KEY = 'hlsf_glyph_ledger';
+
+const DEFAULT_NODE_SIZE = 1;
+const NODE_SIZE_MIN = 0.5;
+const NODE_SIZE_MAX = 2.5;
+const DEFAULT_EDGE_WIDTH = 0.2;
+const EDGE_WIDTH_MIN = 0.01;
+const EDGE_WIDTH_MAX = 1;
+const DEFAULT_ALPHA = 0.67;
+
+const TokenToGlyph = new Map<string, string>();
+const GlyphToToken = new Map<string, Set<string>>();
+const relationColorCache = new Map<string, string>();
+
+const GLYPH_LIBRARY: string[] = [
+  '●', '○', '▲', '△', '▴', '▵', '▼', '▽', '◆', '◇', '■', '□', '▣', '▤', '▥', '▦', '▧', '▨', '▩', '★',
+  '☆', '✦', '✧', '✩', '✪', '✫', '✬', '✭', '✮', '✯', '✰', '✱', '✲', '✳', '✴', '✵', '✶', '✷', '✸', '✹',
+  '✺', '✻', '✼', '✽', '✾', '✿', '❀', '❁', '❂', '❃', '❄', '❅', '❆', '❇', '❈', '❉', '❊', '❋', '◐', '◑',
+  '◒', '◓', '◔', '◕', '◖', '◗', '◰', '◱', '◲', '◳', '◴', '◵', '◶', '◷', '◸', '◹', '◺', '◻', '◼', '◽',
+  '◾', '⬟', '⬠', '⬡', '⬢', '⬣', '⬤', '⬥', '⬦', '⬧', '⬨', '⬩', '⬰', '⬱', '⬲', '⬳', '⬴', '⬵', '⬶', '⬷',
+  '⬸', '⬹', '⬺', '⬻', '⬼', '⬽', '⬾', '⬿', '⌘', '⌖', '⌗', '⌙', '⌚', '⌛', '⏣', '⎈', '⍟', '⎔', '◉', '◎',
+  '☉', '☼', '☀', '☾', '☽', '⚘', '⚚', '⚛', '⚜', '⚝', '⚞', '⚟', '⚠', '⚡', '⚢', '⚣', '⚤', '⚥', '⚧', '⚨',
+  '⚩', '⚪', '⚫', '⚬', '⚮', '⚯', '⚰', '⚱', '⚲', '⚳', '⚴', '⚵', '⚶', '⚷', '⚸', '⚹', '⚺', '⚻', '⚼', '⚽',
+  '⚾', '⛀', '⛁', '⛂', '⛃', '⛋', '⛌', '⛍', '⛎', '⛏', '⛐', '⛑', '⛒', '⛓', '⛔', '⛕', '⛖', '⛗', '⛘', '⛙',
+  '⛚', '⛛', '⛜', '⛝', '⛞', '⛟',
+];
+const GLYPH_SET: string[] = [...GLYPH_LIBRARY];
+const GLYPH_SEP = ' ';
+const NUM_FMT = (value: number): string => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return '0.000';
+  }
+  return numeric.toFixed(3);
+};
 
 const saasPlatform = initializeSaasPlatform();
 const userAvatarStore = initializeUserAvatarStore();
@@ -766,6 +801,56 @@ function applyPerformanceCaps(settingsOverride = null) {
 
 applyPerformanceCaps();
 
+function clampAlpha(value: unknown): number {
+  const numeric = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_ALPHA;
+  }
+  return Math.max(0, Math.min(0.99, numeric));
+}
+
+function baseAlpha(): number {
+  if (typeof window !== 'undefined') {
+    window.HLSF = window.HLSF || {};
+    const config = (window.HLSF.config = window.HLSF.config || {});
+    if (Number.isFinite(config.alpha)) {
+      const normalized = clampAlpha(config.alpha);
+      if (normalized !== config.alpha) {
+        config.alpha = normalized;
+      }
+      return normalized;
+    }
+    config.alpha = DEFAULT_ALPHA;
+  }
+  return DEFAULT_ALPHA;
+}
+
+function clampNodeSize(value: unknown): number {
+  const numeric = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_NODE_SIZE;
+  }
+  return Math.max(NODE_SIZE_MIN, Math.min(NODE_SIZE_MAX, numeric));
+}
+
+function clampEdgeWidth(value: unknown): number {
+  const numeric = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return DEFAULT_EDGE_WIDTH;
+  }
+  return Math.max(EDGE_WIDTH_MIN, Math.min(EDGE_WIDTH_MAX, numeric));
+}
+
+type EdgeColorMode = 'theme' | 'weight' | 'relation';
+
+function normalizeEdgeColorMode(value: unknown): EdgeColorMode {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (normalized === 'theme') return 'theme';
+  if (normalized === 'weight' || normalized === 'attention') return 'weight';
+  if (normalized === 'relation' || normalized === 'relations') return 'relation';
+  return 'relation';
+}
+
 function shouldStartClusterZoom(event: MouseEvent): boolean {
   return event.shiftKey || event.altKey || event.metaKey;
 }
@@ -1257,6 +1342,73 @@ const RELKEY_ALIASES = (() => {
 })();
 
 const EDGE_LABEL_DENSITY_THRESHOLD = 160;
+
+function paletteColor(relKey: string | null | undefined): string {
+  const normalizedKey = typeof relKey === 'string' && relKey
+    ? normRelKey(relKey) || relKey
+    : '';
+  if (!normalizedKey) {
+    return '#00ff88';
+  }
+  if (relationColorCache.has(normalizedKey)) {
+    return relationColorCache.get(normalizedKey) as string;
+  }
+  let hash = 0;
+  for (let i = 0; i < normalizedKey.length; i += 1) {
+    hash = ((hash << 5) - hash) + normalizedKey.charCodeAt(i);
+    hash |= 0; // force 32-bit integer
+  }
+  const hue = Math.abs(hash) % 360;
+  const saturation = 55 + (Math.abs(hash >> 3) % 35);
+  const lightness = 45 + (Math.abs(hash >> 5) % 20);
+  const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  relationColorCache.set(normalizedKey, color);
+  return color;
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  const clamped = Math.max(0, Math.min(1, alpha));
+  if (!color) {
+    return `rgba(255, 255, 255, ${clamped})`;
+  }
+  if (/^#([0-9a-f]{3})$/i.test(color)) {
+    const [, hex] = color.match(/^#([0-9a-f]{3})$/i) || [];
+    if (hex) {
+      const r = Number.parseInt(hex[0] + hex[0], 16);
+      const g = Number.parseInt(hex[1] + hex[1], 16);
+      const b = Number.parseInt(hex[2] + hex[2], 16);
+      return `rgba(${r}, ${g}, ${b}, ${clamped})`;
+    }
+  }
+  if (/^#([0-9a-f]{6})$/i.test(color)) {
+    const [, hex] = color.match(/^#([0-9a-f]{6})$/i) || [];
+    if (hex) {
+      const r = Number.parseInt(hex.slice(0, 2), 16);
+      const g = Number.parseInt(hex.slice(2, 4), 16);
+      const b = Number.parseInt(hex.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${clamped})`;
+    }
+  }
+  if (color.startsWith('rgba(')) {
+    return color.replace(/rgba\(([^)]+)\)/, (_, values) => {
+      const parts = values.split(',').slice(0, 3).map(part => part.trim());
+      return `rgba(${parts.join(', ')}, ${clamped})`;
+    });
+  }
+  if (color.startsWith('rgb(')) {
+    return color.replace(/rgb\(([^)]+)\)/, (_, values) => `rgba(${values}, ${clamped})`);
+  }
+  if (color.startsWith('hsla(')) {
+    return color.replace(/hsla\(([^)]+)\)/, (_, values) => {
+      const parts = values.split(',').slice(0, 3).map(part => part.trim());
+      return `hsla(${parts.join(', ')}, ${clamped})`;
+    });
+  }
+  if (color.startsWith('hsl(')) {
+    return color.replace(/hsl\(([^)]+)\)/, (_, values) => `hsla(${values}, ${clamped})`);
+  }
+  return color;
+}
 
 function resolveEdgeRelationDescriptor(edge) {
   if (!edge || typeof edge !== 'object') return null;
@@ -1766,6 +1918,122 @@ function buildIndex(db) {
     if (rec?.token) idx.set(rec.token, rec);
   });
   return idx;
+}
+
+interface GlyphMapsSnapshot {
+  tokenToGlyph: Map<string, string>;
+  glyphToToken: Map<string, Set<string>>;
+}
+
+function recordGlyphMapping(token: string, glyph: string): void {
+  if (!token || !glyph) return;
+  const trimmed = token.trim();
+  if (!trimmed) return;
+  const normalized = trimmed.toLowerCase();
+  TokenToGlyph.set(normalized, glyph);
+  if (!GlyphToToken.has(glyph)) {
+    GlyphToToken.set(glyph, new Set());
+  }
+  GlyphToToken.get(glyph)?.add(trimmed);
+}
+
+function hydrateGlyphMappingsFromLedger(ledger: unknown): number {
+  if (!ledger || typeof ledger !== 'object') return 0;
+  const glyphMap = (ledger as Record<string, any>).glyph_map
+    || (ledger as Record<string, any>).glyphMap
+    || ledger;
+  if (!glyphMap || typeof glyphMap !== 'object') return 0;
+  let count = 0;
+  for (const [glyph, entries] of Object.entries(glyphMap)) {
+    if (!glyph) continue;
+    const list = Array.isArray(entries) ? entries : [];
+    for (const entry of list) {
+      const tokenValue = typeof entry === 'string'
+        ? entry
+        : typeof entry?.token === 'string'
+          ? entry.token
+          : '';
+      const trimmed = typeof tokenValue === 'string' ? tokenValue.trim() : '';
+      if (!trimmed) continue;
+      recordGlyphMapping(trimmed, glyph);
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function loadGlyphMaps(db: any = null): GlyphMapsSnapshot | null {
+  try {
+    const sourceDb = db || getDb();
+    if (!sourceDb) {
+      return null;
+    }
+
+    if (typeof window !== 'undefined') {
+      const runtime = (window.HLSF = window.HLSF || {});
+      if (runtime.glyphMapsSource === sourceDb && runtime.glyphMaps) {
+        return runtime.glyphMaps as GlyphMapsSnapshot;
+      }
+    }
+
+    TokenToGlyph.clear();
+    GlyphToToken.clear();
+
+    let hydrated = 0;
+
+    const ledgerHydrated = hydrateGlyphMappingsFromLedger((sourceDb as any).glyph_ledger);
+    hydrated += ledgerHydrated;
+    if (hydrated === 0) {
+      hydrated += hydrateGlyphMappingsFromLedger((sourceDb as any).glyph_map);
+    }
+
+    const records = Array.isArray(sourceDb?.full_token_data)
+      ? sourceDb.full_token_data
+      : [];
+
+    for (const record of records) {
+      if (!record || typeof record !== 'object') continue;
+      const rawToken = typeof record.token === 'string' ? record.token.trim() : '';
+      if (!rawToken) continue;
+      const normalized = rawToken.toLowerCase();
+      if (TokenToGlyph.has(normalized)) continue;
+      const glyphCandidate = typeof record.glyph === 'string' && record.glyph.trim()
+        ? record.glyph.trim()
+        : null;
+      let glyph = glyphCandidate;
+      if (!glyph) {
+        try {
+          const complex = memoizedComplexNumber(rawToken, record);
+          glyph = complexToGlyph(complex);
+        } catch (err) {
+          console.warn('Failed to derive glyph for token:', rawToken, err);
+          glyph = null;
+        }
+      }
+      if (!glyph) continue;
+      recordGlyphMapping(rawToken, glyph);
+      hydrated += 1;
+    }
+
+    const snapshot: GlyphMapsSnapshot = {
+      tokenToGlyph: new Map(TokenToGlyph),
+      glyphToToken: new Map(
+        Array.from(GlyphToToken.entries()).map(([glyph, tokens]) => [glyph, new Set(tokens)]),
+      ),
+    };
+
+    if (typeof window !== 'undefined') {
+      const runtime = (window.HLSF = window.HLSF || {});
+      runtime.glyphMaps = snapshot;
+      runtime.glyphMapsSource = sourceDb;
+      runtime.glyphMapCount = hydrated;
+    }
+
+    return snapshot;
+  } catch (err) {
+    console.warn('loadGlyphMaps failed:', err);
+    return null;
+  }
 }
 
 async function loadOrGetIndex() {
@@ -9440,10 +9708,18 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
     .sort((a, b) => a.relType.localeCompare(b.relType));
 
   if (entries.length === 0) {
+    const fallbackVertices = polygonVertices(center, baseRadius * 0.8, 3);
+    const fallbackLabels = fallbackVertices.map((_, idx) => (idx === 0 ? 'anchor' : ''));
+    const fallbackWeights = fallbackVertices.map(() => 1);
+    const fallbackRelations = fallbackVertices.map(() => null);
     return {
-      vertices: polygonVertices(center, baseRadius * 0.8, 3),
+      vertices: fallbackVertices,
       anchorIndex: 0,
-      adjacencyTypes: 0
+      adjacencyTypes: 0,
+      vertexLabels: fallbackLabels,
+      vertexWeights: fallbackWeights,
+      vertexRelations: fallbackRelations,
+      relationEntries: [],
     };
   }
 
@@ -9452,7 +9728,12 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
   const angleStep = (2 * Math.PI) / vertexCount;
   const maxCount = Math.max(...entries.map(entry => entry.count));
 
-  const vertices = [];
+  const vertices: Array<[number, number]> = [];
+  const vertexLabels: string[] = ['anchor'];
+  const vertexWeights: number[] = [1];
+  const vertexRelations: Array<{ key: string | null; label: string; count: number; weight: number } | null> = [null];
+  const relationEntries: Array<{ key: string | null; label: string; count: number; avgWeight: number }> = [];
+
   const anchor = [center[0], center[1] - baseRadius];
   vertices.push(anchor);
 
@@ -9467,6 +9748,25 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
       center[0] + radius * Math.cos(angle),
       center[1] + radius * Math.sin(angle)
     ]);
+
+    const relKey = normRelKey(entry.relType) || entry.relType;
+    const label = typeof relKey === 'string' && relKey
+      ? relDisplay(relKey)
+      : entry.relType;
+    vertexLabels.push(label || entry.relType);
+    vertexWeights.push(Math.max(0, Math.min(1, entry.avgWeight)));
+    vertexRelations.push({
+      key: typeof relKey === 'string' && relKey ? relKey : null,
+      label: label || entry.relType,
+      count: entry.count,
+      weight: entry.avgWeight,
+    });
+    relationEntries.push({
+      key: typeof relKey === 'string' && relKey ? relKey : null,
+      label: label || entry.relType,
+      count: entry.count,
+      avgWeight: entry.avgWeight,
+    });
   }
 
   let fillerIndex = entries.length;
@@ -9482,7 +9782,11 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
   return {
     vertices,
     anchorIndex: 0,
-    adjacencyTypes: entries.length
+    adjacencyTypes: entries.length,
+    vertexLabels,
+    vertexWeights,
+    vertexRelations,
+    relationEntries,
   };
 }
 
@@ -9653,7 +9957,11 @@ function buildHLSFNodes() {
         anchorIndex: shape.anchorIndex,
         color,
         vertices: shape.vertices,
-        triangles: null // Will be computed
+        triangles: null, // Will be computed
+        vertexLabels: Array.isArray(shape.vertexLabels) ? shape.vertexLabels : [],
+        vertexWeights: Array.isArray(shape.vertexWeights) ? shape.vertexWeights : [],
+        vertexRelations: Array.isArray(shape.vertexRelations) ? shape.vertexRelations : [],
+        relationEntries: Array.isArray(shape.relationEntries) ? shape.relationEntries : [],
       });
     } catch (err) {
       console.error('Failed to process token for HLSF:', tokenData, err);
@@ -10008,6 +10316,58 @@ function strokePolygon(ctx, verts) {
 function strokeTriangles(ctx, tris) {
   if (!tris) return;
   for (const t of tris) strokePolygon(ctx, t);
+}
+
+function normalizeColorTuple(value: unknown): [number, number, number] {
+  if (Array.isArray(value) && value.length >= 3) {
+    const [r, g, b] = value;
+    return [
+      Math.max(0, Math.min(255, Number(r) || 0)),
+      Math.max(0, Math.min(255, Number(g) || 0)),
+      Math.max(0, Math.min(255, Number(b) || 0)),
+    ];
+  }
+  return [0, 255, 136];
+}
+
+function mixRgb(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+  const clamped = Math.max(0, Math.min(1, t));
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * clamped),
+    Math.round(a[1] + (b[1] - a[1]) * clamped),
+    Math.round(a[2] + (b[2] - a[2]) * clamped),
+  ];
+}
+
+function rgbTupleToString(tuple: [number, number, number]): string {
+  return `rgb(${tuple[0]}, ${tuple[1]}, ${tuple[2]})`;
+}
+
+function nodeEdgeStrokeColor(node, vertexIndex: number, mode: EdgeColorMode): string {
+  const baseTuple = normalizeColorTuple(node?.color);
+  if (vertexIndex === 0 || mode === 'theme') {
+    return rgbTupleToString(baseTuple);
+  }
+
+  if (mode === 'weight') {
+    const weights = Array.isArray(node?.vertexWeights) ? node.vertexWeights : null;
+    const weight = Number(weights?.[vertexIndex]);
+    const normalized = Number.isFinite(weight) ? Math.max(0, Math.min(1, weight)) : 0.5;
+    const mix = mixRgb([200, 200, 200], baseTuple, normalized);
+    return rgbTupleToString(mix);
+  }
+
+  if (mode === 'relation') {
+    const relations = Array.isArray(node?.vertexRelations) ? node.vertexRelations : null;
+    const relationEntry = relations?.[vertexIndex];
+    const keyCandidate = relationEntry && typeof relationEntry === 'object' && relationEntry?.key
+      ? relationEntry.key
+      : node?.vertexLabels?.[vertexIndex] || node?.verticesLabels?.[vertexIndex];
+    const palette = paletteColor(typeof keyCandidate === 'string' ? keyCandidate : '');
+    return palette;
+  }
+
+  return rgbTupleToString(baseTuple);
 }
 
 function worldToScreen(x, y) {
@@ -11724,6 +12084,119 @@ function tokenWeight(token, idx) {
   const maxW = Math.max(...weights);
   const meanW = weights.reduce((sum, value) => sum + value, 0) / weights.length;
   return Math.max(0.01, Math.min(1.0, 0.6 * maxW + 0.4 * meanW));
+}
+
+type GlyphLedgerEntry = { token: string; w: number; t: number };
+interface GlyphLedger {
+  version: number;
+  updated_at: number;
+  glyph_map: Record<string, GlyphLedgerEntry[]>;
+}
+
+function normalizeLedger(raw: unknown): GlyphLedger {
+  const base: GlyphLedger = {
+    version: 1,
+    updated_at: Date.now(),
+    glyph_map: {},
+  };
+
+  if (!raw || typeof raw !== 'object') {
+    return base;
+  }
+
+  const maybeVersion = Number((raw as any).version);
+  if (Number.isFinite(maybeVersion)) {
+    base.version = maybeVersion;
+  }
+  const maybeUpdated = Number((raw as any).updated_at ?? (raw as any).updatedAt);
+  if (Number.isFinite(maybeUpdated)) {
+    base.updated_at = maybeUpdated;
+  }
+
+  const glyphMap = (raw as Record<string, any>).glyph_map
+    || (raw as Record<string, any>).glyphMap
+    || {};
+  if (glyphMap && typeof glyphMap === 'object') {
+    for (const [glyph, entries] of Object.entries(glyphMap)) {
+      if (!glyph) continue;
+      const list = Array.isArray(entries) ? entries : [];
+      const normalizedEntries: GlyphLedgerEntry[] = [];
+      for (const entry of list) {
+        if (typeof entry === 'string') {
+          const trimmed = entry.trim();
+          if (!trimmed) continue;
+          normalizedEntries.push({ token: trimmed, w: 0.5, t: Date.now() });
+          continue;
+        }
+        if (!entry || typeof entry !== 'object') continue;
+        const token = typeof entry.token === 'string' ? entry.token.trim() : '';
+        if (!token) continue;
+        const weight = Number(entry.w ?? entry.weight ?? entry.value);
+        const timestamp = Number(entry.t ?? entry.timestamp ?? Date.now());
+        normalizedEntries.push({
+          token,
+          w: Number.isFinite(weight) ? weight : 0.5,
+          t: Number.isFinite(timestamp) ? timestamp : Date.now(),
+        });
+      }
+      if (normalizedEntries.length) {
+        base.glyph_map[glyph] = normalizedEntries;
+      }
+    }
+  }
+
+  return base;
+}
+
+function hydrateLedgerMaps(rawLedger: unknown): GlyphLedger {
+  const ledger = normalizeLedger(rawLedger);
+  TokenToGlyph.clear();
+  GlyphToToken.clear();
+  hydrateGlyphMappingsFromLedger(ledger.glyph_map);
+  if (typeof window !== 'undefined') {
+    const runtime = (window.HLSF = window.HLSF || {});
+    runtime.glyphMaps = {
+      tokenToGlyph: new Map(TokenToGlyph),
+      glyphToToken: new Map(
+        Array.from(GlyphToToken.entries()).map(([glyph, tokens]) => [glyph, new Set(tokens)]),
+      ),
+    };
+    runtime.glyphMapsSource = null;
+    runtime.glyphLedgerCache = ledger;
+  }
+  return ledger;
+}
+
+function loadLedger(): GlyphLedger {
+  if (typeof window !== 'undefined') {
+    const runtime = (window.HLSF = window.HLSF || {});
+    if (runtime.glyphLedgerCache && typeof runtime.glyphLedgerCache === 'object') {
+      return hydrateLedgerMaps(runtime.glyphLedgerCache);
+    }
+  }
+
+  const stored = safeStorageGet(GLYPH_LEDGER_STORAGE_KEY, null);
+  const ledger = hydrateLedgerMaps(stored);
+  if (typeof window !== 'undefined') {
+    const runtime = (window.HLSF = window.HLSF || {});
+    runtime.glyphLedgerCache = ledger;
+  }
+  return ledger;
+}
+
+function saveLedger(nextLedger: unknown): GlyphLedger {
+  const ledger = hydrateLedgerMaps(nextLedger);
+  try {
+    const serialized = JSON.stringify(ledger);
+    safeStorageSet(GLYPH_LEDGER_STORAGE_KEY, serialized);
+  } catch (err) {
+    console.warn('Failed to persist glyph ledger:', err);
+  }
+  if (typeof window !== 'undefined') {
+    const runtime = (window.HLSF = window.HLSF || {});
+    runtime.glyphLedgerCache = ledger;
+  }
+  return ledger;
 }
 
 function hashGlyphForToken(token) {
