@@ -146,6 +146,12 @@ const HIDDEN_ADJACENCY_RELATION = 'hidden-adjacency';
 const DEFAULT_HIDDEN_ATTENTION_PER_TOKEN = 6;
 const DEFAULT_HIDDEN_ADJACENCY_DEPTH = 2;
 const DEFAULT_HIDDEN_ADJACENCY_CAP = 128;
+const RELATION_TYPE_CAP_MIN = 1;
+const RELATION_TYPE_CAP_MAX = 50;
+const RELATION_TYPE_CAP_DEFAULT = 50;
+const EDGES_PER_TYPE_MIN = 1;
+const EDGES_PER_TYPE_DEFAULT = 3;
+const EDGES_PER_TYPE_MAX = 10;
 
 const memoryStorageFallback = new Map<string, string>();
 const TOKEN_CACHE_PREFIX = 'hlsf_token_';
@@ -533,6 +539,52 @@ async function hydrateTokensFromKnowledgeStore(tokens: Array<{ token?: string } 
   } catch (error) {
     console.warn('Knowledge store hydration failed:', error);
   }
+}
+
+function clampRelationTypeCap(value: unknown): number {
+  if (value === Infinity || value === 'Infinity') {
+    return Infinity;
+  }
+
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric)) {
+    const runtimeMax = (() => {
+      if (typeof window === 'undefined') return RELATION_TYPE_CAP_DEFAULT;
+      const candidate = Number((window as any)?.HLSF?.config?.maxRelationTypes);
+      if (Number.isFinite(candidate) && candidate >= RELATION_TYPE_CAP_MIN) {
+        return Math.max(RELATION_TYPE_CAP_MIN, Math.min(candidate, RELATION_TYPE_CAP_MAX));
+      }
+      return RELATION_TYPE_CAP_DEFAULT;
+    })();
+    return Math.max(RELATION_TYPE_CAP_MIN, Math.min(runtimeMax, RELATION_TYPE_CAP_MAX));
+  }
+
+  return Math.max(
+    RELATION_TYPE_CAP_MIN,
+    Math.min(RELATION_TYPE_CAP_MAX, numeric),
+  );
+}
+
+function clampEdgesPerType(value: unknown): number {
+  if (value === Infinity || value === 'Infinity') {
+    return Infinity;
+  }
+
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric)) {
+    const fallbackMax = Math.max(
+      EDGES_PER_TYPE_DEFAULT,
+      Number.isFinite(CONFIG.ADJACENCY_EDGES_PER_LEVEL)
+        ? Number(CONFIG.ADJACENCY_EDGES_PER_LEVEL)
+        : EDGES_PER_TYPE_DEFAULT,
+    );
+    return Math.max(EDGES_PER_TYPE_MIN, Math.min(fallbackMax, EDGES_PER_TYPE_MAX));
+  }
+
+  return Math.max(
+    EDGES_PER_TYPE_MIN,
+    Math.min(EDGES_PER_TYPE_MAX, numeric),
+  );
 }
 
 function clampRecursionDepth(value: unknown): number {
@@ -1349,6 +1401,76 @@ function normalizeRelKeyForStats(k){
 
 function renderRelTypeRow(glyph, count){
   return `${relDisplay(glyph)}: ${count} instances`;
+}
+
+function resolveVisualizerElements() {
+  if (typeof document === 'undefined') {
+    return { container: null, canvas: null, overlay: null, emptyState: null };
+  }
+
+  const container = document.getElementById('hlsf-canvas-container');
+  const canvas = document.getElementById('hlsf-canvas');
+  const overlay = document.getElementById('hlsf-overlay');
+  const emptyState = document.getElementById('hlsf-empty-state');
+
+  return {
+    container: container instanceof HTMLElement ? container : null,
+    canvas: canvas instanceof HTMLElement ? canvas : null,
+    overlay: overlay instanceof HTMLElement ? overlay : null,
+    emptyState: emptyState instanceof HTMLElement ? emptyState : null,
+  };
+}
+
+function showVisualizer(): void {
+  const { container, canvas, overlay, emptyState } = resolveVisualizerElements();
+
+  if (container) {
+    container.setAttribute('data-hlsf-visualizer', 'visible');
+  }
+
+  if (canvas) {
+    canvas.classList.remove('hidden');
+    canvas.setAttribute('aria-hidden', 'false');
+  }
+
+  if (overlay) {
+    overlay.classList.remove('hidden');
+  }
+
+  if (emptyState) {
+    emptyState.classList.add('hidden');
+    emptyState.setAttribute('aria-hidden', 'true');
+  }
+
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.setAttribute('data-hlsf-visualizer', 'visible');
+  }
+}
+
+function hideVisualizer(): void {
+  const { container, canvas, overlay, emptyState } = resolveVisualizerElements();
+
+  if (canvas) {
+    canvas.classList.add('hidden');
+    canvas.setAttribute('aria-hidden', 'true');
+  }
+
+  if (overlay) {
+    overlay.classList.add('hidden');
+  }
+
+  if (container) {
+    container.setAttribute('data-hlsf-visualizer', 'hidden');
+  }
+
+  if (emptyState) {
+    emptyState.classList.remove('hidden');
+    emptyState.setAttribute('aria-hidden', 'false');
+  }
+
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.setAttribute('data-hlsf-visualizer', 'hidden');
+  }
 }
 
 // ---------------- HLSF matrix builder ----------------
@@ -5494,6 +5616,99 @@ function relationshipsExpanded(previousRelationships, nextRelationships) {
   }
 
   return false;
+}
+
+function refreshDbReference(record, options = {}) {
+  const { deferReload = false, persist = true } = options || {};
+  if (!record || typeof record !== 'object') return null;
+
+  const rawToken = (record as any).token;
+  const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+  if (!token) return null;
+
+  const normalizedToken = token.toLowerCase();
+  const enrichedRecord = Object.assign({}, record, { token });
+
+  if (!enrichedRecord.relationships || typeof enrichedRecord.relationships !== 'object') {
+    enrichedRecord.relationships = {};
+  }
+
+  if (typeof window === 'undefined') {
+    return enrichedRecord;
+  }
+
+  try {
+    window.HLSF = window.HLSF || {};
+    const dbRoot = (window.HLSF.dbCache && typeof window.HLSF.dbCache === 'object')
+      ? window.HLSF.dbCache
+      : (window.HLSF.dbCache = { full_token_data: [] });
+
+    if (!Array.isArray(dbRoot.full_token_data)) {
+      dbRoot.full_token_data = [];
+    }
+
+    let existingIndex = -1;
+    for (let i = 0; i < dbRoot.full_token_data.length; i += 1) {
+      const current = dbRoot.full_token_data[i];
+      const currentToken = typeof current?.token === 'string' ? current.token.trim().toLowerCase() : '';
+      if (currentToken === normalizedToken) {
+        existingIndex = i;
+        break;
+      }
+    }
+
+    const existingRecord = existingIndex >= 0 ? dbRoot.full_token_data[existingIndex] : null;
+    const mergedRelationships = existingRecord && existingRecord.relationships && enrichedRecord.relationships
+      ? { ...existingRecord.relationships, ...enrichedRecord.relationships }
+      : enrichedRecord.relationships;
+
+    const mergedRecord = Object.assign({}, existingRecord || {}, enrichedRecord, {
+      relationships: mergedRelationships,
+    });
+
+    if (existingIndex >= 0) {
+      dbRoot.full_token_data[existingIndex] = mergedRecord;
+    } else {
+      dbRoot.full_token_data.push(mergedRecord);
+    }
+
+    if (persist !== false) {
+      try {
+        safeStorageSet(DB_RAW_KEY, JSON.stringify(dbRoot));
+      } catch (err) {
+        console.warn('Failed to persist DB snapshot after cache refresh:', err);
+      }
+    }
+
+    try {
+      if (knowledgeStore && typeof knowledgeStore.markInMemory === 'function') {
+        knowledgeStore.markInMemory(token);
+      }
+      if (knowledgeStore && typeof knowledgeStore.put === 'function') {
+        void knowledgeStore.put({
+          token: normalizedToken,
+          relationships: mergedRecord.relationships,
+          attention_score: mergedRecord.attention_score,
+          total_relationships: mergedRecord.total_relationships,
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to update knowledge store from DB refresh:', err);
+    }
+
+    if (!deferReload) {
+      try {
+        notifyHlsfAdjacencyChange('cache-update');
+      } catch (err) {
+        console.warn('Failed to schedule HLSF refresh after DB update:', err);
+      }
+    }
+
+    return mergedRecord;
+  } catch (err) {
+    console.warn('Failed to refresh database cache reference:', err);
+    return null;
+  }
 }
 
 function saveToCache(token, data, options = {}) {
