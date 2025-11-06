@@ -7255,6 +7255,9 @@ async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default'
   }
 
   const map = new Map();
+  const pipelineTokens = Array.isArray(pipelineResult?.tokens)
+    ? pipelineResult.tokens
+    : [];
 
   for (const token of baseList) {
     if (!token) continue;
@@ -7263,7 +7266,7 @@ async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default'
     map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
   }
 
-  for (const token of pipelineResult.tokens) {
+  for (const token of pipelineTokens) {
     if (!token) continue;
     if (token.kind === 'word') {
       const normalized = token.t.toLowerCase();
@@ -7283,10 +7286,10 @@ async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default'
   }
 
   const combined = Array.from(map.values());
-  recordSymbolMetrics(label, pipelineResult, baseList.length);
+  recordSymbolMetrics(label, pipelineResult ?? null, baseList.length);
   if (state.symbolMetrics) {
     state.symbolMetrics.lastTokens = combined;
-    state.symbolMetrics.lastPipeline = pipelineResult;
+    state.symbolMetrics.lastPipeline = pipelineResult ?? null;
   }
   return combined;
 }
