@@ -15,6 +15,10 @@ import { demoGoogleSignIn } from './auth/google';
 import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
 import { initializeLoginForm } from './onboarding/loginFlow';
 import { recordCommandUsage } from './analytics/commandUsage';
+import { AgentKernel } from './agent';
+import type { AgentConfig, AgentContext } from './agent/types';
+import { registerAgentCommands } from './app/commands/agent';
+import { recordAgentTelemetryEvent } from './analytics/agentTelemetry';
 import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
 import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
@@ -84,6 +88,55 @@ const CONFIG: EngineConfig = {
 
 const MAX_RECURSION_DEPTH = 8;
 const MAX_LEVEL_UP_SEEDS = 64;
+
+const AGENT_CONFIG_STORAGE_KEY = 'agent.config.v1';
+
+const DEFAULT_AGENT_CONFIG: AgentConfig = {
+  enabled: false,
+  intervalMs: 15000,
+  energy: {
+    maxRunsPerHour: 120,
+    minIntervalMs: 5000,
+    maxIntervalMs: 60000,
+  },
+  strategy: 'graphPlan',
+  echoCommands: true,
+  autoExecute: true,
+};
+
+function mergeAgentConfig(base: AgentConfig, next: Partial<AgentConfig> | null | undefined): AgentConfig {
+  if (!next) return { ...base, energy: { ...base.energy } };
+  const merged: AgentConfig = {
+    ...base,
+    ...next,
+    energy: { ...base.energy, ...(next.energy ?? {}) },
+  };
+  if (merged.intervalMs <= 0 || !Number.isFinite(merged.intervalMs)) {
+    merged.intervalMs = base.intervalMs;
+  }
+  return merged;
+}
+
+function loadAgentConfig(): AgentConfig {
+  try {
+    const stored = safeStorageGet(AGENT_CONFIG_STORAGE_KEY, null);
+    if (!stored || typeof stored !== 'object') {
+      return { ...DEFAULT_AGENT_CONFIG, energy: { ...DEFAULT_AGENT_CONFIG.energy } };
+    }
+    return mergeAgentConfig(DEFAULT_AGENT_CONFIG, stored as Partial<AgentConfig>);
+  } catch (err) {
+    console.warn('Failed to load agent config, using defaults:', err);
+    return { ...DEFAULT_AGENT_CONFIG, energy: { ...DEFAULT_AGENT_CONFIG.energy } };
+  }
+}
+
+function persistAgentConfig(cfg: AgentConfig): void {
+  try {
+    safeStorageSet(AGENT_CONFIG_STORAGE_KEY, JSON.stringify(cfg));
+  } catch (err) {
+    console.warn('Failed to persist agent config:', err);
+  }
+}
 
 let pipelineWorkerClientInstance: PipelineWorkerClient | null = null;
 
@@ -6137,6 +6190,16 @@ function trackCommandExecution(command: string, args: string[], source: 'dispatc
   recordCommandUsage({ command, args, membership: getMembershipLevel(), source });
 }
 
+const agent = new AgentKernel(loadAgentConfig(), () => makeAgentContext(), {
+  onConfigChange: cfg => persistAgentConfig(cfg),
+  recordEvent: event => recordAgentTelemetryEvent(event),
+});
+
+if (typeof window !== 'undefined') {
+  const root = ((window as any).CognitionEngine = (window as any).CognitionEngine || {});
+  root.agent = agent;
+}
+
 function applyMembershipUi() {
   const body = document.body;
   if (!body) return;
@@ -8532,6 +8595,16 @@ function addLog(content, type = 'info') {
 function appendLog(msg, type = 'info') {
   if (typeof msg === 'string') return addLog(msg, type);
   return addLog(sanitize(String(msg)), type);
+}
+
+function agentLog(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
+  const prefix = '🤖';
+  const safe = sanitize(`[agent] ${message}`);
+  addLog(`${prefix} ${safe}`, type);
+}
+
+function agentLogError(message: string) {
+  agentLog(message, 'error');
 }
 
 function logStatus(msg) {
@@ -18270,6 +18343,11 @@ if (!(legacyCommands as Record<string, unknown>).__hlsf_bound) {
 }
 commandRegistry.register('/visualize', cmd_hlsf);
 
+registerAgentCommands(commandRegistry, agent, {
+  info: line => agentLog(line),
+  error: line => agentLogError(line),
+});
+
 registerSaasCommands(saasPlatform, {
   registerCommand: (name, handler) => commandRegistry.register(name, handler),
   addLog: html => addLog(html),
@@ -20755,6 +20833,63 @@ elements.input.addEventListener('input', (e) => {
   handleLiveInputChange(e.target.value);
 });
 
+function makeAgentContext(): AgentContext {
+  const promptLog = getSessionPromptLog();
+  const historyEntries = Array.isArray(promptLog) ? promptLog.slice(-10) : [];
+  const history = historyEntries
+    .map(entry => (entry && typeof entry.text === 'string' ? entry.text : ''))
+    .filter(text => typeof text === 'string' && text.trim().length > 0);
+  const lastEntry = Array.isArray(promptLog) && promptLog.length
+    ? promptLog[promptLog.length - 1]
+    : null;
+  const lastPrompt = lastEntry && typeof lastEntry.text === 'string' ? lastEntry.text : '';
+
+  const metrics: Record<string, number> = {};
+  const source = state?.symbolMetrics?.last;
+  if (source && typeof source === 'object') {
+    for (const [key, value] of Object.entries(source)) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        metrics[key] = value;
+      }
+    }
+  }
+
+  const graphSnapshot = state?.symbolMetrics?.lastRunGraph ?? (() => {
+    const live = state?.liveGraph;
+    if (!live || !(live.nodes instanceof Map)) return null;
+    return {
+      nodes: Array.from(live.nodes.values()),
+      links: Array.isArray(live.links) ? [...live.links] : [],
+    };
+  })();
+
+  const maybeLlm = typeof window !== 'undefined' && window?.CognitionEngine?.llm;
+  const llm = typeof maybeLlm === 'function'
+    ? (input: string) => Promise.resolve(maybeLlm(input))
+    : undefined;
+
+  return {
+    now: Date.now(),
+    state: {
+      prompt: typeof lastPrompt === 'string' ? lastPrompt : '',
+      graph: graphSnapshot,
+      metrics,
+      history,
+    },
+    runCommand: async (raw: string) => {
+      const text = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
+      if (!text) return;
+      if (text.startsWith('/')) {
+        await handleCommand(text);
+      } else {
+        await submitPromptThroughEngine(text, { source: 'input-field' });
+      }
+    },
+    log: (line: string) => agentLog(line),
+    llm,
+  };
+}
+
 // ============================================
 // INIT
 // ============================================
@@ -20850,6 +20985,11 @@ async function initialize() {
   }
 
   initializeVoiceClonePanel();
+
+  if (agent.status.enabled) {
+    agent.start();
+    agentLog('Agent resumed with saved configuration.');
+  }
   elements.input.focus();
 }
 
