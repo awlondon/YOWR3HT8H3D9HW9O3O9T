@@ -10,6 +10,7 @@ import {
 } from './controllers/sessionManager';
 import { updateHlsfLimitSummary, formatHlsfLimitValue } from './controllers/uiUpdater';
 import { knowledgeStore } from './engine/knowledgeStore';
+import { normalizeRecord } from './engine/normalize';
 import { VectorSemanticStore } from './engine/vectorSemantics';
 import { AutonomousAgent } from './agent/autonomousAgent';
 import { createRemoteDbFileWriter, type RemoteDbDirectoryStats } from './engine/remoteDbWriter';
@@ -4290,6 +4291,17 @@ function enhanceLogEntry(entry) {
   attachTtsButtons(entry);
 }
 
+function printStartupBanner(): void {
+  addLog(`
+    <div class="startup-banner">
+      <strong>HLSF Cognition Engine</strong><br/>
+      Type a prompt to build adjacencies & render the HLSF graph.<br/>
+      Try <code>/help</code> for available commands. Examples:
+      <code>/hlsf</code>, <code>/database</code>, <code>/stats</code>, <code>/reset</code>.
+    </div>
+  `);
+}
+
 function addLog(content, type = 'info') {
   const entry = document.createElement('div');
   entry.className = `log-entry ${type}`;
@@ -5160,7 +5172,11 @@ const RemoteDbRecorder = (() => {
 
   const hasData = () => hasDataInternal();
 
-  hydrateFromStorage();
+  try {
+    hydrateFromStorage();
+  } catch (err) {
+    console.warn('RemoteDbRecorder hydration failed:', err);
+  }
 
   return {
     ingest,
@@ -16843,6 +16859,7 @@ async function initialize() {
     setDocumentCacheBaseline(Math.max(0, getDocumentCacheBaseline()));
   }
   updateStats();
+  printStartupBanner();
 
   const hlsfWrapper = document.getElementById('hlsf-canvas-container');
   if (hlsfWrapper) {
