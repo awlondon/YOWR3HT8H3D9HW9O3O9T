@@ -1222,6 +1222,8 @@ const state = {
   isProcessing: false,
 };
 
+let currentAbortController: AbortController | null = null;
+
 function getMembershipLevel(): MembershipLevel {
   const rawLevel = typeof state?.membership?.level === 'string'
     ? state.membership.level.toLowerCase()
@@ -10791,6 +10793,56 @@ function animateViewport(target, ms = 300) {
 }
 
 let _legacyLast = null;
+function stepRotation(dt) {
+  if (typeof window === 'undefined') return;
+  if (!Number.isFinite(dt) || dt <= 0) return;
+
+  window.HLSF = window.HLSF || {};
+  const config = (window.HLSF.config = window.HLSF.config || {});
+  const hlsfState = (window.HLSF.state = window.HLSF.state || {});
+
+  if (!hlsfState.emergent || typeof hlsfState.emergent !== 'object') {
+    hlsfState.emergent = {
+      on: config.emergentActive === true,
+      speed: Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0,
+    };
+  }
+
+  if (!Number.isFinite(hlsfState.emergentRot)) {
+    hlsfState.emergentRot = 0;
+  }
+
+  const emergent = hlsfState.emergent;
+  const isActive = config.emergentActive === true && emergent.on !== false;
+  if (!isActive) {
+    return;
+  }
+
+  const rawOmega = Number.isFinite(emergent.speed)
+    ? emergent.speed
+    : (Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0);
+  const omega = Math.max(-5, Math.min(5, rawOmega));
+  emergent.speed = omega;
+  if (!Number.isFinite(config.rotationOmega)) {
+    config.rotationOmega = omega;
+  }
+
+  if (Math.abs(omega) < 1e-6) {
+    return;
+  }
+
+  const safeDt = Math.min(Math.max(dt, 0), 0.5);
+  const tau = Math.PI * 2;
+  const nextAngle = hlsfState.emergentRot + omega * safeDt;
+  let normalized = nextAngle % tau;
+  if (!Number.isFinite(normalized)) {
+    normalized = 0;
+  } else if (normalized < 0) {
+    normalized += tau;
+  }
+  hlsfState.emergentRot = normalized;
+}
+
 function animateLegacyHLSF(now) {
   if (!window.HLSF.canvas || !window.HLSF.ctx) {
     console.warn('Canvas not ready for animation');
