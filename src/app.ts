@@ -1142,6 +1142,37 @@ const COMMAND_RESTRICTIONS: Partial<Record<MembershipLevel, Set<string>>> = {
   ),
 };
 
+function ensureCommandAvailable(command: string): boolean {
+  const normalized = typeof command === 'string' ? command.trim().toLowerCase() : '';
+  if (!normalized || !normalized.startsWith('/')) return true;
+
+  const restrictions = COMMAND_RESTRICTIONS[getMembershipLevel()];
+  if (!restrictions || !restrictions.has(normalized)) return true;
+
+  const entry = COMMAND_HELP_ENTRIES.find(item => item.command.toLowerCase() === normalized);
+  const label = entry?.command || command;
+  const level = getMembershipLevel();
+
+  if (level === MEMBERSHIP_LEVELS.DEMO) {
+    const safeLabel = sanitize(label);
+    const safeDescription = entry?.description ? sanitize(entry.description) : '';
+    addLog(
+      `
+        <div class="command-locked">
+          🔒 ${safeLabel}${safeDescription ? ` <span class="command-locked__desc">${safeDescription}</span>` : ''}
+          <div class="command-locked__cta"><a href="#" class="command-upgrade-link" data-upgrade="trial">Start trial</a> to unlock advanced slash commands.</div>
+        </div>
+      `,
+      'warning',
+    );
+  } else {
+    const description = entry?.description ? ` – ${entry.description}` : '';
+    logWarning(`${label}${description} is not available for the current membership level.`);
+  }
+
+  return false;
+}
+
 type ProcessingStatus = {
   isActive?: () => boolean;
   update?: (info: Record<string, unknown>) => void;
