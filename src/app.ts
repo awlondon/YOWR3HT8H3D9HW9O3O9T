@@ -1,18 +1,5 @@
 import { SETTINGS, PERFORMANCE_PROFILES, resolvePerformanceProfile } from './settings';
-import { PipelineWorkerClient } from './engine/pipelineWorkerClient';
-import { globalCommandRegistry } from './controllers/commandRegistry';
-import {
-  SessionManager,
-  type LocalHlsfAdjacencySummary,
-  type LocalHlsfAdjacencyTokenSummary,
-  type LocalHlsfMemoryState,
-  type LocalHlsfPromptRecord,
-} from './controllers/sessionManager';
-import { updateHlsfLimitSummary, formatHlsfLimitValue } from './controllers/uiUpdater';
-import { knowledgeStore } from './engine/knowledgeStore';
-import { normalizeRecord } from './engine/normalize';
-import { VectorSemanticStore } from './engine/vectorSemantics';
-import { AutonomousAgent } from './agent/autonomousAgent';
+import { runPipeline } from './engine/pipeline';
 import { createRemoteDbFileWriter, type RemoteDbDirectoryStats } from './engine/remoteDbWriter';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
@@ -25,13 +12,6 @@ import { demoGoogleSignIn } from './auth/google';
 import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
 import { initializeLoginForm } from './onboarding/loginFlow';
 import { recordCommandUsage } from './analytics/commandUsage';
-
-declare global {
-  interface Window {
-    CognitionEngine?: Record<string, unknown>;
-    animateComposite?: (graph: unknown, glyphOnly?: boolean) => unknown;
-  }
-}
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -99,529 +79,6 @@ const CONFIG: EngineConfig = {
 const MAX_RECURSION_DEPTH = 8;
 const MAX_LEVEL_UP_SEEDS = 64;
 
-function resolveAutoBypassOnboarding(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  const { location } = window;
-  const globalOverride = (window as any).AUTO_BYPASS_ONBOARDING;
-
-  if (typeof globalOverride === 'boolean') {
-    return globalOverride;
-  }
-
-  if (typeof globalOverride === 'string') {
-    const normalized = globalOverride.trim().toLowerCase();
-    if (normalized === 'true') return true;
-    if (normalized === 'false') return false;
-  }
-
-  const hostname = typeof location?.hostname === 'string' ? location.hostname : '';
-  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-
-  const isDev = typeof import.meta !== 'undefined'
-    && typeof (import.meta as any).env === 'object'
-    && Boolean((import.meta as any).env?.DEV);
-
-  return Boolean(isDev && isLocalhost);
-}
-
-// Automatically promote visitors to the main application without showing the landing/login flow.
-const AUTO_BYPASS_ONBOARDING = resolveAutoBypassOnboarding();
-const AUTO_BYPASS_MEMBERSHIP_DETAILS = {
-  plan: 'admin',
-  name: 'Local Operator',
-  email: 'operator@local.dev',
-  role: 'admin',
-  authProvider: 'auto-bypass',
-} as const;
-
-const vectorSemanticStore = new VectorSemanticStore();
-const pipelineClient = new PipelineWorkerClient({ embeddingStore: vectorSemanticStore });
-const commandRegistry = globalCommandRegistry;
-
-const HIDDEN_EDGE_MIN_WEIGHT = 0.05;
-const HIDDEN_ADJACENCY_RELATION = 'hidden-adjacency';
-const DEFAULT_HIDDEN_ATTENTION_PER_TOKEN = 6;
-const DEFAULT_HIDDEN_ADJACENCY_DEPTH = 2;
-const DEFAULT_HIDDEN_ADJACENCY_CAP = 128;
-const RELATION_TYPE_CAP_MIN = 1;
-const RELATION_TYPE_CAP_MAX = 50;
-const RELATION_TYPE_CAP_DEFAULT = 50;
-const EDGES_PER_TYPE_MIN = 1;
-const EDGES_PER_TYPE_DEFAULT = 3;
-const EDGES_PER_TYPE_MAX = 10;
-
-const memoryStorageFallback = new Map<string, string>();
-const TOKEN_CACHE_PREFIX = 'hlsf_token_';
-const DB_INDEX_KEY = 'hlsf_token_index';
-const DB_RAW_KEY = 'hlsf_db_snapshot';
-const API_KEY_STORAGE_KEY = 'hlsf_api_key';
-const GLYPH_LEDGER_STORAGE_KEY = 'hlsf_glyph_ledger';
-
-const DEFAULT_NODE_SIZE = 1;
-const NODE_SIZE_MIN = 0.5;
-const NODE_SIZE_MAX = 2.5;
-const DEFAULT_EDGE_WIDTH = 0.2;
-const EDGE_WIDTH_MIN = 0.01;
-const EDGE_WIDTH_MAX = 1;
-const DEFAULT_ALPHA = 0.67;
-
-const TokenToGlyph = new Map<string, string>();
-const GlyphToToken = new Map<string, Set<string>>();
-const relationColorCache = new Map<string, string>();
-
-const GLYPH_LIBRARY: string[] = [
-  '●', '○', '▲', '△', '▴', '▵', '▼', '▽', '◆', '◇', '■', '□', '▣', '▤', '▥', '▦', '▧', '▨', '▩', '★',
-  '☆', '✦', '✧', '✩', '✪', '✫', '✬', '✭', '✮', '✯', '✰', '✱', '✲', '✳', '✴', '✵', '✶', '✷', '✸', '✹',
-  '✺', '✻', '✼', '✽', '✾', '✿', '❀', '❁', '❂', '❃', '❄', '❅', '❆', '❇', '❈', '❉', '❊', '❋', '◐', '◑',
-  '◒', '◓', '◔', '◕', '◖', '◗', '◰', '◱', '◲', '◳', '◴', '◵', '◶', '◷', '◸', '◹', '◺', '◻', '◼', '◽',
-  '◾', '⬟', '⬠', '⬡', '⬢', '⬣', '⬤', '⬥', '⬦', '⬧', '⬨', '⬩', '⬰', '⬱', '⬲', '⬳', '⬴', '⬵', '⬶', '⬷',
-  '⬸', '⬹', '⬺', '⬻', '⬼', '⬽', '⬾', '⬿', '⌘', '⌖', '⌗', '⌙', '⌚', '⌛', '⏣', '⎈', '⍟', '⎔', '◉', '◎',
-  '☉', '☼', '☀', '☾', '☽', '⚘', '⚚', '⚛', '⚜', '⚝', '⚞', '⚟', '⚠', '⚡', '⚢', '⚣', '⚤', '⚥', '⚧', '⚨',
-  '⚩', '⚪', '⚫', '⚬', '⚮', '⚯', '⚰', '⚱', '⚲', '⚳', '⚴', '⚵', '⚶', '⚷', '⚸', '⚹', '⚺', '⚻', '⚼', '⚽',
-  '⚾', '⛀', '⛁', '⛂', '⛃', '⛋', '⛌', '⛍', '⛎', '⛏', '⛐', '⛑', '⛒', '⛓', '⛔', '⛕', '⛖', '⛗', '⛘', '⛙',
-  '⛚', '⛛', '⛜', '⛝', '⛞', '⛟',
-];
-const GLYPH_SET: string[] = [...GLYPH_LIBRARY];
-const GLYPH_SEP = ' ';
-const NUM_FMT = (value: number): string => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return '0.000';
-  }
-  return numeric.toFixed(3);
-};
-
-const saasPlatform = initializeSaasPlatform();
-const userAvatarStore = initializeUserAvatarStore();
-
-let voiceDockController: ReturnType<typeof initializeVoiceModelDock> = null;
-let remotedir = false;
-
-function isValidApiKey(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const trimmed = value.trim();
-  if (trimmed.length < 24) return false;
-
-  const knownPrefixes = ['sk-', 'rk-', 'sess-', 'ft-', 'oa-', 'gpt-'];
-  if (knownPrefixes.some(prefix => trimmed.startsWith(prefix))) {
-    return /^[A-Za-z0-9_-]+$/.test(trimmed);
-  }
-
-  return /^[A-Za-z0-9_-]{24,}$/.test(trimmed);
-}
-
-function parseStoredValue(raw: string | null, fallback: unknown): unknown {
-  if (raw == null) return fallback;
-  const trimmed = raw.trim();
-  if (!trimmed) return fallback;
-  if (trimmed === 'undefined') return undefined;
-  if (trimmed === 'null') return null;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return raw;
-  }
-}
-
-function safeStorageGet(key: string, fallback: unknown = null): unknown {
-  if (!key) return fallback;
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(key);
-      if (raw != null) {
-        memoryStorageFallback.set(key, raw);
-        return parseStoredValue(raw, fallback);
-      }
-    }
-  } catch {
-    // ignore access errors and fall back to in-memory cache
-  }
-
-  if (memoryStorageFallback.has(key)) {
-    return parseStoredValue(memoryStorageFallback.get(key) ?? null, fallback);
-  }
-
-  return fallback;
-}
-
-function safeStorageSet(key: string, value: string | null): boolean {
-  if (!key) return false;
-  let persisted = false;
-  try {
-    if (typeof localStorage !== 'undefined') {
-      if (value === null) {
-        localStorage.removeItem(key);
-      } else {
-        localStorage.setItem(key, value);
-      }
-      persisted = true;
-    }
-  } catch {
-    persisted = false;
-  }
-
-  if (value === null) {
-    memoryStorageFallback.delete(key);
-  } else {
-    memoryStorageFallback.set(key, value);
-  }
-
-  return persisted;
-}
-
-function safeStorageRemove(key: string): boolean {
-  if (!key) return false;
-  let removed = false;
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(key);
-      removed = true;
-    }
-  } catch {
-    removed = false;
-  }
-
-  memoryStorageFallback.delete(key);
-  return removed;
-}
-
-function safeStorageKeys(prefix = ''): string[] {
-  const keys = new Set<string>();
-  const normalizedPrefix = typeof prefix === 'string' ? prefix : '';
-
-  try {
-    if (typeof localStorage !== 'undefined') {
-      for (let i = 0; i < localStorage.length; i += 1) {
-        const key = localStorage.key(i);
-        if (!key) continue;
-        if (!normalizedPrefix || key.startsWith(normalizedPrefix)) {
-          keys.add(key);
-        }
-      }
-    }
-  } catch {
-    // ignore storage access errors
-  }
-
-  for (const key of memoryStorageFallback.keys()) {
-    if (!normalizedPrefix || key.startsWith(normalizedPrefix)) {
-      keys.add(key);
-    }
-  }
-
-  return Array.from(keys);
-}
-
-function getDb(): any | null {
-  if (typeof window === 'undefined') return null;
-  const root = ((window as any).HLSF = (window as any).HLSF || {});
-  if (root.dbCache && typeof root.dbCache === 'object') {
-    return root.dbCache;
-  }
-
-  const persisted = safeStorageGet(DB_RAW_KEY, null);
-  if (!persisted) return null;
-
-  if (typeof persisted === 'string') {
-    try {
-      root.dbCache = JSON.parse(persisted);
-      return root.dbCache;
-    } catch {
-      return null;
-    }
-  }
-
-  if (typeof persisted === 'object') {
-    root.dbCache = persisted;
-    return root.dbCache;
-  }
-
-  return null;
-}
-
-function sanitize(value: string): string {
-  const raw = value == null ? '' : String(value);
-  return raw
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function setRemotedirFlag(connected: boolean): void {
-  const flag = Boolean(connected);
-  remotedir = flag;
-  if (typeof document !== 'undefined' && document.body) {
-    document.body.classList.toggle('remotedir-connected', flag);
-    document.body.setAttribute('data-remotedir', flag ? 'connected' : 'disconnected');
-  }
-  if (typeof window !== 'undefined') {
-    const root = (window as any).CognitionEngine || ((window as any).CognitionEngine = {});
-    root.remoteDirectoryConnected = flag;
-  }
-}
-
-interface AppElements {
-  log: HTMLElement | null;
-  cachedTokens: HTMLElement | null;
-  cacheHitRate: HTMLElement | null;
-  sessionCost: HTMLElement | null;
-  sendBtn: HTMLElement | null;
-  cancelBtn: HTMLElement | null;
-  input: HTMLInputElement | null;
-  apiModal: HTMLElement | null;
-  apiKeyInput: HTMLInputElement | null;
-  apiConfirmBtn: HTMLElement | null;
-  apiCancelBtn: HTMLElement | null;
-  avatarBundleInput: HTMLInputElement | null;
-  readFileInput: HTMLInputElement | null;
-}
-
-const elements: AppElements = {
-  log: null,
-  cachedTokens: null,
-  cacheHitRate: null,
-  sessionCost: null,
-  sendBtn: null,
-  cancelBtn: null,
-  input: null,
-  apiModal: null,
-  apiKeyInput: null,
-  apiConfirmBtn: null,
-  apiCancelBtn: null,
-  avatarBundleInput: null,
-  readFileInput: null,
-};
-
-function hydrateAppElements(root: Document | null = typeof document !== 'undefined' ? document : null): void {
-  if (!root) return;
-  elements.log = root.getElementById('log');
-  elements.cachedTokens = root.getElementById('cached-tokens');
-  elements.cacheHitRate = root.getElementById('cache-hit-rate');
-  elements.sessionCost = root.getElementById('session-cost');
-  elements.sendBtn = root.getElementById('send-btn');
-  elements.cancelBtn = root.getElementById('cancel-btn');
-  elements.input = root.getElementById('command-input') as HTMLInputElement | null;
-  elements.apiModal = root.getElementById('api-modal');
-  elements.apiKeyInput = root.getElementById('api-key-input') as HTMLInputElement | null;
-  elements.apiConfirmBtn = root.getElementById('api-confirm');
-  elements.apiCancelBtn = root.getElementById('api-cancel');
-  elements.avatarBundleInput = root.getElementById('avatar-bundle-input') as HTMLInputElement | null;
-  elements.readFileInput = root.getElementById('read-file') as HTMLInputElement | null;
-}
-
-if (typeof document !== 'undefined') {
-  hydrateAppElements(document);
-}
-
-let sendButtonBound = false;
-let cancelButtonBound = false;
-let inputFieldBound = false;
-let apiConfirmBound = false;
-let apiCancelBound = false;
-let apiKeyInputBound = false;
-let logClickBound = false;
-
-function bindCoreUiEvents(): void {
-  const sendButton = elements.sendBtn instanceof HTMLButtonElement ? elements.sendBtn : null;
-  const cancelButton = elements.cancelBtn instanceof HTMLButtonElement ? elements.cancelBtn : null;
-  const inputField = elements.input instanceof HTMLInputElement ? elements.input : null;
-  const apiConfirmBtn = elements.apiConfirmBtn instanceof HTMLButtonElement ? elements.apiConfirmBtn : null;
-  const apiCancelBtn = elements.apiCancelBtn instanceof HTMLButtonElement ? elements.apiCancelBtn : null;
-  const apiKeyInput = elements.apiKeyInput instanceof HTMLInputElement ? elements.apiKeyInput : null;
-  const logElement = elements.log instanceof HTMLElement ? elements.log : null;
-
-  if (sendButton && inputField && !sendButtonBound) {
-    sendButton.addEventListener('click', () => {
-      const rawValue = inputField.value;
-      if (!rawValue || !rawValue.trim()) return;
-
-      void submitPromptThroughEngine(rawValue, { source: 'input-field' })
-        .then(result => {
-          if (result.kind === 'command') {
-            inputField.value = '';
-          }
-        })
-        .catch(error => {
-          console.error('Prompt submission failed:', error);
-        });
-    });
-    sendButtonBound = true;
-  }
-
-  if (cancelButton && !cancelButtonBound) {
-    cancelButton.addEventListener('click', () => {
-      if (currentAbortController) {
-        currentAbortController.abort();
-        logWarning('Cancelling...');
-      }
-    });
-    cancelButtonBound = true;
-  }
-
-  if (inputField && !inputFieldBound) {
-    inputField.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        sendButton?.click();
-      }
-    });
-
-    inputField.addEventListener('input', () => {
-      handleLiveInputChange(inputField.value);
-    });
-
-    inputFieldBound = true;
-  }
-
-  if (apiConfirmBtn && !apiConfirmBound) {
-    apiConfirmBtn.addEventListener('click', () => {
-      applyApiKeyFromModal();
-    });
-    apiConfirmBound = true;
-  }
-
-  if (apiCancelBtn && !apiCancelBound) {
-    apiCancelBtn.addEventListener('click', () => {
-      const modal = elements.apiModal;
-      if (modal instanceof HTMLElement) {
-        modal.classList.add('hidden');
-      }
-      state.apiKey = '';
-      state.networkOffline = true;
-      state.networkErrorNotified = true;
-      state.lastNetworkErrorTime = Date.now();
-      safeStorageRemove(API_KEY_STORAGE_KEY);
-      logWarning('Offline mode - limited functionality');
-    });
-    apiCancelBound = true;
-  }
-
-  if (apiKeyInput && !apiKeyInputBound) {
-    apiKeyInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        applyApiKeyFromModal();
-      }
-    });
-    apiKeyInputBound = true;
-  }
-
-  if (logElement && !logClickBound) {
-    logElement.addEventListener('click', handlePromptReviewClick);
-    logClickBound = true;
-  }
-}
-
-const sessionManager = new SessionManager({
-  resolveLocalMemoryEdgeWeightFloor,
-  limitAdjacencyEntryEdges,
-  pruneRelationshipEdgesByWeight,
-  windowRef: typeof window !== 'undefined' ? window : undefined,
-});
-
-let autonomousAgent: AutonomousAgent | null = null;
-
-function ensureLocalHlsfMemory(): LocalHlsfMemoryState | null {
-  return sessionManager.ensureLocalMemory();
-}
-
-function recordLocalPromptMemory(
-  id: string,
-  promptText: string,
-  tokens: string[],
-  adjacencyTargets: Array<{ token?: string; normalized?: string }> = [],
-): LocalHlsfPromptRecord | null {
-  return sessionManager.recordLocalPromptMemory(id, promptText, tokens, adjacencyTargets);
-}
-
-function summarizeAdjacencyMapForLocal(
-  adjacencyMap: Map<string, any>,
-  options: { limit?: number; edgesPerToken?: number } = {},
-): LocalHlsfAdjacencyTokenSummary[] {
-  return sessionManager.summarizeAdjacencyMap(adjacencyMap, options);
-}
-
-function recordLocalAdjacencySummary(
-  id: string,
-  adjacencyMap: Map<string, any>,
-  label = 'prompt-adjacency',
-  options: { limit?: number; edgesPerToken?: number } = {},
-): LocalHlsfAdjacencySummary | null {
-  return sessionManager.recordAdjacencySummary(id, adjacencyMap, label, options);
-}
-
-async function hydrateTokensFromKnowledgeStore(tokens: Array<{ token?: string } | string>): Promise<void> {
-  if (!Array.isArray(tokens) || !tokens.length) return;
-  const candidates = new Set<string>();
-  for (const entry of tokens) {
-    const raw = typeof entry === 'string' ? entry : String(entry?.token ?? '').trim();
-    if (!raw) continue;
-    const lower = raw.toLowerCase();
-    if (!lower || isTokenCached(lower)) continue;
-    candidates.add(lower);
-  }
-  if (!candidates.size) return;
-  try {
-    const records = await knowledgeStore.bulkGet(Array.from(candidates));
-    for (const record of records.values()) {
-      stageDbRecordForCache(record);
-    }
-  } catch (error) {
-    console.warn('Knowledge store hydration failed:', error);
-  }
-}
-
-function clampRelationTypeCap(value: unknown): number {
-  if (value === Infinity || value === 'Infinity') {
-    return Infinity;
-  }
-
-  const numeric = Math.floor(Number(value));
-  if (!Number.isFinite(numeric)) {
-    const runtimeMax = (() => {
-      if (typeof window === 'undefined') return RELATION_TYPE_CAP_DEFAULT;
-      const candidate = Number((window as any)?.HLSF?.config?.maxRelationTypes);
-      if (Number.isFinite(candidate) && candidate >= RELATION_TYPE_CAP_MIN) {
-        return Math.max(RELATION_TYPE_CAP_MIN, Math.min(candidate, RELATION_TYPE_CAP_MAX));
-      }
-      return RELATION_TYPE_CAP_DEFAULT;
-    })();
-    return Math.max(RELATION_TYPE_CAP_MIN, Math.min(runtimeMax, RELATION_TYPE_CAP_MAX));
-  }
-
-  return Math.max(
-    RELATION_TYPE_CAP_MIN,
-    Math.min(RELATION_TYPE_CAP_MAX, numeric),
-  );
-}
-
-function clampEdgesPerType(value: unknown): number {
-  if (value === Infinity || value === 'Infinity') {
-    return Infinity;
-  }
-
-  const numeric = Math.floor(Number(value));
-  if (!Number.isFinite(numeric)) {
-    const fallbackMax = Math.max(
-      EDGES_PER_TYPE_DEFAULT,
-      Number.isFinite(CONFIG.ADJACENCY_EDGES_PER_LEVEL)
-        ? Number(CONFIG.ADJACENCY_EDGES_PER_LEVEL)
-        : EDGES_PER_TYPE_DEFAULT,
-    );
-    return Math.max(EDGES_PER_TYPE_MIN, Math.min(fallbackMax, EDGES_PER_TYPE_MAX));
-  }
-
-  return Math.max(
-    EDGES_PER_TYPE_MIN,
-    Math.min(EDGES_PER_TYPE_MAX, numeric),
-  );
-}
-
 function clampRecursionDepth(value: unknown): number {
   if (value === Infinity || value === 'Infinity') {
     return MAX_RECURSION_DEPTH;
@@ -663,84 +120,6 @@ function activeSettings() {
     return (window as any).SETTINGS;
   }
   return SETTINGS;
-}
-
-function deriveRelationshipBudgetFallback(): number {
-  const settings = activeSettings() || {};
-
-  const fromSettings = (settings as Record<string, unknown>).maxRelationships;
-  if (typeof fromSettings === 'number' && Number.isFinite(fromSettings)) {
-    return Math.max(0, Math.floor(fromSettings));
-  }
-  if (typeof fromSettings === 'string') {
-    const normalized = fromSettings.trim();
-    if (normalized) {
-      const numeric = Number(normalized.replace(/[_,\s]/g, ''));
-      if (Number.isFinite(numeric)) {
-        return Math.max(0, Math.floor(numeric));
-      }
-    }
-  }
-
-  const edgeCap = Number((settings as Record<string, unknown>).maxEdges);
-  if (Number.isFinite(edgeCap) && edgeCap > 0) {
-    return Math.max(0, Math.floor(edgeCap));
-  }
-
-  const nodeCap = Number((settings as Record<string, unknown>).maxNodes);
-  if (Number.isFinite(nodeCap) && nodeCap > 0) {
-    return Math.max(0, Math.floor(nodeCap * 2));
-  }
-
-  const defaultBudget = Number.isFinite(CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE)
-    ? Math.max(0, Math.floor(CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE) * 2)
-    : 0;
-  return defaultBudget || 0;
-}
-
-function resolveHlsfRelationshipBudget(input: unknown): number {
-  if (input === null || typeof input === 'undefined') {
-    return deriveRelationshipBudgetFallback();
-  }
-
-  if (input === Infinity) {
-    return Infinity;
-  }
-
-  if (typeof input === 'number') {
-    if (!Number.isFinite(input)) {
-      return deriveRelationshipBudgetFallback();
-    }
-    return Math.max(0, Math.floor(input));
-  }
-
-  if (typeof input === 'string') {
-    const trimmed = input.trim();
-    if (!trimmed) {
-      return deriveRelationshipBudgetFallback();
-    }
-    const normalized = trimmed.toLowerCase();
-    if (['infinity', 'inf', '∞', 'all', 'unbounded', 'unlimited'].includes(normalized)) {
-      return Infinity;
-    }
-    if (['auto', 'default', 'dynamic', 'adaptive', 'recommended'].includes(normalized)) {
-      return deriveRelationshipBudgetFallback();
-    }
-
-    const suffix = normalized.slice(-1);
-    const multiplier = suffix === 'k'
-      ? 1_000
-      : suffix === 'm'
-        ? 1_000_000
-        : 1;
-    const numericPortion = multiplier === 1 ? normalized : normalized.slice(0, -1);
-    const numeric = Number(numericPortion.replace(/[_,\s]/g, ''));
-    if (Number.isFinite(numeric)) {
-      return Math.max(0, Math.floor(numeric * multiplier));
-    }
-  }
-
-  return deriveRelationshipBudgetFallback();
 }
 
 function applyPerformanceCaps(settingsOverride = null) {
@@ -801,54 +180,51 @@ function applyPerformanceCaps(settingsOverride = null) {
 
 applyPerformanceCaps();
 
-function clampAlpha(value: unknown): number {
-  const numeric = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
-  if (!Number.isFinite(numeric)) {
-    return DEFAULT_ALPHA;
+function formatHlsfLimitValue(value: unknown): string {
+  if (value === Infinity) return '∞';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toLocaleString();
   }
-  return Math.max(0, Math.min(0.99, numeric));
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric.toLocaleString();
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : '—';
+  }
+  return '—';
 }
 
-function baseAlpha(): number {
-  if (typeof window !== 'undefined') {
-    window.HLSF = window.HLSF || {};
-    const config = (window.HLSF.config = window.HLSF.config || {});
-    if (Number.isFinite(config.alpha)) {
-      const normalized = clampAlpha(config.alpha);
-      if (normalized !== config.alpha) {
-        config.alpha = normalized;
-      }
-      return normalized;
+function updateHlsfLimitSummary(limits?: { nodes?: unknown; edges?: unknown; relationships?: unknown }) {
+  if (typeof document === 'undefined') return;
+  const summary = document.getElementById('hlsf-limit-summary');
+  if (!summary) return;
+  const nodesEl = summary.querySelector('[data-hlsf-limit-nodes]');
+  const edgesEl = summary.querySelector('[data-hlsf-limit-edges]');
+  const relEl = summary.querySelector('[data-hlsf-limit-relationships]');
+  if (nodesEl) nodesEl.textContent = `Nodes: ${formatHlsfLimitValue(limits?.nodes)}`;
+  if (edgesEl) edgesEl.textContent = `Edges: ${formatHlsfLimitValue(limits?.edges)}`;
+  if (relEl) relEl.textContent = `Relationships: ${formatHlsfLimitValue(limits?.relationships)}`;
+  if (summary instanceof HTMLElement) {
+    if (Number.isFinite(Number(limits?.nodes))) {
+      summary.dataset.nodes = String(limits?.nodes ?? '');
+    } else {
+      delete summary.dataset.nodes;
     }
-    config.alpha = DEFAULT_ALPHA;
+    if (Number.isFinite(Number(limits?.edges))) {
+      summary.dataset.edges = String(limits?.edges ?? '');
+    } else {
+      delete summary.dataset.edges;
+    }
+    if (limits?.relationships === Infinity) {
+      summary.dataset.relationships = 'Infinity';
+    } else if (Number.isFinite(Number(limits?.relationships))) {
+      summary.dataset.relationships = String(limits?.relationships ?? '');
+    } else {
+      delete summary.dataset.relationships;
+    }
   }
-  return DEFAULT_ALPHA;
-}
-
-function clampNodeSize(value: unknown): number {
-  const numeric = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
-  if (!Number.isFinite(numeric)) {
-    return DEFAULT_NODE_SIZE;
-  }
-  return Math.max(NODE_SIZE_MIN, Math.min(NODE_SIZE_MAX, numeric));
-}
-
-function clampEdgeWidth(value: unknown): number {
-  const numeric = typeof value === 'string' ? Number.parseFloat(value) : Number(value);
-  if (!Number.isFinite(numeric)) {
-    return DEFAULT_EDGE_WIDTH;
-  }
-  return Math.max(EDGE_WIDTH_MIN, Math.min(EDGE_WIDTH_MAX, numeric));
-}
-
-type EdgeColorMode = 'theme' | 'weight' | 'relation';
-
-function normalizeEdgeColorMode(value: unknown): EdgeColorMode {
-  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  if (normalized === 'theme') return 'theme';
-  if (normalized === 'weight' || normalized === 'attention') return 'weight';
-  if (normalized === 'relation' || normalized === 'relations') return 'relation';
-  return 'relation';
 }
 
 function shouldStartClusterZoom(event: MouseEvent): boolean {
@@ -1073,6 +449,36 @@ interface CommandHelpEntry {
   requiresMembership: boolean;
 }
 
+interface LocalHlsfAdjacencyTokenSummary {
+  token: string;
+  relationships: Record<string, { token: string; weight: number }[]>;
+  attention: number;
+  totalRelationships: number;
+}
+
+interface LocalHlsfPromptRecord {
+  id: string;
+  text: string;
+  tokens: string[];
+  adjacencySeeds: string[];
+  timestamp: string;
+}
+
+interface LocalHlsfAdjacencySummary {
+  id: string;
+  tokenCount: number;
+  summary: LocalHlsfAdjacencyTokenSummary[];
+  updatedAt: string;
+  label?: string;
+}
+
+interface LocalHlsfMemoryState {
+  prompts: LocalHlsfPromptRecord[];
+  adjacencySummaries: Map<string, LocalHlsfAdjacencySummary>;
+  lastPrompt?: LocalHlsfPromptRecord | null;
+  lastAdjacency?: LocalHlsfAdjacencySummary | null;
+}
+
 const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/help', description: 'Show this command catalog', requiresMembership: false },
   { command: '/clear', description: 'Clear log history', requiresMembership: true },
@@ -1104,7 +510,6 @@ const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/omega', description: 'Adjust rotation omega', requiresMembership: true },
   { command: '/alpha', description: 'Adjust alpha transparency', requiresMembership: true },
   { command: '/symbols', description: 'Symbol tokenization controls', requiresMembership: true },
-  { command: '/agent', description: 'Toggle autonomous agent loop', requiresMembership: true },
   { command: '/self', description: 'Display engine self state', requiresMembership: true },
   { command: '/state', description: 'Inspect runtime state snapshot', requiresMembership: true },
   { command: '/maphidden', description: 'Reveal hidden adjacency tokens', requiresMembership: true },
@@ -1142,199 +547,8 @@ const COMMAND_RESTRICTIONS: Partial<Record<MembershipLevel, Set<string>>> = {
   ),
 };
 
-function ensureCommandAvailable(command: string): boolean {
-  const normalized = typeof command === 'string' ? command.trim().toLowerCase() : '';
-  if (!normalized || !normalized.startsWith('/')) return true;
-
-  const restrictions = COMMAND_RESTRICTIONS[getMembershipLevel()];
-  if (!restrictions || !restrictions.has(normalized)) return true;
-
-  const entry = COMMAND_HELP_ENTRIES.find(item => item.command.toLowerCase() === normalized);
-  const label = entry?.command || command;
-  const level = getMembershipLevel();
-
-  if (level === MEMBERSHIP_LEVELS.DEMO) {
-    const safeLabel = sanitize(label);
-    const safeDescription = entry?.description ? sanitize(entry.description) : '';
-    addLog(
-      `
-        <div class="command-locked">
-          🔒 ${safeLabel}${safeDescription ? ` <span class="command-locked__desc">${safeDescription}</span>` : ''}
-          <div class="command-locked__cta"><a href="#" class="command-upgrade-link" data-upgrade="trial">Start trial</a> to unlock advanced slash commands.</div>
-        </div>
-      `,
-      'warning',
-    );
-  } else {
-    const description = entry?.description ? ` – ${entry.description}` : '';
-    logWarning(`${label}${description} is not available for the current membership level.`);
-  }
-
-  return false;
-}
-
-type ProcessingStatus = {
-  isActive?: () => boolean;
-  update?: (info: Record<string, unknown>) => void;
-  fail?: (summary?: string) => void;
-  cancel?: (summary?: string) => void;
-  complete?: (info?: Record<string, unknown>) => void;
-} | null;
-
-const state = {
-  membership: {
-    level: MEMBERSHIP_LEVELS.DEMO,
-    plan: 'demo',
-    trial: false,
-    demoMode: 'api',
-    name: '',
-    email: '',
-  },
-  focusTokens: [] as string[],
-  tokens: new Set<string>(),
-  tokenSources: new Map<string, any>(),
-  tokenOrder: [] as string[],
-  documentCacheBaseline: 0,
-  documentCacheBaselineManuallyCleared: false,
-  lastComputedCacheBase: 0,
-  hlsfReady: false,
-  liveGraphMode: false,
-  liveGraphUpdateTimer: null as ReturnType<typeof setTimeout> | null,
-  liveGraph: { nodes: new Map<string, any>(), links: [] as Array<any> },
-  pendingPromptReviews: new Map<string, any>(),
-  sessionStats: { totalApiCalls: 0, totalCacheHits: 0, totalCostUsd: 0 },
-  networkOffline: false,
-  lastNetworkErrorTime: 0,
-  networkErrorNotified: false,
-  symbolMetrics: null as null | {
-    history: unknown[];
-    last: unknown;
-    lastRunGraph: unknown;
-    topNodes: unknown[];
-    lastTokens: unknown[];
-    lastPipeline: unknown;
-  },
-  apiKey: '',
-  processingStatus: null as ProcessingStatus,
-  processingStart: 0,
-  processingAverageMs: 0,
-  processingSamples: 0,
-  isProcessing: false,
-};
-
-let currentAbortController: AbortController | null = null;
-
-function getMembershipLevel(): MembershipLevel {
-  const rawLevel = typeof state?.membership?.level === 'string'
-    ? state.membership.level.toLowerCase()
-    : '';
-  if (rawLevel === MEMBERSHIP_LEVELS.MEMBER) {
-    return MEMBERSHIP_LEVELS.MEMBER;
-  }
-  return MEMBERSHIP_LEVELS.DEMO;
-}
-
-function applyMembershipUi(): void {
-  const level = getMembershipLevel();
-  if (typeof document !== 'undefined' && document.body) {
-    document.body.classList.toggle('membership-member', level === MEMBERSHIP_LEVELS.MEMBER);
-    document.body.classList.toggle('membership-demo', level !== MEMBERSHIP_LEVELS.MEMBER);
-    document.body.setAttribute('data-membership', level);
-  }
-  if (typeof window !== 'undefined') {
-    const root = (window as any).CognitionEngine || ((window as any).CognitionEngine = {});
-    const current = (state && typeof state === 'object' && state.membership)
-      ? state.membership
-      : {};
-    root.membership = { ...current, level };
-  }
-}
-
 const METRIC_SCOPE = { RUN: 'run', DB: 'db' };
 const DATABASE_READY_EVENT = 'hlsf:database-ready';
-
-const databaseReadyState = {
-  lastReason: '',
-  lastTokenCount: -1,
-  lastTimestamp: 0,
-};
-
-function announceDatabaseReady(reason: string): void {
-  if (typeof window === 'undefined') return;
-
-  const normalizedReason = typeof reason === 'string' && reason.trim()
-    ? reason.trim()
-    : 'ready';
-  const now = Date.now();
-  const db = getDb();
-  const dbTokenCount = Array.isArray(db?.full_token_data)
-    ? db.full_token_data.length
-    : null;
-  const cachedTokenCountRaw = getCachedTokenCount();
-  const cachedTokenCount = Number.isFinite(cachedTokenCountRaw)
-    ? Number(cachedTokenCountRaw)
-    : null;
-
-  const detail = {
-    reason: normalizedReason,
-    timestamp: now,
-    isoTimestamp: new Date(now).toISOString(),
-    tokens: {
-      database: dbTokenCount,
-      cached: cachedTokenCount,
-    },
-  } as const;
-
-  const messageParts: string[] = [];
-  if (typeof dbTokenCount === 'number' && Number.isFinite(dbTokenCount)) {
-    messageParts.push(`${dbTokenCount} tokens`);
-  } else if (typeof cachedTokenCount === 'number' && Number.isFinite(cachedTokenCount)) {
-    messageParts.push(`${cachedTokenCount} cached tokens`);
-  }
-  messageParts.push(`source: ${normalizedReason}`);
-
-  const rootEngine = (window as any).CognitionEngine || ((window as any).CognitionEngine = {});
-  const previousState = (rootEngine.database && typeof rootEngine.database === 'object')
-    ? rootEngine.database
-    : {};
-  rootEngine.database = {
-    ...previousState,
-    ready: true,
-    reason: normalizedReason,
-    lastReadyAt: detail.isoTimestamp,
-    tokens: detail.tokens,
-  };
-
-  const nextTokenCount = typeof dbTokenCount === 'number'
-    ? dbTokenCount
-    : (typeof cachedTokenCount === 'number' ? cachedTokenCount : -1);
-  if (databaseReadyState.lastReason !== normalizedReason
-    || databaseReadyState.lastTokenCount !== nextTokenCount) {
-    const logOk = (window as any).logOK;
-    if (typeof logOk === 'function') {
-      logOk(`HLSF database ready (${messageParts.join(', ')})`);
-    }
-  }
-
-  if (typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
-    try {
-      window.dispatchEvent(new CustomEvent(DATABASE_READY_EVENT, { detail }));
-    } catch (err) {
-      console.warn('Failed to dispatch database ready event:', err);
-    }
-  }
-
-  databaseReadyState.lastReason = normalizedReason;
-  databaseReadyState.lastTokenCount = nextTokenCount;
-  databaseReadyState.lastTimestamp = now;
-
-  if (typeof document !== 'undefined' && document.body) {
-    document.body.setAttribute('data-hlsf-db', 'ready');
-  }
-
-  window.HLSF = window.HLSF || {};
-  window.HLSF.databaseReady = detail;
-}
 
 const GLOBAL_CONNECTION_RELATION = '∼';
 const GLOBAL_CONNECTION_WEIGHT = 0.05;
@@ -1375,73 +589,6 @@ const RELKEY_ALIASES = (() => {
 })();
 
 const EDGE_LABEL_DENSITY_THRESHOLD = 160;
-
-function paletteColor(relKey: string | null | undefined): string {
-  const normalizedKey = typeof relKey === 'string' && relKey
-    ? normRelKey(relKey) || relKey
-    : '';
-  if (!normalizedKey) {
-    return '#00ff88';
-  }
-  if (relationColorCache.has(normalizedKey)) {
-    return relationColorCache.get(normalizedKey) as string;
-  }
-  let hash = 0;
-  for (let i = 0; i < normalizedKey.length; i += 1) {
-    hash = ((hash << 5) - hash) + normalizedKey.charCodeAt(i);
-    hash |= 0; // force 32-bit integer
-  }
-  const hue = Math.abs(hash) % 360;
-  const saturation = 55 + (Math.abs(hash >> 3) % 35);
-  const lightness = 45 + (Math.abs(hash >> 5) % 20);
-  const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-  relationColorCache.set(normalizedKey, color);
-  return color;
-}
-
-function colorWithAlpha(color: string, alpha: number): string {
-  const clamped = Math.max(0, Math.min(1, alpha));
-  if (!color) {
-    return `rgba(255, 255, 255, ${clamped})`;
-  }
-  if (/^#([0-9a-f]{3})$/i.test(color)) {
-    const [, hex] = color.match(/^#([0-9a-f]{3})$/i) || [];
-    if (hex) {
-      const r = Number.parseInt(hex[0] + hex[0], 16);
-      const g = Number.parseInt(hex[1] + hex[1], 16);
-      const b = Number.parseInt(hex[2] + hex[2], 16);
-      return `rgba(${r}, ${g}, ${b}, ${clamped})`;
-    }
-  }
-  if (/^#([0-9a-f]{6})$/i.test(color)) {
-    const [, hex] = color.match(/^#([0-9a-f]{6})$/i) || [];
-    if (hex) {
-      const r = Number.parseInt(hex.slice(0, 2), 16);
-      const g = Number.parseInt(hex.slice(2, 4), 16);
-      const b = Number.parseInt(hex.slice(4, 6), 16);
-      return `rgba(${r}, ${g}, ${b}, ${clamped})`;
-    }
-  }
-  if (color.startsWith('rgba(')) {
-    return color.replace(/rgba\(([^)]+)\)/, (_, values) => {
-      const parts = values.split(',').slice(0, 3).map(part => part.trim());
-      return `rgba(${parts.join(', ')}, ${clamped})`;
-    });
-  }
-  if (color.startsWith('rgb(')) {
-    return color.replace(/rgb\(([^)]+)\)/, (_, values) => `rgba(${values}, ${clamped})`);
-  }
-  if (color.startsWith('hsla(')) {
-    return color.replace(/hsla\(([^)]+)\)/, (_, values) => {
-      const parts = values.split(',').slice(0, 3).map(part => part.trim());
-      return `hsla(${parts.join(', ')}, ${clamped})`;
-    });
-  }
-  if (color.startsWith('hsl(')) {
-    return color.replace(/hsl\(([^)]+)\)/, (_, values) => `hsla(${values}, ${clamped})`);
-  }
-  return color;
-}
 
 function resolveEdgeRelationDescriptor(edge) {
   if (!edge || typeof edge !== 'object') return null;
@@ -1671,128 +818,6 @@ function renderRelTypeRow(glyph, count){
   return `${relDisplay(glyph)}: ${count} instances`;
 }
 
-function resolveVisualizerElements() {
-  if (typeof document === 'undefined') {
-    return { container: null, canvas: null, overlay: null, emptyState: null };
-  }
-
-  const container = document.getElementById('hlsf-canvas-container');
-  const canvas = document.getElementById('hlsf-canvas');
-  const overlay = document.getElementById('hlsf-overlay');
-  const emptyState = document.getElementById('hlsf-empty-state');
-
-  return {
-    container: container instanceof HTMLElement ? container : null,
-    canvas: canvas instanceof HTMLElement ? canvas : null,
-    overlay: overlay instanceof HTMLElement ? overlay : null,
-    emptyState: emptyState instanceof HTMLElement ? emptyState : null,
-  };
-}
-
-function ensureHLSFCanvas(): HTMLCanvasElement | null {
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return null;
-  }
-
-  const existingCanvas = window.HLSF?.canvas;
-  if (existingCanvas instanceof HTMLCanvasElement) {
-    return existingCanvas;
-  }
-
-  const { container, canvas } = resolveVisualizerElements();
-  let targetCanvas: HTMLCanvasElement | null = null;
-
-  if (canvas instanceof HTMLCanvasElement) {
-    targetCanvas = canvas;
-  } else if (container instanceof HTMLElement) {
-    targetCanvas = document.createElement('canvas');
-    targetCanvas.id = 'hlsf-canvas';
-    targetCanvas.setAttribute('aria-hidden', 'true');
-    const overlay = container.querySelector('#hlsf-overlay');
-    if (overlay instanceof HTMLElement) {
-      container.insertBefore(targetCanvas, overlay);
-    } else {
-      container.appendChild(targetCanvas);
-    }
-  }
-
-  if (!(targetCanvas instanceof HTMLCanvasElement)) {
-    return null;
-  }
-
-  const bounds = (container instanceof HTMLElement)
-    ? container.getBoundingClientRect()
-    : targetCanvas.getBoundingClientRect();
-  const resolvedWidth = Math.max(1, Math.round(bounds.width || targetCanvas.clientWidth || targetCanvas.width || 0));
-  const resolvedHeight = Math.max(1, Math.round(bounds.height || targetCanvas.clientHeight || targetCanvas.height || 0));
-
-  if (!targetCanvas.width || Math.abs(targetCanvas.width - resolvedWidth) > 2) {
-    targetCanvas.width = resolvedWidth || 1200;
-  }
-  if (!targetCanvas.height || Math.abs(targetCanvas.height - resolvedHeight) > 2) {
-    targetCanvas.height = resolvedHeight || 600;
-  }
-
-  window.HLSF = window.HLSF || {};
-  window.HLSF.canvas = targetCanvas;
-  const ctx = targetCanvas.getContext('2d');
-  window.HLSF.ctx = ctx || null;
-
-  return targetCanvas;
-}
-
-function showVisualizer(): void {
-  const { container, canvas, overlay, emptyState } = resolveVisualizerElements();
-
-  if (container) {
-    container.setAttribute('data-hlsf-visualizer', 'visible');
-  }
-
-  if (canvas) {
-    canvas.classList.remove('hidden');
-    canvas.setAttribute('aria-hidden', 'false');
-  }
-
-  if (overlay) {
-    overlay.classList.remove('hidden');
-  }
-
-  if (emptyState) {
-    emptyState.classList.add('hidden');
-    emptyState.setAttribute('aria-hidden', 'true');
-  }
-
-  if (typeof document !== 'undefined' && document.body) {
-    document.body.setAttribute('data-hlsf-visualizer', 'visible');
-  }
-}
-
-function hideVisualizer(): void {
-  const { container, canvas, overlay, emptyState } = resolveVisualizerElements();
-
-  if (canvas) {
-    canvas.classList.add('hidden');
-    canvas.setAttribute('aria-hidden', 'true');
-  }
-
-  if (overlay) {
-    overlay.classList.add('hidden');
-  }
-
-  if (container) {
-    container.setAttribute('data-hlsf-visualizer', 'hidden');
-  }
-
-  if (emptyState) {
-    emptyState.classList.remove('hidden');
-    emptyState.setAttribute('aria-hidden', 'false');
-  }
-
-  if (typeof document !== 'undefined' && document.body) {
-    document.body.setAttribute('data-hlsf-visualizer', 'hidden');
-  }
-}
-
 // ---------------- HLSF matrix builder ----------------
 function buildMatrixForRecord(rec) {
   const edges = [];
@@ -1953,122 +978,6 @@ function buildIndex(db) {
   return idx;
 }
 
-interface GlyphMapsSnapshot {
-  tokenToGlyph: Map<string, string>;
-  glyphToToken: Map<string, Set<string>>;
-}
-
-function recordGlyphMapping(token: string, glyph: string): void {
-  if (!token || !glyph) return;
-  const trimmed = token.trim();
-  if (!trimmed) return;
-  const normalized = trimmed.toLowerCase();
-  TokenToGlyph.set(normalized, glyph);
-  if (!GlyphToToken.has(glyph)) {
-    GlyphToToken.set(glyph, new Set());
-  }
-  GlyphToToken.get(glyph)?.add(trimmed);
-}
-
-function hydrateGlyphMappingsFromLedger(ledger: unknown): number {
-  if (!ledger || typeof ledger !== 'object') return 0;
-  const glyphMap = (ledger as Record<string, any>).glyph_map
-    || (ledger as Record<string, any>).glyphMap
-    || ledger;
-  if (!glyphMap || typeof glyphMap !== 'object') return 0;
-  let count = 0;
-  for (const [glyph, entries] of Object.entries(glyphMap)) {
-    if (!glyph) continue;
-    const list = Array.isArray(entries) ? entries : [];
-    for (const entry of list) {
-      const tokenValue = typeof entry === 'string'
-        ? entry
-        : typeof entry?.token === 'string'
-          ? entry.token
-          : '';
-      const trimmed = typeof tokenValue === 'string' ? tokenValue.trim() : '';
-      if (!trimmed) continue;
-      recordGlyphMapping(trimmed, glyph);
-      count += 1;
-    }
-  }
-  return count;
-}
-
-function loadGlyphMaps(db: any = null): GlyphMapsSnapshot | null {
-  try {
-    const sourceDb = db || getDb();
-    if (!sourceDb) {
-      return null;
-    }
-
-    if (typeof window !== 'undefined') {
-      const runtime = (window.HLSF = window.HLSF || {});
-      if (runtime.glyphMapsSource === sourceDb && runtime.glyphMaps) {
-        return runtime.glyphMaps as GlyphMapsSnapshot;
-      }
-    }
-
-    TokenToGlyph.clear();
-    GlyphToToken.clear();
-
-    let hydrated = 0;
-
-    const ledgerHydrated = hydrateGlyphMappingsFromLedger((sourceDb as any).glyph_ledger);
-    hydrated += ledgerHydrated;
-    if (hydrated === 0) {
-      hydrated += hydrateGlyphMappingsFromLedger((sourceDb as any).glyph_map);
-    }
-
-    const records = Array.isArray(sourceDb?.full_token_data)
-      ? sourceDb.full_token_data
-      : [];
-
-    for (const record of records) {
-      if (!record || typeof record !== 'object') continue;
-      const rawToken = typeof record.token === 'string' ? record.token.trim() : '';
-      if (!rawToken) continue;
-      const normalized = rawToken.toLowerCase();
-      if (TokenToGlyph.has(normalized)) continue;
-      const glyphCandidate = typeof record.glyph === 'string' && record.glyph.trim()
-        ? record.glyph.trim()
-        : null;
-      let glyph = glyphCandidate;
-      if (!glyph) {
-        try {
-          const complex = memoizedComplexNumber(rawToken, record);
-          glyph = complexToGlyph(complex);
-        } catch (err) {
-          console.warn('Failed to derive glyph for token:', rawToken, err);
-          glyph = null;
-        }
-      }
-      if (!glyph) continue;
-      recordGlyphMapping(rawToken, glyph);
-      hydrated += 1;
-    }
-
-    const snapshot: GlyphMapsSnapshot = {
-      tokenToGlyph: new Map(TokenToGlyph),
-      glyphToToken: new Map(
-        Array.from(GlyphToToken.entries()).map(([glyph, tokens]) => [glyph, new Set(tokens)]),
-      ),
-    };
-
-    if (typeof window !== 'undefined') {
-      const runtime = (window.HLSF = window.HLSF || {});
-      runtime.glyphMaps = snapshot;
-      runtime.glyphMapsSource = sourceDb;
-      runtime.glyphMapCount = hydrated;
-    }
-
-    return snapshot;
-  } catch (err) {
-    console.warn('loadGlyphMaps failed:', err);
-    return null;
-  }
-}
-
 async function loadOrGetIndex() {
   const db = getDb();
   if (!db) throw new Error('No DB loaded');
@@ -2111,184 +1020,6 @@ function defaultAnchors(idx, k = 64) {
     return (B.edges - A.edges) || (B.relTypes - A.relTypes);
   });
   return recs.slice(0, k).map(r => r.token);
-}
-
-function applyConversationOverlay(index) {
-  if (!(index instanceof Map)) {
-    return { index, focusTokens: [] };
-  }
-
-  const memory = ensureLocalHlsfMemory();
-  if (!memory) {
-    return { index, focusTokens: [] };
-  }
-
-  const idxLower = new Map();
-  for (const key of index.keys()) {
-    if (typeof key !== 'string') continue;
-    idxLower.set(key.toLowerCase(), key);
-  }
-
-  const seen = new Set();
-  const focusTokens = [];
-  const pushToken = (candidate) => {
-    if (typeof candidate !== 'string') return;
-    const trimmed = candidate.trim();
-    if (!trimmed) return;
-    const lower = trimmed.toLowerCase();
-    const resolved = index.has(trimmed)
-      ? trimmed
-      : idxLower.get(lower) || null;
-    if (!resolved) return;
-    if (seen.has(lower)) return;
-    seen.add(lower);
-    focusTokens.push(resolved);
-  };
-
-  const recentPrompts = Array.isArray(memory.prompts) ? memory.prompts.slice(-3) : [];
-
-  if (Array.isArray(memory.lastPrompt?.tokens)) {
-    memory.lastPrompt.tokens.forEach(pushToken);
-  }
-  if (Array.isArray(memory.lastPrompt?.adjacencySeeds)) {
-    memory.lastPrompt.adjacencySeeds.forEach(pushToken);
-  }
-  if (Array.isArray(memory.lastAdjacency?.summary)) {
-    memory.lastAdjacency.summary.forEach(entry => pushToken(entry?.token));
-  }
-
-  for (let i = recentPrompts.length - 1; i >= 0 && focusTokens.length < 24; i--) {
-    const entry = recentPrompts[i];
-    if (!entry) continue;
-    if (Array.isArray(entry.tokens)) entry.tokens.forEach(pushToken);
-    if (Array.isArray(entry.adjacencySeeds)) entry.adjacencySeeds.forEach(pushToken);
-  }
-
-  return { index, focusTokens };
-}
-
-async function anchorsForMode(args, index) {
-  const overlay = applyConversationOverlay(index);
-  const effectiveIndex = overlay.index instanceof Map ? overlay.index : index;
-  const idx = effectiveIndex instanceof Map ? effectiveIndex : null;
-
-  const focusFromOverlay = Array.isArray(overlay.focusTokens) ? overlay.focusTokens : [];
-  if (!idx) {
-    return {
-      anchors: [],
-      idx: effectiveIndex,
-      glyphOnly: args?.mode === 'glyphs',
-      focusTokens: focusFromOverlay,
-    };
-  }
-
-  const idxLower = new Map();
-  for (const key of idx.keys()) {
-    if (typeof key !== 'string') continue;
-    idxLower.set(key.toLowerCase(), key);
-  }
-
-  const resolveToken = (candidate) => {
-    if (typeof candidate !== 'string') return null;
-    const trimmed = candidate.trim();
-    if (!trimmed) return null;
-    if (idx.has(trimmed)) return trimmed;
-    const lower = trimmed.toLowerCase();
-    if (idxLower.has(lower)) return idxLower.get(lower);
-    const record = idx.get(trimmed);
-    if (record && typeof record.token === 'string' && idx.has(record.token)) {
-      return record.token;
-    }
-    return null;
-  };
-
-  const anchorCap = getAnchorCap(idx) || 0;
-  const seenAnchors = new Set();
-  let anchors = [];
-  const missingTokens = [];
-  const addAnchor = (candidate, trackMissing = false) => {
-    const resolved = resolveToken(candidate);
-    if (!resolved) {
-      if (trackMissing && typeof candidate === 'string') {
-        missingTokens.push(candidate.trim());
-      }
-      return;
-    }
-    const key = resolved.toLowerCase();
-    if (seenAnchors.has(key)) return;
-    seenAnchors.add(key);
-    anchors.push(resolved);
-  };
-
-  if (args?.mode === 'tokens' && Array.isArray(args.tokens)) {
-    for (const token of args.tokens) addAnchor(token, true);
-  } else if (args?.mode === 'glyphs' && Array.isArray(args.glyphs)) {
-    loadLedger();
-    for (const glyph of args.glyphs) {
-      if (typeof glyph !== 'string' || !glyph.trim()) continue;
-      const mapped = GlyphToToken.get(glyph) || new Set();
-      if (mapped instanceof Set && mapped.size) {
-        for (const token of mapped) {
-          addAnchor(token, true);
-          if (anchorCap > 0 && anchors.length >= anchorCap) break;
-        }
-      } else {
-        addAnchor(glyph, true);
-      }
-      if (anchorCap > 0 && anchors.length >= anchorCap) break;
-    }
-  } else if (args?.mode === 'conversation') {
-    for (const token of focusFromOverlay) {
-      addAnchor(token, false);
-      if (anchorCap > 0 && anchors.length >= anchorCap) break;
-    }
-  }
-
-  if ((!Array.isArray(anchors) || !anchors.length) && idx instanceof Map) {
-    anchors = defaultAnchors(idx, anchorCap > 0 ? anchorCap : undefined);
-  }
-
-  if ((!Array.isArray(anchors) || !anchors.length) && idx instanceof Map) {
-    const fallback = Array.from(idx.keys());
-    anchors = anchorCap > 0 ? fallback.slice(0, anchorCap) : fallback;
-  }
-
-  if (anchorCap > 0 && anchors.length > anchorCap) {
-    anchors = anchors.slice(0, anchorCap);
-  }
-
-  const focusSet = new Set();
-  const focusTokens = [];
-  const addFocus = (candidate) => {
-    const resolved = resolveToken(candidate);
-    if (!resolved) return;
-    const key = resolved.toLowerCase();
-    if (focusSet.has(key)) return;
-    focusSet.add(key);
-    focusTokens.push(resolved);
-  };
-
-  focusFromOverlay.forEach(addFocus);
-  if (!focusTokens.length) {
-    anchors.slice(0, 12).forEach(addFocus);
-  }
-
-  if (missingTokens.length) {
-    const missingDisplay = missingTokens
-      .filter(Boolean)
-      .map(token => token.trim())
-      .filter(Boolean);
-    if (missingDisplay.length) {
-      logWarning(`Some requested tokens were not found in the index: ${missingDisplay.join(', ')}`);
-    }
-  }
-
-  return {
-    anchors,
-    idx: effectiveIndex,
-    glyphOnly: args?.mode === 'glyphs',
-    focusTokens,
-  };
 }
 
 function signatureFor(rec) {
@@ -3497,255 +2228,4984 @@ function ensureFullHiddenConnectivity(hiddenMap, nodeIterator, scoreMap) {
 function buildHiddenAdjacencyNetwork(graph, index, lowerMap, ensureNode, options = {}) {
   if (!(graph?.nodes instanceof Map) || !(index instanceof Map)) return null;
 
-  const limit = Math.max(1, Number(options?.limit) || DEFAULT_HIDDEN_ATTENTION_PER_TOKEN);
-  const maxDepth = Math.max(0, Number.isFinite(options?.depth) ? Math.floor(options.depth) : DEFAULT_HIDDEN_ADJACENCY_DEPTH);
-  const cap = Math.max(limit, Number.isFinite(options?.cap) ? Math.floor(options.cap) : DEFAULT_HIDDEN_ADJACENCY_CAP);
+  const limit = Number.isFinite(options.limit) && options.limit > 0
+    ? Math.floor(options.limit)
+    : DEFAULT_HIDDEN_ATTENTION_PER_TOKEN;
+  const depthLimit = Number.isFinite(options.depth) && options.depth >= 0
+    ? Math.floor(options.depth)
+    : DEFAULT_HIDDEN_ADJACENCY_DEPTH;
+  const baseCap = Number.isFinite(options.cap) && options.cap > 0
+    ? Math.floor(options.cap)
+    : DEFAULT_HIDDEN_ADJACENCY_CAP;
+  const cap = Math.max(baseCap, graph.nodes.size);
 
   const adjacency = new Map();
-  const scoreMap = new Map();
-  const visited = new Map();
+  const scores = new Map();
+  const seenDepth = new Map();
   const queue = [];
 
-  const seeds = gatherHiddenAdjacencySeeds(graph, index, lowerMap, cap);
-  if (!seeds.length) {
-    return {
-      adjacency,
-      scores: scoreMap,
-      stats: {
-        seeds: 0,
-        expansions: 0,
-        visitedTokens: 0,
-        limit,
-        depth: maxDepth,
-        cap,
-        edgeCount: 0,
-        hiddenTokens: 0,
-        componentCount: 0,
-        allSeedsConnected: true,
-      },
-    };
-  }
-
-  for (const seed of seeds) {
-    if (!seed || visited.has(seed)) continue;
-    visited.set(seed, 0);
-    queue.push({ token: seed, depth: 0 });
-    if (typeof ensureNode === 'function') {
-      ensureNode(seed, 0);
+  const ensureEntry = (token) => {
+    if (!token) return null;
+    let set = adjacency.get(token);
+    if (!(set instanceof Set)) {
+      set = new Set();
+      adjacency.set(token, set);
     }
+    return set;
+  };
+
+  const enqueue = (token, depthValue) => {
+    if (!token || seenDepth.size >= cap) return null;
+    const resolved = resolveTokenKey(token, index, lowerMap);
+    if (!resolved) return null;
+    const node = ensureNode(resolved, depthValue);
+    if (!node) return null;
+    ensureEntry(resolved);
+    const prevDepth = seenDepth.get(resolved);
+    if (!Number.isFinite(prevDepth) || prevDepth > depthValue) {
+      seenDepth.set(resolved, depthValue);
+      queue.push({ token: resolved, depth: depthValue });
+    }
+    return resolved;
+  };
+
+  const seeds = gatherHiddenAdjacencySeeds(graph, index, lowerMap, cap);
+  for (const seed of seeds) {
+    enqueue(seed, 0);
+    if (seenDepth.size >= cap) break;
   }
 
   let expansions = 0;
+  const maxExpansions = Math.max(cap * limit, graph.nodes.size * limit * Math.max(1, depthLimit || 1));
 
-  while (queue.length) {
-    const next = queue.shift();
-    if (!next) continue;
-    const { token, depth } = next;
-    if (!token) continue;
+  while (queue.length && expansions < maxExpansions) {
+    const current = queue.shift();
+    if (!current) continue;
+    const { token, depth } = current;
+    if (depth > depthLimit) continue;
     const record = index.get(token);
     if (!record) continue;
-
     const neighbors = topAttentionNeighborsForRecord(record, index, lowerMap, limit);
-    if (!Array.isArray(neighbors) || neighbors.length === 0) continue;
-
-    expansions += 1;
-
-    const ensureAdjacencySet = (key) => {
-      let bucket = adjacency.get(key);
-      if (!(bucket instanceof Set)) {
-        bucket = new Set();
-        adjacency.set(key, bucket);
-      }
-      return bucket;
-    };
-
     for (const neighbor of neighbors) {
-      const neighborToken = typeof neighbor?.token === 'string' ? neighbor.token : null;
-      if (!neighborToken || neighborToken === token) continue;
-
-      ensureAdjacencySet(token).add(neighborToken);
-      ensureAdjacencySet(neighborToken).add(token);
-
-      const rawWeight = Number.isFinite(neighbor?.score) ? neighbor.score : HIDDEN_EDGE_MIN_WEIGHT;
-      const normalizedWeight = normalizeHiddenWeight(rawWeight);
-      const key = token < neighborToken ? `${token}|${neighborToken}` : `${neighborToken}|${token}`;
-      const previous = scoreMap.get(key) ?? 0;
-      scoreMap.set(key, previous ? Math.max(previous, normalizedWeight) : normalizedWeight);
-
-      if (typeof ensureNode === 'function') {
-        ensureNode(neighborToken, depth + 1);
+      if (expansions >= maxExpansions) break;
+      const nextToken = neighbor?.token;
+      if (!nextToken || nextToken === token) continue;
+      const resolvedNeighbor = resolveTokenKey(nextToken, index, lowerMap);
+      if (!resolvedNeighbor) continue;
+      const neighborNode = ensureNode(resolvedNeighbor, depth + 1);
+      if (!neighborNode) continue;
+      ensureEntry(token).add(resolvedNeighbor);
+      ensureEntry(resolvedNeighbor).add(token);
+      const key = token < resolvedNeighbor ? `${token}|${resolvedNeighbor}` : `${resolvedNeighbor}|${token}`;
+      const normalizedScore = normalizeHiddenWeight(neighbor?.score);
+      if (!scores.has(key) || (scores.get(key) || 0) < normalizedScore) {
+        scores.set(key, normalizedScore);
       }
-
-      if (!visited.has(neighborToken) && depth < maxDepth && visited.size < cap) {
-        visited.set(neighborToken, depth + 1);
-        queue.push({ token: neighborToken, depth: depth + 1 });
+      const nextDepth = depth + 1;
+      const previousDepth = seenDepth.get(resolvedNeighbor);
+      if (nextDepth <= depthLimit && (!Number.isFinite(previousDepth) || previousDepth > nextDepth)) {
+        if (seenDepth.size < cap) {
+          seenDepth.set(resolvedNeighbor, nextDepth);
+          queue.push({ token: resolvedNeighbor, depth: nextDepth });
+        }
       }
+      expansions += 1;
     }
   }
 
-  const adjacencyNodes = Array.from(adjacency.keys());
-  ensureFullHiddenConnectivity(adjacency, adjacencyNodes, scoreMap);
+  ensureFullHiddenConnectivity(adjacency, [...graph.nodes.keys()], scores);
 
-  const seen = new Set();
-  let componentCount = 0;
-  for (const node of adjacencyNodes) {
-    if (!node || seen.has(node)) continue;
-    componentCount += 1;
-    const stack = [node];
-    while (stack.length) {
-      const current = stack.pop();
-      if (!current || seen.has(current)) continue;
-      seen.add(current);
-      const neighbors = adjacency.get(current);
-      if (!(neighbors instanceof Set)) continue;
-      for (const neighbor of neighbors) {
-        if (!neighbor || seen.has(neighbor)) continue;
-        stack.push(neighbor);
-      }
-    }
-  }
-
-  const stats = {
-    seeds: seeds.length,
-    expansions,
-    visitedTokens: visited.size,
-    limit,
-    depth: maxDepth,
-    cap,
-    edgeCount: scoreMap.size,
-    hiddenTokens: adjacency.size,
-    componentCount,
-    allSeedsConnected: componentCount <= 1,
+  return {
+    adjacency,
+    scores,
+    stats: {
+      seeds: seeds.length,
+      expansions,
+      nodes: adjacency.size,
+    },
   };
-
-  return { adjacency, scores: scoreMap, stats };
 }
 
-async function collectSymbolAwareTokens(text, baseTokens = [], label = 'default') {
-  const baseList = Array.isArray(baseTokens) ? baseTokens : [];
-  if (!SETTINGS.tokenizeSymbols) return baseList;
+function cloneRecordWithRelationships(rec) {
+  if (!rec || typeof rec !== 'object') {
+    return { token: '', relationships: {} };
+  }
+  const clone: any = Object.assign({}, rec);
+  const relationships = rec.relationships && typeof rec.relationships === 'object' ? rec.relationships : {};
+  const relClone: Record<string, any[]> = {};
+  for (const [type, edges] of Object.entries(relationships)) {
+    relClone[type] = Array.isArray(edges)
+      ? edges.map(edge => (edge && typeof edge === 'object' ? Object.assign({}, edge) : edge))
+      : [];
+  }
+  clone.relationships = relClone;
+  return clone;
+}
 
-  try {
-    const pipelineResult = await pipelineClient.run(text || '', SETTINGS);
-    const map = new Map();
+function normalizeEdgeRecord(edge) {
+  if (!edge || typeof edge !== 'object') return null;
+  const token = typeof edge.token === 'string' ? edge.token.trim() : '';
+  if (!token) return null;
+  const weightRaw = Number.isFinite(edge.weight) ? Number(edge.weight) : Number(edge.w);
+  const weight = Number.isFinite(weightRaw) ? weightRaw : 0;
+  const copy: any = Object.assign({}, edge, { token });
+  copy.weight = weight;
+  if (!Number.isFinite(copy.w)) copy.w = weight;
+  return copy;
+}
 
-    for (const token of baseList) {
-      if (!token) continue;
-      const normalized = String(token).toLowerCase();
-      if (!normalized || map.has(`word:${normalized}`)) continue;
-      map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
+function mergeEdgeLists(existingEdges = [], newEdges = []) {
+  const merged = new Map();
+  for (const edge of existingEdges) {
+    const normalized = normalizeEdgeRecord(edge);
+    if (!normalized) continue;
+    merged.set(normalized.token, normalized);
+  }
+  for (const edge of newEdges) {
+    const normalized = normalizeEdgeRecord(edge);
+    if (!normalized) continue;
+    const prev = merged.get(normalized.token);
+    if (!prev || (normalized.weight ?? 0) > (prev.weight ?? 0)) {
+      merged.set(normalized.token, Object.assign({}, prev || {}, normalized));
     }
+  }
+  return [...merged.values()].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+}
 
-    for (const token of pipelineResult.tokens) {
+function resolveHlsfRelationshipBudget(overrideLimit = null) {
+  if (overrideLimit === Infinity) return Infinity;
+  if (typeof overrideLimit === 'string') {
+    const trimmed = overrideLimit.trim();
+    if (trimmed.toLowerCase() === 'infinity') return Infinity;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return Math.max(0, Math.floor(numeric));
+    }
+  } else if (Number.isFinite(overrideLimit)) {
+    return Math.max(0, Math.floor(Number(overrideLimit)));
+  }
+
+  if (typeof window !== 'undefined') {
+    const config = window?.HLSF?.config || {};
+    const raw = config.relationshipBudget ?? config.relationshipLimit;
+    if (raw === Infinity) return Infinity;
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
+      }
+      if (trimmed.toLowerCase() === 'infinity') return Infinity;
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) {
+        return Math.max(0, Math.floor(numeric));
+      }
+      return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
+    }
+    if (Number.isFinite(raw)) {
+      return Math.max(0, Math.floor(Number(raw)));
+    }
+  }
+
+  return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
+}
+
+function countRecordRelationships(record) {
+  if (!record || typeof record !== 'object') return 0;
+  const relationships = record.relationships && typeof record.relationships === 'object'
+    ? record.relationships
+    : {};
+  let total = 0;
+  for (const edges of Object.values(relationships)) {
+    if (!Array.isArray(edges)) continue;
+    total += edges.length;
+  }
+  return total;
+}
+
+function trimRecordRelationships(record, maxEdges) {
+  if (!record || typeof record !== 'object') {
+    return { removed: 0, kept: 0 };
+  }
+
+  const relationships = record.relationships && typeof record.relationships === 'object'
+    ? record.relationships
+    : {};
+
+  const collected = [];
+  for (const [rel, edges] of Object.entries(relationships)) {
+    if (!Array.isArray(edges)) continue;
+    for (const edge of edges) {
+      if (!edge || typeof edge.token !== 'string') continue;
+      const token = edge.token.trim();
       if (!token) continue;
-      if (token.kind === 'word') {
-        const normalized = token.t.toLowerCase();
-        if (!normalized || map.has(`word:${normalized}`)) continue;
-        map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
-      } else if (token.kind === 'sym') {
-        const key = `sym:${token.t}`;
-        if (map.has(key)) continue;
-        map.set(key, {
-          token: token.t,
-          kind: 'sym',
-          cat: token.cat || null,
-          index: token.i,
-          span: token.n,
+      const weight = Number(edge.weight);
+      collected.push({ rel, token, weight: Number.isFinite(weight) ? weight : 0 });
+    }
+  }
+
+  const allowed = Math.max(0, Math.floor(Number.isFinite(maxEdges) ? maxEdges : 0));
+  if (collected.length <= allowed) {
+    for (const edges of Object.values(relationships)) {
+      if (Array.isArray(edges)) {
+        edges.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+      }
+    }
+    record.relationships = relationships;
+    record.total_relationships = collected.length;
+    if ('relationshipTypes' in record) {
+      record.relationshipTypes = typeof record.relationshipTypes === 'number'
+        ? Object.keys(relationships).length
+        : Object.keys(relationships);
+    }
+    if ('relationship_types' in record) {
+      record.relationship_types = typeof record.relationship_types === 'number'
+        ? Object.keys(relationships).length
+        : Object.keys(relationships);
+    }
+    return { removed: 0, kept: collected.length };
+  }
+
+  collected.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  const selected = collected.slice(0, allowed);
+  const next = {};
+  for (const entry of selected) {
+    if (!next[entry.rel]) next[entry.rel] = [];
+    next[entry.rel].push({ token: entry.token, weight: entry.weight });
+  }
+  for (const edges of Object.values(next)) {
+    edges.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+  }
+
+  record.relationships = next;
+  record.total_relationships = selected.length;
+  const nextKeys = Object.keys(next);
+  if ('relationshipTypes' in record) {
+    record.relationshipTypes = typeof record.relationshipTypes === 'number'
+      ? nextKeys.length
+      : nextKeys;
+  }
+  if ('relationship_types' in record) {
+    record.relationship_types = typeof record.relationship_types === 'number'
+      ? nextKeys.length
+      : nextKeys;
+  }
+
+  return { removed: collected.length - selected.length, kept: selected.length };
+}
+
+function resolveRecordTimestamp(record, fallbackIndex = 0) {
+  if (!record || typeof record !== 'object') {
+    return Number.MIN_SAFE_INTEGER;
+  }
+  const candidates = [record.cached_at, record.updated_at, record.last_ingested_at, record.timestamp];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return Number.MAX_SAFE_INTEGER - fallbackIndex;
+}
+
+function enforceLocalRelationshipBudget(options = {}) {
+  const { limit = null, persist = true } = options || {};
+  const resolvedLimit = resolveHlsfRelationshipBudget(limit);
+  if (!Number.isFinite(resolvedLimit) || resolvedLimit < 0) {
+    return false;
+  }
+
+  const db = window?.HLSF?.dbCache;
+  if (!db || !Array.isArray(db.full_token_data) || db.full_token_data.length === 0) {
+    return false;
+  }
+
+  const records = db.full_token_data;
+  const metrics = [];
+  let totalRelationships = 0;
+
+  for (let idx = 0; idx < records.length; idx += 1) {
+    const record = records[idx];
+    if (!record || typeof record.token !== 'string') continue;
+    const count = countRecordRelationships(record);
+    if (count <= 0) continue;
+    totalRelationships += count;
+    metrics.push({
+      record,
+      token: record.token,
+      count,
+      timestamp: resolveRecordTimestamp(record, idx),
+      index: idx,
+    });
+  }
+
+  if (totalRelationships <= resolvedLimit) {
+    return false;
+  }
+
+  metrics.sort((a, b) => {
+    if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+    return b.index - a.index;
+  });
+
+  let budgetUsed = 0;
+  const trimmedTokens = new Map();
+
+  for (const entry of metrics) {
+    const remaining = resolvedLimit - budgetUsed;
+    if (remaining <= 0) {
+      const { removed } = trimRecordRelationships(entry.record, 0);
+      if (removed > 0) {
+        trimmedTokens.set(entry.token, entry.record);
+      }
+      continue;
+    }
+    if (entry.count <= remaining) {
+      budgetUsed += entry.count;
+      continue;
+    }
+    const { removed, kept } = trimRecordRelationships(entry.record, remaining);
+    budgetUsed += kept;
+    if (removed > 0) {
+      trimmedTokens.set(entry.token, entry.record);
+    }
+  }
+
+  if (!trimmedTokens.size) {
+    return false;
+  }
+
+  for (const [token, record] of trimmedTokens.entries()) {
+    if (!token) continue;
+    const cacheKey = getCacheKey(token);
+    const payload = JSON.stringify(record);
+    const persistedRecord = safeStorageSet(cacheKey, payload);
+    if (!persistedRecord && !memoryStorageFallback.has(cacheKey)) {
+      memoryStorageFallback.set(cacheKey, payload);
+    }
+  }
+
+  if (persist !== false) {
+    try {
+      safeStorageSet(DB_RAW_KEY, JSON.stringify(db));
+    } catch (err) {
+      console.warn('Failed to persist DB snapshot after relationship pruning:', err);
+    }
+  }
+
+  return true;
+}
+
+function applyConversationOverlay(index) {
+  if (!(index instanceof Map)) {
+    return { index, focusTokens: [] };
+  }
+
+  const memory = ensureLocalHlsfMemory();
+  const summaries: LocalHlsfAdjacencySummary[] = [];
+  if (memory?.adjacencySummaries instanceof Map) {
+    for (const value of memory.adjacencySummaries.values()) {
+      if (value && typeof value === 'object') summaries.push(value);
+    }
+  }
+  const lastAdjacency = memory?.lastAdjacency && typeof memory.lastAdjacency === 'object'
+    ? memory.lastAdjacency
+    : null;
+  if (lastAdjacency) summaries.push(lastAdjacency);
+
+  if (!summaries.length) {
+    return { index, focusTokens: [] };
+  }
+
+  const augmented = new Map(index);
+  const caseMap = buildLowercaseIndexMap(augmented);
+  const modified = new Set();
+  const focusMap = new Map();
+
+  const ensureRecord = (tokenRaw) => {
+    if (!tokenRaw) return null;
+    const base = String(tokenRaw).trim();
+    if (!base) return null;
+    const lower = base.toLowerCase();
+    const existingKey = augmented.has(base)
+      ? base
+      : augmented.has(lower)
+        ? lower
+        : caseMap.get(lower) || base;
+    let record = augmented.get(existingKey);
+    if (record && !modified.has(existingKey)) {
+      record = cloneRecordWithRelationships(record);
+      augmented.set(existingKey, record);
+      modified.add(existingKey);
+    } else if (!record) {
+      record = { token: existingKey, relationships: {} };
+      augmented.set(existingKey, record);
+      modified.add(existingKey);
+    }
+    if (!record.relationships || typeof record.relationships !== 'object') {
+      record.relationships = {};
+    }
+    if (lower && !caseMap.has(lower)) caseMap.set(lower, existingKey);
+    return { key: existingKey, record };
+  };
+
+  const mergeSummary = (summary, captureFocus = false) => {
+    if (!summary || !Array.isArray(summary.summary)) return;
+    for (const item of summary.summary) {
+      if (!item || typeof item.token !== 'string') continue;
+      const ensured = ensureRecord(item.token);
+      if (!ensured) continue;
+      const { key, record } = ensured;
+      const relationships = item.relationships && typeof item.relationships === 'object'
+        ? item.relationships
+        : {};
+      for (const [relType, edges] of Object.entries(relationships)) {
+        if (!Array.isArray(edges) || !edges.length) continue;
+        const normalizedEdges = [];
+        for (const edge of edges) {
+          if (!edge || typeof edge.token !== 'string') continue;
+          const neighbor = ensureRecord(edge.token);
+          if (!neighbor) continue;
+          const mergedEdge = normalizeEdgeRecord(Object.assign({}, edge, { token: neighbor.key }));
+          if (mergedEdge) normalizedEdges.push(mergedEdge);
+        }
+        const existing = Array.isArray(record.relationships[relType]) ? record.relationships[relType] : [];
+        record.relationships[relType] = mergeEdgeLists(existing, normalizedEdges);
+      }
+
+      if (Number.isFinite(item.attention)) {
+        const att = Number(item.attention);
+        const existingAttention = Number(record.attention_score);
+        record.attention_score = Number.isFinite(existingAttention)
+          ? Math.max(existingAttention, att)
+          : att;
+        if (captureFocus && att > 0) {
+          const prev = focusMap.get(key) || 0;
+          if (att > prev) focusMap.set(key, att);
+        }
+      }
+
+      if (Number.isFinite(item.totalRelationships)) {
+        const total = Number(item.totalRelationships);
+        const existingTotal = Number(record.total_relationships);
+        if (!Number.isFinite(existingTotal) || total > existingTotal) {
+          record.total_relationships = total;
+        }
+      }
+    }
+  };
+
+  for (const summary of summaries) {
+    const captureFocus = lastAdjacency === summary;
+    mergeSummary(summary, captureFocus);
+  }
+
+  const focusTokens = [...focusMap.entries()]
+    .sort((a, b) => (b[1] || 0) - (a[1] || 0))
+    .map(([token]) => token)
+    .slice(0, 12);
+
+  return { index: augmented, focusTokens };
+}
+
+function anchorsForMode(args, idx){
+  let index = idx;
+  if (!(index instanceof Map)) {
+    const db = getDb();
+    if (!db) throw new Error('No DB loaded');
+    loadGlyphMaps(db);
+    index = buildIndex(db);
+  }
+
+  const overlay = applyConversationOverlay(index);
+  index = overlay.index instanceof Map ? overlay.index : index;
+  const focusTokens = Array.isArray(overlay.focusTokens) ? overlay.focusTokens : [];
+
+  if (args.mode === 'conversation') {
+    const conv = [...(Session?.tokens || [])].filter(t => index.has(t));
+    const anchors = conv.length ? conv : defaultAnchors(index, 32);
+    return { anchors, idx: index, focusTokens };
+  }
+
+  if (args.mode === 'tokens') {
+    let anchors = args.tokens.filter(t => index.has(t));
+    if (!anchors.length) anchors = defaultAnchors(index, 32);
+    return { anchors, idx: index, focusTokens };
+  }
+
+  if (args.mode === 'glyphs') {
+    const glyphTokens = [];
+    for (const glyph of args.glyphs) {
+      const val = GlyphToToken.get(glyph);
+      if (!val) continue;
+      if (val instanceof Set) glyphTokens.push(...val);
+      else if (Array.isArray(val)) glyphTokens.push(...val);
+      else glyphTokens.push(val);
+    }
+    const toks = glyphTokens.filter(t => index.has(t));
+    const anchors = toks.length ? toks : defaultAnchors(index, 32);
+    return { anchors, idx: index, glyphOnly: true, focusTokens };
+  }
+
+  const cap = getAnchorCap(index);
+  const limit = cap > 0 ? cap : index.size;
+  const scope = window.HLSF?.config?.metricScope;
+  if (scope === METRIC_SCOPE.RUN) {
+    const liveAnchors = collectWorkingMemoryAnchors(index, limit);
+    if (liveAnchors.length) {
+      return { anchors: liveAnchors, idx: index, focusTokens };
+    }
+  }
+  return { anchors: defaultAnchors(index, limit), idx: index, focusTokens };
+}
+
+function nodeLabel(token, glyphOnly = false) {
+  const glyph = TokenToGlyph.get(token);
+  if (glyphOnly && glyph) return glyph;
+  return glyph || token;
+}
+
+function edgeLabel(rtype) {
+  if (typeof rtype !== 'string') return '';
+  const cleaned = rtype.trim();
+  if (!cleaned) return '';
+
+  const normalized = normRelKey(cleaned);
+  if (normalized) return REL_EN[normalized] || '';
+
+  const withoutGlyph = cleaned.replace(/^[\p{S}\p{P}]+\s*/u, '');
+  return withoutGlyph || cleaned;
+}
+
+function legacyPositions(graph, width, height, scale, centerX, centerY) {
+  const anchorList = Array.isArray(graph?.anchors) && graph.anchors.length
+    ? graph.anchors
+    : Array.isArray(graph?.seeds) && graph.seeds.length
+      ? graph.seeds
+      : [...graph.nodes.keys()].slice(0, 1);
+  const pos = new Map();
+  const rotation = 0;
+  const Rc = Math.min(width, height) * 0.35 * scale;
+  const cx = Number.isFinite(centerX) ? centerX : width / 2;
+  const cy = Number.isFinite(centerY) ? centerY : height / 2;
+
+  anchorList.forEach((token, idx) => {
+    const angle = (idx / Math.max(1, anchorList.length)) * Math.PI * 2 + rotation;
+    const x = cx + Rc * Math.cos(angle);
+    const y = cy + Rc * Math.sin(angle);
+    pos.set(token, { x, y });
+  });
+
+  const groupByRoot = new Map();
+  const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
+  edges.forEach(edge => {
+    if (!groupByRoot.has(edge.from)) groupByRoot.set(edge.from, []);
+    groupByRoot.get(edge.from).push(edge);
+  });
+
+  for (const [root, edges] of groupByRoot.entries()) {
+    const base = pos.get(root) || { x: cx, y: cy };
+    const R = Math.min(width, height) * 0.18 * scale;
+    const sorted = [...edges].sort((a, b) => b.w - a.w);
+    const denom = Math.max(1, sorted.length - 1);
+    sorted.forEach((edge, i) => {
+      const theta = Math.PI * (i / denom);
+      const x = base.x + R * Math.cos(theta);
+      const y = base.y - R * Math.sin(theta);
+      if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
+    });
+  }
+
+  return pos;
+}
+
+function clusterLevelLayout(graph, width, height, scale, centerX, centerY) {
+  const rot = 0;
+  const cx = Number.isFinite(centerX) ? centerX : width / 2;
+  const cy = Number.isFinite(centerY) ? centerY : height / 2;
+  let Lmax = 0;
+  for (const node of graph.nodes.values()) {
+    const layer = node?.layer;
+    if (Number.isFinite(layer)) Lmax = Math.max(Lmax, layer | 0);
+  }
+
+  const layerCluster = new Map();
+  for (const [token, node] of graph.nodes) {
+    const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
+    const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+    const key = `${layer}:${cluster}`;
+    const arr = layerCluster.get(key) || [];
+    arr.push(token);
+    layerCluster.set(key, arr);
+  }
+
+  const layers = Array.from({ length: Lmax + 1 }, () => new Map());
+  for (const [key, toks] of layerCluster.entries()) {
+    const [layerStr, clusterStr] = key.split(':');
+    const layer = Number(layerStr) || 0;
+    const cluster = Number(clusterStr) || 0;
+    const bucket = layers[layer];
+    toks.sort();
+    bucket.set(cluster, toks);
+  }
+
+  const Rmax = Math.min(width, height) * 0.45 * scale;
+  const dr = Rmax / Math.max(1, Lmax + 1);
+  const pos = new Map();
+
+  for (let layer = 0; layer < layers.length; layer++) {
+    const entries = [...layers[layer].entries()]
+      .sort((a, b) => b[1].length - a[1].length || a[0] - b[0]);
+    const R = Math.max(20, dr * (layer + 1));
+    const sectors = Math.max(1, entries.length);
+    for (let s = 0; s < entries.length; s++) {
+      const tokens = entries[s][1];
+      const phi0 = rot + (s / sectors) * Math.PI * 2;
+      const span = (Math.PI * 2) / sectors;
+      const N = tokens.length;
+      for (let i = 0; i < N; i++) {
+        const theta = phi0 + (i / Math.max(1, N)) * span;
+        const wobble = i % 2 ? 0.92 : 0.98;
+        const r = R * wobble;
+        pos.set(tokens[i], {
+          x: cx + r * Math.cos(theta),
+          y: cy + r * Math.sin(theta)
         });
       }
     }
+  }
+  return pos;
+}
 
-    const combined = Array.from(map.values());
-    const metricsBucket = recordSymbolMetrics(label, pipelineResult, baseList.length);
-    if (metricsBucket) {
-      metricsBucket.lastTokens = combined;
-      metricsBucket.lastPipeline = pipelineResult;
-    } else {
-      const fallbackState = typeof globalThis !== 'undefined' ? (globalThis as any).state : undefined;
-      if (fallbackState?.symbolMetrics) {
-        fallbackState.symbolMetrics.lastTokens = combined;
-        fallbackState.symbolMetrics.lastPipeline = pipelineResult;
-      }
+function ringPositions(graph, width, height, scale, centerX, centerY) {
+  const cx = Number.isFinite(centerX) ? centerX : width / 2;
+  const cy = Number.isFinite(centerY) ? centerY : height / 2;
+  let L = 0;
+  for (const node of graph.nodes.values()) {
+    const rawLayer = node && Number.isFinite(node.layer) ? node.layer : 0;
+    const layer = Math.max(0, Math.floor(rawLayer));
+    if (layer > L) L = layer;
+  }
+
+  const rings = Array.from({ length: L + 1 }, () => []);
+  for (const [token, node] of graph.nodes.entries()) {
+    const layer = node && Number.isFinite(node.layer)
+      ? Math.max(0, Math.floor(node.layer))
+      : 0;
+    rings[layer].push({ token, node });
+  }
+
+  for (const ring of rings) {
+    ring.sort((a, b) => ((b.node?.degree || 0) - (a.node?.degree || 0)) || a.token.localeCompare(b.token));
+  }
+
+  const Rmax = Math.min(width, height) * 0.42 * scale;
+  const dr = Rmax / Math.max(1, L + 1);
+  const pos = new Map();
+  const rotation = 0;
+
+  for (let layer = 0; layer < rings.length; layer++) {
+    const ring = rings[layer];
+    if (!ring.length) continue;
+    const R = Math.max(20, dr * (layer + 1));
+    const N = ring.length;
+    for (let i = 0; i < N; i++) {
+      const theta = (i / N) * 2 * Math.PI + rotation;
+      pos.set(ring[i].token, {
+        x: cx + R * Math.cos(theta),
+        y: cy + R * Math.sin(theta)
+      });
     }
-    return combined;
-  } catch (error) {
-    console.warn('Symbol-aware tokenization failed:', error);
-    return baseList;
+  }
+
+  return pos;
+}
+
+function drawClusterOverlays(ctx, graph, positions) {
+  const byLC = new Map();
+  for (const [token, node] of graph.nodes) {
+    const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
+    const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+    const key = `${layer}:${cluster}`;
+    const arr = byLC.get(key) || [];
+    arr.push(token);
+    byLC.set(key, arr);
+  }
+  ctx.save();
+  for (const [key, tokens] of byLC) {
+    if (tokens.length < 3) continue;
+    const pts = tokens.map(t => positions.get(t)).filter(Boolean);
+    if (pts.length < 3) continue;
+    const color = paletteColor(`cluster-${key}`);
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function colorWithAlpha(color, alpha) {
+  const normalized = Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 0));
+  if (typeof color !== 'string' || !color) {
+    return `rgba(0, 0, 0, ${normalized})`;
+  }
+  if (color.startsWith('#')) {
+    let hex = color.slice(1);
+    if (hex.length === 3) {
+      hex = hex.split('').map((ch) => ch + ch).join('');
+    }
+    if (hex.length >= 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${normalized})`;
+    }
+  }
+  const rgbaMatch = color.match(/rgba?\(([^)]+)\)/i);
+  if (rgbaMatch) {
+    const [r = '0', g = '0', b = '0'] = rgbaMatch[1].split(',').map((c) => c.trim());
+    return `rgba(${r}, ${g}, ${b}, ${normalized})`;
+  }
+  return color;
+}
+
+function drawRoundedRectPath(ctx, x, y, width, height, radius) {
+  const r = Math.max(0, Math.min(radius, Math.min(width / 2, height / 2)));
+  if (typeof ctx.roundRect === 'function') {
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, height, r);
+    return;
+  }
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function renderNodeLabelOverlay(ctx, text, centerX, baselineY, radius, theme, nodeColor, inFocus, alphaValue) {
+  if (!text) return;
+  const metrics = ctx.measureText(text);
+  const width = metrics.width || 0;
+  const ascent = metrics.actualBoundingBoxAscent || 9;
+  const descent = metrics.actualBoundingBoxDescent || 3;
+  const padX = 6;
+  const padY = 4;
+  const boxWidth = width + padX * 2;
+  const boxHeight = ascent + descent + padY * 2;
+  const boxX = centerX - boxWidth / 2;
+  const boxY = baselineY - ascent - padY;
+  const overlayAlpha = Math.max(0.2, Math.min(1, (Number.isFinite(alphaValue) ? alphaValue : 0.1) * 1.2));
+  const baseColor = inFocus
+    ? 'rgba(0, 255, 153, 0.35)'
+    : (theme.bg === '#fff'
+        ? 'rgba(255, 255, 255, 0.82)'
+        : 'rgba(0, 0, 0, 0.72)');
+
+  ctx.save();
+  ctx.globalAlpha = overlayAlpha;
+  ctx.fillStyle = baseColor;
+  drawRoundedRectPath(ctx, boxX, boxY, boxWidth, boxHeight, Math.min(12, boxHeight / 2));
+  ctx.fill();
+  ctx.restore();
+
+  const trailTop = boxY + boxHeight - 1;
+  const trailBottom = baselineY + radius + 6;
+  if (trailBottom > trailTop) {
+    ctx.save();
+    const gradient = ctx.createLinearGradient(0, trailTop, 0, trailBottom);
+    gradient.addColorStop(0, colorWithAlpha(baseColor, overlayAlpha * 0.85));
+    gradient.addColorStop(1, colorWithAlpha(nodeColor, 0));
+    ctx.globalAlpha = Math.min(1, Number.isFinite(alphaValue) ? alphaValue : 0.1);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(boxX + padX, trailTop, Math.max(0, boxWidth - padX * 2), trailBottom - trailTop);
+    ctx.restore();
   }
 }
 
-function recordSymbolMetrics(label, pipelineResult, baseTokenCount = 0) {
-  if (!pipelineResult || typeof pipelineResult !== 'object') return null;
+function drawComposite(graph, opts = {}) {
+  if (!window.HLSF || typeof window.HLSF !== 'object') window.HLSF = {};
+  if (!window.HLSF.state || typeof window.HLSF.state !== 'object') {
+    window.HLSF.state = {};
+  }
+  if (!(window.HLSF.state.patches instanceof Map)) {
+    window.HLSF.state.patches = new Map();
+  }
+  if (!Number.isFinite(window.HLSF.state.emergentRot)) {
+    window.HLSF.state.emergentRot = 0;
+  }
 
-  const globalState = typeof globalThis !== 'undefined' ? (globalThis as any).state : undefined;
-  const rootState = (globalState && typeof globalState === 'object') ? globalState : window.CognitionEngine?.state;
-  if (!rootState || typeof rootState !== 'object') return null;
+  const cfg = window.HLSF.config;
+  const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
+  if (!canvas) {
+    console.warn('HLSF canvas element not found');
+    return;
+  }
+  const ctx = window.HLSF.ctx || (window.HLSF.ctx = canvas.getContext('2d'));
+  const dpr = window.devicePixelRatio || 1;
+  const displayWidth = canvas.clientWidth || canvas.width || 0;
+  const displayHeight = canvas.clientHeight || canvas.height || 0;
+  const bufferWidth = Math.max(1, Math.round(displayWidth * dpr));
+  const bufferHeight = Math.max(1, Math.round(displayHeight * dpr));
+  if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
+    canvas.width = bufferWidth;
+    canvas.height = bufferHeight;
+  }
+  const width = displayWidth || canvas.width / dpr;
+  const height = displayHeight || canvas.height / dpr;
+  const theme = cfg.whiteBg
+    ? { bg: '#fff', fg: '#000', hint: '#444' }
+    : { bg: '#000', fg: '#fff', hint: '#bbb' };
+  const edgeColorMode = normalizeEdgeColorMode(cfg.edgeColorMode);
+  const edgeWidthControl = document.getElementById('edgew');
+  const edgeWidth = clampEdgeWidth(cfg.edgeWidth);
+  const nodeScale = clampNodeSize(cfg.nodeSize);
+  const showGlow = cfg.showNodeGlow === true;
 
-  const bucket = (rootState.symbolMetrics = rootState.symbolMetrics || {
+  if (!window.HLSF.__centerInit) {
+    window.HLSF.view.x = width / 2;
+    window.HLSF.view.y = height / 2;
+    syncViewToConfig();
+    window.HLSF.__centerInit = true;
+  }
+
+  syncViewToConfig();
+  const view = window.HLSF.view;
+  const zoom = Number.isFinite(view.scale) ? view.scale : 1;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1.0;
+  ctx.fillStyle = theme.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.translate(view.x, view.y);
+  ctx.scale(zoom, zoom);
+  ctx.strokeStyle = theme.fg;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const controlValue = edgeWidthControl ? parseFloat(edgeWidthControl.value) : NaN;
+  const edgeWidthValue = Number.isFinite(controlValue) ? controlValue : edgeWidth;
+  const safeZoom = Math.max(zoom, 1e-4);
+  const zoomAttenuation = Math.max(0.2, Math.min(5, 1 / Math.sqrt(safeZoom)));
+  ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
+  const fontScale = Math.max(0.35, Math.min(3, zoomAttenuation));
+  ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
+
+  const layoutScale = 1;
+  const layoutMode = normalizeLayout(window.HLSF.config.layout);
+  let pos;
+  if (graph.live) {
+    pos = ringPositions(graph, width, height, layoutScale, 0, 0);
+  } else if (layoutMode === 'dimension' && graph.dimensionLayout) {
+    const dim = graph.dimensionLayout;
+    const radialMax = Math.max(1, dim.maxRadius || 1);
+    const radiusScale = Math.min(width, height) * 0.42 * layoutScale;
+    pos = new Map();
+    for (const [token, entry] of dim.positions.entries()) {
+      const radius = (entry?.radius || 1) / radialMax * radiusScale;
+      const angle = entry?.angle || 0;
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      pos.set(token, { x, y });
+    }
+  } else if (layoutMode === 'affinity') {
+    pos = clusterLevelLayout(graph, width, height, layoutScale, 0, 0);
+  } else if (layoutMode === 'layered') {
+    pos = ringPositions(graph, width, height, layoutScale, 0, 0);
+  } else {
+    pos = legacyPositions(graph, width, height, layoutScale, 0, 0);
+  }
+
+  const patches = computePatches(graph, pos);
+  window.HLSF.state.patches = patches;
+  const rotatedPositions = new Map();
+  for (const [token, base] of pos.entries()) {
+    const node = graph.nodes.get(token);
+    rotatedPositions.set(token, rotatedPos(token, base, node));
+  }
+
+  if (layoutMode === 'affinity') {
+    drawClusterOverlays(ctx, graph, rotatedPositions);
+  }
+
+  if (layoutMode === 'dimension' && graph.dimensionLayout) {
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    const polyWidth = Math.max(0.01, Math.min(1, edgeWidthValue * zoomAttenuation)) * dpr;
+    ctx.lineWidth = polyWidth;
+    ctx.strokeStyle = theme.hint;
+    const cells = Array.isArray(graph.dimensionLayout.cells) ? graph.dimensionLayout.cells : [];
+    for (const cell of cells) {
+      const tokens = Array.isArray(cell?.tokens) ? cell.tokens : [];
+      const pts = tokens
+        .map(t => rotatedPositions.get(t.token))
+        .filter(Boolean);
+      if (pts.length < 3) continue;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  const glyphOnly = opts.glyphOnly === true;
+  const focusSet = window.HLSF?.state?.documentFocus instanceof Set
+    ? window.HLSF.state.documentFocus
+    : null;
+
+  ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
+
+  const hitAreas = new Map();
+
+  const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
+  updateRelationLegend(graph, edges, edgeColorMode);
+  const renderState = window.HLSF.rendering && typeof window.HLSF.rendering === 'object'
+    ? window.HLSF.rendering
+    : (window.HLSF.rendering = {});
+
+  const labelEntries = [];
+  let visibleEdgeCount = 0;
+  const labelEnabled = cfg.showRelationLabels !== false;
+
+  if (cfg.showEdges !== false) {
+    const batches = new Map();
+    for (const edge of edges) {
+      const fromPos = rotatedPositions.get(edge.from) || rotatedPositions.get(edge.to);
+      const toPos = rotatedPositions.get(edge.to);
+      if (!fromPos || !toPos) continue;
+      const dxWorld = toPos.x - fromPos.x;
+      const dyWorld = toPos.y - fromPos.y;
+      const viewScale = window.HLSF?.view?.scale ?? zoom;
+      const dx = dxWorld * viewScale;
+      const dy = dyWorld * viewScale;
+      if ((dx * dx + dy * dy) < 0.25) continue;
+      visibleEdgeCount++;
+      const fromFocus = focusSet && focusSet.has((edge.from || '').toLowerCase());
+      const toFocus = focusSet && focusSet.has((edge.to || '').toLowerCase());
+      const edgeFocus = fromFocus && toFocus;
+      if (labelEnabled) {
+        const descriptor = resolveEdgeRelationDescriptor(edge);
+        if (descriptor) {
+          labelEntries.push({
+            from: fromPos,
+            to: toPos,
+            label: descriptor.label,
+            relKey: descriptor.glyph,
+            focus: edgeFocus,
+          });
+        }
+      }
+      const strokeColor = edgeFocus ? '#00ffcc' : compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
+      if (!batches.has(strokeColor)) batches.set(strokeColor, []);
+      batches.get(strokeColor).push({ from: fromPos, to: toPos, edge, edgeFocus });
+    }
+    for (const [color, edges] of batches.entries()) {
+      ctx.strokeStyle = color;
+      for (const { from, to, edge, edgeFocus } of edges) {
+        ctx.globalAlpha = edgeFocus ? Math.min(1, baseAlpha() * 1.5) : edgeAlphaFromWeight(edge.w);
+        ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation * (edgeFocus ? 1.8 : 1)) * dpr;
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1.0;
+    ctx.strokeStyle = theme.fg;
+    ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
+  } else {
+    visibleEdgeCount = 0;
+  }
+
+  const labelThreshold = Number.isFinite(cfg.edgeLabelDensityThreshold)
+    ? Math.max(1, Math.round(cfg.edgeLabelDensityThreshold))
+    : EDGE_LABEL_DENSITY_THRESHOLD;
+  const highDensity = visibleEdgeCount > labelThreshold;
+  const canRenderEdgeLabels = cfg.showEdges !== false
+    && labelEnabled
+    && !highDensity
+    && labelEntries.length > 0;
+
+  if (renderState) {
+    renderState.edgeLabelSuppressed = cfg.showEdges === false || !labelEnabled || highDensity;
+    renderState.edgeLabelCount = labelEntries.length;
+    renderState.edgeCount = visibleEdgeCount;
+    renderState.edgeLabelThreshold = labelThreshold;
+    renderState.edgeLabelDense = highDensity;
+  }
+
+  if (canRenderEdgeLabels) {
+    renderEdgeRelationLabels(ctx, labelEntries, {
+      theme,
+      fontScale,
+      alpha: baseAlpha(),
+    });
+  }
+
+  for (const [token, data] of graph.nodes.entries()) {
+    const position = rotatedPositions.get(token);
+    if (!position) continue;
+    const freq = typeof data.f === 'number' ? data.f : 1;
+    const nodeKey = (token || '').toLowerCase();
+    const inFocus = focusSet && focusSet.has(nodeKey);
+    const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * nodeScale * (inFocus ? 1.6 : 1));
+    const nodeColor = inFocus
+      ? '#00ff88'
+      : data?.color
+        || (data?.status === 'cached' ? '#44ff44' : data?.status === 'unknown' ? '#ff8800' : theme.fg);
+    const alphaValue = baseAlpha();
+    ctx.save();
+    if (showGlow) {
+      ctx.shadowColor = inFocus ? 'rgba(0, 255, 200, 0.65)' : 'rgba(0, 255, 136, 0.35)';
+      ctx.shadowBlur = (inFocus ? 24 : 14) * Math.max(1, zoom);
+    }
+    ctx.beginPath();
+    ctx.fillStyle = nodeColor;
+    ctx.globalAlpha = alphaValue;
+    ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = alphaValue;
+    ctx.strokeStyle = inFocus ? '#00ffcc' : theme.fg;
+    ctx.beginPath();
+    ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    ctx.globalAlpha = 1.0;
+    if (cfg.showLabels !== false) {
+      const labelText = nodeLabel(token, glyphOnly);
+      const labelY = position.y - (radius + 12);
+      renderNodeLabelOverlay(ctx, labelText, position.x, labelY, radius, theme, nodeColor, inFocus, alphaValue);
+      ctx.globalAlpha = alphaValue;
+      ctx.fillStyle = inFocus ? '#00ffcc' : theme.fg;
+      ctx.fillText(labelText, position.x, labelY);
+      ctx.globalAlpha = 1.0;
+    }
+
+    hitAreas.set(token, { x: position.x, y: position.y, radius });
+  }
+
+  const state = renderState || (window.HLSF.rendering = window.HLSF.rendering || {});
+  state.nodeHitAreas = hitAreas;
+  state.nodePositions = rotatedPositions;
+
+  ctx.restore();
+}
+
+function getNodeHitAreas() {
+  const map = window.HLSF?.rendering?.nodeHitAreas;
+  return map instanceof Map ? map : new Map();
+}
+
+function canvasPointToWorld(event) {
+  const canvas = window.HLSF?.canvas || document.getElementById('hlsf-canvas');
+  if (!canvas || !event) return null;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const view = window.HLSF?.view || { x: 0, y: 0, scale: 1 };
+  const scale = Number.isFinite(view?.scale) && view.scale !== 0 ? view.scale : 1;
+  return {
+    x: (x - (Number.isFinite(view?.x) ? view.x : 0)) / scale,
+    y: (y - (Number.isFinite(view?.y) ? view.y : 0)) / scale,
+  };
+}
+
+function findTokenAtCanvasEvent(event) {
+  const world = canvasPointToWorld(event);
+  if (!world) return null;
+  let bestToken = null;
+  let bestDist = Infinity;
+  for (const [token, area] of getNodeHitAreas()) {
+    if (!token || !area) continue;
+    const radius = Number(area.radius) || 0;
+    const dx = world.x - (Number(area.x) || 0);
+    const dy = world.y - (Number(area.y) || 0);
+    const dist = Math.hypot(dx, dy);
+    const limit = radius > 0 ? radius : 8;
+    if (dist <= limit && dist < bestDist) {
+      bestDist = dist;
+      bestToken = token;
+    }
+  }
+  return bestToken;
+}
+
+async function resolveAdjacencyRecord(token) {
+  const raw = typeof token === 'string' ? token : '';
+  const lower = raw.toLowerCase();
+  if (!lower) return null;
+
+  const tryMaps = (maps) => {
+    for (const map of maps) {
+      if (!(map instanceof Map)) continue;
+      const direct = map.get(raw) || map.get(lower);
+      if (direct) return direct;
+    }
+    return null;
+  };
+
+  const preliminary = tryMaps([
+    window.HLSF?.lastCommand?.idx,
+    window.HLSF?.indexCache,
+    window.HLSF?.matrices,
+  ]);
+  if (preliminary) return preliminary;
+
+  const cached = getCachedRecordForToken(raw) || getCachedRecordForToken(lower);
+  if (cached) return cached;
+
+  try {
+    const idx = await loadOrGetIndex();
+    if (idx instanceof Map) {
+      const fromIdx = idx.get(raw) || idx.get(lower);
+      if (fromIdx) return fromIdx;
+    }
+  } catch (err) {
+    console.warn('Unable to load adjacency index for token:', raw, err);
+  }
+
+  return null;
+}
+
+async function gatherAdjacencyEntries(token) {
+  const record = await resolveAdjacencyRecord(token);
+  if (!record) return null;
+  const matrix = Array.isArray(record?.edges) ? record : buildMatrixForRecord(record);
+  if (!matrix || !Array.isArray(matrix.edges)) return null;
+
+  const aggregate = new Map();
+  for (const relation of matrix.edges) {
+    if (!relation) continue;
+    const relKey = relation.rtype || relation.rel || relation.type || '';
+    const rel = normRelKey(relKey) || relKey || '∼';
+    const items = Array.isArray(relation.items) ? relation.items : [];
+    for (const item of items) {
+      if (!item) continue;
+      const neighbor = item.token || item.id || item.to;
+      if (!neighbor) continue;
+      const neighborLower = neighbor.toLowerCase();
+      const weight = Number.isFinite(item.weight)
+        ? item.weight
+        : Number.isFinite(item.w)
+          ? item.w
+          : Number(relation.aggWeight) || 0;
+      const key = `${rel}|${neighborLower}`;
+      const existing = aggregate.get(key);
+      if (!existing || (Number.isFinite(weight) && weight > existing.weight)) {
+        aggregate.set(key, {
+          token: neighbor,
+          tokenLower: neighborLower,
+          rel,
+          weight: Number.isFinite(weight) ? weight : 0,
+          cached: isTokenCached(neighborLower),
+        });
+      }
+    }
+  }
+
+  const entries = Array.from(aggregate.values()).sort((a, b) => {
+    const aw = Number.isFinite(a.weight) ? a.weight : 0;
+    const bw = Number.isFinite(b.weight) ? b.weight : 0;
+    return bw - aw;
+  });
+
+  const uncached = entries.filter(entry => entry && entry.cached === false);
+  const focusSet = new Set();
+  focusSet.add(token.toLowerCase());
+  for (const entry of uncached) {
+    if (entry?.tokenLower) focusSet.add(entry.tokenLower);
+  }
+
+  return {
+    entries,
+    uncached,
+    focusTokens: Array.from(focusSet),
+  };
+}
+
+function buildAdjacencyLogHtml(token, uncachedEntries) {
+  const safeToken = sanitize(token);
+  if (!Array.isArray(uncachedEntries) || uncachedEntries.length === 0) {
+    return `<div class="adjacency-insight"><strong>${safeToken}</strong><br><em>All adjacent tokens are cached.</em></div>`;
+  }
+
+  const grouped = new Map();
+  for (const entry of uncachedEntries) {
+    if (!entry) continue;
+    const rel = entry.rel || '∼';
+    if (!grouped.has(rel)) grouped.set(rel, []);
+    grouped.get(rel).push(entry);
+  }
+
+  const lines = [];
+  for (const [rel, list] of grouped) {
+    if (!Array.isArray(list) || list.length === 0) continue;
+    list.sort((a, b) => {
+      const aw = Number.isFinite(a.weight) ? a.weight : 0;
+      const bw = Number.isFinite(b.weight) ? b.weight : 0;
+      return bw - aw;
+    });
+    const preview = list.slice(0, 6).map(item => {
+      const weightText = Number.isFinite(item.weight) && item.weight > 0
+        ? ` (${item.weight.toFixed(2)})`
+        : '';
+      return `${sanitize(item.token)}${weightText}`;
+    });
+    const remainder = list.length - preview.length;
+    const suffix = remainder > 0 ? ` +${remainder} more` : '';
+    const relLabel = sanitize(relDisplay(rel) || rel);
+    lines.push(`• ${relLabel}: ${preview.join(', ')}${suffix}`);
+  }
+
+  if (!lines.length) {
+    return `<div class="adjacency-insight"><strong>${safeToken}</strong><br><em>No uncached adjacencies found.</em></div>`;
+  }
+
+  return `<div class="adjacency-insight"><strong>${safeToken}</strong><br>${lines.join('<br>')}</div>`;
+}
+
+async function revealAdjacenciesForToken(token) {
+  if (!token) return;
+  const info = await gatherAdjacencyEntries(token);
+  if (!info || !Array.isArray(info.entries) || info.entries.length === 0) {
+    logWarning(`No adjacency data available for ${token}.`);
+    setDocumentFocusTokens([token.toLowerCase()]);
+    return;
+  }
+  setDocumentFocusTokens(info.focusTokens);
+  const html = buildAdjacencyLogHtml(token, info.uncached);
+  addLog(html);
+}
+
+async function cacheAdjacencyNeighbors(token) {
+  if (!token) return;
+  const info = await gatherAdjacencyEntries(token);
+  if (!info || !Array.isArray(info.entries) || info.entries.length === 0) {
+    logWarning(`No adjacency data available for ${token}.`);
+    setDocumentFocusTokens([token.toLowerCase()]);
+    return;
+  }
+
+  setDocumentFocusTokens(info.focusTokens);
+
+  if (!info.uncached.length) {
+    logOK(`All adjacent tokens are already cached for ${token}.`);
+    return;
+  }
+
+  const targets = Array.from(new Set(info.uncached.map(entry => entry.token).filter(Boolean)));
+  const focusSummary = targets.slice(0, 6).join(', ');
+  const status = logStatus(`Caching ${targets.length} adjacent token${targets.length === 1 ? '' : 's'} near ${token}…`);
+
+  try {
+    const context = `Manual adjacency expansion triggered by double-click on ${token}. Focus tokens: ${focusSummary}.`;
+    const label = `Manual cache ${token}`;
+    const results = await batchFetchAdjacencies(targets, context, label);
+    const { hits, misses, total } = summarizeAdjacencyResults(results);
+    let offline = 0;
+    let errors = 0;
+    if (results instanceof Map) {
+      for (const entry of results.values()) {
+        if (!entry) continue;
+        if (entry.offline) offline += 1;
+        if (entry.error && entry.error !== 'network_offline') errors += 1;
+      }
+    }
+
+    if (status) {
+      const parts = [];
+      parts.push(`${total} request${total === 1 ? '' : 's'}`);
+      if (misses > 0) parts.push(`${misses} new`);
+      if (hits > 0) parts.push(`${hits} cached`);
+      if (offline > 0) parts.push(`${offline} offline`);
+      if (errors > 0) parts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+      status.innerHTML = `✅ ${sanitize(token)}: ${parts.join(' • ')}`;
+    }
+
+    if (hasNewAdjacencyData(results)) {
+      notifyHlsfAdjacencyChange('manual-cache', { immediate: true });
+    } else if (offline > 0 && offline === (total || targets.length)) {
+      logWarning('Adjacency expansion deferred due to offline mode.');
+    }
+  } catch (err) {
+    if (status) {
+      status.innerHTML = `❌ ${sanitize(`Failed to cache adjacencies for ${token}: ${err?.message || err}`)}`;
+    }
+    logError(`Failed to cache adjacencies for ${token}: ${err?.message || err}`);
+  }
+}
+
+function computePatches(graph, pos) {
+  const groups = new Map();
+  for (const [token, node] of graph.nodes) {
+    const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
+    const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+    const key = `${layer}:${cluster}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(token);
+  }
+  const patches = new Map();
+  const prev = window.HLSF?.state?.patches;
+  for (const [key, toks] of groups) {
+    const pts = toks.map(t => pos.get(t)).filter(Boolean);
+    if (!pts.length) continue;
+    const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
+    const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
+    const prevPatch = prev instanceof Map ? prev.get(key) : null;
+    const angle = prevPatch && Number.isFinite(prevPatch.angle) ? prevPatch.angle : 0;
+    patches.set(key, { cx, cy, angle });
+  }
+  return patches;
+}
+
+function rotate_patches(dt) {
+  const state = window.HLSF?.state;
+  if (!state?.emergent?.on) return;
+  const speed = Number.isFinite(state.emergent.speed) ? state.emergent.speed : 0;
+  if (!speed) return;
+  const patches = state.patches instanceof Map ? state.patches : null;
+  if (!patches) return;
+  const tau = Math.PI * 2;
+  for (const patch of patches.values()) {
+    const current = Number.isFinite(patch?.angle) ? patch.angle : 0;
+    patch.angle = (current + speed * dt) % tau;
+  }
+}
+
+function rotatedPos(token, basePos, node) {
+  if (!basePos) return basePos;
+  const state = window.HLSF?.state;
+  if (!state?.emergent?.on) return basePos;
+  const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
+  const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+  const patchKey = `${layer}:${cluster}`;
+  const patch = state.patches instanceof Map ? state.patches.get(patchKey) : null;
+  if (!patch) return basePos;
+  const angle = Number.isFinite(patch.angle) ? patch.angle : 0;
+  const s = Math.sin(angle);
+  const c = Math.cos(angle);
+  const x = basePos.x - patch.cx;
+  const y = basePos.y - patch.cy;
+  return { x: patch.cx + c * x - s * y, y: patch.cy + s * x + c * y };
+}
+
+// ---------------- O20 layout ----------------
+function buildO20Layout(width, height, margin = 32) {
+  const cx = width / 2;
+  const cy = height / 2;
+  const R = Math.min(cx, cy) - margin;
+  const slots = [];
+  for (let i = 0; i < 20; i++) {
+    const theta = Math.PI * (i / 19);
+    slots.push({
+      x: cx + R * Math.cos(theta),
+      y: cy - R * Math.sin(theta),
+      theta
+    });
+  }
+  return { cx, cy, R, slots };
+}
+
+function getCachedO20Layout(width, height, margin = 32) {
+  window.HLSF = window.HLSF || {};
+  const cache = window.HLSF.layoutCache;
+  if (cache && cache.width === width && cache.height === height && cache.margin === margin) {
+    return cache.layout;
+  }
+  const layout = buildO20Layout(width, height, margin);
+  window.HLSF.layoutCache = { width, height, margin, layout };
+  return layout;
+}
+
+function applyFrequencyVisuals(f) {
+  const value = typeof f === 'number' ? f : 0;
+  const stats = window.HLSF?.metrics?.freqStats;
+  if (!stats || typeof stats.min !== 'number' || typeof stats.max !== 'number') {
+    const clamped = Math.min(1, Math.max(0, value));
+    return { norm: clamped, isHigh: value >= 1 };
+  }
+  const range = stats.max - stats.min;
+  const norm = range === 0 ? 0 : (value - stats.min) / range;
+  const clamped = Math.min(1, Math.max(0, norm));
+  const threshold = typeof stats.p90 === 'number' ? stats.p90 : stats.max;
+  return { norm: clamped, isHigh: value >= threshold };
+}
+
+// ---------------- Canvas renderer ----------------
+function drawHLSFMatrix(graph, opts = {}) {
+  drawComposite(graph, opts);
+}
+
+let _anim = null;
+const HLSF_FRAME_INTERVAL_MS = 1000 / 30;
+
+function isEmergentAnimationActive() {
+  const cfg = window.HLSF?.config;
+  const state = window.HLSF?.state;
+  if (!cfg || !state) return false;
+  if (cfg.emergentActive === false) return false;
+  const emergent = state.emergent;
+  if (!emergent || emergent.on !== true) return false;
+  const speed = Number.isFinite(emergent.speed)
+    ? emergent.speed
+    : (Number.isFinite(cfg.rotationOmega) ? cfg.rotationOmega : 0);
+  return Math.abs(speed) > 1e-3;
+}
+
+function startHlsfAnimation(step) {
+  if (!isEmergentAnimationActive()) {
+    _anim = null;
+    return;
+  }
+
+  let last = performance.now();
+  let accumulator = 0;
+
+  const tick = (now) => {
+    if (!isEmergentAnimationActive()) {
+      _anim = null;
+      return;
+    }
+
+    accumulator += now - last;
+    last = now;
+
+    if (accumulator < HLSF_FRAME_INTERVAL_MS) {
+      _anim = requestAnimationFrame(tick);
+      return;
+    }
+
+    const dtSeconds = accumulator / 1000;
+    accumulator = 0;
+    step(dtSeconds);
+    _anim = requestAnimationFrame(tick);
+  };
+
+  _anim = requestAnimationFrame(tick);
+}
+
+function animateComposite(graph, glyphOnly = false) {
+  if (!graph) return;
+  if (_anim) {
+    cancelAnimationFrame(_anim);
+    _anim = null;
+  }
+  window.HLSF.currentGraph = graph;
+  window.HLSF.currentGlyphOnly = glyphOnly === true;
+  const drawFrame = () => drawComposite(graph, { glyphOnly });
+  drawFrame();
+  startHlsfAnimation(dt => {
+    stepRotation(dt);
+    drawFrame();
+  });
+}
+
+function animateHLSF(graph, glyphOnly = false) {
+  if (!graph) return;
+  const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
+  if (!canvas) {
+    console.warn('HLSF canvas element not found for animation');
+    return;
+  }
+
+  if (_anim) {
+    cancelAnimationFrame(_anim);
+    _anim = null;
+  }
+  window.HLSF.currentGraph = graph;
+  window.HLSF.currentGlyphOnly = glyphOnly === true;
+  const drawFrame = () => drawHLSFMatrix(graph, { glyphOnly });
+  drawFrame();
+  startHlsfAnimation(dt => {
+    stepRotation(dt);
+    drawFrame();
+  });
+}
+
+function stopHLSFAnimation() {
+  if (_anim) {
+    cancelAnimationFrame(_anim);
+    _anim = null;
+  }
+  if (window.HLSF) {
+    window.HLSF.currentGraph = null;
+    window.HLSF.currentGlyphOnly = false;
+    window.HLSF.__centerInit = false;
+  }
+  if (typeof stopLegacyHLSFAnimation === 'function') {
+    try {
+      stopLegacyHLSFAnimation();
+    } catch (err) {
+      console.warn('Legacy HLSF animation stop failed:', err);
+    }
+  }
+}
+
+const MAX_REL_TYPES = 50;
+const DEFAULT_RELATION_TYPE_CAP = 2;
+const MAX_EDGES_PER_TYPE = 10;
+
+function clampRelationTypeCap(value) {
+  if (value === Infinity) return Infinity;
+  if (typeof value === 'string') {
+    const norm = value.trim().toLowerCase();
+    if (norm === 'all' || norm === '∞' || norm === 'infinity') return Infinity;
+  }
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric)) return DEFAULT_RELATION_TYPE_CAP;
+  if (numeric <= 0) return DEFAULT_RELATION_TYPE_CAP;
+  return Math.min(MAX_REL_TYPES, Math.max(1, numeric));
+}
+
+function clampEdgesPerType(value) {
+  if (value === Infinity) return Infinity;
+  if (typeof value === 'string') {
+    const norm = value.trim().toLowerCase();
+    if (norm === 'all' || norm === '∞' || norm === 'infinity') return Infinity;
+  }
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric)) return 3;
+  if (numeric <= 0) return 3;
+  return Math.min(MAX_EDGES_PER_TYPE, Math.max(1, numeric));
+}
+
+function clampEdgeWidth(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0.02;
+  return Math.min(1, Math.max(0.01, numeric));
+}
+
+function clampNodeSize(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.min(2.5, Math.max(0.5, numeric));
+}
+
+function normalizeEdgeColorMode(value) {
+  switch (value) {
+    case 'weight':
+    case 'relation':
+      return value;
+    default:
+      return 'theme';
+  }
+}
+
+function normalizeMetricScope(value) {
+  if (value === METRIC_SCOPE.DB) return METRIC_SCOPE.DB;
+  if (typeof value === 'string' && value.toLowerCase() === METRIC_SCOPE.DB) return METRIC_SCOPE.DB;
+  return METRIC_SCOPE.RUN;
+}
+
+function normalizeLayout(value) {
+  const v = typeof value === 'string' ? value.toLowerCase() : value;
+  switch (v) {
+    case 'dimension':
+    case 'affinity':
+    case 'layered':
+    case 'legacy':
+      return v;
+    default:
+      return 'dimension';
+  }
+}
+
+function describeAffinityMentalState(threshold, iterations) {
+  const thr = Number.isFinite(threshold) ? threshold : 0.35;
+  const iters = Number.isFinite(iterations) ? iterations : 8;
+  const thrBand = thr <= 0.2 ? 'low'
+    : thr <= 0.4 ? 'medium'
+    : thr <= 0.6 ? 'high'
+    : 'veryHigh';
+  const iterBand = iters <= 4 ? 'brief'
+    : iters <= 9 ? 'steady'
+    : 'extended';
+
+  const mechanics = `Neighbors must score at least ${thr.toFixed(2)} on the 60/40 cosine–Jaccard affinity mix to influence clustering. The loop allows up to ${iters} iteration${iters === 1 ? '' : 's'} before settling.`;
+
+  const STATES = {
+    low: {
+      brief: {
+        name: 'Impulsive ideation',
+        desc: 'Weak ties are welcomed but the loop stops quickly, so early, noisy neighbors shape the clusters.'
+      },
+      steady: {
+        name: 'Expansive brainstorming',
+        desc: 'Low thresholds keep associative links flowing while a few passes weave them into loose but lively groups.'
+      },
+      extended: {
+        name: 'Hypnagogic free association',
+        desc: 'Almost every tenuous link survives repeated revisits, letting clusters blend in a dreamlike drift.'
+      }
+    },
+    medium: {
+      brief: {
+        name: 'Decisive synthesis',
+        desc: 'Moderate evidence is required but only a handful of passes occur, yielding balanced snap decisions.'
+      },
+      steady: {
+        name: 'Focused yet flexible attention',
+        desc: 'Clustering balances evidence with patience, producing well-formed communities without overthinking.'
+      },
+      extended: {
+        name: 'Reflective integration',
+        desc: 'Moderate filters paired with long deliberation polish clusters through repeated, thoughtful reconciliation.'
+      }
+    },
+    high: {
+      brief: {
+        name: 'Surgical categorization',
+        desc: 'Only strong alignments are heeded and the loop resolves quickly, carving crisp, selective groups.'
+      },
+      steady: {
+        name: 'Structured analytical focus',
+        desc: 'Strict similarity demands with measured revisits create tight, compartmentalized communities.'
+      },
+      extended: {
+        name: 'Perfectionistic rumination',
+        desc: 'High selectivity and many passes continually prune ambiguous members in search of immaculate boundaries.'
+      }
+    },
+    veryHigh: {
+      brief: {
+        name: 'Rigid snap judgments',
+        desc: 'Only the strongest neighbors are considered and the process halts fast, leaving fragmented results.'
+      },
+      steady: {
+        name: 'Guarded deliberation',
+        desc: 'Strict gates with limited revisits keep clusters narrow while cautiously revisiting edge cases.'
+      },
+      extended: {
+        name: 'Tunnel-vision fixation',
+        desc: 'Extreme selectivity applied over many rounds replays only the most forceful convictions.'
+      }
+    }
+  };
+
+  const preset = STATES[thrBand] && STATES[thrBand][iterBand]
+    ? STATES[thrBand][iterBand]
+    : null;
+  if (preset) return Object.assign({ mechanics }, preset);
+  return {
+    name: 'Adaptive clustering',
+    desc: `Threshold ${thr.toFixed(2)} with ${iters} iteration${iters === 1 ? '' : 's'} blends evidence filtering with iterative refinement.`,
+    mechanics,
+  };
+}
+
+const MENTAL_STATE_PRESET_CONFIGS = [
+  { id: 'low-brief', threshold: 0.18, iterations: 3 },
+  { id: 'low-steady', threshold: 0.18, iterations: 6 },
+  { id: 'low-extended', threshold: 0.18, iterations: 12 },
+  { id: 'medium-brief', threshold: 0.35, iterations: 4 },
+  { id: 'medium-steady', threshold: 0.35, iterations: 8 },
+  { id: 'medium-extended', threshold: 0.35, iterations: 12 },
+  { id: 'high-brief', threshold: 0.55, iterations: 4 },
+  { id: 'high-steady', threshold: 0.55, iterations: 8 },
+  { id: 'high-extended', threshold: 0.55, iterations: 12 },
+  { id: 'veryHigh-brief', threshold: 0.72, iterations: 3 },
+  { id: 'veryHigh-steady', threshold: 0.72, iterations: 8 },
+  { id: 'veryHigh-extended', threshold: 0.72, iterations: 12 },
+];
+
+const MENTAL_STATE_PRESETS = MENTAL_STATE_PRESET_CONFIGS.map(preset => {
+  const meta = describeAffinityMentalState(preset.threshold, preset.iterations) || {};
+  const label = `${meta.name || 'Preset'} — ${preset.threshold.toFixed(2)} · ${preset.iterations}`;
+  return Object.assign({ label }, preset, meta);
+});
+
+const MENTAL_STATE_THRESHOLD_TOLERANCE = 0.005;
+
+function getMentalStatePresetById(id) {
+  return MENTAL_STATE_PRESETS.find(preset => preset.id === id) || null;
+}
+
+function matchMentalStatePreset(threshold, iterations) {
+  const thr = Number(threshold);
+  const iters = Math.round(Number(iterations));
+  if (!Number.isFinite(thr) || !Number.isFinite(iters)) return null;
+  return MENTAL_STATE_PRESETS.find(preset =>
+    Math.abs(preset.threshold - thr) <= MENTAL_STATE_THRESHOLD_TOLERANCE && preset.iterations === iters
+  ) || null;
+}
+
+function populateMentalStatePresetOptions(select) {
+  if (!select) return;
+  select.innerHTML = '';
+  const customOption = document.createElement('option');
+  customOption.value = 'custom';
+  customOption.textContent = 'Custom (manual sliders)';
+  select.appendChild(customOption);
+  for (const preset of MENTAL_STATE_PRESETS) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.textContent = preset.label;
+    option.dataset.threshold = preset.threshold.toFixed(2);
+    option.dataset.iterations = String(preset.iterations);
+    select.appendChild(option);
+  }
+}
+
+function syncMentalStatePresetControl(wrapper, threshold, iterations) {
+  if (!wrapper) return;
+  const select = wrapper.querySelector('#hlsf-mental-preset');
+  if (!select) return;
+  const matched = matchMentalStatePreset(threshold, iterations);
+  const value = matched ? matched.id : 'custom';
+  if (select.value !== value) select.value = value;
+}
+
+function applyMentalStatePreset(wrapper, preset) {
+  if (!wrapper || !preset) return;
+  const thr = Number(preset.threshold);
+  const iters = Number(preset.iterations);
+  if (!Number.isFinite(thr) || !Number.isFinite(iters)) return;
+  const affinityConfig = Object.assign({}, window.HLSF.config?.affinity || {}, {
+    threshold: thr,
+    iterations: iters,
+  });
+  window.HLSF.config.affinity = affinityConfig;
+  const thresholdSlider = wrapper.querySelector('#hlsf-aff-thresh');
+  const thresholdVal = wrapper.querySelector('#hlsf-aff-thresh-val');
+  if (thresholdSlider) thresholdSlider.value = thr.toFixed(2);
+  if (thresholdVal) thresholdVal.textContent = thr.toFixed(2);
+  const iterSlider = wrapper.querySelector('#hlsf-aff-iters');
+  const iterVal = wrapper.querySelector('#hlsf-aff-iters-val');
+  if (iterSlider) iterSlider.value = String(iters);
+  if (iterVal) iterVal.textContent = String(iters);
+  updateAffinityAnnotations(wrapper, thr, iters);
+  recomputeAndRender();
+}
+
+function updateAffinityAnnotations(wrapper, threshold, iterations) {
+  if (!wrapper) return;
+  const { name, desc, mechanics } = describeAffinityMentalState(threshold, iterations);
+  const nameEl = wrapper.querySelector('#hlsf-mental-name');
+  if (nameEl) nameEl.textContent = name;
+  const summaryEl = wrapper.querySelector('#hlsf-affinity-summary');
+  if (summaryEl) summaryEl.textContent = `Current mental state: ${name}.`;
+  const descEl = wrapper.querySelector('#hlsf-mental-desc');
+  if (descEl) descEl.textContent = desc;
+  const mechanicsEl = wrapper.querySelector('#hlsf-affinity-mechanics');
+  if (mechanicsEl) mechanicsEl.textContent = mechanics;
+  const overlayName = wrapper.querySelector('#hlsf-overlay-mental-name');
+  if (overlayName) overlayName.textContent = name;
+  const overlayThreshold = wrapper.querySelector('#hlsf-overlay-threshold');
+  if (overlayThreshold)
+    overlayThreshold.textContent = Number.isFinite(threshold) ? Number(threshold).toFixed(2) : '—';
+  const overlayIterations = wrapper.querySelector('#hlsf-overlay-iterations');
+  if (overlayIterations)
+    overlayIterations.textContent = Number.isFinite(iterations) ? String(Math.round(iterations)) : '—';
+  syncMentalStatePresetControl(wrapper, threshold, iterations);
+}
+
+function ensureHLSFCanvas() {
+  let wrapper = document.getElementById('hlsf-canvas-container');
+  if (wrapper) {
+    if (window.HLSF.config.deferredRender === false) wrapper.classList.remove('hidden');
+  } else {
+    if (!elements?.log) {
+      console.warn('Log element not ready for HLSF canvas');
+      return null;
+    }
+
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
+
+    wrapper = document.createElement('div');
+    wrapper.id = 'hlsf-canvas-container';
+    wrapper.className = 'hlsf-canvas-container';
+    if (window.HLSF.config.deferredRender !== false) wrapper.classList.add('hidden');
+    wrapper.innerHTML = `
+      <div class="section-title">🔭 HLSF Matrix Visualizer</div>
+      <details id="hlsf-batch-log" open>
+        <summary>Batch log</summary>
+        <div id="hlsf-log-progress">
+          <div id="hlsf-log-bar"></div>
+        </div>
+        <pre id="hlsf-log-stream"></pre>
+        <button id="hlsf-log-download">Download log</button>
+      </details>
+      <div id="hlsf-loading-panel" class="hlsf-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
+        <div class="processing-indicator">
+          <div class="spinner"></div>
+          <span id="hlsf-loading-label">Preparing HLSF visualization…</span>
+        </div>
+        <div class="hlsf-loading-bar">
+          <div id="hlsf-loading-progress" class="hlsf-loading-progress"></div>
+        </div>
+        <div id="hlsf-loading-detail" class="hlsf-loading-detail">This can take a few seconds for large datasets.</div>
+      </div>
+      <canvas id="hlsf-canvas"></canvas>
+      <div class="hlsf-overlay" id="hlsf-overlay">
+        <button
+          id="hlsf-overlay-toggle"
+          class="hlsf-overlay-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="hlsf-overlay-panel"
+          title="Show affinity cognition details"
+        >
+          State
+        </button>
+        <div id="hlsf-overlay-panel" class="hlsf-overlay-panel" hidden>
+          <div class="hlsf-overlay-row">
+            <span class="hlsf-overlay-label">Mental state</span>
+            <span id="hlsf-overlay-mental-name" class="hlsf-overlay-value">Focused yet flexible attention</span>
+          </div>
+          <div class="hlsf-overlay-divider"></div>
+          <div class="hlsf-overlay-row">
+            <span class="hlsf-overlay-label">Affinity threshold</span>
+            <span id="hlsf-overlay-threshold" class="hlsf-overlay-value">0.35</span>
+          </div>
+          <div class="hlsf-overlay-row">
+            <span class="hlsf-overlay-label">Affinity iterations</span>
+            <span id="hlsf-overlay-iterations" class="hlsf-overlay-value">8</span>
+          </div>
+        </div>
+      </div>
+      <div class="hlsf-controls">
+        <div class="hlsf-control-group">
+          <label for="hlsf-rotation-speed">Emergent rotation speed <span id="hlsf-speed-val">0.00</span></label>
+          <input id="hlsf-rotation-speed" type="range" min="-5" max="5" step="0.01" value="0.30">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-alpha">Alpha <span id="hlsf-alpha-val">0.67</span></label>
+          <input id="hlsf-alpha" type="range" min="0" max="0.99" step="0.01" value="0.67">
+        </div>
+        <div class="hlsf-control-group">
+          <label>Edge width <span id="edgew-val">0.200</span></label>
+          <input id="edgew" type="range" min="0.01" max="1.00" step="0.005" value="0.200">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-node-size">Node size <span id="hlsf-node-size-val">1.0</span></label>
+          <input id="hlsf-node-size" type="range" min="0.5" max="2.5" step="0.1" value="1.0">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-edge-color-mode">Edge coloring</label>
+          <select id="hlsf-edge-color-mode">
+            <option value="theme">Theme</option>
+            <option value="weight">Weight</option>
+            <option value="relation" selected>Relation</option>
+          </select>
+        </div>
+        <div class="hlsf-control-group hlsf-control-legend">
+          <details id="hlsf-relation-legend" class="hlsf-legend-container" open>
+            <summary>
+              <span>Relation edge colors</span>
+              <span id="hlsf-relation-legend-count" class="hlsf-legend-count"></span>
+            </summary>
+            <div id="hlsf-relation-legend-items" class="hlsf-legend"></div>
+          </details>
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-relation-cap">
+            Relation types <span id="hlsf-relation-cap-val">${DEFAULT_RELATION_TYPE_CAP}</span>
+          </label>
+          <input id="hlsf-relation-cap" type="number" min="1" max="${MAX_REL_TYPES}" step="1" value="${DEFAULT_RELATION_TYPE_CAP}">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-scope">Scope</label>
+          <select id="hlsf-scope">
+            <option value="db">DB</option>
+            <option value="state">State</option>
+          </select>
+        </div>
+        <div class="hlsf-control-group">
+          <label>Dimension metrics</label>
+          <div class="hlsf-dimension-stats">
+            <div>Anchors D: <span id="hlsf-dimension-d">—</span></div>
+            <div>Level count L: <span id="hlsf-dimension-levels">—</span></div>
+            <div>Last level components C: <span id="hlsf-dimension-last">—</span></div>
+          </div>
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-edges-per-type">Edges per type <span id="hlsf-edges-per-type-val">3</span></label>
+          <input id="hlsf-edges-per-type" type="number" min="1" max="${MAX_EDGES_PER_TYPE}" step="1" value="3">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-recursion-depth">
+            Recursion depth <span id="hlsf-recursion-depth-val">${CONFIG.ADJACENCY_RECURSION_DEPTH}</span>
+          </label>
+          <input
+            id="hlsf-recursion-depth"
+            type="number"
+            min="0"
+            max="${MAX_RECURSION_DEPTH}"
+            step="1"
+            value="${CONFIG.ADJACENCY_RECURSION_DEPTH}"
+          >
+          <button id="hlsf-level-up" class="btn btn-primary" type="button" title="Expand the current graph using recursive adjacency exploration">
+            Complete Graph Level Up
+          </button>
+        </div>
+        <div class="hlsf-control-group">
+          <label>Display options</label>
+          <div class="hlsf-button-row">
+            <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
+            <button id="hlsf-toggle-adjacency" class="btn btn-secondary">Adjacency: Compact</button>
+            <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: On</button>
+            <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
+            <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
+          </div>
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-layout">Layout</label>
+          <select id="hlsf-layout">
+            <option value="dimension">Dimension NAM</option>
+            <option value="affinity">Clusters × Levels</option>
+            <option value="layered">Layered</option>
+            <option value="legacy">Legacy</option>
+          </select>
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-aff-thresh">Affinity threshold <span id="hlsf-aff-thresh-val">0.35</span></label>
+          <input id="hlsf-aff-thresh" type="range" min="0.1" max="0.8" step="0.01" value="0.35">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-aff-iters">Affinity iterations <span id="hlsf-aff-iters-val">8</span></label>
+          <input id="hlsf-aff-iters" type="range" min="1" max="20" step="1" value="8">
+        </div>
+        <div class="hlsf-control-group">
+          <label for="hlsf-mental-preset">Mental state preset</label>
+          <select id="hlsf-mental-preset">
+            <option value="custom">Custom (manual sliders)</option>
+          </select>
+        </div>
+        <div class="hlsf-control-group">
+          <em id="hlsf-affinity-summary" class="hlsf-mental-summary">Current mental state: Focused yet flexible attention.</em>
+        </div>
+        <div class="hlsf-control-group">
+          <label>Affinity cognition</label>
+          <div id="hlsf-affinity-mental-state" class="hlsf-mental-state">
+            <div id="hlsf-mental-name" class="hlsf-mental-name">Focused yet flexible attention</div>
+            <div id="hlsf-mental-desc" class="hlsf-mental-desc">Moderate evidence is required and several rounds are permitted, yielding balanced, well-formed communities without excessive rumination.</div>
+            <div id="hlsf-affinity-mechanics" class="hlsf-mental-mechanics">Neighbors must score at least 0.35 on the 60/40 cosine–Jaccard affinity mix to influence clustering. The loop allows up to 8 iterations before settling.</div>
+          </div>
+        </div>
+        <div class="hlsf-control-group">
+          <label>Emergent rotation</label>
+          <div class="hlsf-button-row">
+            <button id="hlsf-toggle-emergent" class="btn btn-secondary">Start Emergence</button>
+          </div>
+        </div>
+        <div class="hlsf-control-group">
+          <label>View</label>
+          <div class="hlsf-button-row">
+            <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
+            <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
+            <button id="hlsf-zoom-portal" class="btn btn-secondary">Portal</button>
+            <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    entry.appendChild(wrapper);
+    elements.log.appendChild(entry);
+    elements.log.scrollTop = elements.log.scrollHeight;
+    BatchLog.mount();
+  }
+
+  const canvas = /** @type {HTMLCanvasElement|null} */ (wrapper.querySelector('#hlsf-canvas'));
+  if (canvas) {
+    window.HLSF.canvas = canvas;
+    window.HLSF.ctx = canvas.getContext('2d');
+  }
+
+  bindHlsfControls(wrapper);
+  syncHlsfControls(wrapper);
+
+  return canvas;
+}
+
+function bindHlsfControls(wrapper) {
+  if (!wrapper || wrapper.dataset.controlsBound === 'true') return;
+
+  const canvas = wrapper.querySelector('#hlsf-canvas');
+  if (canvas) {
+    window.HLSF.canvas = canvas;
+    window.HLSF.ctx = canvas.getContext('2d');
+  }
+
+  const overlay = wrapper.querySelector('#hlsf-overlay');
+  const overlayToggle = wrapper.querySelector('#hlsf-overlay-toggle');
+  const overlayPanel = wrapper.querySelector('#hlsf-overlay-panel');
+  if (overlayToggle && overlayPanel) {
+    overlayToggle.addEventListener('click', () => {
+      const expanded = overlayToggle.getAttribute('aria-expanded') === 'true';
+      const next = !expanded;
+      overlayToggle.setAttribute('aria-expanded', String(next));
+      overlayPanel.hidden = !next;
+      overlayToggle.classList.toggle('is-active', next);
+      if (overlay) overlay.classList.toggle('open', next);
+      wrapper.classList.toggle('hlsf-overlay-open', next);
+    });
+  }
+
+  const scopeSelect = wrapper.querySelector('#hlsf-scope');
+  if (scopeSelect) {
+    scopeSelect.addEventListener('change', () => {
+      const value = scopeSelect.value === 'state' ? 'state' : 'db';
+      window.HLSF.config.hlsfScope = value;
+      if (window.HLSF?.currentGraph && window.HLSF?.lastCommand?.idx) {
+        rebuildHlsfFromLastCommand(true);
+      } else {
+        debouncedLegacyRender();
+      }
+    });
+  }
+
+  const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
+  const speedVal = wrapper.querySelector('#hlsf-speed-val');
+  if (speedSlider && speedVal) {
+    speedSlider.addEventListener('input', (e) => {
+      const next = parseFloat(e.target.value);
+      if (!Number.isFinite(next)) return;
+      const clamped = Math.max(-5, Math.min(5, next));
+      window.HLSF.config.rotationOmega = clamped;
+      window.HLSF.state = window.HLSF.state || {};
+      if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
+        window.HLSF.state.emergent = { on: true, speed: clamped };
+      } else {
+        window.HLSF.state.emergent.speed = clamped;
+      }
+      if (Math.abs(clamped - next) > 1e-6) {
+        speedSlider.value = clamped.toFixed(2);
+      }
+      speedVal.textContent = clamped.toFixed(2);
+      if (window.HLSF.state.emergent.on) {
+        requestRender();
+      } else {
+        debouncedLegacyRender();
+      }
+    });
+  }
+
+  const alphaSlider = wrapper.querySelector('#hlsf-alpha');
+  const alphaVal = wrapper.querySelector('#hlsf-alpha-val');
+  if (alphaSlider && alphaVal) {
+    alphaSlider.addEventListener('input', (e) => {
+      const raw = parseFloat(e.target.value);
+      const next = clampAlpha(raw);
+      if (!Number.isFinite(next)) {
+        logError('Alpha value must be numeric.');
+        return;
+      }
+      window.HLSF.config.alpha = next;
+      alphaVal.textContent = next.toFixed(2);
+      if (Math.abs(next - parseFloat(alphaSlider.value)) > 1e-6) {
+        alphaSlider.value = next.toFixed(2);
+      }
+      debouncedLegacyRender();
+    });
+  }
+
+  const edgeWidthSlider = wrapper.querySelector('#edgew');
+  const edgeWidthVal = wrapper.querySelector('#edgew-val');
+  if (edgeWidthSlider && edgeWidthVal) {
+    edgeWidthSlider.addEventListener('input', (e) => {
+      const next = clampEdgeWidth(parseFloat(e.target.value));
+      if (!Number.isFinite(next)) return;
+      window.HLSF.config.edgeWidth = next;
+      edgeWidthVal.textContent = next.toFixed(3);
+      if (Math.abs(next - parseFloat(edgeWidthSlider.value)) > 1e-6) {
+        edgeWidthSlider.value = next.toFixed(3);
+      }
+      requestRender();
+    });
+  }
+
+  const nodeSizeSlider = wrapper.querySelector('#hlsf-node-size');
+  const nodeSizeVal = wrapper.querySelector('#hlsf-node-size-val');
+  if (nodeSizeSlider && nodeSizeVal) {
+    nodeSizeSlider.addEventListener('input', (e) => {
+      const next = clampNodeSize(e.target.value);
+      if (!Number.isFinite(next)) return;
+      window.HLSF.config.nodeSize = next;
+      nodeSizeVal.textContent = next.toFixed(1);
+      if (Math.abs(next - parseFloat(nodeSizeSlider.value)) > 1e-6) {
+        nodeSizeSlider.value = next.toFixed(1);
+      }
+      debouncedLegacyRender();
+    });
+  }
+
+  const relationInput = wrapper.querySelector('#hlsf-relation-cap');
+  const relationVal = wrapper.querySelector('#hlsf-relation-cap-val');
+  if (relationInput) {
+    relationInput.addEventListener('input', () => {
+      const next = clampRelationTypeCap(relationInput.value);
+      window.HLSF.config.relationTypeCap = next;
+      relationInput.value = String(next);
+      if (relationVal) relationVal.textContent = String(next);
+      rebuildHlsfFromLastCommand(true);
+    });
+  }
+
+  const edgesInput = wrapper.querySelector('#hlsf-edges-per-type');
+  const edgesVal = wrapper.querySelector('#hlsf-edges-per-type-val');
+  if (edgesInput) {
+    edgesInput.addEventListener('input', () => {
+      const next = clampEdgesPerType(edgesInput.value);
+      window.HLSF.config.edgesPerType = next;
+      edgesInput.value = String(next);
+      if (edgesVal) edgesVal.textContent = String(next);
+      rebuildHlsfFromLastCommand(true);
+    });
+  }
+
+  const recursionInput = wrapper.querySelector('#hlsf-recursion-depth');
+  const recursionVal = wrapper.querySelector('#hlsf-recursion-depth-val');
+  if (recursionInput) {
+    recursionInput.addEventListener('input', () => {
+      const prev = getRecursionDepthSetting();
+      const next = applyRecursionDepthSetting(recursionInput.value);
+      recursionInput.value = String(next);
+      if (recursionVal) recursionVal.textContent = String(next);
+      if (next === prev) return;
+      if (window.HLSF?.lastCommand) {
+        window.HLSF.lastCommand.depth = next;
+      }
+      rebuildHlsfFromLastCommand(true);
+    });
+  }
+
+  const presetSelect = wrapper.querySelector('#hlsf-mental-preset');
+  if (presetSelect && !presetSelect.dataset.populated) {
+    populateMentalStatePresetOptions(presetSelect);
+    presetSelect.dataset.populated = 'true';
+  }
+  if (presetSelect) {
+    presetSelect.addEventListener('change', () => {
+      if (presetSelect.value === 'custom') return;
+      const preset = getMentalStatePresetById(presetSelect.value);
+      if (preset) {
+        applyMentalStatePreset(wrapper, preset);
+        logStatus(`Mental state preset applied: ${preset.name}`);
+      }
+    });
+  }
+
+  const thresholdSlider = wrapper.querySelector('#hlsf-aff-thresh');
+  const thresholdVal = wrapper.querySelector('#hlsf-aff-thresh-val');
+  if (thresholdSlider) {
+    thresholdSlider.addEventListener('input', () => {
+      const raw = Number(thresholdSlider.value);
+      const clamped = Number.isFinite(raw) ? Math.min(0.8, Math.max(0.1, raw)) : 0.35;
+      const value = Math.round(clamped * 100) / 100;
+      window.HLSF.config.affinity = Object.assign({}, window.HLSF.config.affinity, { threshold: value });
+      thresholdSlider.value = value.toFixed(2);
+      if (thresholdVal) thresholdVal.textContent = value.toFixed(2);
+      const currentIters = window.HLSF.config.affinity?.iterations;
+      updateAffinityAnnotations(wrapper, value, Number.isFinite(currentIters) ? currentIters : 8);
+      recomputeAndRender();
+    });
+  }
+
+  const iterSlider = wrapper.querySelector('#hlsf-aff-iters');
+  const iterVal = wrapper.querySelector('#hlsf-aff-iters-val');
+  if (iterSlider) {
+    iterSlider.addEventListener('input', () => {
+      const raw = Number(iterSlider.value);
+      const value = Number.isFinite(raw) ? Math.min(20, Math.max(1, Math.round(raw))) : 8;
+      window.HLSF.config.affinity = Object.assign({}, window.HLSF.config.affinity, { iterations: value });
+      iterSlider.value = String(value);
+      if (iterVal) iterVal.textContent = String(value);
+      const currentThresh = window.HLSF.config.affinity?.threshold;
+      updateAffinityAnnotations(wrapper, Number.isFinite(currentThresh) ? currentThresh : 0.35, value);
+      recomputeAndRender();
+    });
+  }
+
+  const edgeColorSelect = wrapper.querySelector('#hlsf-edge-color-mode');
+  if (edgeColorSelect) {
+    edgeColorSelect.addEventListener('change', (e) => {
+      const value = normalizeEdgeColorMode(e.target.value);
+      window.HLSF.config.edgeColorMode = value;
+      edgeColorSelect.value = value;
+      markRelationLegendDirty();
+      debouncedLegacyRender();
+    });
+  }
+
+  const relationLegend = wrapper.querySelector('#hlsf-relation-legend');
+  if (relationLegend && !relationLegend.dataset.bound) {
+    relationLegend.dataset.userCollapsed = relationLegend.open ? 'false' : 'true';
+    relationLegend.addEventListener('toggle', () => {
+      relationLegend.dataset.userCollapsed = relationLegend.open ? 'false' : 'true';
+    });
+    relationLegend.dataset.bound = 'true';
+  }
+
+  const zoomIn = wrapper.querySelector('#hlsf-zoom-in');
+  if (zoomIn) {
+    zoomIn.addEventListener('click', () => {
+      const view = window.HLSF.view;
+      const next = Math.min(12, Math.max(0.25, view.scale * 1.2));
+      window.HLSF.view.scale = next;
+      syncViewToConfig();
+      requestRender();
+    });
+  }
+
+  const zoomOut = wrapper.querySelector('#hlsf-zoom-out');
+  if (zoomOut) {
+    zoomOut.addEventListener('click', () => {
+      const view = window.HLSF.view;
+      const next = Math.min(12, Math.max(0.25, view.scale * 0.8));
+      window.HLSF.view.scale = next;
+      syncViewToConfig();
+      requestRender();
+    });
+  }
+
+  const reset = wrapper.querySelector('#hlsf-reset-view');
+  if (reset) {
+    reset.addEventListener('click', () => {
+      const canvasEl = window.HLSF.canvas;
+      window.HLSF.view.scale = 1;
+      if (canvasEl) {
+        const width = canvasEl.clientWidth || canvasEl.width;
+        const height = canvasEl.clientHeight || canvasEl.height;
+        window.HLSF.view.x = width / 2;
+        window.HLSF.view.y = height / 2;
+      } else {
+        window.HLSF.view.x = 0;
+        window.HLSF.view.y = 0;
+      }
+      syncViewToConfig();
+      requestRender();
+    });
+  }
+
+  const portal = wrapper.querySelector('#hlsf-zoom-portal');
+  if (portal) {
+    portal.addEventListener('click', () => {
+      const canvasEl = window.HLSF.canvas;
+      if (!canvasEl) return;
+      const width = canvasEl.clientWidth || canvasEl.width;
+      const height = canvasEl.clientHeight || canvasEl.height;
+      const cx = width / 2;
+      const cy = height / 2;
+      const target = {
+        x: cx,
+        y: cy,
+        scale: Math.max(1.5, window.HLSF.view.scale * 2),
+      };
+      animateViewport(target, 350);
+    });
+  }
+
+  const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
+  if (emergentBtn) {
+    emergentBtn.addEventListener('click', () => {
+      const state = window.HLSF.state.emergent;
+      state.on = !state.on;
+      window.HLSF.config.emergentActive = state.on;
+      syncHlsfControls(wrapper);
+      if (state.on && window.HLSF.currentGraph) {
+        animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
+      } else if (!state.on && _anim) {
+        cancelAnimationFrame(_anim);
+        _anim = null;
+      }
+      requestRender();
+    });
+  }
+
+  const edgesBtn = wrapper.querySelector('#hlsf-toggle-edges');
+  if (edgesBtn) {
+    edgesBtn.addEventListener('click', () => {
+      window.HLSF.config.showEdges = !window.HLSF.config.showEdges;
+      edgesBtn.textContent = window.HLSF.config.showEdges ? 'Edges: On' : 'Edges: Off';
+      debouncedLegacyRender();
+    });
+  }
+
+  const adjacencyBtn = wrapper.querySelector('#hlsf-toggle-adjacency');
+  if (adjacencyBtn) {
+    adjacencyBtn.addEventListener('click', () => {
+      toggleAdjacencyExpansion({ root: wrapper, source: 'button' }).catch(err => {
+        console.warn('Failed to toggle adjacency expansion:', err);
+      });
+    });
+  }
+
+  const levelUpBtn = wrapper.querySelector('#hlsf-level-up');
+  if (levelUpBtn) {
+    levelUpBtn.addEventListener('click', () => {
+      if (levelUpBtn.disabled) return;
+      levelUpBtn.disabled = true;
+      Promise.resolve(levelUpHlsfGraph({ root: wrapper }))
+        .catch(err => {
+          console.warn('Failed to level up graph:', err);
+        })
+        .finally(() => {
+          levelUpBtn.disabled = false;
+        });
+    });
+  }
+
+  const labelsBtn = wrapper.querySelector('#hlsf-toggle-labels');
+  if (labelsBtn) {
+    labelsBtn.addEventListener('click', () => {
+      window.HLSF.config.showLabels = !window.HLSF.config.showLabels;
+      labelsBtn.textContent = window.HLSF.config.showLabels ? 'Labels: On' : 'Labels: Off';
+      debouncedLegacyRender();
+    });
+  }
+
+  const glowBtn = wrapper.querySelector('#hlsf-toggle-glow');
+  if (glowBtn) {
+    glowBtn.addEventListener('click', () => {
+      window.HLSF.config.showNodeGlow = !window.HLSF.config.showNodeGlow;
+      glowBtn.textContent = window.HLSF.config.showNodeGlow ? 'Glow: On' : 'Glow: Off';
+      debouncedLegacyRender();
+    });
+  }
+
+  const bgBtn = wrapper.querySelector('#hlsf-toggle-bg');
+  if (bgBtn) {
+    bgBtn.addEventListener('click', () => {
+      window.HLSF.config.whiteBg = !window.HLSF.config.whiteBg;
+      bgBtn.textContent = window.HLSF.config.whiteBg ? 'BG: Light' : 'BG: Dark';
+      debouncedLegacyRender();
+    });
+  }
+
+  const layoutSelect = wrapper.querySelector('#hlsf-layout');
+  if (layoutSelect) {
+    layoutSelect.addEventListener('change', () => {
+      const next = normalizeLayout(layoutSelect.value);
+      window.HLSF.config.layout = next;
+      layoutSelect.value = next;
+      debouncedLegacyRender();
+    });
+  }
+
+  const canvasEl = wrapper.querySelector('#hlsf-canvas') as HTMLCanvasElement | null;
+  if (canvasEl) {
+    installClusterZoom(canvasEl);
+    let isDragging = false;
+    let lastX = 0;
+    let lastY = 0;
+    let movedDuringDrag = false;
+    let clickTimer = null;
+
+    canvasEl.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      movedDuringDrag = false;
+    });
+
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    canvasEl.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      if (!movedDuringDrag && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+        movedDuringDrag = true;
+      }
+      window.HLSF.view.x += dx;
+      window.HLSF.view.y += dy;
+      syncViewToConfig();
+      lastX = e.clientX;
+      lastY = e.clientY;
+      requestRender();
+    });
+
+    canvasEl.addEventListener('mouseleave', () => {
+      isDragging = false;
+      movedDuringDrag = false;
+    });
+
+    canvasEl.addEventListener('click', (e) => {
+      if (movedDuringDrag) {
+        movedDuringDrag = false;
+        return;
+      }
+      const token = findTokenAtCanvasEvent(e);
+      if (!token) return;
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        revealAdjacenciesForToken(token).catch(err => {
+          console.warn('Failed to reveal adjacencies:', err);
+        });
+      }, 200);
+    });
+
+    canvasEl.addEventListener('dblclick', (e) => {
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+      }
+      if (movedDuringDrag) {
+        movedDuringDrag = false;
+        return;
+      }
+      e.preventDefault();
+      const token = findTokenAtCanvasEvent(e);
+      if (!token) return;
+      cacheAdjacencyNeighbors(token).catch(err => {
+        console.warn('Failed to cache adjacency neighbors:', err);
+      });
+    });
+  }
+
+  const affinityCfg = window.HLSF.config?.affinity || {};
+  const initialThresh = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
+  const initialIters = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
+  updateAffinityAnnotations(wrapper, initialThresh, initialIters);
+
+  wrapper.dataset.controlsBound = 'true';
+}
+
+function syncHlsfControls(wrapper) {
+  if (!wrapper) return;
+
+  syncViewToConfig();
+  const config = window.HLSF.config || {};
+  const recursionDepth = applyRecursionDepthSetting(
+    Object.prototype.hasOwnProperty.call(config, 'adjacencyRecursionDepth')
+      ? config.adjacencyRecursionDepth
+      : CONFIG.ADJACENCY_RECURSION_DEPTH,
+  );
+  const recursionInput = wrapper.querySelector('#hlsf-recursion-depth');
+  const recursionVal = wrapper.querySelector('#hlsf-recursion-depth-val');
+  if (recursionInput) recursionInput.value = String(recursionDepth);
+  if (recursionVal) recursionVal.textContent = String(recursionDepth);
+  const showAllAdj = isAdjacencyExpansionEnabled();
+  const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
+  const speedVal = wrapper.querySelector('#hlsf-speed-val');
+  const emergentState = window.HLSF.state && typeof window.HLSF.state.emergent === 'object'
+    ? window.HLSF.state.emergent
+    : null;
+  const omega = Number.isFinite(emergentState?.speed)
+    ? emergentState.speed
+    : (Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0);
+  const clampedOmega = Math.max(-5, Math.min(5, omega));
+  window.HLSF.config.rotationOmega = clampedOmega;
+  if (emergentState) {
+    emergentState.speed = clampedOmega;
+    if (typeof emergentState.on !== 'boolean') {
+      emergentState.on = config.emergentActive === true;
+    }
+  } else {
+    window.HLSF.state = window.HLSF.state || {};
+    window.HLSF.state.emergent = {
+      on: config.emergentActive === true,
+      speed: clampedOmega,
+    };
+  }
+  if (speedSlider) speedSlider.value = clampedOmega.toFixed(2);
+  if (speedVal) speedVal.textContent = clampedOmega.toFixed(2);
+
+  const alphaSlider = wrapper.querySelector('#hlsf-alpha');
+  const alphaVal = wrapper.querySelector('#hlsf-alpha-val');
+  const alpha = clampAlpha(config.alpha);
+  window.HLSF.config.alpha = alpha;
+  if (alphaSlider) alphaSlider.value = alpha.toFixed(2);
+  if (alphaVal) alphaVal.textContent = alpha.toFixed(2);
+
+  const edgeWidthSlider = wrapper.querySelector('#edgew');
+  const edgeWidthVal = wrapper.querySelector('#edgew-val');
+  const edgeWidth = clampEdgeWidth(config.edgeWidth);
+  window.HLSF.config.edgeWidth = edgeWidth;
+  if (edgeWidthSlider) edgeWidthSlider.value = edgeWidth.toFixed(3);
+  if (edgeWidthVal) edgeWidthVal.textContent = edgeWidth.toFixed(3);
+
+  const nodeSizeSlider = wrapper.querySelector('#hlsf-node-size');
+  const nodeSizeVal = wrapper.querySelector('#hlsf-node-size-val');
+  const nodeSize = clampNodeSize(config.nodeSize);
+  window.HLSF.config.nodeSize = nodeSize;
+  if (nodeSizeSlider) nodeSizeSlider.value = nodeSize.toFixed(1);
+  if (nodeSizeVal) nodeSizeVal.textContent = nodeSize.toFixed(1);
+
+  const relationInput = wrapper.querySelector('#hlsf-relation-cap');
+  const relationVal = wrapper.querySelector('#hlsf-relation-cap-val');
+  const relationCapRaw = config.relationTypeCap;
+  const relationCap = relationCapRaw === Infinity
+    ? Infinity
+    : clampRelationTypeCap(relationCapRaw);
+  window.HLSF.config.relationTypeCap = relationCap;
+  if (relationInput) {
+    relationInput.value = relationCap === Infinity ? String(MAX_REL_TYPES) : String(relationCap);
+    relationInput.disabled = showAllAdj;
+  }
+  const effectiveRelationCap = showAllAdj ? Infinity : relationCap;
+  if (relationVal) relationVal.textContent = effectiveRelationCap === Infinity ? '∞' : String(effectiveRelationCap);
+
+  const scopeSelect = wrapper.querySelector('#hlsf-scope');
+  const normalizedScope = config.hlsfScope === 'state' ? 'state' : 'db';
+  window.HLSF.config.hlsfScope = normalizedScope;
+  if (scopeSelect) scopeSelect.value = normalizedScope;
+
+  const dimLayout = window.HLSF?.currentGraph?.dimensionLayout || window.HLSF?.currentLayoutSnapshot?.layout || null;
+  const dimDSpan = wrapper.querySelector('#hlsf-dimension-d');
+  const dimLevelSpan = wrapper.querySelector('#hlsf-dimension-levels');
+  const dimLastSpan = wrapper.querySelector('#hlsf-dimension-last');
+  if (dimDSpan) dimDSpan.textContent = dimLayout ? String(dimLayout.dimension || 0) : '—';
+  if (dimLevelSpan) dimLevelSpan.textContent = dimLayout ? String(dimLayout.levelCount || 0) : '—';
+  if (dimLastSpan) dimLastSpan.textContent = dimLayout ? String(dimLayout.lastLevelComponents || 0) : '—';
+
+  const edgesInput = wrapper.querySelector('#hlsf-edges-per-type');
+  const edgesVal = wrapper.querySelector('#hlsf-edges-per-type-val');
+  const edgesRaw = config.edgesPerType;
+  const edgesPerType = edgesRaw === Infinity
+    ? Infinity
+    : clampEdgesPerType(edgesRaw);
+  window.HLSF.config.edgesPerType = edgesPerType;
+  if (edgesInput) {
+    edgesInput.value = edgesPerType === Infinity ? String(MAX_EDGES_PER_TYPE) : String(edgesPerType);
+    edgesInput.disabled = showAllAdj;
+  }
+  const effectiveEdgesPerType = showAllAdj ? Infinity : edgesPerType;
+  if (edgesVal) edgesVal.textContent = effectiveEdgesPerType === Infinity ? '∞' : String(effectiveEdgesPerType);
+
+  const affinityCfg = (config.affinity && typeof config.affinity === 'object') ? config.affinity : {};
+  const threshold = (() => {
+    const raw = Number(affinityCfg.threshold);
+    const clamped = Number.isFinite(raw) ? Math.min(0.8, Math.max(0.1, raw)) : 0.35;
+    return Math.round(clamped * 100) / 100;
+  })();
+  const iterations = (() => {
+    const raw = Number(affinityCfg.iterations);
+    return Number.isFinite(raw) ? Math.min(20, Math.max(1, Math.round(raw))) : 8;
+  })();
+  window.HLSF.config.affinity = { threshold, iterations };
+
+  const thresholdSlider = wrapper.querySelector('#hlsf-aff-thresh');
+  const thresholdVal = wrapper.querySelector('#hlsf-aff-thresh-val');
+  if (thresholdSlider) thresholdSlider.value = threshold.toFixed(2);
+  if (thresholdVal) thresholdVal.textContent = threshold.toFixed(2);
+
+  const iterSlider = wrapper.querySelector('#hlsf-aff-iters');
+  const iterVal = wrapper.querySelector('#hlsf-aff-iters-val');
+  if (iterSlider) iterSlider.value = String(iterations);
+  if (iterVal) iterVal.textContent = String(iterations);
+
+  updateAffinityAnnotations(wrapper, threshold, iterations);
+
+  const edgeColorSelect = wrapper.querySelector('#hlsf-edge-color-mode');
+  const colorMode = normalizeEdgeColorMode(config.edgeColorMode);
+  window.HLSF.config.edgeColorMode = colorMode;
+  if (window.HLSF?.rendering?.relationLegendColorMode !== colorMode) {
+    markRelationLegendDirty();
+  }
+  if (edgeColorSelect) edgeColorSelect.value = colorMode;
+
+  const emergentBtn = wrapper.querySelector('#hlsf-toggle-emergent');
+  const emergentActive = window.HLSF.state?.emergent?.on === true;
+  window.HLSF.config.emergentActive = emergentActive;
+  if (emergentBtn) emergentBtn.textContent = emergentActive ? 'Stop Emergence' : 'Start Emergence';
+
+  const edgesBtn = wrapper.querySelector('#hlsf-toggle-edges');
+  if (edgesBtn) edgesBtn.textContent = config.showEdges ? 'Edges: On' : 'Edges: Off';
+
+  const adjacencyBtn = wrapper.querySelector('#hlsf-toggle-adjacency');
+  if (adjacencyBtn) {
+    adjacencyBtn.textContent = showAllAdj ? 'Adjacency: Expanded' : 'Adjacency: Compact';
+    adjacencyBtn.classList.add('btn');
+    adjacencyBtn.classList.toggle('btn-primary', showAllAdj);
+    adjacencyBtn.classList.toggle('btn-secondary', !showAllAdj);
+  }
+
+  const labelsBtn = wrapper.querySelector('#hlsf-toggle-labels');
+  if (labelsBtn) labelsBtn.textContent = config.showLabels ? 'Labels: On' : 'Labels: Off';
+
+  const glowBtn = wrapper.querySelector('#hlsf-toggle-glow');
+  if (glowBtn) glowBtn.textContent = config.showNodeGlow ? 'Glow: On' : 'Glow: Off';
+
+  const bgBtn = wrapper.querySelector('#hlsf-toggle-bg');
+  if (bgBtn) bgBtn.textContent = config.whiteBg ? 'BG: Light' : 'BG: Dark';
+
+  const layoutSelect = wrapper.querySelector('#hlsf-layout');
+  if (layoutSelect) {
+    const layout = normalizeLayout(config.layout);
+    window.HLSF.config.layout = layout;
+    layoutSelect.value = layout;
+  }
+}
+
+async function setAdjacencyExpansion(enabled, options = {}) {
+  const desired = enabled === true;
+  const previous = isAdjacencyExpansionEnabled();
+  window.HLSF.config.showAllAdjacencies = desired;
+  const root = options.root instanceof HTMLElement
+    ? options.root
+    : document.getElementById('hlsf-canvas-container');
+  if (root) syncHlsfControls(root);
+  if (desired === previous) {
+    return desired;
+  }
+  if (options.log !== false) {
+    const origin = options.source ? ` via ${options.source}` : '';
+    const message = desired
+      ? 'Adjacency expansion enabled — showing all relation types and edges.'
+      : 'Adjacency expansion disabled — using configured adjacency caps.';
+    logStatus(`${message}${origin}`.trim());
+  }
+  if (options.rebuild === false) {
+    if (window.HLSF.currentGraph) {
+      debouncedLegacyRender();
+    }
+    return desired;
+  }
+  const rebuilt = await rebuildHlsfFromLastCommand(true);
+  if (!rebuilt && window.HLSF.currentGraph) {
+    debouncedLegacyRender();
+  }
+  return desired;
+}
+
+function toggleAdjacencyExpansion(options = {}) {
+  return setAdjacencyExpansion(!isAdjacencyExpansionEnabled(), options);
+}
+
+function isEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName ? target.tagName.toLowerCase() : '';
+  if (tag === 'textarea') return true;
+  if (tag === 'input') {
+    const type = (target.getAttribute('type') || '').toLowerCase();
+    const nonTextTypes = new Set(['button', 'checkbox', 'radio', 'submit', 'reset', 'range', 'color', 'file', 'image']);
+    return !nonTextTypes.has(type);
+  }
+  return false;
+}
+
+window.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented) return;
+  const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+  if (key !== 'a' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+    return;
+  }
+  if (isEditableTarget(event.target)) return;
+  event.preventDefault();
+  const root = document.getElementById('hlsf-canvas-container');
+  toggleAdjacencyExpansion({ root, source: 'Alt+A shortcut' }).catch(err => {
+    console.warn('Adjacency shortcut toggle failed:', err);
+  });
+});
+
+window.HLSF = window.HLSF || {};
+const existingConfig = window.HLSF.config || {};
+// Default cached database bundled with the repository. Keep this in sync with
+// the actual JSON artifact checked into version control so the visualizer can
+// bootstrap immediately without requiring a manual import.
+const DEFAULT_BOOTSTRAP_DB = 'remote-db/metadata.json';
+const desiredRecursionDepth = clampRecursionDepth(
+  (existingConfig as any).adjacencyRecursionDepth ?? CONFIG.ADJACENCY_RECURSION_DEPTH,
+);
+window.HLSF.config = Object.assign({
+  bootstrapDbUrl: typeof existingConfig.bootstrapDbUrl === 'string' ? existingConfig.bootstrapDbUrl : DEFAULT_BOOTSTRAP_DB,
+  rotationOmega: 0.30,
+  alpha: 0.67,
+  scale: 1,
+  tx: 0,
+  ty: 0,
+  emergentActive: false,
+  showEdges: true,
+  showLabels: true,
+  fillFaces: false,
+  whiteBg: false,
+  showEnglish: true,
+  fullAnchorCap: 0,
+  batchLogging: true,
+  deferredRender: false,
+  progressTick: 250,
+  layout: 'dimension',
+  hlsfScope: existingConfig.hlsfScope || 'db',
+  metricScope: METRIC_SCOPE.RUN,
+  relationTypeCap: DEFAULT_RELATION_TYPE_CAP,
+  edgesPerType: 3,
+  edgeWidth: 0.2,
+  nodeSize: 1,
+  edgeColorMode: 'relation',
+  showRelationLabels: existingConfig.showRelationLabels !== false,
+  edgeLabelDensityThreshold: Number.isFinite(existingConfig.edgeLabelDensityThreshold)
+    ? existingConfig.edgeLabelDensityThreshold
+    : EDGE_LABEL_DENSITY_THRESHOLD,
+  showNodeGlow: false,
+  autoHlsfOnChange: existingConfig.autoHlsfOnChange === true,
+  showAllAdjacencies: existingConfig.showAllAdjacencies !== false,
+  affinity: { threshold: 0.35, iterations: 8 },
+  relationshipBudget: DEFAULT_HLSF_RELATIONSHIP_LIMIT,
+  adjacencyRecursionDepth: desiredRecursionDepth,
+}, existingConfig);
+const initialRelationCap = window.HLSF.config.relationTypeCap;
+window.HLSF.config.relationTypeCap = initialRelationCap === Infinity
+  ? Infinity
+  : clampRelationTypeCap(initialRelationCap);
+const initialEdgesPerType = window.HLSF.config.edgesPerType;
+window.HLSF.config.edgesPerType = initialEdgesPerType === Infinity
+  ? Infinity
+  : clampEdgesPerType(initialEdgesPerType);
+window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
+window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
+window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
+applyRecursionDepthSetting(window.HLSF.config.adjacencyRecursionDepth);
+window.HLSF.config.relationshipBudget = resolveHlsfRelationshipBudget(window.HLSF.config.relationshipBudget);
+if ('relationshipLimit' in window.HLSF.config) {
+  window.HLSF.config.relationshipLimit = window.HLSF.config.relationshipBudget;
+}
+markRelationLegendDirty();
+window.HLSF.config.showRelationLabels = window.HLSF.config.showRelationLabels !== false;
+const rawEdgeLabelThreshold = Number(window.HLSF.config.edgeLabelDensityThreshold);
+window.HLSF.config.edgeLabelDensityThreshold = Number.isFinite(rawEdgeLabelThreshold) && rawEdgeLabelThreshold > 0
+  ? Math.round(rawEdgeLabelThreshold)
+  : EDGE_LABEL_DENSITY_THRESHOLD;
+window.HLSF.config.showNodeGlow = window.HLSF.config.showNodeGlow === true;
+window.HLSF.config.showAllAdjacencies = window.HLSF.config.showAllAdjacencies !== false;
+window.HLSF.config.layout = normalizeLayout(window.HLSF.config.layout);
+window.HLSF.config.batchLogging = window.HLSF.config.batchLogging !== false;
+window.HLSF.config.deferredRender = window.HLSF.config.deferredRender !== false;
+window.HLSF.config.progressTick = Math.max(1, Math.round(Number(window.HLSF.config.progressTick) || 250));
+window.HLSF.config.metricScope = normalizeMetricScope(window.HLSF.config.metricScope);
+const affinityCfg = window.HLSF.config.affinity;
+if (!affinityCfg || typeof affinityCfg !== 'object') {
+  window.HLSF.config.affinity = { threshold: 0.35, iterations: 8 };
+} else {
+  const rawThresh = Number(affinityCfg.threshold);
+  const rawIters = Number(affinityCfg.iterations);
+  window.HLSF.config.affinity.threshold = Number.isFinite(rawThresh)
+    ? Math.round(Math.min(0.8, Math.max(0.1, rawThresh)) * 100) / 100
+    : 0.35;
+  window.HLSF.config.affinity.iterations = Number.isFinite(rawIters)
+    ? Math.min(20, Math.max(1, Math.round(rawIters)))
+    : 8;
+}
+const prevState = window.HLSF.state || {};
+window.HLSF.state = Object.assign({}, prevState);
+const emergentState = prevState.emergent && typeof prevState.emergent === 'object'
+  ? prevState.emergent
+  : {};
+const emergentDefaultOn = window.HLSF.config.emergentActive === true;
+window.HLSF.state.emergent = Object.assign({ on: emergentDefaultOn, speed: window.HLSF.config.rotationOmega || 0 }, emergentState);
+window.HLSF.state.emergentRot = Number.isFinite(prevState.emergentRot) ? prevState.emergentRot : 0;
+if (!(window.HLSF.state.patches instanceof Map)) window.HLSF.state.patches = new Map();
+window.HLSF.view = Object.assign({ x: 0, y: 0, scale: 1 }, window.HLSF.view || {});
+if (!Number.isFinite(window.HLSF.view.x)) window.HLSF.view.x = 0;
+if (!Number.isFinite(window.HLSF.view.y)) window.HLSF.view.y = 0;
+if (!Number.isFinite(window.HLSF.view.scale) || window.HLSF.view.scale <= 0) window.HLSF.view.scale = 1;
+
+function syncViewToConfig() {
+  if (!window.HLSF?.config || !window.HLSF?.view) return;
+  window.HLSF.config.scale = window.HLSF.view.scale;
+  window.HLSF.config.tx = window.HLSF.view.x;
+  window.HLSF.config.ty = window.HLSF.view.y;
+}
+window.HLSF.canvas = window.HLSF.canvas || null;
+window.HLSF.ctx = window.HLSF.ctx || null;
+window.HLSF.nodes = window.HLSF.nodes || [];
+window.HLSF.animationFrame = window.HLSF.animationFrame || null;
+window.HLSF.geometry = window.HLSF.geometry || {};
+window.HLSF.rendering = window.HLSF.rendering || {};
+window.HLSF.__centerInit = window.HLSF.__centerInit || false;
+window.HLSF.indexCache = window.HLSF.indexCache || null;
+window.HLSF.indexCacheSource = window.HLSF.indexCacheSource || null;
+
+const clampAlpha = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return NaN;
+  return Math.min(0.99, Math.max(0, numeric));
+};
+window.HLSF.config.alpha = (() => {
+  const initial = clampAlpha(window.HLSF.config.alpha);
+  return Number.isFinite(initial) ? initial : 0.67;
+})();
+const baseAlpha = () => {
+  const resolved = clampAlpha(window.HLSF.config.alpha);
+  return Number.isFinite(resolved) ? resolved : 0.67;
+};
+
+function hideVisualizer() {
+  const el = document.getElementById('hlsf-canvas-container');
+  if (el) el.classList.add('hidden');
+}
+
+function showVisualizer() {
+  const el = document.getElementById('hlsf-canvas-container');
+  if (el) el.classList.remove('hidden');
+}
+const edgeAlphaFromWeight = (w) => {
+  const preferred = Number.isFinite(w) ? clampAlpha(w) : NaN;
+  if (Number.isFinite(preferred)) return preferred;
+  return baseAlpha();
+};
+
+const EDGE_COLOR_PALETTE = [
+  '#00ff88', '#ffd54f', '#ff6f91', '#64b5f6', '#ce93d8',
+  '#ff8a65', '#4dd0e1', '#9ccc65', '#f06292', '#ba68c8'
+];
+
+function paletteColor(key) {
+  if (!key) return EDGE_COLOR_PALETTE[0];
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = (hash * 33 + key.charCodeAt(i)) | 0;
+  }
+  const index = Math.abs(hash) % EDGE_COLOR_PALETTE.length;
+  return EDGE_COLOR_PALETTE[index];
+}
+
+function normalizedIntensity(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(1, numeric));
+}
+
+function weightToColor(value) {
+  const t = normalizedIntensity(value);
+  const r = Math.round(255 - 90 * t);
+  const g = Math.round(160 + 80 * t);
+  const b = Math.round(120 + 16 * (1 - t));
+  const alpha = 0.45 + 0.45 * t;
+  return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+}
+
+function nodeEdgeStrokeColor(node, index, mode) {
+  if (mode === 'relation') {
+    return paletteColor(`${node.token}-${index}`);
+  }
+  if (mode === 'weight') {
+    return weightToColor(node.attention ?? 0);
+  }
+  return null;
+}
+
+function compositeEdgeStrokeColor(edge, mode) {
+  if (mode === 'relation') {
+    return paletteColor(edge.rtype || `${edge.from}->${edge.to}`);
+  }
+  if (mode === 'weight') {
+    return weightToColor(edge.w ?? 0);
+  }
+  return null;
+}
+
+function markRelationLegendDirty() {
+  window.HLSF = window.HLSF || {};
+  if (!window.HLSF.rendering || typeof window.HLSF.rendering !== 'object') {
+    window.HLSF.rendering = {};
+  }
+  window.HLSF.rendering.relationLegendSignature = null;
+  window.HLSF.rendering.relationLegendGraph = null;
+  window.HLSF.rendering.relationLegendColorMode = null;
+  window.HLSF.rendering.relationLegendInitialized = false;
+}
+
+function updateRelationLegend(graph, edges, edgeColorMode) {
+  const container = document.getElementById('hlsf-relation-legend');
+  const list = document.getElementById('hlsf-relation-legend-items');
+  if (!container || !list) return;
+  const countEl = document.getElementById('hlsf-relation-legend-count');
+  const group = container.closest('.hlsf-control-group');
+
+  window.HLSF = window.HLSF || {};
+  if (!window.HLSF.rendering || typeof window.HLSF.rendering !== 'object') {
+    window.HLSF.rendering = {};
+  }
+  const state = window.HLSF.rendering;
+
+  if (edgeColorMode !== 'relation') {
+    list.innerHTML = '';
+    container.hidden = true;
+    container.setAttribute('aria-hidden', 'true');
+    if (group) {
+      group.hidden = true;
+      group.setAttribute('aria-hidden', 'true');
+    }
+    if (countEl) countEl.textContent = '';
+    state.relationLegendSignature = null;
+    state.relationLegendGraph = null;
+    state.relationLegendColorMode = edgeColorMode;
+    state.relationLegendInitialized = false;
+    return;
+  }
+
+  const edgeList = Array.isArray(edges)
+    ? edges
+    : Array.isArray(graph?.links)
+      ? graph.links
+      : Array.isArray(graph?.edges)
+        ? graph.edges
+        : [];
+
+  if (!edgeList.length) {
+    list.innerHTML = '';
+    container.hidden = true;
+    container.setAttribute('aria-hidden', 'true');
+    if (group) {
+      group.hidden = true;
+      group.setAttribute('aria-hidden', 'true');
+    }
+    if (countEl) countEl.textContent = '';
+    state.relationLegendSignature = '';
+    state.relationLegendGraph = graph || null;
+    state.relationLegendColorMode = edgeColorMode;
+    state.relationLegendInitialized = false;
+    if (graph && typeof graph === 'object') graph.__legendDirty = false;
+    return;
+  }
+
+  const requiresUpdate = graph?.__legendDirty === true
+    || state.relationLegendSignature == null
+    || state.relationLegendGraph !== graph
+    || state.relationLegendColorMode !== edgeColorMode;
+
+  if (!requiresUpdate) {
+    return;
+  }
+
+  const unique = new Map();
+  for (const edge of edgeList) {
+    const rel = typeof edge?.rtype === 'string' ? edge.rtype : null;
+    if (!rel || unique.has(rel)) continue;
+    unique.set(rel, {
+      color: paletteColor(rel),
+      label: relDisplay(rel),
+    });
+  }
+
+  const sorted = [...unique.keys()].sort((a, b) => {
+    const aLabel = unique.get(a)?.label ?? a;
+    const bLabel = unique.get(b)?.label ?? b;
+    return aLabel.localeCompare(bLabel, undefined, { sensitivity: 'base' });
+  });
+  const signature = sorted.join('|');
+
+  if (signature === state.relationLegendSignature && graph?.__legendDirty !== true) {
+    const isEmpty = sorted.length === 0;
+    container.hidden = isEmpty;
+    container.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
+    if (!isEmpty) container.removeAttribute('hidden');
+    if (group) {
+      group.hidden = isEmpty;
+      if (!isEmpty) group.removeAttribute('hidden');
+      group.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
+    }
+    if (countEl) countEl.textContent = sorted.length ? `${sorted.length}` : '';
+    if (!isEmpty && container.dataset.userCollapsed !== 'true' && state.relationLegendInitialized !== true) {
+      container.open = true;
+      container.dataset.userCollapsed = 'false';
+    }
+    state.relationLegendInitialized = !isEmpty;
+    state.relationLegendGraph = graph || null;
+    state.relationLegendColorMode = edgeColorMode;
+    if (graph && typeof graph === 'object') graph.__legendDirty = false;
+    return;
+  }
+
+  list.innerHTML = '';
+  for (const key of sorted) {
+    const entry = unique.get(key);
+    if (!entry) continue;
+    const item = document.createElement('div');
+    item.className = 'hlsf-legend-item';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'hlsf-legend-color';
+    swatch.style.background = entry.color;
+
+    const label = document.createElement('span');
+    label.textContent = entry.label;
+
+    item.appendChild(swatch);
+    item.appendChild(label);
+    list.appendChild(item);
+  }
+
+  const isEmpty = sorted.length === 0;
+  container.hidden = isEmpty;
+  container.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
+  if (!isEmpty) container.removeAttribute('hidden');
+  if (group) {
+    group.hidden = isEmpty;
+    if (!isEmpty) group.removeAttribute('hidden');
+    group.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
+  }
+  if (countEl) countEl.textContent = sorted.length ? `${sorted.length}` : '';
+  if (!isEmpty && container.dataset.userCollapsed !== 'true') {
+    container.open = true;
+    container.dataset.userCollapsed = 'false';
+  }
+  state.relationLegendInitialized = !isEmpty;
+  state.relationLegendSignature = signature;
+  state.relationLegendGraph = graph || null;
+  state.relationLegendColorMode = edgeColorMode;
+  if (graph && typeof graph === 'object') graph.__legendDirty = false;
+}
+
+function stepRotation(dt) {
+  const tau = 2 * Math.PI;
+  rotate_patches(dt);
+  const emergent = window.HLSF.state?.emergent;
+  if (!emergent?.on) return;
+  const speed = Number.isFinite(emergent.speed)
+    ? emergent.speed
+    : (Number.isFinite(window.HLSF.config.rotationOmega) ? window.HLSF.config.rotationOmega : 0);
+  if (!speed) return;
+  emergent.speed = speed;
+  window.HLSF.state.emergentRot = (window.HLSF.state.emergentRot + dt * speed) % tau;
+}
+
+let TokenToGlyph = new Map();
+let GlyphToToken = new Map();
+
+function loadGlyphMaps(db) {
+  if (!db) return;
+  if (!(TokenToGlyph instanceof Map)) TokenToGlyph = new Map();
+  if (!(GlyphToToken instanceof Map)) GlyphToToken = new Map();
+  TokenToGlyph.clear();
+  GlyphToToken.clear();
+  (db.token_glyph_map || []).forEach(({ token, glyph }) => {
+    if (token && glyph) {
+      TokenToGlyph.set(token, glyph);
+      if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+      GlyphToToken.get(glyph).add(token);
+    }
+  });
+  (db.glyph_token_map || []).forEach(({ glyph, token }) => {
+    if (glyph && token) {
+      TokenToGlyph.set(token, glyph);
+      if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+      GlyphToToken.get(glyph).add(token);
+    }
+  });
+}
+
+const userAvatarStore = initializeUserAvatarStore();
+
+window.CognitionEngine = window.CognitionEngine || {
+  state: {},
+  cache: {},
+  api: {},
+  processing: {},
+};
+window.CognitionEngine.userAvatar = userAvatarStore;
+window.CognitionEngine.export = window.CognitionEngine.export || {};
+window.CognitionEngine.export.session = options => {
+  const opts = options && typeof options === 'object' ? { ...options } : {};
+  const extras = opts.extras && typeof opts.extras === 'object' ? { ...opts.extras } : {};
+  try {
+    const voiceApi = window.CognitionEngine?.voice;
+    const clonePayload = voiceApi?.getProfileClone?.();
+    if (clonePayload) extras.voiceProfileClone = clonePayload;
+    const profilePayload = voiceApi?.getProfileExport?.();
+    if (profilePayload) extras.voiceProfile = profilePayload;
+  } catch (err) {
+    console.warn('Unable to attach voice profile clone to session export:', err);
+  }
+  opts.extras = extras;
+  const tokens = Array.isArray(opts.tokens) ? opts.tokens : opts.tokens ? [].concat(opts.tokens) : [];
+  const edges = Array.isArray(opts.edges) ? opts.edges : opts.edges || [];
+  const lastPipeline = state.symbolMetrics?.lastPipeline;
+  const metrics = opts.metrics || lastPipeline?.metrics || null;
+  const topNodes = opts.top || lastPipeline?.top || null;
+  const consciousness = opts.consciousness || lastPipeline?.consciousness || null;
+  const snapshot = opts.settingsSnapshot && typeof opts.settingsSnapshot === 'object'
+    ? opts.settingsSnapshot
+    : null;
+  return buildSessionExport({
+    tokens,
+    edges,
+    metrics: metrics || undefined,
+    top: topNodes || undefined,
+    consciousness: consciousness || undefined,
+    settingsSnapshot: snapshot || undefined,
+    extras: opts.extras,
+  });
+};
+
+window.GlyphSystem = window.GlyphSystem || {
+  ledger: null,
+  encode: () => '',
+  decode: () => '',
+  export: () => ({}),
+};
+
+// ---- Glyph crypto core ----
+const LEDGER_KEY = "HLSF_GLYPH_LEDGER_V1";
+const GLYPH_SET = Array.from("⬣⬧⬩⬡⬪⬨⬤⬟⬢⬥⬠⬙⬘⬗⬖⬕⬔⬓⬒⬑"); // limited symbols
+const GLYPH_SEP = " "; // delimiter between glyph-weight pairs
+const NUM_FMT = n => Number(n).toString(); // unlimited precision as given
+
+function hydrateLedgerMaps(ledger) {
+  TokenToGlyph.clear();
+  GlyphToToken.clear();
+  const map = ledger?.glyph_map || {};
+  for (const glyph of Object.keys(map)) {
+    const entries = Array.isArray(map[glyph]) ? map[glyph] : [];
+    for (const entry of entries) {
+      if (!entry || !entry.token) continue;
+      TokenToGlyph.set(entry.token, glyph);
+      if (!GlyphToToken.has(glyph)) GlyphToToken.set(glyph, new Set());
+      GlyphToToken.get(glyph).add(entry.token);
+    }
+  }
+}
+
+// Load/save ledger
+function loadLedger() {
+  let ledger;
+  try {
+    const raw = localStorage.getItem(LEDGER_KEY);
+    ledger = raw ? JSON.parse(raw) : null;
+  } catch {
+    ledger = null;
+  }
+  if (!ledger || typeof ledger !== 'object') {
+    ledger = { version: "1.0", created_at: new Date().toISOString(), glyph_map: {} };
+  } else {
+    ledger.version = ledger.version || "1.0";
+    ledger.created_at = ledger.created_at || new Date().toISOString();
+    ledger.glyph_map = ledger.glyph_map || {};
+  }
+  hydrateLedgerMaps(ledger);
+  return ledger;
+}
+function saveLedger(ledger) {
+  try {
+    localStorage.setItem(LEDGER_KEY, JSON.stringify(ledger));
+  } catch (err) {
+    console.warn('Failed to persist glyph ledger:', err);
+  }
+}
+
+// ---- HLSF constants
+const TOKEN_CACHE_PREFIX = 'hlsf_token_';
+const DB_RAW_KEY = 'HLSF_DB_RAW';        // stores JSON export text
+const API_KEY_STORAGE_KEY = 'HLSF_API_KEY';
+const DB_INDEX_KEY = 'HLSF_DB_INDEX';    // array of token strings
+const EXPORT_KEY_STORAGE_KEY = 'HLSF_EXPORT_KEY';
+const EXPORT_PAYLOAD_FORMAT = 'HLSF_DB_EXPORT_V2';
+const EXPORT_PAYLOAD_VERSION = 2;
+
+const memoryStorageFallback = new Map();
+let storageQuotaWarningIssued = false;
+let storageQuotaHardLimitActive = false;
+
+function isQuotaExceededError(err) {
+  if (!err) return false;
+  return err.name === 'QuotaExceededError'
+    || err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+    || err.code === 22
+    || err.code === 1014;
+}
+
+function purgeTokenCache() {
+  let removed = 0;
+  try {
+    const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+    for (const key of keys) {
+      localStorage.removeItem(key);
+      removed++;
+    }
+  } catch (err) {
+    console.warn('Failed to purge token cache from persistent storage:', err);
+  }
+  for (const key of Array.from(memoryStorageFallback.keys())) {
+    if (key.startsWith(TOKEN_CACHE_PREFIX)) {
+      memoryStorageFallback.delete(key);
+      removed++;
+    }
+  }
+
+  if (removed > 0 && typeof state !== 'undefined' && state && typeof state === 'object') {
+    setDocumentCacheBaseline(0, { manual: true });
+  }
+  if (removed > 0) {
+    storageQuotaHardLimitActive = false;
+  }
+  return removed;
+}
+
+function purgeSpecificKey(key) {
+  let removed = false;
+  try {
+    if (localStorage.getItem(key) != null) {
+      localStorage.removeItem(key);
+      removed = true;
+    }
+  } catch (err) {
+    console.warn(`Failed to purge ${key} from persistent storage:`, err);
+  }
+  if (memoryStorageFallback.delete(key)) {
+    removed = true;
+  }
+  if (removed) {
+    storageQuotaHardLimitActive = false;
+  }
+  return removed;
+}
+
+function parseMaybeNdjson(text) {
+  try { return JSON.parse(text); } catch {}
+  const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const rows = [];
+  for (const ln of lines) {
+    try { rows.push(JSON.parse(ln)); } catch {}
+  }
+  return rows.length ? rows : null;
+}
+
+function coerceDb(input) {
+  const data = (typeof input === 'string') ? parseMaybeNdjson(input.replace(/^\uFEFF/, '')) : input;
+  if (!data) throw new Error('Unparseable JSON/NDJSON');
+  if (data && !Array.isArray(data) && Array.isArray(data.full_token_data)) {
+    return Object.assign({}, data, { full_token_data: data.full_token_data });
+  }
+  if (Array.isArray(data)) return { full_token_data: data };
+  throw new Error('Invalid database format. Expected full_token_data array.');
+}
+
+function normalizeRecord(rec) {
+  if (!rec || typeof rec.token !== 'string') return null;
+  const rels = rec.relationships && typeof rec.relationships === 'object' ? rec.relationships : {};
+  const out = { token: rec.token, relationships: rels, cached_at: rec.cached_at || null };
+  for (const [key, value] of Object.entries(rec)) {
+    if (key === 'token' || key === 'relationships' || key === 'cached_at') continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+function ensureGlobalConnectionEdge(record, targetToken, relation = GLOBAL_CONNECTION_RELATION, weight = GLOBAL_CONNECTION_WEIGHT) {
+  if (!record || typeof record !== 'object') return false;
+  if (!targetToken || typeof targetToken !== 'string') return false;
+
+  const relKey = normRelKey(relation) || relation;
+  if (!relKey) return false;
+
+  if (!record.relationships || typeof record.relationships !== 'object') {
+    record.relationships = {};
+  }
+
+  const relationships = record.relationships;
+  let edges = Array.isArray(relationships[relKey]) ? relationships[relKey] : null;
+  if (!edges) {
+    edges = [];
+    relationships[relKey] = edges;
+  }
+
+  const normalizedTarget = targetToken.toLowerCase();
+  let changed = false;
+
+  for (const edge of edges) {
+    if (!edge || typeof edge.token !== 'string') continue;
+    if (edge.token.toLowerCase() !== normalizedTarget) continue;
+
+    const current = Number.isFinite(Number(edge.weight)) ? Number(edge.weight) : null;
+    const updated = Number.isFinite(current) ? Math.max(current, weight) : weight;
+    if (!Number.isFinite(current) || updated !== current) {
+      edge.weight = updated;
+      changed = true;
+    }
+    return changed;
+  }
+
+  edges.push({ token: targetToken, weight });
+  return true;
+}
+
+function applyGlobalConnectionRule(records, tokensToConnect = null) {
+  if (!Array.isArray(records) || !records.length) return new Set();
+
+  const recordMap = new Map();
+  const orderedRecords = [];
+
+  for (const rec of records) {
+    if (!rec || typeof rec.token !== 'string') continue;
+    const key = rec.token.toLowerCase();
+    if (!key) continue;
+    if (!recordMap.has(key)) {
+      if (!rec.relationships || typeof rec.relationships !== 'object') {
+        rec.relationships = {};
+      }
+      recordMap.set(key, rec);
+      orderedRecords.push(rec);
+    }
+  }
+
+  if (!recordMap.size) return new Set();
+
+  const targets = tokensToConnect instanceof Set && tokensToConnect.size
+    ? Array.from(tokensToConnect)
+        .map(token => (typeof token === 'string' ? token.toLowerCase() : ''))
+        .filter(token => token && recordMap.has(token))
+    : orderedRecords.map(rec => rec.token.toLowerCase());
+
+  const changedTokens = new Set();
+
+  for (const key of targets) {
+    const record = recordMap.get(key);
+    if (!record) continue;
+
+    for (const other of orderedRecords) {
+      if (!other || typeof other.token !== 'string') continue;
+      const otherKey = other.token.toLowerCase();
+      if (!otherKey || otherKey === key) continue;
+
+      if (ensureGlobalConnectionEdge(record, other.token)) {
+        changedTokens.add(record.token);
+      }
+      if (ensureGlobalConnectionEdge(other, record.token)) {
+        changedTokens.add(other.token);
+      }
+    }
+  }
+
+  return changedTokens;
+}
+
+function persistChangedTokenCaches(records, changedTokens) {
+  if (!(changedTokens instanceof Set) || changedTokens.size === 0) return;
+  const lookup = new Map();
+  for (const rec of Array.isArray(records) ? records : []) {
+    if (!rec || typeof rec.token !== 'string') continue;
+    const key = rec.token.toLowerCase();
+    if (!key || lookup.has(key)) continue;
+    lookup.set(key, rec);
+  }
+
+  for (const token of changedTokens) {
+    if (!token || typeof token !== 'string') continue;
+    const rec = lookup.get(token.toLowerCase());
+    if (!rec) continue;
+    const cacheKey = getCacheKey(rec.token);
+    const payload = JSON.stringify(rec);
+    const persisted = safeStorageSet(cacheKey, payload);
+    if (!persisted && !memoryStorageFallback.has(cacheKey)) {
+      memoryStorageFallback.set(cacheKey, payload);
+    }
+    CacheBatch.record(rec.token);
+  }
+}
+
+function announceDatabaseReady(reason = 'unknown') {
+  const normalizedReason = typeof reason === 'string' && reason.trim() ? reason.trim() : 'unknown';
+  const timestamp = Date.now();
+  const db = getDb();
+  const tokenCount = Array.isArray(db?.full_token_data) ? db.full_token_data.length : getCachedTokenCount();
+  const remoteReady = Boolean(window.HLSF?.remoteDb?.isReady?.());
+  const detail = {
+    reason: normalizedReason,
+    timestamp,
+    hasDatabase: !!db,
+    tokenCount,
+    remoteReady,
+  };
+
+  window.HLSF = window.HLSF || {};
+  window.HLSF.databaseReady = detail;
+
+  const listeners = window.HLSF.databaseReadyListeners;
+  if (Array.isArray(listeners)) {
+    for (const listener of listeners) {
+      if (typeof listener !== 'function') continue;
+      try {
+        listener(detail);
+      } catch (err) {
+        console.warn('Database ready listener failed:', err);
+      }
+    }
+  } else if (typeof listeners === 'function') {
+    try {
+      listeners(detail);
+    } catch (err) {
+      console.warn('Database ready listener failed:', err);
+    }
+  }
+
+  if (typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+    try {
+      const event = new window.CustomEvent(DATABASE_READY_EVENT, { detail });
+      window.dispatchEvent(event);
+    } catch (err) {
+      console.warn('Failed to dispatch database-ready event:', err);
+    }
+  }
+  signalVoiceCloneTokensChanged('database-ready');
+}
+
+const DB_IMPORT_MIN_CHUNK_SIZE = 200;
+const DB_IMPORT_MAX_CHUNK_SIZE = 2500;
+
+function resolveDbImportConcurrency() {
+  const configured = Number(window.HLSF?.config?.dbImportConcurrency);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(1, Math.min(8, Math.floor(configured)));
+  }
+  const hardware = typeof navigator !== 'undefined'
+    && navigator
+    && typeof navigator.hardwareConcurrency === 'number'
+      ? navigator.hardwareConcurrency
+      : 0;
+  if (Number.isFinite(hardware) && hardware > 0) {
+    const derived = Math.floor(hardware / 2) || 1;
+    return Math.max(1, Math.min(6, derived));
+  }
+  return 3;
+}
+
+function resolveDbImportChunkSize(total, concurrency) {
+  if (!Number.isFinite(total) || total <= 0) return DB_IMPORT_MIN_CHUNK_SIZE;
+  const denominator = Math.max(1, concurrency * 4);
+  const approx = Math.ceil(total / denominator);
+  return Math.max(DB_IMPORT_MIN_CHUNK_SIZE, Math.min(DB_IMPORT_MAX_CHUNK_SIZE, approx));
+}
+
+async function yieldDbImport() {
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    await new Promise(resolve => window.requestIdleCallback(resolve, { timeout: 100 }));
+    return;
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
+async function loadDbObject(dbLike, options = {}) {
+  CacheBatch.begin({ baseline: getDocumentCacheBaseline() });
+  try {
+    const db = coerceDb(dbLike);
+    const records = Array.isArray(db.full_token_data) ? db.full_token_data : [];
+    if (!records.length) throw new Error('No valid token records');
+
+    const opts = options || {};
+    const now = new Date().toISOString();
+    const recorder = window.HLSF?.remoteDbRecorder;
+    const indexSeed = safeStorageGet(DB_INDEX_KEY, []);
+    const indexSet = new Set(Array.isArray(indexSeed) ? indexSeed : []);
+    const chunkBuckets = new Map();
+    const concurrency = resolveDbImportConcurrency();
+    const chunkSize = Math.max(1, resolveDbImportChunkSize(records.length, concurrency));
+    let normalizedCount = 0;
+
+    if (opts.replace === true) {
+      purgeTokenCache();
+      safeStorageRemove(DB_INDEX_KEY);
+      safeStorageRemove(DB_RAW_KEY);
+      indexSet.clear();
+      window.HLSF.dbCache = { full_token_data: [] };
+    }
+
+    const normalizePrefix = (token) => {
+      const lower = typeof token === 'string' ? token.toLowerCase() : '';
+      if (!lower) return '_';
+      const first = lower.charAt(0);
+      if (first >= 'a' && first <= 'z') return first;
+      if (first >= '0' && first <= '9') return first;
+      return '_';
+    };
+
+    const flushChunk = async (prefix) => {
+      const batch = chunkBuckets.get(prefix);
+      if (!batch || !batch.length) return;
+      if (recorder && typeof recorder.ingestMany === 'function') {
+        try {
+          await recorder.ingestMany(batch);
+        } catch (err) {
+          console.warn('Remote DB recorder bulk ingest failed:', err);
+        }
+      }
+
+      for (const normalized of batch) {
+        if (!normalized?.token) continue;
+        normalizedCount++;
+        if (!normalized.cached_at) normalized.cached_at = now;
+        indexSet.add(normalized.token);
+        const cacheKey = getCacheKey(normalized.token);
+        const wasCached = isTokenCached(normalized.token);
+        const stub = Object.assign({}, normalized, { relationships: {} });
+        const payload = JSON.stringify(stub);
+        const persisted = safeStorageSet(cacheKey, payload);
+        if (!persisted) memoryStorageFallback.set(cacheKey, payload);
+        if (!wasCached) {
+          CacheBatch.record(normalized.token);
+        }
+      }
+
+      batch.length = 0;
+      await yieldDbImport();
+    };
+
+    for (const rawRecord of records) {
+      const normalized = normalizeRecord(rawRecord);
+      if (!normalized?.token) continue;
+      const prefix = normalizePrefix(normalized.token);
+      if (!chunkBuckets.has(prefix)) {
+        chunkBuckets.set(prefix, []);
+      }
+      const bucket = chunkBuckets.get(prefix);
+      bucket.push(normalized);
+      if (bucket.length >= chunkSize) {
+        await flushChunk(prefix);
+      }
+    }
+
+    const remainingPrefixes = Array.from(chunkBuckets.keys());
+    for (const prefix of remainingPrefixes) {
+      await flushChunk(prefix);
+    }
+    chunkBuckets.clear();
+
+    records.length = 0;
+    db.full_token_data = [];
+    window.HLSF.dbCache = { full_token_data: [] };
+    const indexPayload = JSON.stringify(Array.from(indexSet));
+    const rawPayload = JSON.stringify(window.HLSF.dbCache);
+    const rawPersisted = safeStorageSet(DB_RAW_KEY, rawPayload);
+    const indexPersisted = safeStorageSet(DB_INDEX_KEY, indexPayload);
+    if (!rawPersisted || !indexPersisted) {
+      logWarning('Local storage quota reached. Database available for this session only — use /export to back up data.');
+    }
+
+    if (recorder && typeof recorder.schedulePersist === 'function') {
+      try { recorder.schedulePersist(); }
+      catch (err) { console.warn('Remote DB recorder persist scheduling failed:', err); }
+    }
+
+    if (recorder && window.HLSF?.remoteDb && typeof window.HLSF.remoteDb.attachRecorder === 'function') {
+      try { window.HLSF.remoteDb.attachRecorder(recorder); }
+      catch (err) { console.warn('Remote DB attachment failed:', err); }
+    }
+
+    state.liveGraphMode = false;
+    markHlsfDataDirty();
+    updateHeaderCounts();
+    announceDatabaseReady('load-db');
+    return normalizedCount;
+  } finally {
+    CacheBatch.end();
+  }
+}
+
+function refreshDbReference(recordLike, options = {}) {
+  const {
+    deferReload = false,
+    persist = true,
+  } = options || {};
+  const normalized = normalizeRecord(recordLike);
+  if (!normalized) return;
+
+  if (!normalized.cached_at) {
+    normalized.cached_at = new Date().toISOString();
+  }
+
+  let db = window.HLSF.dbCache;
+  if (!db || typeof db !== 'object') {
+    const stored = safeStorageGet(DB_RAW_KEY, null);
+    if (stored && typeof stored === 'object') {
+      db = stored;
+    } else if (typeof stored === 'string') {
+      try {
+        db = JSON.parse(stored);
+      } catch (err) {
+        console.warn('Failed to hydrate existing DB snapshot:', err);
+        db = null;
+      }
+    }
+  }
+
+  if (!db || typeof db !== 'object') {
+    db = { full_token_data: [] };
+  }
+
+  if (!Array.isArray(db.full_token_data)) {
+    db.full_token_data = Array.isArray(db.full_token_data)
+      ? db.full_token_data.filter(Boolean).map(normalizeRecord).filter(Boolean)
+      : [];
+  }
+
+  const entries = db.full_token_data;
+  const idx = entries.findIndex(rec => rec && rec.token === normalized.token);
+  let storedRecord = null;
+  if (idx >= 0) {
+    const existing = entries[idx] || {};
+    entries[idx] = Object.assign({}, existing, normalized);
+    if (!entries[idx].cached_at) entries[idx].cached_at = normalized.cached_at;
+    storedRecord = entries[idx];
+  } else {
+    entries.push(normalized);
+    storedRecord = normalized;
+  }
+
+  const targetTokens = new Set(storedRecord?.token ? [storedRecord.token] : []);
+  const globalChanged = applyGlobalConnectionRule(entries, targetTokens);
+  if (persist && globalChanged.size) {
+    persistChangedTokenCaches(entries, globalChanged);
+  }
+
+  window.HLSF.dbCache = db;
+  enforceLocalRelationshipBudget({ persist: false });
+  if (persist) {
+    try {
+      safeStorageSet(DB_RAW_KEY, JSON.stringify(db));
+    } catch (err) {
+      console.warn('Failed to persist updated DB snapshot:', err);
+    }
+  }
+  try {
+    const recorder = window.HLSF?.remoteDbRecorder;
+    if (recorder && typeof recorder.ingest === 'function') {
+      recorder.ingest(storedRecord);
+    }
+  } catch (err) {
+    console.warn('Remote DB recorder ingest failed:', err);
+  }
+  if (deferReload) {
+    markHlsfDataDirty();
+  } else {
+    notifyHlsfAdjacencyChange('cache-update');
+  }
+  updateHeaderCounts();
+  return storedRecord;
+}
+
+function getDb() {
+  if (window.HLSF.dbCache) return window.HLSF.dbCache;
+  let stored = safeStorageGet(DB_RAW_KEY, null);
+  if (stored && typeof stored === 'object') {
+    window.HLSF.dbCache = stored;
+    return stored;
+  }
+
+  let raw = typeof stored === 'string' ? stored : null;
+  if (!raw) {
+    let legacy = null;
+    try {
+      legacy = localStorage.getItem('hlsf_db_raw');
+    } catch (err) {
+      console.warn('Failed to read legacy DB snapshot from storage:', err);
+    }
+    if (!legacy && memoryStorageFallback.has('hlsf_db_raw')) {
+      legacy = memoryStorageFallback.get('hlsf_db_raw');
+    }
+    if (legacy) {
+      safeStorageSet(DB_RAW_KEY, legacy);
+      safeStorageRemove('hlsf_db_raw');
+      raw = legacy;
+    }
+  }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    window.HLSF.dbCache = parsed;
+    return parsed;
+  } catch (err) {
+    console.warn('Stored DB is not valid JSON:', err);
+    return null;
+  }
+}
+
+// Symbolic glyphs for complex number representation
+const GLYPH_LIBRARY = [
+  '◉', '◈', '◇', '◆', '◊', '○', '●', '◐', '◑', '◒',
+  '◓', '☉', '⊙', '⊚', '⊛', '⊜', '⊝', '◎', '◍', '◌',
+  '△', '▲', '▽', '▼', '◁', '▷', '◀', '▶', '⬟', '⬠',
+  '⬡', '⬢', '⬣', '⬤', '⬥', '⬦', '⬧', '⬨', '⬩', '⬪',
+  '⬫', '⬬', '⬭', '⬮', '⬯', '⭐', '★', '☆', '✦', '✧',
+  '✶', '✷', '✸', '✹', '✺', '✻', '✼', '✽', '✾', '✿',
+  '❀', '❁', '❂', '❃', '❄', '❅', '❆', '❇', '❈', '❉',
+  '⚙', '⚛', '⚝', '⚞', '⚟', '⚬', '⚭', '⚮', '⚯', '⚰'
+];
+
+const HIDDEN_ADJACENCY_RELATION = '⊚';
+const HIDDEN_EDGE_MIN_WEIGHT = 0.01;
+const DEFAULT_HIDDEN_ATTENTION_PER_TOKEN = 2;
+const DEFAULT_HIDDEN_ADJACENCY_DEPTH = 6;
+const DEFAULT_HIDDEN_ADJACENCY_CAP = 2048;
+
+const RELATIONSHIP_PRIORITIES = new Map([
+  ['≡', 1.0], ['⊃', 1.0], ['⊂', 0.8], ['≈', 0.7], ['∈', 0.9], ['∋', 0.9],
+  ['⊤', 0.9], ['⊥', 0.9], ['⊏', 0.8], ['⊐', 0.8], ['↔', 0.7], ['⇌', 0.7],
+  ['∥', 0.6], ['∼', 0.5], ['→', 0.5], ['⇒', 0.5], ['⇐', 0.5], ['↠', 0.5],
+  ['↗', 0.4], ['↘', 0.4], ['⇝', 1.0], ['⇂', 0.7], ['≠', 0.8], ['⊕', 0.8],
+  ['⊛', 0.7], ['∝', 0.7], ['⇝ Causes', 1.0], ['⇐ Caused By', 0.9],
+  ['∗', 0.7], ['≜', 0.9], ['⋆', 0.8], ['7→', 0.7], ['⊢', 0.9], ['⊣', 0.9],
+  ['↷', 0.8], ['↶', 0.8], ['◦', 0.9], ['|=', 0.9], ['◁', 0.6], ['⇄', 0.6],
+  ['⊗', 0.9], ['÷', 0.7], ['⊘', 0.8], ['×', 0.8], ['¬', 0.8], ['†', 0.8],
+  ['⊠', 0.8], ['/∈', 0.8], ['⊬', 0.8], ['⊩', 0.9], ['⊨', 0.9], ['?', 0.5],
+  ['⚡', 0.7], ['⇒ Attention', 0.7], ['↶ Self-Reference', 0.7], ['∧', 0.6],
+  ['↭', 0.6], ['▷◁', 0.6], [HIDDEN_ADJACENCY_RELATION, 0.6]
+]);
+
+// ============================================
+// STATE
+// ============================================
+const state = {
+  apiKey: '',
+  isProcessing: false,
+  processingStatus: null,
+  processingStart: 0,
+  processingAverageMs: 0,
+  processingSamples: 0,
+  sessionStats: {
+    totalApiCalls: 0,
+    totalCacheHits: 0,
+    totalCostUsd: 0,
+  },
+  saas: null,
+  hlsfReady: false,
+  tokenSources: new Map(),
+  tokenOrder: [],
+  liveGraph: { nodes: new Map(), links: [] },
+  liveGraphMode: true,
+  liveGraphUpdateTimer: null,
+  documentCacheBaseline: 0,
+  documentCacheBaselineManuallyCleared: false,
+  networkOffline: false,
+  networkErrorNotified: false,
+  lastNetworkErrorTime: 0,
+  lastComputedCacheBase: 0,
+  pendingPromptReviews: new Map(),
+  symbolMetrics: {
     history: [],
     last: null,
     lastRunGraph: null,
     topNodes: [],
     lastTokens: [],
     lastPipeline: null,
+  },
+  membership: {
+    level: MEMBERSHIP_LEVELS.DEMO,
+    name: '',
+    email: '',
+    plan: null,
+    trial: true,
+    demoMode: 'api',
+  },
+};
+
+state.hlsfReady = false;
+let remotedir = false;
+
+let voiceDockController: ReturnType<typeof initializeVoiceModelDock> | null = null;
+
+function setRemotedirFlag(value: boolean) {
+  remotedir = Boolean(value);
+  if (typeof window !== 'undefined' && window.CognitionEngine) {
+    window.CognitionEngine.remotedir = remotedir;
+  }
+}
+
+setRemotedirFlag(remotedir);
+
+window.CognitionEngine.state = state;
+const saasPlatform = initializeSaasPlatform();
+state.saas = saasPlatform;
+window.CognitionEngine.saas = saasPlatform;
+applyMembershipUi();
+const promptReviewStore = state.pendingPromptReviews;
+syncSettings();
+
+let currentAbortController = null;
+
+// ============================================
+// DOM ELEMENTS
+// ============================================
+const elements = {
+  log: document.getElementById('log'),
+  input: document.getElementById('command-input'),
+  sendBtn: document.getElementById('send-btn'),
+  cancelBtn: document.getElementById('cancel-btn'),
+  apiModal: document.getElementById('api-modal'),
+  apiKeyInput: document.getElementById('api-key-input'),
+  apiConfirmBtn: document.getElementById('api-confirm'),
+  apiCancelBtn: document.getElementById('api-cancel'),
+  cacheHitRate: document.getElementById('cache-hit-rate'),
+  cachedTokens: document.getElementById('cached-tokens'),
+  sessionCost: document.getElementById('session-cost'),
+  dbFileInput: document.getElementById('db-file'),
+  avatarBundleInput: document.getElementById('avatar-bundle-input'),
+  readFileInput: document.getElementById('read-file'),
+};
+
+// ============================================
+// UTILITIES
+// ============================================
+function sanitize(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function slugifyName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+function stripBase64Prefix(data) {
+  if (typeof data !== 'string') return '';
+  const trimmed = data.trim();
+  if (!trimmed) return '';
+  const comma = trimmed.indexOf(',');
+  return comma >= 0 ? trimmed.slice(comma + 1) : trimmed;
+}
+
+function ensureDataUrl(base64, mime = 'audio/webm') {
+  if (typeof base64 !== 'string') return '';
+  const trimmed = base64.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:')) return trimmed;
+  const type = typeof mime === 'string' && mime ? mime : 'audio/webm';
+  return `data:${type};base64,${trimmed}`;
+}
+
+function audioExtensionForMime(mime) {
+  const normalized = typeof mime === 'string' ? mime.toLowerCase() : '';
+  if (normalized.includes('mpeg') || normalized.includes('mp3')) return 'mp3';
+  if (normalized.includes('wav')) return 'wav';
+  if (normalized.includes('ogg')) return 'ogg';
+  if (normalized.includes('mp4')) return 'm4a';
+  if (normalized.includes('aac')) return 'aac';
+  return 'webm';
+}
+
+function getMembershipLevel() {
+  return (state?.membership?.level || MEMBERSHIP_LEVELS.DEMO);
+}
+
+function isDemoUser() {
+  return getMembershipLevel() === MEMBERSHIP_LEVELS.DEMO;
+}
+
+function isCommandLocked(command) {
+  if (!command || typeof command !== 'string') return false;
+  const normalized = command.startsWith('/') ? command.toLowerCase() : `/${command.toLowerCase()}`;
+  const restrictions = COMMAND_RESTRICTIONS[getMembershipLevel()];
+  if (!restrictions || !(restrictions instanceof Set)) return false;
+  return restrictions.has(normalized);
+}
+
+function logCommandLocked(command) {
+  const label = command ? sanitize(command) : 'This command';
+  addLog(`
+    <div class="command-locked">
+      ⚠️ ${label} is unavailable in demo mode. <a href="#" class="command-upgrade-link" data-upgrade="trial">Start your 7-day trial for full access</a>.
+    </div>
+  `);
+}
+
+function ensureCommandAvailable(command) {
+  if (!command || typeof command !== 'string') return true;
+  const normalized = command.startsWith('/') ? command.toLowerCase() : `/${command.toLowerCase()}`;
+  if (normalized === '/help') return true;
+  if (!isCommandLocked(normalized)) return true;
+  logCommandLocked(normalized);
+  return false;
+}
+
+function trackCommandExecution(command: string, args: string[], source: 'dispatch' | 'handler') {
+  if (!command) return;
+  recordCommandUsage({ command, args, membership: getMembershipLevel(), source });
+}
+
+function applyMembershipUi() {
+  const body = document.body;
+  if (!body) return;
+  body.classList.remove('membership-demo', 'membership-member');
+  body.classList.add(isDemoUser() ? 'membership-demo' : 'membership-member');
+}
+
+function cssEscape(value) {
+  const str = value == null ? '' : String(value);
+  if (window.CSS && typeof window.CSS.escape === 'function') {
+    return window.CSS.escape(str);
+  }
+  return str.replace(/[^a-zA-Z0-9_\-]/g, ch => `\\${ch}`);
+}
+
+const ExternalLoaders = (() => {
+  let pdfPromise = null;
+  let jszipPromise = null;
+
+  function loadScript(src, checkFn) {
+    return new Promise((resolve, reject) => {
+      try {
+        if (typeof checkFn === 'function') {
+          const existing = checkFn();
+          if (existing) {
+            resolve(existing);
+            return;
+          }
+        }
+
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = () => {
+          try {
+            resolve(typeof checkFn === 'function' ? checkFn() : true);
+          } catch (err) {
+            resolve(true);
+          }
+        };
+        script.onerror = () => reject(new Error(`Failed to load ${src}`));
+        document.head.appendChild(script);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  async function loadPdfJs() {
+    if (window.pdfjsLib) {
+      if (window.pdfjsLib.GlobalWorkerOptions) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = window.pdfjsLib.GlobalWorkerOptions.workerSrc
+          || 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
+      }
+      return window.pdfjsLib;
+    }
+    if (!pdfPromise) {
+      pdfPromise = loadScript(
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js',
+        () => window.pdfjsLib
+      ).then(lib => {
+        if (lib?.GlobalWorkerOptions) {
+          lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
+        }
+        return lib;
+      });
+    }
+    return pdfPromise;
+  }
+
+  async function loadJsZip() {
+    if (window.JSZip) return window.JSZip;
+    if (!jszipPromise) {
+      jszipPromise = loadScript(
+        'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+        () => window.JSZip
+      );
+    }
+    return jszipPromise;
+  }
+
+  return { loadPdfJs, loadJsZip };
+})();
+
+const DocumentReaders = (() => {
+  async function extractPdfText(file) {
+    const pdfjs = await ExternalLoaders.loadPdfJs();
+    if (!pdfjs?.getDocument) throw new Error('PDF parser unavailable');
+    const data = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data }).promise;
+    let text = '';
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const content = await page.getTextContent();
+      const pageText = content.items.map(item => item.str).join(' ');
+      text += pageText + '\n';
+    }
+    return text;
+  }
+
+  async function extractDocxText(file) {
+    const JSZip = await ExternalLoaders.loadJsZip();
+    if (!JSZip?.loadAsync) throw new Error('DOCX parser unavailable');
+    const data = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(data);
+    const docFile = zip.file('word/document.xml');
+    if (!docFile) throw new Error('DOCX archive missing document.xml');
+    const xml = await docFile.async('string');
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'application/xml');
+    const nodes = Array.from(doc.getElementsByTagName('w:t'));
+    return nodes.map(node => node.textContent || '').join(' ');
+  }
+
+  async function extractDocBinary(file) {
+    const data = await file.arrayBuffer();
+    const bytes = new Uint8Array(data);
+    let text = '';
+    for (let i = 0; i < bytes.length; i++) {
+      const code = bytes[i];
+      if (code === 0) continue;
+      if (code === 10 || code === 13) {
+        text += ' ';
+        continue;
+      }
+      if (code < 32) {
+        text += ' ';
+        continue;
+      }
+      text += String.fromCharCode(code);
+    }
+    return text.replace(/\s+/g, ' ');
+  }
+
+  async function extractPlainText(file) {
+    return await file.text();
+  }
+
+  async function preload(options = {}) {
+    const config = (options && typeof options === 'object') ? options : {};
+    const formats = Array.isArray(config.formats) && config.formats.length
+      ? new Set(config.formats.map(f => String(f).toLowerCase()))
+      : null;
+    const silent = config.silent === true;
+
+    const shouldInclude = (format) => !formats || formats.has(format);
+    const tasks = [];
+
+    if (shouldInclude('pdf')) {
+      tasks.push(
+        ExternalLoaders.loadPdfJs()
+          .then(lib => Boolean(lib))
+          .catch(err => {
+            if (!silent) console.warn('PDF preloader failed:', err);
+            return false;
+          })
+      );
+    }
+
+    if (shouldInclude('docx')) {
+      tasks.push(
+        ExternalLoaders.loadJsZip()
+          .then(lib => Boolean(lib))
+          .catch(err => {
+            if (!silent) console.warn('DOCX preloader failed:', err);
+            return false;
+          })
+      );
+    }
+
+    if (!tasks.length) {
+      return { pdf: false, docx: false };
+    }
+
+    const [pdfReady = false, docxReady = false] = await Promise.all(tasks);
+    return { pdf: Boolean(pdfReady), docx: Boolean(docxReady) };
+  }
+
+  async function extract(file) {
+    if (!file) throw new Error('No file selected');
+    const name = (file.name || '').toLowerCase();
+    const type = (file.type || '').toLowerCase();
+    try {
+      if (name.endsWith('.pdf') || type === 'application/pdf') {
+        return await extractPdfText(file);
+      }
+      if (name.endsWith('.docx') || type.includes('officedocument.wordprocessingml.document')) {
+        return await extractDocxText(file);
+      }
+      if (name.endsWith('.doc') && !name.endsWith('.docx')) {
+        return await extractDocBinary(file);
+      }
+      return await extractPlainText(file);
+    } catch (err) {
+      throw new Error(err?.message || 'Unable to extract document text');
+    }
+  }
+
+  return { extract, preload };
+})();
+
+function validatePrompt(prompt) {
+  if (!prompt || typeof prompt !== 'string') {
+    throw new Error('Invalid prompt: must be non-empty string');
+  }
+  if (prompt.length > 10000) {
+    throw new Error('Prompt too long: max 10000 characters');
+  }
+  return prompt.trim();
+}
+
+function safeStorageGet(key, defaultValue = null) {
+  let item = null;
+  try {
+    item = localStorage.getItem(key);
+  } catch (err) {
+    console.warn(`Storage read failed for ${key}:`, err);
+  }
+
+  if (item == null && memoryStorageFallback.has(key)) {
+    item = memoryStorageFallback.get(key);
+  }
+
+  if (item == null) return defaultValue;
+
+  try {
+    return JSON.parse(item);
+  } catch {
+    return item;
+  }
+}
+
+function safeStorageSet(key, value) {
+  const fallbackToMemory = (err = null) => {
+    memoryStorageFallback.set(key, value);
+    if (!storageQuotaWarningIssued) {
+      logWarning('Browser storage quota exceeded. Falling back to in-memory storage for this session.');
+      storageQuotaWarningIssued = true;
+    }
+    if (err) {
+      console.warn(`Storage write failed for ${key}: using in-memory fallback`, err);
+    }
+    return false;
+  };
+
+  const attemptWrite = () => {
+    localStorage.setItem(key, value);
+    memoryStorageFallback.delete(key);
+    storageQuotaHardLimitActive = false;
+    return true;
+  };
+
+  if (storageQuotaHardLimitActive) {
+    return fallbackToMemory();
+  }
+
+  try {
+    return attemptWrite();
+  } catch (err) {
+    if (!isQuotaExceededError(err)) {
+      console.warn(`Storage write failed for ${key}:`, err);
+      return false;
+    }
+
+    const cleanupSteps = [];
+    cleanupSteps.push(() => purgeTokenCache());
+    if (key !== DB_INDEX_KEY) cleanupSteps.push(() => purgeSpecificKey(DB_INDEX_KEY));
+    if (key !== DB_RAW_KEY) cleanupSteps.push(() => purgeSpecificKey(DB_RAW_KEY));
+    cleanupSteps.push(() => purgeSpecificKey(key));
+
+    for (const step of cleanupSteps) {
+      try {
+        const removed = step();
+        if (!removed) continue;
+      } catch (cleanupErr) {
+        console.warn('Storage cleanup step failed:', cleanupErr);
+      }
+
+      try {
+        return attemptWrite();
+      } catch (retryErr) {
+        if (!isQuotaExceededError(retryErr)) {
+          console.warn(`Storage write failed for ${key} after cleanup:`, retryErr);
+          return false;
+        }
+      }
+    }
+
+    storageQuotaHardLimitActive = true;
+    return fallbackToMemory(err);
+  }
+}
+
+function safeStorageRemove(key) {
+  let removed = false;
+  try {
+    localStorage.removeItem(key);
+    removed = true;
+  } catch (err) {
+    console.warn(`Storage remove failed for ${key}:`, err);
+  }
+  if (memoryStorageFallback.delete(key)) {
+    removed = true;
+  }
+  if (removed) {
+    storageQuotaHardLimitActive = false;
+  }
+  return removed;
+}
+
+function safeStorageKeys(prefix = '') {
+  let keys = [];
+  try {
+    keys = Object.keys(localStorage);
+  } catch (err) {
+    console.warn('Storage keys enumeration failed:', err);
+  }
+
+  const combined = new Set();
+  keys.forEach(key => { if (key.startsWith(prefix)) combined.add(key); });
+  memoryStorageFallback.forEach((_, key) => {
+    if (key.startsWith(prefix)) combined.add(key);
   });
 
-  const metrics = pipelineResult.metrics || {};
-  const tokens = Array.isArray(pipelineResult.tokens) ? pipelineResult.tokens : [];
-  const tokenCount = Number.isFinite(metrics.tokenCount) ? metrics.tokenCount : tokens.length;
-  const wordCount = Number.isFinite(metrics.wordCount)
-    ? metrics.wordCount
-    : tokens.filter(tok => tok?.kind === 'word').length;
-  const symbolCount = Number.isFinite(metrics.symbolCount)
-    ? metrics.symbolCount
-    : tokens.filter(tok => tok?.kind === 'sym').length;
-  const symbolDensity = Number.isFinite(metrics.symbolDensity)
-    ? metrics.symbolDensity
-    : (tokenCount ? symbolCount / tokenCount : 0);
-  const edgeCount = Number.isFinite(metrics.edgeCount)
-    ? metrics.edgeCount
-    : (Array.isArray(pipelineResult.edges) ? pipelineResult.edges.length : 0);
-  const symbolEdgeCount = Number.isFinite(metrics.symbolEdgeCount)
-    ? metrics.symbolEdgeCount
-    : 0;
-  const weightSum = Number.isFinite(metrics.weightSum) ? metrics.weightSum : 0;
-  const baseCount = Number.isFinite(baseTokenCount) ? baseTokenCount : 0;
-  const uniqueTokens = tokens.reduce((acc, tok) => {
-    const key = typeof tok?.t === 'string' ? tok.t : typeof tok?.token === 'string' ? tok.token : '';
-    if (!key) return acc;
-    acc.add(key);
-    return acc;
-  }, new Set());
+  return Array.from(combined);
+}
 
+function getStoredExportKey() {
+  const raw = safeStorageGet(EXPORT_KEY_STORAGE_KEY, null);
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+async function ensureExportEncryptionKey() {
+  let key = getStoredExportKey();
+  if (key) return key;
+
+  try {
+    key = await generateSymmetricKey();
+  } catch (err) {
+    console.warn('Failed to generate export encryption key:', err);
+    throw new Error('Unable to initialize export encryption key.');
+  }
+
+  const stored = safeStorageSet(EXPORT_KEY_STORAGE_KEY, key);
+  if (!stored) {
+    console.warn('Export encryption key persisted to in-memory fallback storage.');
+  }
+  return key;
+}
+
+function bytesToBase64(bytes) {
+  if (!bytes || typeof bytes.length !== 'number') return '';
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+  if (!base64) return new Uint8Array();
+  const clean = base64.replace(/\s+/g, '');
+  const binary = atob(clean);
+  const len = binary.length;
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
+
+async function compressStringToBase64(input) {
+  const encoder = new TextEncoder();
+  const source = encoder.encode(input);
+  if (typeof CompressionStream === 'function') {
+    try {
+      const stream = new CompressionStream('gzip');
+      const writer = stream.writable.getWriter();
+      await writer.write(source);
+      await writer.close();
+      const compressed = await new Response(stream.readable).arrayBuffer();
+      return { base64: bytesToBase64(new Uint8Array(compressed)), algorithm: 'gzip' };
+    } catch (err) {
+      console.warn('Compression failed, falling back to identity:', err);
+    }
+  }
+  return { base64: bytesToBase64(source), algorithm: 'identity' };
+}
+
+async function decompressBase64ToString(base64, algorithm = 'gzip') {
+  const decoder = new TextDecoder();
+  const bytes = base64ToBytes(base64);
+  if (algorithm === 'gzip') {
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('This environment cannot decompress gzip data.');
+    }
+    try {
+      const stream = new DecompressionStream('gzip');
+      const writer = stream.writable.getWriter();
+      await writer.write(bytes);
+      await writer.close();
+      const decompressed = await new Response(stream.readable).arrayBuffer();
+      return decoder.decode(decompressed);
+    } catch (err) {
+      console.warn('Gzip decompression failed:', err);
+      throw new Error('Failed to decompress export payload.');
+    }
+  }
+  return decoder.decode(bytes);
+}
+
+const LessonStore = (() => {
+  const STORAGE_KEY = 'hlsf-lessons-v1';
+  const MAX_ENTRIES = 500;
+  let cache = null;
+
+  function load() {
+    if (cache) return cache;
+    const map = new Map();
+    const raw = safeStorageGet(STORAGE_KEY);
+    if (raw) {
+      try {
+        const parsed = Array.isArray(raw) ? raw : JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const entry of parsed) {
+            if (!entry || typeof entry.key !== 'string' || !entry.key) continue;
+            const { key, ...rest } = entry;
+            const original = typeof rest.originalResponse === 'string' && rest.originalResponse.trim()
+              ? rest.originalResponse
+              : typeof rest.reflection === 'string'
+                ? rest.reflection
+                : '';
+            const local = typeof rest.localOutput === 'string' && rest.localOutput.trim()
+              ? rest.localOutput
+              : typeof rest.thoughtStream === 'string'
+                ? rest.thoughtStream
+                : '';
+            const refined = typeof rest.refinedOutput === 'string' && rest.refinedOutput.trim()
+              ? rest.refinedOutput
+              : typeof rest.refinedResponse === 'string'
+                ? rest.refinedResponse
+                : '';
+            const grammar = typeof rest.grammarOutput === 'string' && rest.grammarOutput.trim()
+              ? rest.grammarOutput
+              : '';
+            map.set(key, {
+              tokens: Array.isArray(rest.tokens) ? rest.tokens : [],
+              originalResponse: original,
+              localOutput: local,
+              refinedOutput: refined,
+              grammarOutput: grammar,
+              updatedAt: Number.isFinite(rest.updatedAt) ? rest.updatedAt : Date.now(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('LessonStore load failed:', err);
+      }
+    }
+    cache = map;
+    return map;
+  }
+
+  function persist(map) {
+    if (!(map instanceof Map)) return;
+    const payload = [];
+    for (const [key, value] of map.entries()) {
+      const original = typeof value?.originalResponse === 'string' && value.originalResponse.trim()
+        ? value.originalResponse
+        : typeof value?.reflection === 'string'
+          ? value.reflection
+          : '';
+      const local = typeof value?.localOutput === 'string' && value.localOutput.trim()
+        ? value.localOutput
+        : typeof value?.thoughtStream === 'string'
+          ? value.thoughtStream
+          : '';
+      const refined = typeof value?.refinedOutput === 'string' && value.refinedOutput.trim()
+        ? value.refinedOutput
+        : typeof value?.refinedResponse === 'string'
+          ? value.refinedResponse
+          : '';
+      const grammar = typeof value?.grammarOutput === 'string' && value.grammarOutput.trim()
+        ? value.grammarOutput
+        : '';
+      payload.push({
+        key,
+        tokens: Array.isArray(value?.tokens) ? value.tokens : [],
+        originalResponse: original,
+        localOutput: local,
+        refinedOutput: refined,
+        reflection: original,
+        thoughtStream: local,
+        refinedResponse: refined,
+        grammarOutput: grammar,
+        updatedAt: Number.isFinite(value?.updatedAt) ? value.updatedAt : Date.now(),
+      });
+    }
+    safeStorageSet(STORAGE_KEY, JSON.stringify(payload));
+    cache = map;
+  }
+
+  function keyFromTokens(tokens) {
+    if (!Array.isArray(tokens) || !tokens.length) return null;
+    return tokens.join(' ');
+  }
+
+  function fetch(tokens) {
+    const key = keyFromTokens(tokens);
+    if (!key) return null;
+    const map = load();
+    return map.get(key) || null;
+  }
+
+  function record(tokens, lesson = {}) {
+    const key = keyFromTokens(tokens);
+    if (!key) return;
+    const map = load();
+    const existingEntry = map.get(key) || {};
+    const prefer = (...values) => {
+      for (const value of values) {
+        if (typeof value !== 'string') continue;
+        const trimmed = value.trim();
+        if (trimmed) return trimmed;
+      }
+      return '';
+    };
+
+    const next = {
+      tokens: Array.isArray(existingEntry.tokens) && existingEntry.tokens.length
+        ? existingEntry.tokens
+        : tokens.slice(0, 160),
+      originalResponse: prefer(
+        lesson.originalResponse,
+        lesson.reflection,
+        existingEntry.originalResponse,
+        existingEntry.reflection
+      ),
+      localOutput: prefer(
+        lesson.localOutput,
+        lesson.thoughtStream,
+        existingEntry.localOutput,
+        existingEntry.thoughtStream
+      ),
+      refinedOutput: prefer(
+        lesson.refinedOutput,
+        lesson.refinedResponse,
+        existingEntry.refinedOutput,
+        existingEntry.refinedResponse
+      ),
+      grammarOutput: prefer(
+        lesson.grammarOutput,
+        existingEntry.grammarOutput
+      ),
+      updatedAt: Date.now(),
+    };
+
+    map.set(key, next);
+
+    if (map.size > MAX_ENTRIES) {
+      const ordered = Array.from(map.entries()).sort((a, b) => (a[1]?.updatedAt || 0) - (b[1]?.updatedAt || 0));
+      while (ordered.length > MAX_ENTRIES) {
+        const [removeKey] = ordered.shift() || [];
+        if (removeKey) map.delete(removeKey);
+      }
+    }
+
+    persist(map);
+  }
+
+  return { fetch, record };
+})();
+
+const CoherenceStore = (() => {
+  const STORAGE_KEY = 'hlsf-coherence-metrics-v1';
+  const MAX_ENTRIES = 1000;
+  let cache = null;
+
+  function sanitizeRecord(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const score = Number(entry.coherenceScore);
+    const tokenCount = Number(entry.tokenCount);
+    const dbSize = Number(entry.databaseSize);
+    if (!Number.isFinite(score) || !Number.isFinite(tokenCount)) {
+      return null;
+    }
+    const trimmedLocal = typeof entry.localResponse === 'string'
+      ? entry.localResponse.slice(0, 4000)
+      : '';
+    const trimmedCoherent = typeof entry.coherentResponse === 'string'
+      ? entry.coherentResponse.slice(0, 4000)
+      : '';
+    return {
+      timestamp: Number.isFinite(entry.timestamp) ? entry.timestamp : Date.now(),
+      chunkLabel: typeof entry.chunkLabel === 'string' ? entry.chunkLabel : '',
+      coherenceScore: Math.max(0, Math.min(1, score)),
+      tokenCount,
+      databaseSize: Number.isFinite(dbSize) ? dbSize : null,
+      localResponse: trimmedLocal,
+      coherentResponse: trimmedCoherent,
+    };
+  }
+
+  function load() {
+    if (cache) return cache;
+    const raw = safeStorageGet(STORAGE_KEY, []);
+    const parsed = Array.isArray(raw)
+      ? raw
+      : (typeof raw === 'string'
+        ? (() => {
+          try { return JSON.parse(raw); } catch { return []; }
+        })()
+        : []);
+    const records = [];
+    for (const entry of parsed) {
+      const sanitized = sanitizeRecord(entry);
+      if (sanitized) records.push(sanitized);
+    }
+    cache = records;
+    return records;
+  }
+
+  function persist(records) {
+    cache = records;
+    safeStorageSet(STORAGE_KEY, JSON.stringify(records));
+  }
+
+  function record(entry) {
+    const records = load();
+    const sanitized = sanitizeRecord(entry);
+    if (!sanitized) return false;
+    records.push(sanitized);
+    if (records.length > MAX_ENTRIES) {
+      records.splice(0, records.length - MAX_ENTRIES);
+    }
+    persist(records);
+    return true;
+  }
+
+  function summarize(target = 0.99) {
+    const records = load();
+    if (!records.length) {
+      return { total: 0, targetCount: 0, averageTokens: 0, targetAverageTokens: 0, averageScore: 0 };
+    }
+    let totalTokens = 0;
+    let totalCount = 0;
+    let totalScore = 0;
+    let targetTokens = 0;
+    let targetCount = 0;
+    for (const entry of records) {
+      if (!Number.isFinite(entry.coherenceScore) || !Number.isFinite(entry.tokenCount)) continue;
+      totalTokens += entry.tokenCount;
+      totalCount += 1;
+      totalScore += entry.coherenceScore;
+      if (entry.coherenceScore >= target) {
+        targetTokens += entry.tokenCount;
+        targetCount += 1;
+      }
+    }
+    return {
+      total: totalCount,
+      targetCount,
+      averageTokens: totalCount ? totalTokens / totalCount : 0,
+      targetAverageTokens: targetCount ? targetTokens / targetCount : 0,
+      averageScore: totalCount ? totalScore / totalCount : 0,
+    };
+  }
+
+  function deriveRefinementLexicon(options = {}) {
+    const { targetScore = 0.9, maxTokens = 24 } = options || {};
+    const records = load();
+    if (!records.length || maxTokens <= 0) return [];
+
+    const frequency = new Map();
+    for (const entry of records) {
+      if (!Number.isFinite(entry.coherenceScore) || entry.coherenceScore < targetScore) continue;
+      const localTokens = new Set(tokenize(entry.localResponse || ''));
+      const refinedTokens = tokenize(entry.coherentResponse || '');
+      for (const token of refinedTokens) {
+        if (!token || localTokens.has(token)) continue;
+        const weight = entry.coherenceScore || 0;
+        frequency.set(token, (frequency.get(token) || 0) + weight);
+      }
+    }
+
+    return Array.from(frequency.entries())
+      .sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return a[0].localeCompare(b[0]);
+      })
+      .slice(0, maxTokens)
+      .map(([token]) => token);
+  }
+
+  return {
+    record,
+    summarize,
+    loadAll: () => load().slice(),
+    getRefinementLexicon: deriveRefinementLexicon,
+  };
+})();
+
+function normalizeCoherenceEvaluation(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const normalized = { ...payload };
+  const pick = (...keys) => {
+    for (const key of keys) {
+      if (key in payload && payload[key] != null) {
+        return payload[key];
+      }
+    }
+    return undefined;
+  };
+
+  const score = pick('coherence_score', 'coherenceScore', 'score', 'coherence');
+  if (score != null && normalized.coherence_score == null) {
+    normalized.coherence_score = score;
+  }
+
+  const response = pick(
+    'coherent_response',
+    'coherentResponse',
+    'refined_response',
+    'refinedResponse',
+    'rewrite',
+    'response'
+  );
+  if (response != null && normalized.coherent_response == null) {
+    normalized.coherent_response = response;
+  }
+
+  const explanation = pick(
+    'coherence_explanation',
+    'coherenceExplanation',
+    'explanation',
+    'rationale',
+    'analysis',
+    'notes'
+  );
+  if (explanation != null && normalized.explanation == null) {
+    normalized.explanation = explanation;
+  }
+
+  return normalized;
+}
+
+function parseCoherenceEvaluation(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return normalizeCoherenceEvaluation(raw) || raw;
+  }
+  const text = String(raw).trim();
+  if (!text) return null;
+
+  const tryParse = (value) => {
+    if (!value) return null;
+    if (typeof value === 'object' && !Array.isArray(value)) return value;
+    try {
+      const parsed = JSON.parse(value);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const cleaned = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+  let parsed = tryParse(cleaned);
+  if (parsed) return normalizeCoherenceEvaluation(parsed) || parsed;
+
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (match) {
+    parsed = tryParse(match[0]);
+    if (parsed) return normalizeCoherenceEvaluation(parsed) || parsed;
+  }
+
+  const ndjson = parseMaybeNdjson(cleaned);
+  if (ndjson && typeof ndjson === 'object' && !Array.isArray(ndjson)) {
+    return normalizeCoherenceEvaluation(ndjson) || ndjson;
+  }
+  if (Array.isArray(ndjson)) {
+    for (const entry of ndjson) {
+      const normalized = normalizeCoherenceEvaluation(entry);
+      if (normalized && normalized.coherence_score != null) {
+        return normalized;
+      }
+    }
+  }
+
+  return null;
+}
+
+
+function isValidApiKey(key) {
+  if (typeof key !== 'string') return false;
+  const trimmed = key.trim();
+  if (!trimmed) return false;
+  if (!trimmed.startsWith('sk-')) return false;
+  return trimmed.length >= 20;
+}
+
+function tokenize(text) {
+  if (!text) return [];
+  const normalized = String(text);
+
+  if (!SETTINGS.tokenizeSymbols) {
+    return normalized.trim()
+      .split(/[^\p{L}\p{N}\-']+/u)
+      .filter(Boolean)
+      .map(t => t.toLowerCase());
+  }
+
+  const tokens = tokenizeWithSymbols(normalized);
+  const seen = new Set();
+  const words = [];
+  for (const token of tokens) {
+    if (!token || token.kind !== 'word') continue;
+    const lower = token.t.toLowerCase();
+    if (!lower || seen.has(lower)) continue;
+    seen.add(lower);
+    words.push(lower);
+  }
+
+  if (words.length === 0) {
+    return normalized.trim()
+      .split(/[^\p{L}\p{N}\-']+/u)
+      .filter(Boolean)
+      .map(t => t.toLowerCase());
+  }
+
+  return words;
+}
+
+function recordSymbolMetrics(label, pipelineResult, baseTokenCount = 0) {
+  if (!SETTINGS.tokenizeSymbols || !pipelineResult) return;
+  const bucket = state.symbolMetrics;
+  if (!bucket) return;
   const entry = {
     label,
     timestamp: Date.now(),
-    tokenCount,
-    wordCount,
-    symbolCount,
-    symbolDensity,
-    edgeCount,
-    symbolEdgeCount,
-    weightSum,
-    baseTokenCount: baseCount,
-    deltaTokens: tokenCount - baseCount,
-    uniqueTokens: uniqueTokens.size,
+    baseTokenCount,
+    ...pipelineResult.metrics,
+    deltaTokens: pipelineResult.metrics.tokenCount - baseTokenCount,
+    topTokens: pipelineResult.top.map(node => node.token).filter(Boolean),
   };
-
-  if (!Array.isArray(bucket.history)) bucket.history = [];
+  bucket.last = entry;
+  bucket.lastRunGraph = pipelineResult.graph;
+  bucket.topNodes = pipelineResult.top;
   bucket.history.push(entry);
-  const maxHistory = 32;
-  if (bucket.history.length > maxHistory) {
-    bucket.history.splice(0, bucket.history.length - maxHistory);
+  if (bucket.history.length > 20) bucket.history.shift();
+}
+
+function ensureLocalHlsfMemory(): LocalHlsfMemoryState | null {
+  if (typeof window === 'undefined') return null;
+  const globalWindow = window as Window & { HLSF?: any };
+  const hlsf = globalWindow.HLSF || (globalWindow.HLSF = {});
+  if (!hlsf.localMemory || typeof hlsf.localMemory !== 'object') {
+    hlsf.localMemory = {
+      prompts: [],
+      adjacencySummaries: new Map<string, LocalHlsfAdjacencySummary>(),
+      lastPrompt: null,
+      lastAdjacency: null,
+    } satisfies LocalHlsfMemoryState;
   }
 
-  bucket.last = entry;
-  bucket.lastRunGraph = pipelineResult.graph || null;
-  bucket.topNodes = Array.isArray(pipelineResult.top) ? pipelineResult.top.slice(0, 12) : [];
-  bucket.lastTokens = Array.isArray(pipelineResult.tokens) ? pipelineResult.tokens : [];
-  bucket.lastPipeline = pipelineResult;
+  const memory = hlsf.localMemory as LocalHlsfMemoryState;
 
-  return bucket;
+  if (!Array.isArray(memory.prompts)) {
+    memory.prompts = [];
+  }
+
+  if (!(memory.adjacencySummaries instanceof Map)) {
+    memory.adjacencySummaries = new Map<string, LocalHlsfAdjacencySummary>();
+  }
+
+  return memory;
+}
+
+function recordLocalPromptMemory(
+  id: string,
+  promptText: string,
+  tokens: string[],
+  adjacencyTargets: Array<{ token?: string; normalized?: string }> = [],
+): LocalHlsfPromptRecord | null {
+  const memory = ensureLocalHlsfMemory();
+  if (!memory) return null;
+
+  const seenTokens = new Set<string>();
+  const normalizedTokens: string[] = [];
+  for (const token of Array.isArray(tokens) ? tokens : []) {
+    if (!token) continue;
+    const value = String(token).trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seenTokens.has(key)) continue;
+    seenTokens.add(key);
+    normalizedTokens.push(value);
+  }
+
+  const adjacencySeeds: string[] = [];
+  const seenAdjacency = new Set<string>();
+  for (const target of Array.isArray(adjacencyTargets) ? adjacencyTargets : []) {
+    if (!target) continue;
+    const raw = typeof target === 'string'
+      ? target
+      : typeof target === 'object'
+        ? String(target.token || target.normalized || '')
+        : '';
+    const value = raw.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seenAdjacency.has(key)) continue;
+    seenAdjacency.add(key);
+    adjacencySeeds.push(value);
+  }
+
+  const entry: LocalHlsfPromptRecord = {
+    id,
+    text: String(promptText || '').trim(),
+    tokens: normalizedTokens,
+    adjacencySeeds,
+    timestamp: new Date().toISOString(),
+  };
+
+  memory.prompts.push(entry);
+  while (memory.prompts.length > 100) {
+    memory.prompts.shift();
+  }
+  memory.lastPrompt = entry;
+
+  return entry;
+}
+
+function summarizeAdjacencyMapForLocal(
+  adjacencyMap: Map<string, any>,
+  options: { limit?: number; edgesPerToken?: number } = {},
+): LocalHlsfAdjacencyTokenSummary[] {
+  if (!(adjacencyMap instanceof Map)) return [];
+
+  const limit = Number.isFinite(options.limit) && options.limit
+    ? Math.max(1, Math.floor(options.limit))
+    : 20;
+  const edgesPerToken = Number.isFinite(options.edgesPerToken) && options.edgesPerToken
+    ? Math.max(1, Math.floor(options.edgesPerToken))
+    : 6;
+  const minEdgeWeight = resolveLocalMemoryEdgeWeightFloor();
+
+  const candidates: Array<{
+    token: string;
+    relationships: Record<string, { token: string; weight: number }[]>;
+    attention: number;
+    totalRelationships: number;
+    score: number;
+  }> = [];
+
+  for (const [tokenKey, entry] of adjacencyMap.entries()) {
+    if (!tokenKey || !entry) continue;
+    const limited = limitAdjacencyEntryEdges(entry, edgesPerToken);
+    const { relationships, totalWeight, totalEdges } = pruneRelationshipEdgesByWeight(
+      limited.relationships,
+      minEdgeWeight,
+    );
+    const attention = Number(limited.attention_score) || 0;
+    const token = typeof limited.token === 'string' && limited.token.trim()
+      ? limited.token.trim()
+      : (typeof tokenKey === 'string' ? String(tokenKey).trim() : '');
+    if (!token) continue;
+    const hasRelationships = Object.keys(relationships).length > 0;
+    if (!hasRelationships && attention <= 0) continue;
+    const totalRelationships = totalEdges > 0
+      ? totalEdges
+      : (Number(limited.total_relationships) || 0);
+    candidates.push({
+      token,
+      relationships,
+      attention,
+      totalRelationships,
+      score: Math.max(attention, totalWeight),
+    });
+  }
+
+  candidates.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (b.attention !== a.attention) return b.attention - a.attention;
+    return a.token.localeCompare(b.token, undefined, { sensitivity: 'base' });
+  });
+
+  const summary: LocalHlsfAdjacencyTokenSummary[] = [];
+  for (const entry of candidates) {
+    summary.push({
+      token: entry.token,
+      relationships: entry.relationships,
+      attention: entry.attention,
+      totalRelationships: entry.totalRelationships,
+    });
+    if (summary.length >= limit) break;
+  }
+
+  return summary;
+}
+
+function recordLocalAdjacencySummary(
+  id: string,
+  adjacencyMap: Map<string, any>,
+  label = 'prompt-adjacency',
+  options: { limit?: number; edgesPerToken?: number } = {},
+): LocalHlsfAdjacencySummary | null {
+  const memory = ensureLocalHlsfMemory();
+  if (!memory || !(adjacencyMap instanceof Map)) return null;
+
+  const summary = summarizeAdjacencyMapForLocal(adjacencyMap, options);
+  const record: LocalHlsfAdjacencySummary = {
+    id,
+    label,
+    tokenCount: summary.length,
+    summary,
+    updatedAt: new Date().toISOString(),
+  };
+
+  memory.adjacencySummaries.set(id, record);
+  while (memory.adjacencySummaries.size > 50) {
+    const oldest = memory.adjacencySummaries.keys().next();
+    if (oldest.done) break;
+    memory.adjacencySummaries.delete(oldest.value);
+  }
+  memory.lastAdjacency = record;
+
+  return record;
+}
+
+function collectSymbolAwareTokens(text, baseTokens = [], label = 'default') {
+  const baseList = Array.isArray(baseTokens) ? baseTokens : [];
+  if (!SETTINGS.tokenizeSymbols) return baseList;
+
+  const pipelineResult = runPipeline(text || '', SETTINGS);
+  const map = new Map();
+
+  for (const token of baseList) {
+    if (!token) continue;
+    const normalized = String(token).toLowerCase();
+    if (!normalized || map.has(`word:${normalized}`)) continue;
+    map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
+  }
+
+  for (const token of pipelineResult.tokens) {
+    if (!token) continue;
+    if (token.kind === 'word') {
+      const normalized = token.t.toLowerCase();
+      if (!normalized || map.has(`word:${normalized}`)) continue;
+      map.set(`word:${normalized}`, { token: normalized, kind: 'word' });
+    } else if (token.kind === 'sym') {
+      const key = `sym:${token.t}`;
+      if (map.has(key)) continue;
+      map.set(key, {
+        token: token.t,
+        kind: 'sym',
+        cat: token.cat || null,
+        index: token.i,
+        span: token.n,
+      });
+    }
+  }
+
+  const combined = Array.from(map.values());
+  recordSymbolMetrics(label, pipelineResult, baseList.length);
+  if (state.symbolMetrics) {
+    state.symbolMetrics.lastTokens = combined;
+    state.symbolMetrics.lastPipeline = pipelineResult;
+  }
+  return combined;
 }
 
 function syncSettings() {
@@ -3807,35 +7267,6 @@ function splitIntoSentences(text) {
   const matches = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g);
   if (!matches) return [normalized];
   return matches.map(sentence => sentence.trim()).filter(Boolean);
-}
-
-function tokenize(text) {
-  if (!text) return [];
-
-  const source = String(text);
-
-  const fallback = () =>
-    source
-      .split(/\s+/)
-      .map(token => token.trim())
-      .filter(Boolean);
-
-  if (!SETTINGS.tokenizeSymbols) {
-    return fallback();
-  }
-
-  try {
-    const result = tokenizeWithSymbols(source, { keepOffsets: false });
-    if (!Array.isArray(result) || result.length === 0) {
-      return fallback();
-    }
-    return result
-      .map(entry => (entry?.t ?? '').toString().trim())
-      .filter(Boolean);
-  } catch (err) {
-    console.warn('Symbol tokenization failed, falling back to whitespace tokenization:', err);
-    return fallback();
-  }
 }
 
 function estimateTokensForText(text) {
@@ -4813,7 +8244,6 @@ function exportGlyphLedger() {
   return exportData;
 }
 
-window.GlyphSystem = window.GlyphSystem || {};
 window.GlyphSystem.ledger = null;
 window.GlyphSystem.encode = function encode(message) {
   const result = encryptTextToGlyphs(message || '');
@@ -4928,9 +8358,6 @@ function showGlyphLedger() {
 // LOGGING
 // ============================================
 function batchLogUpdates(entries) {
-  if (!(elements.log instanceof HTMLElement)) {
-    return;
-  }
   const fragment = document.createDocumentFragment();
   entries.forEach(entry => fragment.appendChild(entry));
   elements.log.appendChild(fragment);
@@ -5073,17 +8500,6 @@ function attachTtsButtons(entry) {
 
 function enhanceLogEntry(entry) {
   attachTtsButtons(entry);
-}
-
-function printStartupBanner(): void {
-  addLog(`
-    <div class="startup-banner">
-      <strong>HLSF Cognition Engine</strong><br/>
-      Type a prompt to build adjacencies & render the HLSF graph.<br/>
-      Try <code>/help</code> for available commands. Examples:
-      <code>/hlsf</code>, <code>/database</code>, <code>/stats</code>, <code>/reset</code>.
-    </div>
-  `);
 }
 
 function addLog(content, type = 'info') {
@@ -5956,11 +9372,7 @@ const RemoteDbRecorder = (() => {
 
   const hasData = () => hasDataInternal();
 
-  try {
-    hydrateFromStorage();
-  } catch (err) {
-    console.warn('RemoteDbRecorder hydration failed:', err);
-  }
+  hydrateFromStorage();
 
   return {
     ingest,
@@ -6067,16 +9479,12 @@ setRemotedirFlag(typeof remoteDbFileWriter?.hasDirectory === 'function' && remot
 function updateCachedTokenDisplay(baseCount) {
   const normalizedBase = Number.isFinite(baseCount) ? Math.max(0, Math.floor(baseCount)) : 0;
   const displayValue = CacheBatch.format(normalizedBase);
-  const cachedTokensEl = elements.cachedTokens;
-  if (!(cachedTokensEl instanceof HTMLElement)) {
-    return;
-  }
-  cachedTokensEl.textContent = displayValue;
+  elements.cachedTokens.textContent = displayValue;
   const total = CacheBatch.total(normalizedBase);
   if (total > 0) {
-    cachedTokensEl.style.color = total > 50 ? '#00ff88' : '#ffd54f';
+    elements.cachedTokens.style.color = total > 50 ? '#00ff88' : '#ffd54f';
   } else {
-    cachedTokensEl.style.removeProperty('color');
+    elements.cachedTokens.style.removeProperty('color');
   }
 }
 
@@ -6126,13 +9534,9 @@ function updateStats() {
   cachedCount = Math.max(0, Math.floor(Number.isFinite(cachedCount) ? cachedCount : 0));
   state.lastComputedCacheBase = cachedCount;
 
-  if (elements.cacheHitRate instanceof HTMLElement) {
-    elements.cacheHitRate.textContent = hitRate;
-  }
+  elements.cacheHitRate.textContent = hitRate;
   updateCachedTokenDisplay(state.lastComputedCacheBase);
-  if (elements.sessionCost instanceof HTMLElement) {
-    elements.sessionCost.textContent = formatCurrency(totalCostUsd);
-  }
+  elements.sessionCost.textContent = formatCurrency(totalCostUsd);
 }
 
 function updateHeaderCounts() {
@@ -6149,7 +9553,6 @@ function getCacheKey(token) {
 
 function isTokenCached(token) {
   const key = getCacheKey(token);
-  if (knowledgeStore.hasInMemory(token)) return true;
   try {
     if (localStorage.getItem(key) != null) return true;
   } catch {
@@ -6230,99 +9633,6 @@ function relationshipsExpanded(previousRelationships, nextRelationships) {
   }
 
   return false;
-}
-
-function refreshDbReference(record, options = {}) {
-  const { deferReload = false, persist = true } = options || {};
-  if (!record || typeof record !== 'object') return null;
-
-  const rawToken = (record as any).token;
-  const token = typeof rawToken === 'string' ? rawToken.trim() : '';
-  if (!token) return null;
-
-  const normalizedToken = token.toLowerCase();
-  const enrichedRecord = Object.assign({}, record, { token });
-
-  if (!enrichedRecord.relationships || typeof enrichedRecord.relationships !== 'object') {
-    enrichedRecord.relationships = {};
-  }
-
-  if (typeof window === 'undefined') {
-    return enrichedRecord;
-  }
-
-  try {
-    window.HLSF = window.HLSF || {};
-    const dbRoot = (window.HLSF.dbCache && typeof window.HLSF.dbCache === 'object')
-      ? window.HLSF.dbCache
-      : (window.HLSF.dbCache = { full_token_data: [] });
-
-    if (!Array.isArray(dbRoot.full_token_data)) {
-      dbRoot.full_token_data = [];
-    }
-
-    let existingIndex = -1;
-    for (let i = 0; i < dbRoot.full_token_data.length; i += 1) {
-      const current = dbRoot.full_token_data[i];
-      const currentToken = typeof current?.token === 'string' ? current.token.trim().toLowerCase() : '';
-      if (currentToken === normalizedToken) {
-        existingIndex = i;
-        break;
-      }
-    }
-
-    const existingRecord = existingIndex >= 0 ? dbRoot.full_token_data[existingIndex] : null;
-    const mergedRelationships = existingRecord && existingRecord.relationships && enrichedRecord.relationships
-      ? { ...existingRecord.relationships, ...enrichedRecord.relationships }
-      : enrichedRecord.relationships;
-
-    const mergedRecord = Object.assign({}, existingRecord || {}, enrichedRecord, {
-      relationships: mergedRelationships,
-    });
-
-    if (existingIndex >= 0) {
-      dbRoot.full_token_data[existingIndex] = mergedRecord;
-    } else {
-      dbRoot.full_token_data.push(mergedRecord);
-    }
-
-    if (persist !== false) {
-      try {
-        safeStorageSet(DB_RAW_KEY, JSON.stringify(dbRoot));
-      } catch (err) {
-        console.warn('Failed to persist DB snapshot after cache refresh:', err);
-      }
-    }
-
-    try {
-      if (knowledgeStore && typeof knowledgeStore.markInMemory === 'function') {
-        knowledgeStore.markInMemory(token);
-      }
-      if (knowledgeStore && typeof knowledgeStore.put === 'function') {
-        void knowledgeStore.put({
-          token: normalizedToken,
-          relationships: mergedRecord.relationships,
-          attention_score: mergedRecord.attention_score,
-          total_relationships: mergedRecord.total_relationships,
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to update knowledge store from DB refresh:', err);
-    }
-
-    if (!deferReload) {
-      try {
-        notifyHlsfAdjacencyChange('cache-update');
-      } catch (err) {
-        console.warn('Failed to schedule HLSF refresh after DB update:', err);
-      }
-    }
-
-    return mergedRecord;
-  } catch (err) {
-    console.warn('Failed to refresh database cache reference:', err);
-    return null;
-  }
 }
 
 function saveToCache(token, data, options = {}) {
@@ -6688,6 +9998,10 @@ function handlePromptReviewClick(event) {
     default:
       break;
   }
+}
+
+if (elements.log) {
+  elements.log.addEventListener('click', handlePromptReviewClick);
 }
 
 const RemoteDbStore = (() => {
@@ -7489,59 +10803,6 @@ function forcePromptLiveGraphPruning() {
     }
   } catch (err) {
     console.warn('Prompt adjacency pruning failed:', err);
-  }
-}
-
-let activeCompositeAnimation = null;
-
-function stopHLSFAnimation() {
-  try {
-    if (activeCompositeAnimation !== null && typeof cancelAnimationFrame === 'function') {
-      cancelAnimationFrame(activeCompositeAnimation);
-    }
-  } catch (err) {
-    console.warn('Failed to cancel HLSF animation frame:', err);
-  } finally {
-    activeCompositeAnimation = null;
-  }
-
-  try {
-    const renderer = window.HLSF?.rendering;
-    if (renderer && typeof renderer.stop === 'function') {
-      renderer.stop();
-    } else {
-      stopLegacyHLSFAnimation();
-    }
-  } catch (err) {
-    console.warn('Error while stopping HLSF animation:', err);
-  }
-}
-
-function animateHLSF(graph, glyphOnly = false) {
-  try {
-    const renderer = window.HLSF?.rendering;
-    if (renderer && typeof renderer.animate === 'function') {
-      const result = renderer.animate(graph, glyphOnly === true);
-      if (typeof result === 'number') {
-        activeCompositeAnimation = result;
-      }
-      return;
-    }
-
-    const compositeAnimator = window?.animateComposite;
-    if (typeof compositeAnimator === 'function') {
-      const result = compositeAnimator(graph, glyphOnly === true);
-      if (typeof result === 'number') {
-        activeCompositeAnimation = result;
-      }
-      return;
-    }
-
-    if (typeof requestAnimationFrame === 'function') {
-      activeCompositeAnimation = requestAnimationFrame(animateLegacyHLSF);
-    }
-  } catch (err) {
-    console.warn('Unable to start HLSF animation:', err);
   }
 }
 
@@ -9919,18 +13180,10 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
     .sort((a, b) => a.relType.localeCompare(b.relType));
 
   if (entries.length === 0) {
-    const fallbackVertices = polygonVertices(center, baseRadius * 0.8, 3);
-    const fallbackLabels = fallbackVertices.map((_, idx) => (idx === 0 ? 'anchor' : ''));
-    const fallbackWeights = fallbackVertices.map(() => 1);
-    const fallbackRelations = fallbackVertices.map(() => null);
     return {
-      vertices: fallbackVertices,
+      vertices: polygonVertices(center, baseRadius * 0.8, 3),
       anchorIndex: 0,
-      adjacencyTypes: 0,
-      vertexLabels: fallbackLabels,
-      vertexWeights: fallbackWeights,
-      vertexRelations: fallbackRelations,
-      relationEntries: [],
+      adjacencyTypes: 0
     };
   }
 
@@ -9939,12 +13192,7 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
   const angleStep = (2 * Math.PI) / vertexCount;
   const maxCount = Math.max(...entries.map(entry => entry.count));
 
-  const vertices: Array<[number, number]> = [];
-  const vertexLabels: string[] = ['anchor'];
-  const vertexWeights: number[] = [1];
-  const vertexRelations: Array<{ key: string | null; label: string; count: number; weight: number } | null> = [null];
-  const relationEntries: Array<{ key: string | null; label: string; count: number; avgWeight: number }> = [];
-
+  const vertices = [];
   const anchor = [center[0], center[1] - baseRadius];
   vertices.push(anchor);
 
@@ -9959,25 +13207,6 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
       center[0] + radius * Math.cos(angle),
       center[1] + radius * Math.sin(angle)
     ]);
-
-    const relKey = normRelKey(entry.relType) || entry.relType;
-    const label = typeof relKey === 'string' && relKey
-      ? relDisplay(relKey)
-      : entry.relType;
-    vertexLabels.push(label || entry.relType);
-    vertexWeights.push(Math.max(0, Math.min(1, entry.avgWeight)));
-    vertexRelations.push({
-      key: typeof relKey === 'string' && relKey ? relKey : null,
-      label: label || entry.relType,
-      count: entry.count,
-      weight: entry.avgWeight,
-    });
-    relationEntries.push({
-      key: typeof relKey === 'string' && relKey ? relKey : null,
-      label: label || entry.relType,
-      count: entry.count,
-      avgWeight: entry.avgWeight,
-    });
   }
 
   let fillerIndex = entries.length;
@@ -9993,11 +13222,7 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
   return {
     vertices,
     anchorIndex: 0,
-    adjacencyTypes: entries.length,
-    vertexLabels,
-    vertexWeights,
-    vertexRelations,
-    relationEntries,
+    adjacencyTypes: entries.length
   };
 }
 
@@ -10168,11 +13393,7 @@ function buildHLSFNodes() {
         anchorIndex: shape.anchorIndex,
         color,
         vertices: shape.vertices,
-        triangles: null, // Will be computed
-        vertexLabels: Array.isArray(shape.vertexLabels) ? shape.vertexLabels : [],
-        vertexWeights: Array.isArray(shape.vertexWeights) ? shape.vertexWeights : [],
-        vertexRelations: Array.isArray(shape.vertexRelations) ? shape.vertexRelations : [],
-        relationEntries: Array.isArray(shape.relationEntries) ? shape.relationEntries : [],
+        triangles: null // Will be computed
       });
     } catch (err) {
       console.error('Failed to process token for HLSF:', tokenData, err);
@@ -10200,15 +13421,13 @@ function initHLSFCanvas() {
   try {
     // Build nodes first to check if we have data
     hlsfNodes = buildHLSFNodes();
-    window.HLSF = window.HLSF || {};
-    window.HLSF.nodes = Array.isArray(hlsfNodes) ? hlsfNodes : [];
 
-    if (!window.HLSF.nodes.length) {
+    if (hlsfNodes.length === 0) {
       logWarning('No cached tokens found for HLSF. Process some queries first to populate the database.');
       return;
     }
 
-    console.log(`Creating canvas UI for ${window.HLSF.nodes.length} nodes`);
+    console.log(`Creating canvas UI for ${hlsfNodes.length} nodes`);
 
     const container = document.createElement('div');
     container.className = 'hlsf-canvas-container';
@@ -10274,11 +13493,8 @@ function initHLSFCanvas() {
   entry.className = 'log-entry';
   entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
   entry.appendChild(container);
-  const logContainer = elements.log instanceof HTMLElement ? elements.log : null;
-  if (logContainer) {
-    logContainer.appendChild(entry);
-    logContainer.scrollTop = logContainer.scrollHeight;
-  }
+  elements.log.appendChild(entry);
+  elements.log.scrollTop = elements.log.scrollHeight;
 
   // Initialize canvas
   window.HLSF.canvas = document.getElementById('hlsf-canvas');
@@ -10531,77 +13747,9 @@ function strokeTriangles(ctx, tris) {
   for (const t of tris) strokePolygon(ctx, t);
 }
 
-function normalizeColorTuple(value: unknown): [number, number, number] {
-  if (Array.isArray(value) && value.length >= 3) {
-    const [r, g, b] = value;
-    return [
-      Math.max(0, Math.min(255, Number(r) || 0)),
-      Math.max(0, Math.min(255, Number(g) || 0)),
-      Math.max(0, Math.min(255, Number(b) || 0)),
-    ];
-  }
-  return [0, 255, 136];
-}
-
-function mixRgb(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
-  const clamped = Math.max(0, Math.min(1, t));
-  return [
-    Math.round(a[0] + (b[0] - a[0]) * clamped),
-    Math.round(a[1] + (b[1] - a[1]) * clamped),
-    Math.round(a[2] + (b[2] - a[2]) * clamped),
-  ];
-}
-
-function rgbTupleToString(tuple: [number, number, number]): string {
-  return `rgb(${tuple[0]}, ${tuple[1]}, ${tuple[2]})`;
-}
-
-function nodeEdgeStrokeColor(node, vertexIndex: number, mode: EdgeColorMode): string {
-  const baseTuple = normalizeColorTuple(node?.color);
-  if (vertexIndex === 0 || mode === 'theme') {
-    return rgbTupleToString(baseTuple);
-  }
-
-  if (mode === 'weight') {
-    const weights = Array.isArray(node?.vertexWeights) ? node.vertexWeights : null;
-    const weight = Number(weights?.[vertexIndex]);
-    const normalized = Number.isFinite(weight) ? Math.max(0, Math.min(1, weight)) : 0.5;
-    const mix = mixRgb([200, 200, 200], baseTuple, normalized);
-    return rgbTupleToString(mix);
-  }
-
-  if (mode === 'relation') {
-    const relations = Array.isArray(node?.vertexRelations) ? node.vertexRelations : null;
-    const relationEntry = relations?.[vertexIndex];
-    const keyCandidate = relationEntry && typeof relationEntry === 'object' && relationEntry?.key
-      ? relationEntry.key
-      : node?.vertexLabels?.[vertexIndex] || node?.verticesLabels?.[vertexIndex];
-    const palette = paletteColor(typeof keyCandidate === 'string' ? keyCandidate : '');
-    return palette;
-  }
-
-  return rgbTupleToString(baseTuple);
-}
-
-function getHlsfScale(): number {
-  const hlsf = (window as any)?.HLSF;
-  const raw = Number(hlsf?.config?.scale);
-  if (!Number.isFinite(raw) || raw <= 0) {
-    return 1;
-  }
-  return raw;
-}
-
 function worldToScreen(x, y) {
-  const scale = getHlsfScale();
-  const hlsf = (window as any)?.HLSF;
-  const config = (hlsf?.config ?? {}) as Record<string, unknown>;
-  const txValue = Number((config as any).tx);
-  const tyValue = Number((config as any).ty);
-  const tx = Number.isFinite(txValue) ? txValue : 0;
-  const ty = Number.isFinite(tyValue) ? tyValue : 0;
-  const sx = x * (200 * scale) + tx;
-  const sy = -y * (200 * scale) + ty;
+  const sx = x * (200 * window.HLSF.config.scale) + window.HLSF.config.tx;
+  const sy = -y * (200 * window.HLSF.config.scale) + window.HLSF.config.ty;
   return [sx, sy];
 }
 
@@ -10615,15 +13763,13 @@ function renderLegacyHLSF() {
     const ctx = window.HLSF.ctx;
     const width = window.HLSF.canvas.width;
     const height = window.HLSF.canvas.height;
-    const nodes = Array.isArray(window.HLSF?.nodes) ? window.HLSF.nodes : [];
-    const scale = getHlsfScale();
     const theme = window.HLSF.config.whiteBg
       ? { bg: '#ffffff', fg: '#000000', grid: 'rgba(0, 0, 0, 0.05)' }
       : { bg: '#0a0a0a', fg: '#ffffff', grid: 'rgba(0, 255, 136, 0.05)' };
     const nodeScale = clampNodeSize(window.HLSF.config.nodeSize);
     const edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
     const edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
-    const effectiveEdgeWidth = edgeWidth * Math.max(0.6, scale || 1);
+    const effectiveEdgeWidth = edgeWidth * Math.max(0.6, window.HLSF.config.scale || 1);
     const focusSet = window.HLSF?.state?.documentFocus instanceof Set
       ? window.HLSF.state.documentFocus
       : null;
@@ -10655,7 +13801,7 @@ function renderLegacyHLSF() {
       /* intentionally unused now */
     }
 
-    for (const node of nodes) {
+    for (const node of window.HLSF.nodes) {
       let triangles = Array.isArray(node.triangles) ? node.triangles : [];
       let vertices = Array.isArray(node.vertices) ? node.vertices : [];
       const nodeColor = Array.isArray(node.color) ? node.color : [0, 255, 136];
@@ -10688,7 +13834,7 @@ function renderLegacyHLSF() {
       if (window.HLSF.config.showNodeGlow) {
         const glowColor = inFocus ? `rgba(0, 255, 200, 0.65)` : `rgba(${r}, ${g}, ${b}, 0.35)`;
         ctx.shadowColor = glowColor;
-        ctx.shadowBlur = (inFocus ? 28 : 16) * Math.max(1, scale || 1);
+        ctx.shadowBlur = (inFocus ? 28 : 16) * Math.max(1, window.HLSF.config.scale || 1);
       }
 
       strokePolygon(ctx, screenVertices);
@@ -10723,11 +13869,11 @@ function renderLegacyHLSF() {
         if (window.HLSF.config.showNodeGlow) {
           const glowColor = inFocus ? 'rgba(0, 255, 200, 0.75)' : `rgba(${r}, ${g}, ${b}, 0.45)`;
           ctx.shadowColor = glowColor;
-          ctx.shadowBlur = (inFocus ? 32 : 18) * Math.max(1, scale || 1);
+          ctx.shadowBlur = (inFocus ? 32 : 18) * Math.max(1, window.HLSF.config.scale || 1);
         }
         ctx.globalAlpha = baseAlpha();
         ctx.fillStyle = inFocus ? 'rgba(0, 255, 204, 0.9)' : `rgba(${r}, ${g}, ${b}, 0.9)`;
-        ctx.font = `${Math.max(12, 20 * scale)}px Arial`;
+        ctx.font = `${Math.max(12, 20 * window.HLSF.config.scale)}px Arial`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(node.glyph, sx, sy);
@@ -10736,8 +13882,8 @@ function renderLegacyHLSF() {
         ctx.fillStyle = inFocus
           ? (window.HLSF.config.whiteBg ? 'rgba(0, 128, 128, 0.8)' : 'rgba(0, 255, 204, 0.8)')
           : window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
-        ctx.font = `${Math.max(9, 11 * scale)}px Fira Code, monospace`;
-        ctx.fillText(node.token, sx, sy + 25 * scale);
+        ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
+        ctx.fillText(node.token, sx, sy + 25 * window.HLSF.config.scale);
         ctx.globalAlpha = 1.0;
       }
     }
@@ -10746,7 +13892,7 @@ function renderLegacyHLSF() {
     ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 255, 136, 0.8)';
     ctx.font = '12px Fira Code, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`Nodes: ${nodes.length} | Zoom: ${scale.toFixed(2)}x`, 10, 20);
+    ctx.fillText(`Nodes: ${window.HLSF.nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`, 10, 20);
 
   } catch (err) {
     console.error('Error rendering HLSF:', err);
@@ -10793,56 +13939,6 @@ function animateViewport(target, ms = 300) {
 }
 
 let _legacyLast = null;
-function stepRotation(dt) {
-  if (typeof window === 'undefined') return;
-  if (!Number.isFinite(dt) || dt <= 0) return;
-
-  window.HLSF = window.HLSF || {};
-  const config = (window.HLSF.config = window.HLSF.config || {});
-  const hlsfState = (window.HLSF.state = window.HLSF.state || {});
-
-  if (!hlsfState.emergent || typeof hlsfState.emergent !== 'object') {
-    hlsfState.emergent = {
-      on: config.emergentActive === true,
-      speed: Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0,
-    };
-  }
-
-  if (!Number.isFinite(hlsfState.emergentRot)) {
-    hlsfState.emergentRot = 0;
-  }
-
-  const emergent = hlsfState.emergent;
-  const isActive = config.emergentActive === true && emergent.on !== false;
-  if (!isActive) {
-    return;
-  }
-
-  const rawOmega = Number.isFinite(emergent.speed)
-    ? emergent.speed
-    : (Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0);
-  const omega = Math.max(-5, Math.min(5, rawOmega));
-  emergent.speed = omega;
-  if (!Number.isFinite(config.rotationOmega)) {
-    config.rotationOmega = omega;
-  }
-
-  if (Math.abs(omega) < 1e-6) {
-    return;
-  }
-
-  const safeDt = Math.min(Math.max(dt, 0), 0.5);
-  const tau = Math.PI * 2;
-  const nextAngle = hlsfState.emergentRot + omega * safeDt;
-  let normalized = nextAngle % tau;
-  if (!Number.isFinite(normalized)) {
-    normalized = 0;
-  } else if (normalized < 0) {
-    normalized += tau;
-  }
-  hlsfState.emergentRot = normalized;
-}
-
 function animateLegacyHLSF(now) {
   if (!window.HLSF.canvas || !window.HLSF.ctx) {
     console.warn('Canvas not ready for animation');
@@ -12041,12 +15137,12 @@ async function importDatabaseData(data, source = 'file') {
 // ============================================
 // COMMANDS
 // ============================================
-const COMMANDS = typeof window !== 'undefined'
-  ? (window.COMMANDS = window.COMMANDS || Object.create(null))
-  : Object.create(null);
+const COMMANDS = window.COMMANDS = window.COMMANDS || Object.create(null);
 
 function registerCommand(name, handler) {
-  commandRegistry.register(name, handler);
+  if (!name || typeof handler !== 'function') return;
+  const key = name.startsWith('/') ? name.toLowerCase() : `/${name.toLowerCase()}`;
+  COMMANDS[key] = handler;
 }
 
 async function fetchBootstrapText(href) {
@@ -12149,13 +15245,6 @@ function stageDbRecordForCache(record) {
     const payload = JSON.stringify(Object.assign({ token: record.token }, record));
     memoryStorageFallback.set(cacheKey, payload);
     CacheBatch.record(record.token);
-    knowledgeStore.markInMemory(record.token);
-    void knowledgeStore.put({
-      token: String(record.token).toLowerCase(),
-      relationships: record.relationships,
-      attention_score: record.attention_score,
-      total_relationships: record.total_relationships,
-    });
     return true;
   } catch (err) {
     console.warn('Failed to stage database record for cache:', err);
@@ -12365,119 +15454,6 @@ function tokenWeight(token, idx) {
   const maxW = Math.max(...weights);
   const meanW = weights.reduce((sum, value) => sum + value, 0) / weights.length;
   return Math.max(0.01, Math.min(1.0, 0.6 * maxW + 0.4 * meanW));
-}
-
-type GlyphLedgerEntry = { token: string; w: number; t: number };
-interface GlyphLedger {
-  version: number;
-  updated_at: number;
-  glyph_map: Record<string, GlyphLedgerEntry[]>;
-}
-
-function normalizeLedger(raw: unknown): GlyphLedger {
-  const base: GlyphLedger = {
-    version: 1,
-    updated_at: Date.now(),
-    glyph_map: {},
-  };
-
-  if (!raw || typeof raw !== 'object') {
-    return base;
-  }
-
-  const maybeVersion = Number((raw as any).version);
-  if (Number.isFinite(maybeVersion)) {
-    base.version = maybeVersion;
-  }
-  const maybeUpdated = Number((raw as any).updated_at ?? (raw as any).updatedAt);
-  if (Number.isFinite(maybeUpdated)) {
-    base.updated_at = maybeUpdated;
-  }
-
-  const glyphMap = (raw as Record<string, any>).glyph_map
-    || (raw as Record<string, any>).glyphMap
-    || {};
-  if (glyphMap && typeof glyphMap === 'object') {
-    for (const [glyph, entries] of Object.entries(glyphMap)) {
-      if (!glyph) continue;
-      const list = Array.isArray(entries) ? entries : [];
-      const normalizedEntries: GlyphLedgerEntry[] = [];
-      for (const entry of list) {
-        if (typeof entry === 'string') {
-          const trimmed = entry.trim();
-          if (!trimmed) continue;
-          normalizedEntries.push({ token: trimmed, w: 0.5, t: Date.now() });
-          continue;
-        }
-        if (!entry || typeof entry !== 'object') continue;
-        const token = typeof entry.token === 'string' ? entry.token.trim() : '';
-        if (!token) continue;
-        const weight = Number(entry.w ?? entry.weight ?? entry.value);
-        const timestamp = Number(entry.t ?? entry.timestamp ?? Date.now());
-        normalizedEntries.push({
-          token,
-          w: Number.isFinite(weight) ? weight : 0.5,
-          t: Number.isFinite(timestamp) ? timestamp : Date.now(),
-        });
-      }
-      if (normalizedEntries.length) {
-        base.glyph_map[glyph] = normalizedEntries;
-      }
-    }
-  }
-
-  return base;
-}
-
-function hydrateLedgerMaps(rawLedger: unknown): GlyphLedger {
-  const ledger = normalizeLedger(rawLedger);
-  TokenToGlyph.clear();
-  GlyphToToken.clear();
-  hydrateGlyphMappingsFromLedger(ledger.glyph_map);
-  if (typeof window !== 'undefined') {
-    const runtime = (window.HLSF = window.HLSF || {});
-    runtime.glyphMaps = {
-      tokenToGlyph: new Map(TokenToGlyph),
-      glyphToToken: new Map(
-        Array.from(GlyphToToken.entries()).map(([glyph, tokens]) => [glyph, new Set(tokens)]),
-      ),
-    };
-    runtime.glyphMapsSource = null;
-    runtime.glyphLedgerCache = ledger;
-  }
-  return ledger;
-}
-
-function loadLedger(): GlyphLedger {
-  if (typeof window !== 'undefined') {
-    const runtime = (window.HLSF = window.HLSF || {});
-    if (runtime.glyphLedgerCache && typeof runtime.glyphLedgerCache === 'object') {
-      return hydrateLedgerMaps(runtime.glyphLedgerCache);
-    }
-  }
-
-  const stored = safeStorageGet(GLYPH_LEDGER_STORAGE_KEY, null);
-  const ledger = hydrateLedgerMaps(stored);
-  if (typeof window !== 'undefined') {
-    const runtime = (window.HLSF = window.HLSF || {});
-    runtime.glyphLedgerCache = ledger;
-  }
-  return ledger;
-}
-
-function saveLedger(nextLedger: unknown): GlyphLedger {
-  const ledger = hydrateLedgerMaps(nextLedger);
-  try {
-    const serialized = JSON.stringify(ledger);
-    safeStorageSet(GLYPH_LEDGER_STORAGE_KEY, serialized);
-  } catch (err) {
-    console.warn('Failed to persist glyph ledger:', err);
-  }
-  if (typeof window !== 'undefined') {
-    const runtime = (window.HLSF = window.HLSF || {});
-    runtime.glyphLedgerCache = ledger;
-  }
-  return ledger;
 }
 
 function hashGlyphForToken(token) {
@@ -15275,7 +18251,6 @@ registerCommand('/hidden', cmd_hidden);
 registerCommand('/sv-avatar', args => cmdSaveAvatar(args));
 registerCommand('/ld-avatar', () => cmdLoadAvatar());
 registerCommand('/del-avatar', () => cmdDeleteAvatar());
-registerCommand('/agent', args => cmdAgent(args));
 window.COMMANDS = COMMANDS;
 // Router guard (prevents duplicate logs)
 if (!COMMANDS.__hlsf_bound) {
@@ -15358,52 +18333,6 @@ function cmdSymbols(args = []) {
 
   const summary = symbolMetricsSummary();
   addLog(`<div class="adjacency-insight"><strong>Symbol metrics</strong><br>${sanitize(summary)}</div>`);
-}
-
-function cmdAgent(args = []) {
-  if (!autonomousAgent) {
-    logWarning('Autonomous agent is not available.');
-    return;
-  }
-  const action = (args[0] || '').toLowerCase();
-  if (action === 'start' || action === 'on') {
-    autonomousAgent.start();
-    return;
-  }
-  if (action === 'stop' || action === 'off') {
-    autonomousAgent.stop();
-    return;
-  }
-  if (action === 'status') {
-    const running = autonomousAgent.isRunning();
-    addLog(`🤖 Autonomous agent is ${running ? 'active' : 'idle'}.`);
-    return;
-  }
-  addLog('Usage: /agent start|stop|status');
-}
-
-function trackCommandExecution(
-  command: string,
-  args: unknown,
-  source: 'dispatch' | 'handler' = 'handler',
-): void {
-  const argList = Array.isArray(args)
-    ? args.map(item => (typeof item === 'string' ? item : String(item)))
-    : typeof args === 'string' && args.trim()
-      ? args.trim().split(/\s+/)
-      : [];
-
-  try {
-    recordCommandUsage({
-      command,
-      args: argList,
-      membership: getMembershipLevel(),
-      source,
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn('Failed to track command execution:', err);
-  }
 }
 
 async function dispatchCommand(input) {
@@ -15708,7 +18637,6 @@ function setupLandingExperience() {
   if (!landingRoot) return;
 
   const tabButtons = Array.from(landingRoot.querySelectorAll('.landing-tab'));
-  const adminBypassLink = landingRoot.querySelector('[data-admin-bypass]');
   const forms = {
     signup: document.getElementById('landing-signup-form'),
     login: document.getElementById('landing-login-form'),
@@ -16000,11 +18928,6 @@ function setupLandingExperience() {
     }, 180);
   }
 
-  if (AUTO_BYPASS_ONBOARDING) {
-    finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, AUTO_BYPASS_MEMBERSHIP_DETAILS);
-    return;
-  }
-
   if (googleSigninButton instanceof HTMLButtonElement) {
     googleSigninButton.addEventListener('click', async () => {
       if (googleSignInInFlight) return;
@@ -16122,9 +19045,7 @@ function setupLandingExperience() {
   if (forms.signup instanceof HTMLFormElement) {
     forms.signup.addEventListener('submit', (event) => {
       event.preventDefault();
-      if (typeof forms.signup.reportValidity === 'function' && !forms.signup.reportValidity()) {
-        return;
-      }
+      if (!forms.signup.reportValidity()) return;
       const data = new FormData(forms.signup);
       openPaymentIntake(MEMBERSHIP_LEVELS.MEMBER, {
         name: String(data.get('fullName') || '').trim(),
@@ -16145,76 +19066,10 @@ function setupLandingExperience() {
     });
   }
 
-  let adminBypassActivated = false;
-
-  const triggerAdminBypass = (source: 'click' | 'hash') => {
-    if (adminBypassActivated && getMembershipLevel() === MEMBERSHIP_LEVELS.MEMBER) {
-      return;
-    }
-    adminBypassActivated = true;
-    finalizeOnboarding(MEMBERSHIP_LEVELS.MEMBER, {
-      plan: 'admin',
-      name: 'System Administrator',
-      email: 'admin@local.dev',
-      role: 'admin',
-      admin: true,
-      authProvider: 'bypass',
-    });
-    const logOk = (window as any).logOK;
-    if (typeof logOk === 'function') {
-      const suffix = source === 'hash'
-        ? ' via URL hash. Full access granted.'
-        : '. Full access granted.';
-      logOk(`Admin bypass activated${suffix}`);
-    }
-  };
-
-  const clearAdminBypassHash = () => {
-    if (typeof window === 'undefined') return;
-    const { hash, pathname, search } = window.location;
-    if (typeof hash === 'string' && hash.trim().toLowerCase() === '#admin-bypass') {
-      const nextUrl = `${pathname}${search}`;
-      if (typeof window.history?.replaceState === 'function') {
-        window.history.replaceState(null, '', nextUrl);
-      } else {
-        window.location.hash = '';
-      }
-    }
-  };
-
-  const maybeHandleAdminBypassFromHash = (hash?: string) => {
-    if (typeof hash !== 'string') return false;
-    const normalized = hash.trim().toLowerCase();
-    if (normalized === '#admin-bypass') {
-      triggerAdminBypass('hash');
-      clearAdminBypassHash();
-      return true;
-    }
-    return false;
-  };
-
-  if (adminBypassLink instanceof HTMLAnchorElement) {
-    adminBypassLink.addEventListener('click', (event) => {
-      event.preventDefault();
-      triggerAdminBypass('click');
-      clearAdminBypassHash();
-    });
-  }
-
-  maybeHandleAdminBypassFromHash(window.location?.hash);
-
-  if (typeof window !== 'undefined') {
-    window.addEventListener('hashchange', () => {
-      maybeHandleAdminBypassFromHash(window.location.hash);
-    });
-  }
-
   if (forms.demo instanceof HTMLFormElement) {
     forms.demo.addEventListener('submit', (event) => {
       event.preventDefault();
-      if (typeof forms.demo.reportValidity === 'function' && !forms.demo.reportValidity()) {
-        return;
-      }
+      if (!forms.demo.reportValidity()) return;
       const data = new FormData(forms.demo);
       const demoMode = String(data.get('demoMode') || 'api').toLowerCase() === 'offline' ? 'offline' : 'api';
       finalizeOnboarding(MEMBERSHIP_LEVELS.DEMO, {
@@ -16228,30 +19083,7 @@ function setupLandingExperience() {
 
   setActiveView('signup');
   landingRoot.setAttribute('aria-hidden', 'false');
-
-  if (typeof window !== 'undefined') {
-    const engineRoot = (window.CognitionEngine ||= {});
-    engineRoot.openLanding = openLanding;
-    engineRoot.finalizeOnboarding = finalizeOnboarding;
-    engineRoot.membershipLevels = MEMBERSHIP_LEVELS;
-    engineRoot.landingInitialized = true;
-
-    const queueKey = '__hlsfPendingOnboarding__';
-    const pending = Array.isArray((window as any)[queueKey])
-      ? (window as any)[queueKey].splice(0)
-      : [];
-
-    if (pending.length) {
-      pending.forEach((payload: any) => {
-        if (!payload || !payload.level) return;
-        try {
-          finalizeOnboarding(payload.level, payload.details || {});
-        } catch (err) {
-          console.warn('Deferred onboarding finalization failed:', err);
-        }
-      });
-    }
-  }
+  window.CognitionEngine.openLanding = openLanding;
 }
 
 function exitProcessingState(options = {}) {
@@ -16370,7 +19202,7 @@ async function processPrompt(prompt) {
       • Targeted edges: ${CONFIG.ADJACENCY_RECURSION_DEPTH} × ${CONFIG.ADJACENCY_EDGES_PER_LEVEL} = ${CONFIG.ADJACENCY_RECURSION_DEPTH * CONFIG.ADJACENCY_EDGES_PER_LEVEL} potential adjacencies per seed token.
     </div>`);
 
-    const inputAdjTokens = await collectSymbolAwareTokens(normalizedPrompt, tokens, 'prompt-input');
+    const inputAdjTokens = collectSymbolAwareTokens(normalizedPrompt, tokens, 'prompt-input');
     const promptMemoryEntry = recordLocalPromptMemory(
       promptReviewId,
       normalizedPrompt,
@@ -16392,7 +19224,6 @@ async function processPrompt(prompt) {
       addLog(`<div class="adjacency-insight"><strong>🧠 Local HLSF memory primed:</strong> ${summaryParts.join(' · ')}</div>`);
     }
     const normalizedSeeds = normalizeAdjacencyInputs(inputAdjTokens);
-    await hydrateTokensFromKnowledgeStore(normalizedSeeds);
     const dbRecordIndex = buildDbRecordIndexMap();
     const remoteDbReady = window.HLSF?.remoteDb?.isReady?.() === true;
     const preferDbHydration = remoteDbReady || dbRecordIndex.size > 0;
@@ -16582,19 +19413,11 @@ async function processPrompt(prompt) {
       logWarning(`Local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
     }
     localOutput = localLimited.text;
-    const responseWasTrimmed = Boolean(localOutputData.responseTrimmed) || localLimited.trimmed;
-    const limitedWordCount = localLimited.wordCount ?? countWords(localOutput);
-    const localWordCount = responseWasTrimmed
-      ? limitedWordCount
-      : (typeof localOutputData.responseWordCount === 'number'
-        ? localOutputData.responseWordCount
-        : limitedWordCount);
+    const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
 
-    const localResponseTokens = responseWasTrimmed
-      ? tokenize(localOutput)
-      : (Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
-        ? localOutputData.responseTokens
-        : tokenize(localOutput));
+    const localResponseTokens = Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
+      ? localOutputData.responseTokens
+      : tokenize(localOutput);
 
     if (localResponseTokens.length) {
       addConversationTokens(localResponseTokens);
@@ -16603,8 +19426,7 @@ async function processPrompt(prompt) {
 
     let localAdjacency = null;
     if (localResponseTokens.length) {
-      const localAdjTargets = await collectSymbolAwareTokens(localOutput, localResponseTokens, 'prompt-local-output');
-      await hydrateTokensFromKnowledgeStore(localAdjTargets);
+      const localAdjTargets = collectSymbolAwareTokens(localOutput, localResponseTokens, 'prompt-local-output');
       if (localAdjTargets.length) {
         const localAdjStatus = logStatus('⏳ Caching local HLSF AGI adjacencies');
         try {
@@ -17124,8 +19946,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     return { result, duration: performance.now() - startTime };
   };
 
-  const promptAdjTokens = await collectSymbolAwareTokens(promptText, promptTokens, `${chunkLabel}-prompt`);
-  await hydrateTokensFromKnowledgeStore(promptAdjTokens);
+  const promptAdjTokens = collectSymbolAwareTokens(promptText, promptTokens, `${chunkLabel}-prompt`);
   const inputData = await measure(() => batchFetchAdjacencies(promptAdjTokens, promptText, `${chunkLabel} prompt adjacencies`));
 
   if (adjacencyStatus) {
@@ -17186,19 +20007,11 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     logWarning(`${chunkLabel}: local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words for archival.`);
   }
   localOutput = localLimited.text;
-  const responseWasTrimmed = Boolean(localOutputData.responseTrimmed) || localLimited.trimmed;
-  const limitedWordCount = localLimited.wordCount ?? countWords(localOutput);
-  const localWordCount = responseWasTrimmed
-    ? limitedWordCount
-    : (typeof localOutputData.responseWordCount === 'number'
-      ? localOutputData.responseWordCount
-      : limitedWordCount);
+  const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
 
-  const localResponseTokens = responseWasTrimmed
-    ? tokenize(localOutput)
-    : (Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
-      ? localOutputData.responseTokens
-      : tokenize(localOutput));
+  const localResponseTokens = Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
+    ? localOutputData.responseTokens
+    : tokenize(localOutput);
 
   if (localResponseTokens.length) {
     addConversationTokens(localResponseTokens);
@@ -17208,8 +20021,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
   let localAdjacency = null;
   let localAdjTargets = [];
   if (localResponseTokens.length) {
-    localAdjTargets = await collectSymbolAwareTokens(localOutput, localResponseTokens, `${chunkLabel}-local-output`);
-    await hydrateTokensFromKnowledgeStore(localAdjTargets);
+    localAdjTargets = collectSymbolAwareTokens(localOutput, localResponseTokens, `${chunkLabel}-local-output`);
     if (localAdjTargets.length) {
       const localAdjStatus = logStatus(`⏳ ${chunkLabel}: caching local HLSF AGI adjacencies`);
       const localAdjStart = performance.now();
@@ -17519,8 +20331,7 @@ async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, foc
   if (reflectionTokens.length) {
     addConversationTokens(reflectionTokens);
     addOutputTokens(reflectionTokens, { render: false });
-    const reflectionAdjTokens = await collectSymbolAwareTokens(finalReflection, reflectionTokens, 'document-reflection');
-    await hydrateTokensFromKnowledgeStore(reflectionAdjTokens);
+    const reflectionAdjTokens = collectSymbolAwareTokens(finalReflection, reflectionTokens, 'document-reflection');
     const reflectionAdjacency = await batchFetchAdjacencies(reflectionAdjTokens, finalReflection, 'document reflection adjacencies');
     calculateAttention(reflectionAdjacency);
     if (hasNewAdjacencyData(reflectionAdjacency)) {
@@ -17808,39 +20619,43 @@ async function processDocumentFile(file) {
 // EVENTS
 // ============================================
 function showApiModal() {
-  const modal = elements.apiModal;
-  if (!(modal instanceof HTMLElement)) return;
-  modal.classList.remove('hidden');
+  if (!elements.apiModal) return;
+  elements.apiModal.classList.remove('hidden');
   setTimeout(() => {
-    const input = elements.apiKeyInput;
-    if (input instanceof HTMLElement) {
-      input.focus();
+    if (elements.apiKeyInput instanceof HTMLElement) {
+      elements.apiKeyInput.focus();
     }
   }, 80);
 }
 
 function applyApiKeyFromModal() {
-  const input = elements.apiKeyInput;
-  if (!(input instanceof HTMLInputElement)) {
-    logError('API key input not available');
-    return;
-  }
-  const key = input.value.trim();
+  const key = elements.apiKeyInput.value.trim();
   if (!isValidApiKey(key)) {
     logError('Invalid API key format');
     return;
   }
   state.apiKey = key.trim();
   const persisted = safeStorageSet(API_KEY_STORAGE_KEY, state.apiKey);
-  const modal = elements.apiModal;
-  if (modal instanceof HTMLElement) {
-    modal.classList.add('hidden');
-  }
+  elements.apiModal.classList.add('hidden');
   if (!persisted) {
     logWarning('API key configured but not saved to storage');
   }
   logOK('API key configured');
 }
+
+elements.apiConfirmBtn.addEventListener('click', applyApiKeyFromModal);
+
+elements.apiKeyInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    applyApiKeyFromModal();
+  }
+});
+
+elements.apiCancelBtn.addEventListener('click', () => {
+  elements.apiModal.classList.add('hidden');
+  logWarning('Offline mode - limited functionality');
+});
 
 document.addEventListener('click', (event) => {
   const target = event.target instanceof HTMLElement ? event.target.closest('.command-upgrade-link') : null;
@@ -17892,39 +20707,42 @@ async function submitPromptThroughEngine(
   }
 }
 
-autonomousAgent = new AutonomousAgent({
-  intervalMs: 60000,
-  vectorStore: vectorSemanticStore,
-  runPrompt: async (prompt: string) => {
-    await submitPromptThroughEngine(prompt, { source: 'input-field' });
-  },
-  getContext: () => ({
-    isProcessing: state.isProcessing === true,
-    lastAdjacency: ensureLocalHlsfMemory()?.lastAdjacency ?? null,
-  }),
-  log: (message: string, level: 'info' | 'warning' | 'error' = 'info') => {
-    if (level === 'error') {
-      logError(message);
-    } else if (level === 'warning') {
-      logWarning(message);
-    } else {
-      addLog(message);
-    }
-  },
-});
-
-if (typeof window !== 'undefined') {
-  const root = (window.CognitionEngine = window.CognitionEngine || {});
-  root.agent = {
-    start: () => autonomousAgent?.start(),
-    stop: () => autonomousAgent?.stop(),
-    isRunning: () => autonomousAgent?.isRunning() ?? false,
-  };
-}
-
 async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } = {}) {
   return submitPromptThroughEngine(input, { annotateLog: options?.annotateLog, source: 'voice' });
 }
+
+elements.sendBtn.addEventListener('click', () => {
+  const rawValue = elements.input.value;
+  if (!rawValue || !rawValue.trim()) return;
+
+  void submitPromptThroughEngine(rawValue, { source: 'input-field' })
+    .then(result => {
+      if (result.kind === 'command') {
+        elements.input.value = '';
+      }
+    })
+    .catch(error => {
+      console.error('Prompt submission failed:', error);
+    });
+});
+
+elements.cancelBtn.addEventListener('click', () => {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    logWarning('Cancelling...');
+  }
+});
+
+elements.input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    elements.sendBtn.click();
+  }
+});
+
+elements.input.addEventListener('input', (e) => {
+  handleLiveInputChange(e.target.value);
+});
 
 // ============================================
 // INIT
@@ -17933,150 +20751,6 @@ window.addEventListener('beforeunload', () => {
   state.apiKey = '';
   stopHLSFAnimation();
 });
-
-function bindHlsfControls(container: HTMLElement | null): void {
-  const root = container instanceof HTMLElement
-    ? container
-    : document.getElementById('hlsf-canvas-container');
-
-  if (!(root instanceof HTMLElement)) {
-    return;
-  }
-
-  if (root.dataset.hlsfControlsBound === 'true') {
-    syncHlsfControls(root);
-    return;
-  }
-
-  root.dataset.hlsfControlsBound = 'true';
-  syncHlsfControls(root);
-}
-
-function syncHlsfControls(container: HTMLElement | null): void {
-  const root = container instanceof HTMLElement
-    ? container
-    : document.getElementById('hlsf-canvas-container');
-
-  if (!(root instanceof HTMLElement)) {
-    return;
-  }
-
-  const hlsf = (window as any).HLSF;
-  const config = hlsf?.config ?? null;
-  if (!config) {
-    return;
-  }
-
-  const ownerDocument = root.ownerDocument ?? document;
-
-  const updateNumericControl = (
-    inputId: string,
-    valueId: string,
-    rawValue: unknown,
-    options: { digits?: number } = {},
-  ) => {
-    const input = ownerDocument.getElementById(inputId) as HTMLInputElement | null;
-    if (!input) return;
-    const digits = options.digits ?? (input.type === 'range' ? 2 : 0);
-    const numeric = Number(rawValue);
-    if (!Number.isFinite(numeric)) return;
-    const formatted = digits > 0 ? numeric.toFixed(digits) : String(Math.round(numeric));
-    if (input.value !== formatted) {
-      input.value = formatted;
-    }
-    const valueEl = ownerDocument.getElementById(valueId) as HTMLElement | null;
-    if (valueEl) {
-      valueEl.textContent = formatted;
-    }
-  };
-
-  updateNumericControl('hlsf-rotation-speed', 'hlsf-speed-val', config.rotationOmega, { digits: 2 });
-  updateNumericControl('hlsf-alpha', 'hlsf-alpha-val', config.alpha, { digits: 2 });
-  updateNumericControl('hlsf-node-size', 'hlsf-node-size-val', config.nodeSize, { digits: 1 });
-
-  const affinity = (config.affinity ?? {}) as { threshold?: unknown; iterations?: unknown };
-  updateNumericControl('hlsf-aff-thresh', 'hlsf-aff-thresh-val', affinity.threshold, { digits: 2 });
-  updateNumericControl('hlsf-aff-iters', 'hlsf-aff-iters-val', affinity.iterations, { digits: 0 });
-
-  const updateIntegerField = (inputId: string, valueId: string, rawValue: unknown) => {
-    const input = ownerDocument.getElementById(inputId) as HTMLInputElement | null;
-    if (!input) return;
-    const numeric = Number(rawValue);
-    if (!Number.isFinite(numeric)) return;
-    const formatted = String(Math.round(numeric));
-    if (input.value !== formatted) {
-      input.value = formatted;
-    }
-    const valueEl = ownerDocument.getElementById(valueId) as HTMLElement | null;
-    if (valueEl) {
-      valueEl.textContent = formatted;
-    }
-  };
-
-  const relationCap = getRelationTypeCap();
-  if (Number.isFinite(relationCap)) {
-    updateIntegerField('hlsf-relation-cap', 'hlsf-relation-cap-val', relationCap);
-  }
-
-  const edgesPerType = getEdgesPerType();
-  if (Number.isFinite(edgesPerType)) {
-    updateIntegerField('hlsf-edges-per-type', 'hlsf-edges-per-type-val', edgesPerType);
-  }
-
-  const syncSelectValue = (id: string, desired: unknown) => {
-    if (typeof desired !== 'string' || !desired) return;
-    const select = ownerDocument.getElementById(id) as HTMLSelectElement | null;
-    if (!select) return;
-    const normalized = desired.toLowerCase();
-    for (const option of Array.from(select.options)) {
-      if (option.value.toLowerCase() === normalized) {
-        if (select.value !== option.value) {
-          select.value = option.value;
-        }
-        break;
-      }
-    }
-  };
-
-  syncSelectValue('hlsf-edge-color-mode', config.edgeColorMode);
-  syncSelectValue('hlsf-layout', config.layout);
-
-  const setToggleState = (id: string, active: boolean, onLabel: string, offLabel: string) => {
-    const button = ownerDocument.getElementById(id) as HTMLButtonElement | null;
-    if (!button) return;
-    button.textContent = active ? onLabel : offLabel;
-    button.setAttribute('aria-pressed', active ? 'true' : 'false');
-  };
-
-  setToggleState('hlsf-toggle-edges', config.showEdges !== false, 'Edges: On', 'Edges: Off');
-  setToggleState('hlsf-toggle-labels', config.showLabels !== false, 'Labels: On', 'Labels: Off');
-  setToggleState('hlsf-toggle-glow', config.showNodeGlow === true, 'Glow: On', 'Glow: Off');
-  setToggleState('hlsf-toggle-bg', config.whiteBg === true, 'BG: Light', 'BG: Dark');
-  setToggleState('hlsf-toggle-emergent', config.emergentActive === true, 'Stop Emergence', 'Start Emergence');
-
-  const adjacencyButton = ownerDocument.getElementById('hlsf-toggle-adjacency') as HTMLButtonElement | null;
-  if (adjacencyButton) {
-    const expanded = isAdjacencyExpansionEnabled();
-    adjacencyButton.textContent = expanded ? 'Adjacency: Expanded' : 'Adjacency: Compact';
-    adjacencyButton.setAttribute('aria-pressed', expanded ? 'true' : 'false');
-  }
-
-  const affinitySummary = ownerDocument.getElementById('hlsf-affinity-summary') as HTMLElement | null;
-  if (affinitySummary) {
-    const threshold = Number(affinity.threshold);
-    const iterations = Number(affinity.iterations);
-    if (Number.isFinite(threshold) || Number.isFinite(iterations)) {
-      const parts: string[] = [];
-      if (Number.isFinite(threshold)) {
-        parts.push(`threshold ${threshold.toFixed(2)}`);
-      }
-      if (Number.isFinite(iterations)) {
-        parts.push(`iterations ${Math.round(iterations)}`);
-      }
-      affinitySummary.textContent = `Current mental state: ${parts.join(', ')}`;
-    }
-  }
-}
 
 async function initialize() {
   let cachedCount = getCachedTokenCount();
@@ -18088,7 +20762,6 @@ async function initialize() {
     setDocumentCacheBaseline(Math.max(0, getDocumentCacheBaseline()));
   }
   updateStats();
-  printStartupBanner();
 
   const hlsfWrapper = document.getElementById('hlsf-canvas-container');
   if (hlsfWrapper) {
@@ -18126,12 +20799,8 @@ async function initialize() {
   const storedKey = safeStorageGet(API_KEY_STORAGE_KEY, '');
   if (isValidApiKey(storedKey)) {
     state.apiKey = storedKey.trim();
-    if (elements.apiKeyInput instanceof HTMLInputElement) {
-      elements.apiKeyInput.value = state.apiKey;
-    }
-    if (elements.apiModal instanceof HTMLElement) {
-      elements.apiModal.classList.add('hidden');
-    }
+    elements.apiKeyInput.value = state.apiKey;
+    elements.apiModal.classList.add('hidden');
     logOK('Loaded stored API key');
   } else if (storedKey) {
     safeStorageRemove(API_KEY_STORAGE_KEY);
@@ -18170,37 +20839,15 @@ async function initialize() {
   }
 
   initializeVoiceClonePanel();
-  if (elements.input instanceof HTMLElement) {
-    elements.input.focus();
-  }
+  elements.input.focus();
 }
 
 window.addEventListener('load', () => {
   tryBootstrapDb();
 });
 
-function runAfterDomReady(task: () => void): void {
-  if (typeof document === 'undefined') {
-    task();
-    return;
-  }
-  if (document.readyState === 'loading') {
-    const invoke = () => {
-      document.removeEventListener('DOMContentLoaded', invoke);
-      task();
-    };
-    document.addEventListener('DOMContentLoaded', invoke);
-    return;
-  }
-  task();
-}
-
-runAfterDomReady(() => {
-  hydrateAppElements(document);
-  bindCoreUiEvents();
-  setupLandingExperience();
-  void initialize();
-});
+setupLandingExperience();
+initialize();
 
 
 /* ===== HLSF limit controls wiring ===== */
