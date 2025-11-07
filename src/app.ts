@@ -1,8 +1,18 @@
 import { SETTINGS, PERFORMANCE_PROFILES, resolvePerformanceProfile } from './settings';
 import type { Settings } from './settings';
-import { runPipeline } from './engine/pipeline';
-import { PipelineWorkerClient } from './engine/pipelineClient';
-import type { TelemetryHook } from './types/pipeline-messages';
+import {
+  activeSettings,
+  applyPerformanceCaps,
+  applyRecursionDepthSetting,
+  CONFIG,
+  DEFAULT_HLSF_RELATIONSHIP_LIMIT,
+  executePipeline,
+  getRecursionDepthSetting,
+  MAX_LEVEL_UP_SEEDS,
+  MAX_RECURSION_DEPTH,
+  resolveHlsfRelationshipBudget,
+} from './app/session/sessionManager';
+import { GraphRenderer } from './app/graph/graphRenderer';
 import { createRemoteDbFileWriter, type RemoteDbDirectoryStats } from './engine/remoteDbWriter';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
@@ -24,73 +34,6 @@ import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
 import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
 import { ensureKBReady } from './state/kbStore';
-// ============================================
-// CONFIGURATION
-// ============================================
-interface PricingModel {
-  inputPerMillion: number;
-  outputPerMillion: number;
-}
-
-interface EngineConfig {
-  MAX_TOKENS_PER_PROMPT: number;
-  MAX_TOKENS_PER_RESPONSE: number;
-  INPUT_WORD_LIMIT: number;
-  DOCUMENT_WORD_LIMIT: number;
-  PROMPT_LOG_LIMIT: number;
-  ORIGINAL_OUTPUT_WORD_LIMIT: number;
-  LOCAL_OUTPUT_WORD_LIMIT: number;
-  LOCAL_RESPONSE_WORD_LIMIT: number;
-  MAX_CONCURRENCY: number;
-  MAX_RETRY_ATTEMPTS: number;
-  RETRY_BASE_DELAY_MS: number;
-  DOCUMENT_CHUNK_SIZE: number;
-  CACHE_SEED_LIMIT: number;
-  DEFAULT_MODEL: string;
-  MODEL_PRICING: Record<string, PricingModel>;
-  ESTIMATED_COMPLETION_RATIO: number;
-  ADJACENCY_TOKEN_ESTIMATES: { prompt: number; completion: number };
-  ADJACENCY_RECURSION_DEPTH: number;
-  ADJACENCY_EDGES_PER_LEVEL: number;
-  ADJACENCY_SPAWN_LIMIT: number;
-  ADJACENCY_RELATIONSHIPS_PER_NODE: number;
-  NETWORK_RETRY_BACKOFF_MS: number;
-}
-
-const CONFIG: EngineConfig = {
-  MAX_TOKENS_PER_PROMPT: 500,
-  MAX_TOKENS_PER_RESPONSE: 1500,
-  INPUT_WORD_LIMIT: 100,
-  DOCUMENT_WORD_LIMIT: 350,
-  PROMPT_LOG_LIMIT: 250,
-  ORIGINAL_OUTPUT_WORD_LIMIT: 200,
-  LOCAL_OUTPUT_WORD_LIMIT: 100,
-  LOCAL_RESPONSE_WORD_LIMIT: 20,
-  MAX_CONCURRENCY: 5,
-  MAX_RETRY_ATTEMPTS: 3,
-  RETRY_BASE_DELAY_MS: 500,
-  DOCUMENT_CHUNK_SIZE: 8,
-  CACHE_SEED_LIMIT: 8000,
-  DEFAULT_MODEL: 'gpt-4o-mini',
-  MODEL_PRICING: {
-    default: { inputPerMillion: 0.15, outputPerMillion: 0.60 },
-    'gpt-4o-mini': { inputPerMillion: 0.15, outputPerMillion: 0.60 },
-  },
-  ESTIMATED_COMPLETION_RATIO: 0.7,
-  ADJACENCY_TOKEN_ESTIMATES: {
-    prompt: 220,
-    completion: 320,
-  },
-  ADJACENCY_RECURSION_DEPTH: 3,
-  ADJACENCY_EDGES_PER_LEVEL: 4,
-  ADJACENCY_SPAWN_LIMIT: 2,
-  ADJACENCY_RELATIONSHIPS_PER_NODE: 8,
-  NETWORK_RETRY_BACKOFF_MS: 5000,
-};
-
-const MAX_RECURSION_DEPTH = 8;
-const MAX_LEVEL_UP_SEEDS = 64;
-
 const AGENT_CONFIG_STORAGE_KEY = 'agent.config.v1';
 
 const DEFAULT_AGENT_CONFIG: AgentConfig = {
@@ -140,412 +83,12 @@ function persistAgentConfig(cfg: AgentConfig): void {
   }
 }
 
-let pipelineWorkerClientInstance: PipelineWorkerClient | null = null;
-
-function getPipelineWorkerClient(): PipelineWorkerClient | null {
-  if (pipelineWorkerClientInstance) {
-    return pipelineWorkerClientInstance;
-  }
-  if (typeof Worker === 'undefined') {
-    return null;
-  }
-  try {
-    pipelineWorkerClientInstance = new PipelineWorkerClient();
-  } catch (err) {
-    console.warn('Pipeline worker initialization failed:', err);
-    pipelineWorkerClientInstance = null;
-  }
-  return pipelineWorkerClientInstance;
-}
-
-interface PipelineRunOptions {
-  signal?: AbortSignal | null;
-  telemetry?: TelemetryHook;
-}
-
-async function executePipeline(
-  text: string,
-  cfg: Settings,
-  options: PipelineRunOptions = {},
-) {
-  const client = getPipelineWorkerClient();
-  if (client) {
-    return client.run(
-      { text, options: cfg },
-      { telemetry: options.telemetry, signal: options.signal ?? undefined },
-    );
-  }
-
-  if (options.signal?.aborted) {
-    const abortError = new Error('Pipeline aborted');
-    abortError.name = 'AbortError';
-    throw abortError;
-  }
-
-  const result = runPipeline(text, cfg, {
-    telemetry: options.telemetry,
-    shouldAbort: () => options.signal?.aborted === true,
-  });
-
-  return { result };
-}
-
-function clampRecursionDepth(value: unknown): number {
-  if (value === Infinity || value === 'Infinity') {
-    return MAX_RECURSION_DEPTH;
-  }
-  const numeric = Math.floor(Number(value));
-  if (!Number.isFinite(numeric)) {
-    const fallback = Math.floor(Number(CONFIG.ADJACENCY_RECURSION_DEPTH));
-    if (!Number.isFinite(fallback)) {
-      return 0;
-    }
-    return Math.min(MAX_RECURSION_DEPTH, Math.max(0, fallback));
-  }
-  return Math.min(MAX_RECURSION_DEPTH, Math.max(0, numeric));
-}
-
-function applyRecursionDepthSetting(nextDepth: unknown): number {
-  const clamped = clampRecursionDepth(nextDepth);
-  if (typeof window !== 'undefined') {
-    (window as any).HLSF = (window as any).HLSF || {};
-    const config = ((window as any).HLSF.config = (window as any).HLSF.config || {});
-    config.adjacencyRecursionDepth = clamped;
-  }
-  CONFIG.ADJACENCY_RECURSION_DEPTH = clamped;
-  return clamped;
-}
-
-function getRecursionDepthSetting(): number {
-  if (typeof window !== 'undefined' && window && (window as any).HLSF) {
-    const config = (window as any).HLSF.config;
-    if (config && Object.prototype.hasOwnProperty.call(config, 'adjacencyRecursionDepth')) {
-      return clampRecursionDepth(config.adjacencyRecursionDepth);
-    }
-  }
-  return clampRecursionDepth(CONFIG.ADJACENCY_RECURSION_DEPTH);
-}
-
-function activeSettings() {
-  if (typeof window !== 'undefined' && window && (window as any).SETTINGS) {
-    return (window as any).SETTINGS;
-  }
-  return SETTINGS;
-}
-
-function applyPerformanceCaps(settingsOverride = null) {
-  const source = settingsOverride || activeSettings() || {};
-  const branching = Math.max(2, Math.floor(Number(source.branchingFactor) || 2));
-  const nodeCap = Math.max(1, Math.floor(Number(source.maxNodes) || 1600));
-  const edgeCap = Math.max(branching * 2, Math.floor(Number(source.maxEdges) || 6400));
-  const relationCap = Math.max(2, Math.floor(Number(source.maxRelationTypes) || 40));
-  const rawRelationship = source.maxRelationships;
-  const numericRelationship = Number(rawRelationship);
-  const relationshipBudget = resolveHlsfRelationshipBudget(
-    Number.isFinite(numericRelationship) ? numericRelationship : rawRelationship ?? null,
-  );
-  const pruneThreshold = Number.isFinite(Number(source.pruneWeightThreshold))
-    ? Math.max(0, Number(source.pruneWeightThreshold))
-    : 0.18;
-
-  CONFIG.ADJACENCY_SPAWN_LIMIT = branching;
-  CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE = relationCap;
-  const derivedEdgesPerLevel = Math.max(
-    branching,
-    Math.floor(edgeCap / Math.max(1, nodeCap)),
-  );
-  CONFIG.ADJACENCY_EDGES_PER_LEVEL = derivedEdgesPerLevel;
-
-  if (typeof window !== 'undefined') {
-    window.HLSF = window.HLSF || {};
-    const runtime = (window.HLSF.config = window.HLSF.config || {});
-    runtime.liveTokenCap = nodeCap;
-    runtime.maxNodeCount = nodeCap;
-    runtime.maxEdgeCount = edgeCap;
-    runtime.maxRelationshipCount = relationshipBudget;
-    runtime.maxRelationTypes = relationCap;
-    runtime.pruneWeightThreshold = pruneThreshold;
-    runtime.liveEdgeWeightMin = pruneThreshold;
-    runtime.localMemoryEdgeWeightMin = pruneThreshold;
-    runtime.relationshipBudget = relationshipBudget;
-    runtime.relationshipLimit = relationshipBudget;
-  }
-
-  if (typeof window !== 'undefined') {
-    window.SETTINGS = Object.assign(window.SETTINGS || {}, source, {
-      branchingFactor: branching,
-      maxNodes: nodeCap,
-      maxEdges: edgeCap,
-      maxRelationships: rawRelationship ?? numericRelationship ?? relationshipBudget,
-      maxRelationTypes: Math.max(50, relationCap),
-      pruneWeightThreshold: pruneThreshold,
-    });
-  }
-
-  updateHlsfLimitSummary({
-    nodes: nodeCap,
-    edges: edgeCap,
-    relationships: relationshipBudget,
-  });
-}
-
 applyPerformanceCaps();
 
-function formatHlsfLimitValue(value: unknown): string {
-  if (value === Infinity) return '∞';
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value.toLocaleString();
-  }
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) {
-    return numeric.toLocaleString();
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? trimmed : '—';
-  }
-  return '—';
-}
-
-function updateHlsfLimitSummary(limits?: { nodes?: unknown; edges?: unknown; relationships?: unknown }) {
-  if (typeof document === 'undefined') return;
-  const summary = document.getElementById('hlsf-limit-summary');
-  if (!summary) return;
-  const nodesEl = summary.querySelector('[data-hlsf-limit-nodes]');
-  const edgesEl = summary.querySelector('[data-hlsf-limit-edges]');
-  const relEl = summary.querySelector('[data-hlsf-limit-relationships]');
-  if (nodesEl) nodesEl.textContent = `Nodes: ${formatHlsfLimitValue(limits?.nodes)}`;
-  if (edgesEl) edgesEl.textContent = `Edges: ${formatHlsfLimitValue(limits?.edges)}`;
-  if (relEl) relEl.textContent = `Relationships: ${formatHlsfLimitValue(limits?.relationships)}`;
-  if (summary instanceof HTMLElement) {
-    if (Number.isFinite(Number(limits?.nodes))) {
-      summary.dataset.nodes = String(limits?.nodes ?? '');
-    } else {
-      delete summary.dataset.nodes;
-    }
-    if (Number.isFinite(Number(limits?.edges))) {
-      summary.dataset.edges = String(limits?.edges ?? '');
-    } else {
-      delete summary.dataset.edges;
-    }
-    if (limits?.relationships === Infinity) {
-      summary.dataset.relationships = 'Infinity';
-    } else if (Number.isFinite(Number(limits?.relationships))) {
-      summary.dataset.relationships = String(limits?.relationships ?? '');
-    } else {
-      delete summary.dataset.relationships;
-    }
-  }
-}
-
-function shouldStartClusterZoom(event: MouseEvent): boolean {
-  return event.shiftKey || event.altKey || event.metaKey;
-}
-
-function ensureClusterZoomOverlay(canvas: HTMLCanvasElement): HTMLDivElement | null {
-  if (!canvas || typeof document === 'undefined') return null;
-  const host = canvas.parentElement;
-  if (!host) return null;
-  let overlay = host.querySelector<HTMLDivElement>('.hlsf-cluster-zoom-box');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.className = 'hlsf-cluster-zoom-box';
-    overlay.setAttribute('aria-hidden', 'true');
-    host.appendChild(overlay);
-  }
-  return overlay;
-}
-
-function getCanvasRelativePosition(canvas: HTMLCanvasElement, event: MouseEvent) {
-  const rect = canvas.getBoundingClientRect();
-  const width = rect.width || canvas.clientWidth || canvas.width || 1;
-  const height = rect.height || canvas.clientHeight || canvas.height || 1;
-  const rawX = event.clientX - rect.left;
-  const rawY = event.clientY - rect.top;
-  const clampedX = Math.max(0, Math.min(width, rawX));
-  const clampedY = Math.max(0, Math.min(height, rawY));
-  return { x: clampedX, y: clampedY };
-}
-
-function buildClusterSelectionRect(
-  canvas: HTMLCanvasElement,
-  start: { x: number; y: number },
-  end: { x: number; y: number },
-) {
-  const width = canvas.clientWidth || canvas.width || 1;
-  const height = canvas.clientHeight || canvas.height || 1;
-  const minX = Math.max(0, Math.min(width, Math.min(start.x, end.x)));
-  const minY = Math.max(0, Math.min(height, Math.min(start.y, end.y)));
-  const maxX = Math.max(0, Math.min(width, Math.max(start.x, end.x)));
-  const maxY = Math.max(0, Math.min(height, Math.max(start.y, end.y)));
-  const rectWidth = Math.max(1, maxX - minX);
-  const rectHeight = Math.max(1, maxY - minY);
-  return { x: minX, y: minY, width: rectWidth, height: rectHeight };
-}
-
-function screenToWorldFromCanvas(canvas: HTMLCanvasElement, point: { x: number; y: number }) {
-  window.HLSF = window.HLSF || {};
-  window.HLSF.view = window.HLSF.view || { x: 0, y: 0, scale: 1 };
-  const view = window.HLSF.view;
-  const scale = Number.isFinite(view.scale) ? view.scale : 1;
-  const vx = Number.isFinite(view.x) ? view.x : 0;
-  const vy = Number.isFinite(view.y) ? view.y : 0;
-  return {
-    x: (point.x - vx) / scale,
-    y: (point.y - vy) / scale,
-  };
-}
-
-type ClusterZoomMode = 'in' | 'out';
-
-function applyClusterZoomSelection(
-  canvas: HTMLCanvasElement,
-  rect: { x: number; y: number; width: number; height: number },
-  mode: ClusterZoomMode = 'in',
-) {
-  if (!canvas || rect.width <= 0 || rect.height <= 0) return;
-  const viewWidth = canvas.clientWidth || canvas.width || 1;
-  const viewHeight = canvas.clientHeight || canvas.height || 1;
-  const padding = 0.85;
-  window.HLSF = window.HLSF || {};
-  window.HLSF.view = window.HLSF.view || { x: 0, y: 0, scale: 1 };
-  const currentView = window.HLSF.view;
-  const currentScale = Number.isFinite(currentView.scale) ? currentView.scale : 1;
-  const startWorld = screenToWorldFromCanvas(canvas, { x: rect.x, y: rect.y });
-  const endWorld = screenToWorldFromCanvas(canvas, {
-    x: rect.x + rect.width,
-    y: rect.y + rect.height,
-  });
-  const worldWidth = Math.max(1e-4, Math.abs(endWorld.x - startWorld.x));
-  const worldHeight = Math.max(1e-4, Math.abs(endWorld.y - startWorld.y));
-  const scaleByWidth = (viewWidth * padding) / worldWidth;
-  const scaleByHeight = (viewHeight * padding) / worldHeight;
-  const scaleCandidate = Math.min(scaleByWidth, scaleByHeight);
-  const zoomRatio = scaleCandidate / Math.max(currentScale, 1e-4);
-  const targetScale =
-    mode === 'out'
-      ? Math.min(48, Math.max(0.1, currentScale / Math.max(zoomRatio, 1e-4)))
-      : Math.min(48, Math.max(0.1, scaleCandidate));
-  const centerWorldX = startWorld.x + worldWidth / 2;
-  const centerWorldY = startWorld.y + worldHeight / 2;
-  const target = {
-    scale: targetScale,
-    x: viewWidth / 2 - centerWorldX * targetScale,
-    y: viewHeight / 2 - centerWorldY * targetScale,
-  };
-  const travel = Math.hypot(rect.width, rect.height);
-  const duration = Math.min(650, Math.max(220, travel * 1.2));
-  animateViewport(target, duration);
-}
-
-function installClusterZoom(canvas: HTMLCanvasElement | null) {
-  if (!canvas || canvas.dataset.clusterZoomBound === 'true') return;
-  const overlay = ensureClusterZoomOverlay(canvas);
-  if (!overlay) {
-    canvas.dataset.clusterZoomBound = 'true';
-    return;
-  }
-
-  const minSelectionSize = 64;
-  let selecting = false;
-  let startPoint = { x: 0, y: 0 };
-  let currentRect: { x: number; y: number; width: number; height: number } | null = null;
-
-  function resetOverlay() {
-    overlay.style.left = '0px';
-    overlay.style.top = '0px';
-    overlay.style.width = '0px';
-    overlay.style.height = '0px';
-    overlay.setAttribute('aria-hidden', 'true');
-    currentRect = null;
-  }
-
-  function updateOverlayRect(endPoint: { x: number; y: number }) {
-    currentRect = buildClusterSelectionRect(canvas, startPoint, endPoint);
-    overlay.style.left = `${currentRect.x}px`;
-    overlay.style.top = `${currentRect.y}px`;
-    overlay.style.width = `${currentRect.width}px`;
-    overlay.style.height = `${currentRect.height}px`;
-    overlay.setAttribute('aria-hidden', 'false');
-  }
-
-  function cancelSelection() {
-    selecting = false;
-    canvas.classList.remove('hlsf-selecting');
-    overlay.classList.remove('is-active');
-    resetOverlay();
-  }
-
-  const onMouseDown = (event: MouseEvent) => {
-    if (event.button !== 0) return;
-    if (!shouldStartClusterZoom(event)) return;
-    selecting = true;
-    startPoint = getCanvasRelativePosition(canvas, event);
-    updateOverlayRect(startPoint);
-    overlay.classList.add('is-active');
-    canvas.classList.add('hlsf-selecting');
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-  };
-
-  const onMouseMove = (event: MouseEvent) => {
-    if (!selecting) return;
-    const pos = getCanvasRelativePosition(canvas, event);
-    updateOverlayRect(pos);
-    event.preventDefault();
-  };
-
-  const onMouseUp = (event: MouseEvent) => {
-    if (!selecting) return;
-    const canvasSize = {
-      width: canvas.clientWidth || canvas.width || 1,
-      height: canvas.clientHeight || canvas.height || 1,
-    };
-    selecting = false;
-    canvas.classList.remove('hlsf-selecting');
-    overlay.classList.remove('is-active');
-    const endPoint = event ? getCanvasRelativePosition(canvas, event) : startPoint;
-    updateOverlayRect(endPoint);
-    const rect = currentRect || buildClusterSelectionRect(canvas, startPoint, endPoint);
-    const dragVector = { x: endPoint.x - startPoint.x, y: endPoint.y - startPoint.y };
-    const shouldZoomOut = dragVector.x < 0 && dragVector.y < 0;
-    resetOverlay();
-    if (!rect) return;
-    const effectiveWidth = Math.max(rect.width, Math.min(minSelectionSize, canvasSize.width));
-    const effectiveHeight = Math.max(rect.height, Math.min(minSelectionSize, canvasSize.height));
-    let normalizedRect = { ...rect };
-    if (rect.width < minSelectionSize || rect.height < minSelectionSize) {
-      const centerX = rect.x + rect.width / 2;
-      const centerY = rect.y + rect.height / 2;
-      const halfW = Math.min(effectiveWidth / 2, canvasSize.width / 2);
-      const halfH = Math.min(effectiveHeight / 2, canvasSize.height / 2);
-      const left = Math.max(0, Math.min(canvasSize.width - effectiveWidth, centerX - halfW));
-      const top = Math.max(0, Math.min(canvasSize.height - effectiveHeight, centerY - halfH));
-      normalizedRect = {
-        x: left,
-        y: top,
-        width: Math.min(canvasSize.width, Math.max(effectiveWidth, minSelectionSize)),
-        height: Math.min(canvasSize.height, Math.max(effectiveHeight, minSelectionSize)),
-      };
-    }
-    applyClusterZoomSelection(canvas, normalizedRect, shouldZoomOut ? 'out' : 'in');
-  };
-
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && selecting) {
-      cancelSelection();
-    }
-  };
-
-  canvas.addEventListener('mousedown', onMouseDown, { capture: true });
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('blur', cancelSelection);
-  canvas.dataset.clusterZoomBound = 'true';
-  resetOverlay();
-}
+const graphRenderer = new GraphRenderer({
+  animateViewport: (target, duration) => animateViewport(target, duration),
+  renderComposite: (graph, glyphOnly) => drawComposite(graph, { glyphOnly }),
+});
 
 interface CommandHelpEntry {
   command: string;
@@ -660,8 +203,6 @@ const GLOBAL_CONNECTION_WEIGHT = 0.05;
 const DEFAULT_LIVE_TOKEN_CAP = 160;
 const DEFAULT_LIVE_EDGE_WEIGHT_MIN = 0.02;
 const DEFAULT_LOCAL_MEMORY_EDGE_WEIGHT_MIN = 0.02;
-const DEFAULT_HLSF_RELATIONSHIP_LIMIT = 1000;
-
 const SYNTHETIC_BRANCH_CACHE: Map<string, Array<{ token: string; weight: number }>> = new Map();
 
 // Canonical 50-type display names
@@ -2474,43 +2015,6 @@ function mergeEdgeLists(existingEdges = [], newEdges = []) {
     }
   }
   return [...merged.values()].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
-}
-
-function resolveHlsfRelationshipBudget(overrideLimit = null) {
-  if (overrideLimit === Infinity) return Infinity;
-  if (typeof overrideLimit === 'string') {
-    const trimmed = overrideLimit.trim();
-    if (trimmed.toLowerCase() === 'infinity') return Infinity;
-    const numeric = Number(trimmed);
-    if (Number.isFinite(numeric)) {
-      return Math.max(0, Math.floor(numeric));
-    }
-  } else if (Number.isFinite(overrideLimit)) {
-    return Math.max(0, Math.floor(Number(overrideLimit)));
-  }
-
-  if (typeof window !== 'undefined') {
-    const config = window?.HLSF?.config || {};
-    const raw = config.relationshipBudget ?? config.relationshipLimit;
-    if (raw === Infinity) return Infinity;
-    if (typeof raw === 'string') {
-      const trimmed = raw.trim();
-      if (!trimmed) {
-        return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
-      }
-      if (trimmed.toLowerCase() === 'infinity') return Infinity;
-      const numeric = Number(trimmed);
-      if (Number.isFinite(numeric)) {
-        return Math.max(0, Math.floor(numeric));
-      }
-      return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
-    }
-    if (Number.isFinite(raw)) {
-      return Math.max(0, Math.floor(Number(raw)));
-    }
-  }
-
-  return DEFAULT_HLSF_RELATIONSHIP_LIMIT;
 }
 
 function countRecordRelationships(record) {
@@ -4710,7 +4214,7 @@ function bindHlsfControls(wrapper) {
 
   const canvasEl = wrapper.querySelector('#hlsf-canvas') as HTMLCanvasElement | null;
   if (canvasEl) {
-    installClusterZoom(canvasEl);
+    graphRenderer.installClusterZoom(canvasEl);
     let isDragging = false;
     let lastX = 0;
     let lastY = 0;
@@ -13596,7 +13100,7 @@ function initHLSFCanvas() {
   // Initialize canvas
   window.HLSF.canvas = document.getElementById('hlsf-canvas');
   if (window.HLSF.canvas) {
-    installClusterZoom(window.HLSF.canvas as HTMLCanvasElement);
+    graphRenderer.installClusterZoom(window.HLSF.canvas as HTMLCanvasElement);
     window.HLSF.ctx = window.HLSF.canvas.getContext('2d');
   } else {
     window.HLSF.ctx = null;
