@@ -6,6 +6,7 @@ import {
   type RecursiveAdjacencyEdge,
   type RecursiveAdjacencyOptions,
 } from '../graph/recursive_adjacency.js';
+import { computeCosineSimilarity } from '../vector/similarity.js';
 import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 import type { PipelineStage, TelemetryHook } from '../types/pipeline-messages.js';
@@ -138,19 +139,84 @@ type Limits = {
   maxEdges: number;
   maxRelationTypes: number;
   pruneWeightThreshold: number;
+  maxLayers: number;
+  maxDegreePerLayer: number[];
+  similarityThreshold: number;
+  strongSimilarityThreshold: number;
 };
 
 function resolveLimitsFromSettings(cfg: any): Limits {
   const dm = (typeof navigator !== 'undefined' && (navigator as any).deviceMemory) || 8;
-  const def = dm <= 4 ? { branchingFactor: 2, maxNodes: 600,  maxEdges: 1800,  maxRelationTypes: 24, pruneWeightThreshold: 0.22 }
-           : dm >= 16 ? { branchingFactor: 2, maxNodes: 3200, maxEdges: 12800, maxRelationTypes: 50, pruneWeightThreshold: 0.15 }
-                       : { branchingFactor: 2, maxNodes: 1600, maxEdges: 6400,  maxRelationTypes: 40, pruneWeightThreshold: 0.18 };
+  const def = dm <= 4
+    ? {
+        branchingFactor: 2,
+        maxNodes: 600,
+        maxEdges: 1800,
+        maxRelationTypes: 24,
+        pruneWeightThreshold: 0.22,
+        maxLayers: 3,
+        maxDegreePerLayer: [4, 2, 1],
+        similarityThreshold: 0.35,
+        strongSimilarityThreshold: 0.85,
+      }
+    : dm >= 16
+      ? {
+          branchingFactor: 2,
+          maxNodes: 3200,
+          maxEdges: 12800,
+          maxRelationTypes: 50,
+          pruneWeightThreshold: 0.15,
+          maxLayers: 4,
+          maxDegreePerLayer: [6, 5, 4, 3],
+          similarityThreshold: 0.26,
+          strongSimilarityThreshold: 0.78,
+        }
+      : {
+          branchingFactor: 2,
+          maxNodes: 1600,
+          maxEdges: 6400,
+          maxRelationTypes: 40,
+          pruneWeightThreshold: 0.18,
+          maxLayers: 3,
+          maxDegreePerLayer: [5, 3, 2],
+          similarityThreshold: 0.3,
+          strongSimilarityThreshold: 0.82,
+        };
+  const maxLayers = Math.max(1, Number(cfg?.maxAdjacencyLayers ?? cfg?.maxLayers ?? def.maxLayers ?? 3) || 3);
+  const rawDegree = Array.isArray(cfg?.maxAdjacencyDegreePerLayer)
+    ? cfg.maxAdjacencyDegreePerLayer.map((value: unknown) => Number(value) || 0)
+    : Array.isArray(def.maxDegreePerLayer)
+      ? def.maxDegreePerLayer.slice()
+      : [Number(cfg?.maxAdjacencyDegree ?? cfg?.maxDegree ?? 4) || 4];
+  const maxDegreePerLayer = Array.from({ length: maxLayers + 1 }, (_, index) => {
+    if (index === 0) return Number.POSITIVE_INFINITY;
+    const value = rawDegree[index - 1] ?? rawDegree[rawDegree.length - 1] ?? 0;
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  });
+
   return {
     branchingFactor: Number(cfg?.branchingFactor ?? def.branchingFactor) || def.branchingFactor,
     maxNodes: Number(cfg?.maxNodes ?? def.maxNodes) || def.maxNodes,
     maxEdges: Number(cfg?.maxEdges ?? def.maxEdges) || def.maxEdges,
     maxRelationTypes: Number(cfg?.maxRelationTypes ?? def.maxRelationTypes) || def.maxRelationTypes,
     pruneWeightThreshold: Number(cfg?.pruneWeightThreshold ?? def.pruneWeightThreshold) || def.pruneWeightThreshold,
+    maxLayers,
+    maxDegreePerLayer,
+    similarityThreshold: Math.max(
+      0,
+      Math.min(1, Number(cfg?.adjacencySimilarityThreshold ?? cfg?.similarityThreshold ?? 0.3)),
+    ),
+    strongSimilarityThreshold: Math.max(
+      0,
+      Math.min(
+        1,
+        Number(
+          cfg?.adjacencyStrongSimilarityThreshold
+            ?? cfg?.strongSimilarityThreshold
+            ?? Math.max(0.8, Number(cfg?.adjacencySimilarityThreshold ?? 0.3) + 0.4),
+        ),
+      ),
+    ),
   };
 }
 
@@ -231,13 +297,20 @@ function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, se
     const parent = queue.shift()!;
     const cachedNeighbors = gatherTopCachedNeighbors(parent, Math.max(2, limits.branchingFactor));
     const addedNeighbors: CachedNeighbor[] = [];
+    let attachedSemanticNeighbor = false;
 
     if (cachedNeighbors.length) {
       for (const neighbor of cachedNeighbors) {
         if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
-        const wasAdded = addNode(neighbor.token, neighbor.weight || 1);
         const normalizedNeighbor = normalizeToken(neighbor.token);
         if (!normalizedNeighbor) continue;
+        const similarity = computeCosineSimilarity(parent, neighbor.token);
+        if (similarity < limits.similarityThreshold) {
+          continue;
+        }
+
+        const neighborWeight = Math.max(similarity, neighbor.weight || 0);
+        const wasAdded = addNode(neighbor.token, neighborWeight || 1);
         if (wasAdded) {
           if (!queue.includes(normalizedNeighbor)) {
             queue.push(normalizedNeighbor);
@@ -246,15 +319,20 @@ function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, se
         } else {
           addedNeighbors.push(neighbor);
         }
-        addEdge(parent, normalizedNeighbor, 'adjacency:cached', neighbor.weight || 0, {
+        attachedSemanticNeighbor = true;
+        addEdge(parent, normalizedNeighbor, 'adjacency:cached', neighborWeight, {
           synthetic: true,
           source: 'cached-adjacency',
           relation: neighbor.relation || null,
+          similarity,
+          level: 1,
         });
-        addEdge(normalizedNeighbor, parent, 'adjacency:cached', neighbor.weight || 0, {
+        addEdge(normalizedNeighbor, parent, 'adjacency:cached', neighborWeight, {
           synthetic: true,
           source: 'cached-adjacency',
           relation: neighbor.relation || null,
+          similarity,
+          level: 1,
         });
       }
 
@@ -263,22 +341,28 @@ function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, se
         const a = normalizeToken(addedNeighbors[i]?.token);
         const b = normalizeToken(addedNeighbors[i + 1]?.token);
         if (!a || !b) continue;
+        const similarityA = computeCosineSimilarity(addedNeighbors[i]!.token, addedNeighbors[i + 1]!.token);
+        if (similarityA < limits.similarityThreshold) continue;
         const bridgeWeight = Math.max(
-          0,
+          similarityA,
           Math.min(addedNeighbors[i]?.weight ?? 0, addedNeighbors[i + 1]?.weight ?? 0),
         );
         addEdge(a, b, 'adjacency:cached-bridge', bridgeWeight, {
           synthetic: true,
           source: 'cached-adjacency-bridge',
+          similarity: similarityA,
+          level: 1,
         });
         addEdge(b, a, 'adjacency:cached-bridge', bridgeWeight, {
           synthetic: true,
           source: 'cached-adjacency-bridge',
+          similarity: similarityA,
+          level: 1,
         });
       }
     }
 
-    if (!cachedNeighbors.length) {
+    if (!attachedSemanticNeighbor) {
       const kids = generateChildrenForToken(parent, limits.branchingFactor);
       for (const k of kids) {
         if (!seen.has(k.toLowerCase())) {
@@ -287,8 +371,8 @@ function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, se
             queue.push(k);
           }
         }
-        addEdge(parent, k, 'seed-expansion', 1, { synthetic: true });
-        addEdge(k, parent, 'seed-expansion', 1, { synthetic: true });
+        addEdge(parent, k, 'seed-expansion', 1, { synthetic: true, similarity: 0, level: 1 });
+        addEdge(k, parent, 'seed-expansion', 1, { synthetic: true, similarity: 0, level: 1 });
         if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
       }
     }
@@ -526,6 +610,10 @@ export function runPipeline(
   const adjacencyOptions: RecursiveAdjacencyOptions = {
     maxDepth: cfg.maxAdjacencyDepth,
     maxDegree: cfg.maxAdjacencyDegree,
+    maxLayers: cfg.maxAdjacencyLayers,
+    maxDegreePerLayer: cfg.maxAdjacencyDegreePerLayer,
+    similarityThreshold: cfg.adjacencySimilarityThreshold,
+    strongSimilarityThreshold: cfg.adjacencyStrongSimilarityThreshold,
     maxEdges: Math.max(
       tokens.length,
       Math.floor((cfg.maxAdjacencyEdgesMultiplier ?? 6) * tokens.length),
