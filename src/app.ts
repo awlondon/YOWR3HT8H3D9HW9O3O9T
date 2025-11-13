@@ -6,13 +6,26 @@ import type { TelemetryHook } from './types/pipeline-messages';
 import { createRemoteDbFileWriter, type RemoteDbDirectoryStats } from './engine/remoteDbWriter';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
-import { computeModelParameters, MODEL_PARAM_DEFAULTS, resolveModelParamConfig } from './export/modelParams';
-import { initializeVoiceClonePanel, resetVoiceCloneStore, signalVoiceCloneTokensChanged } from './voice/voiceClone';
-import { initializeVoiceModelDock } from './voice/voiceModel';
+import {
+  computeModelParameters,
+  MODEL_PARAM_DEFAULTS,
+  resolveModelParamConfig,
+} from './export/modelParams';
+import {
+  initializeVoiceClonePanel,
+  resetVoiceCloneStore,
+  signalVoiceCloneTokensChanged,
+} from './features/voice/voiceClone';
+import { initializeVoiceModelDock } from './features/voice/voiceModel';
 import { initializeUserAvatarStore } from './userAvatar';
-import { initializeSaasPlatform, registerSaasCommands } from './saas/platform';
+import { initializeSaasPlatform, registerSaasCommands } from './features/saas/platform';
 import { demoGoogleSignIn } from './auth/google';
-import { base64Preview, decryptString, encryptString, generateSymmetricKey } from './saas/encryption';
+import {
+  base64Preview,
+  decryptString,
+  encryptString,
+  generateSymmetricKey,
+} from './lib/crypto/encryption';
 import { initializeLoginForm } from './onboarding/loginFlow';
 import { recordCommandUsage } from './analytics/commandUsage';
 import { AgentKernel } from './agent';
@@ -73,8 +86,8 @@ const CONFIG: EngineConfig = {
   CACHE_SEED_LIMIT: 8000,
   DEFAULT_MODEL: 'gpt-4o-mini',
   MODEL_PRICING: {
-    default: { inputPerMillion: 0.15, outputPerMillion: 0.60 },
-    'gpt-4o-mini': { inputPerMillion: 0.15, outputPerMillion: 0.60 },
+    default: { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+    'gpt-4o-mini': { inputPerMillion: 0.15, outputPerMillion: 0.6 },
   },
   ESTIMATED_COMPLETION_RATIO: 0.7,
   ADJACENCY_TOKEN_ESTIMATES: {
@@ -106,7 +119,10 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   autoExecute: true,
 };
 
-function mergeAgentConfig(base: AgentConfig, next: Partial<AgentConfig> | null | undefined): AgentConfig {
+function mergeAgentConfig(
+  base: AgentConfig,
+  next: Partial<AgentConfig> | null | undefined,
+): AgentConfig {
   if (!next) return { ...base, energy: { ...base.energy } };
   const merged: AgentConfig = {
     ...base,
@@ -163,11 +179,7 @@ interface PipelineRunOptions {
   telemetry?: TelemetryHook;
 }
 
-async function executePipeline(
-  text: string,
-  cfg: Settings,
-  options: PipelineRunOptions = {},
-) {
+async function executePipeline(text: string, cfg: Settings, options: PipelineRunOptions = {}) {
   const client = getPipelineWorkerClient();
   if (client) {
     return client.run(
@@ -242,7 +254,7 @@ function applyPerformanceCaps(settingsOverride = null) {
   const rawRelationship = source.maxRelationships;
   const numericRelationship = Number(rawRelationship);
   const relationshipBudget = resolveHlsfRelationshipBudget(
-    Number.isFinite(numericRelationship) ? numericRelationship : rawRelationship ?? null,
+    Number.isFinite(numericRelationship) ? numericRelationship : (rawRelationship ?? null),
   );
   const pruneThreshold = Number.isFinite(Number(source.pruneWeightThreshold))
     ? Math.max(0, Number(source.pruneWeightThreshold))
@@ -250,10 +262,7 @@ function applyPerformanceCaps(settingsOverride = null) {
 
   CONFIG.ADJACENCY_SPAWN_LIMIT = branching;
   CONFIG.ADJACENCY_RELATIONSHIPS_PER_NODE = relationCap;
-  const derivedEdgesPerLevel = Math.max(
-    branching,
-    Math.floor(edgeCap / Math.max(1, nodeCap)),
-  );
+  const derivedEdgesPerLevel = Math.max(branching, Math.floor(edgeCap / Math.max(1, nodeCap)));
   CONFIG.ADJACENCY_EDGES_PER_LEVEL = derivedEdgesPerLevel;
 
   if (typeof window !== 'undefined') {
@@ -307,7 +316,11 @@ function formatHlsfLimitValue(value: unknown): string {
   return '—';
 }
 
-function updateHlsfLimitSummary(limits?: { nodes?: unknown; edges?: unknown; relationships?: unknown }) {
+function updateHlsfLimitSummary(limits?: {
+  nodes?: unknown;
+  edges?: unknown;
+  relationships?: unknown;
+}) {
   if (typeof document === 'undefined') return;
   const summary = document.getElementById('hlsf-limit-summary');
   if (!summary) return;
@@ -586,8 +599,16 @@ interface LocalHlsfMemoryState {
 const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/help', description: 'Show this command catalog', requiresMembership: false },
   { command: '/clear', description: 'Clear log history', requiresMembership: true },
-  { command: '/reset', description: 'Clear cache and database snapshots', requiresMembership: true },
-  { command: '/del-avatar', description: 'Delete avatar conversation log and voice', requiresMembership: true },
+  {
+    command: '/reset',
+    description: 'Clear cache and database snapshots',
+    requiresMembership: true,
+  },
+  {
+    command: '/del-avatar',
+    description: 'Delete avatar conversation log and voice',
+    requiresMembership: true,
+  },
   { command: '/sv-avatar', description: 'Save avatar archive', requiresMembership: true },
   { command: '/ld-avatar', description: 'Load avatar archive', requiresMembership: true },
   { command: '/stats', description: 'Session statistics overview', requiresMembership: true },
@@ -600,12 +621,28 @@ const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/decrypt', description: 'Decode glyph sequences', requiresMembership: true },
   { command: '/exportledger', description: 'Export glyph ledger', requiresMembership: true },
   { command: '/import', description: 'Import HLSF database file', requiresMembership: true },
-  { command: '/read', description: 'Ingest document for adjacency mapping', requiresMembership: true },
+  {
+    command: '/read',
+    description: 'Ingest document for adjacency mapping',
+    requiresMembership: true,
+  },
   { command: '/ingest', description: 'Alias for /read', requiresMembership: true },
   { command: '/loaddb', description: 'Load remote database manifest', requiresMembership: true },
-  { command: '/load', description: 'Bootstrap remote database and sync directory', requiresMembership: false },
-  { command: '/remotedir', description: 'Connect remote DB save directory', requiresMembership: false },
-  { command: '/remotestats', description: 'View remote database statistics', requiresMembership: true },
+  {
+    command: '/load',
+    description: 'Bootstrap remote database and sync directory',
+    requiresMembership: false,
+  },
+  {
+    command: '/remotedir',
+    description: 'Connect remote DB save directory',
+    requiresMembership: false,
+  },
+  {
+    command: '/remotestats',
+    description: 'View remote database statistics',
+    requiresMembership: true,
+  },
   { command: '/remotedb', description: 'Alias for /remotestats', requiresMembership: true },
   { command: '/hlsf', description: 'Render HLSF visualization', requiresMembership: true },
   { command: '/visualize', description: 'Alias for /hlsf', requiresMembership: true },
@@ -616,7 +653,11 @@ const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/symbols', description: 'Symbol tokenization controls', requiresMembership: true },
   { command: '/self', description: 'Display engine self state', requiresMembership: true },
   { command: '/state', description: 'Inspect runtime state snapshot', requiresMembership: true },
-  { command: '/maphidden', description: 'Reveal hidden adjacency tokens', requiresMembership: true },
+  {
+    command: '/maphidden',
+    description: 'Reveal hidden adjacency tokens',
+    requiresMembership: true,
+  },
   { command: '/hidden', description: 'Alias for /maphidden', requiresMembership: true },
   { command: '/signup', description: 'Create a SaaS profile', requiresMembership: true },
   { command: '/switchuser', description: 'Switch active SaaS profile', requiresMembership: true },
@@ -641,13 +682,11 @@ const DEMO_UNLOCKED_COMMANDS = new Set([
 
 const COMMAND_RESTRICTIONS: Partial<Record<MembershipLevel, Set<string>>> = {
   [MEMBERSHIP_LEVELS.DEMO]: new Set(
-    COMMAND_HELP_ENTRIES
-      .filter(entry => {
-        if (!entry.requiresMembership) return false;
-        const normalized = entry.command.toLowerCase();
-        return !DEMO_UNLOCKED_COMMANDS.has(normalized);
-      })
-      .map(entry => entry.command.toLowerCase()),
+    COMMAND_HELP_ENTRIES.filter((entry) => {
+      if (!entry.requiresMembership) return false;
+      const normalized = entry.command.toLowerCase();
+      return !DEMO_UNLOCKED_COMMANDS.has(normalized);
+    }).map((entry) => entry.command.toLowerCase()),
   ),
 };
 
@@ -666,18 +705,61 @@ const SYNTHETIC_BRANCH_CACHE: Map<string, Array<{ token: string; weight: number 
 
 // Canonical 50-type display names
 const REL_EN = {
-  "≡":"Identity","⊃":"Contains","⊂":"Is Contained By","≈":"Variant","∈":"Is Instance Of","∋":"Has Instance",
-  "⊤":"Is Type Of","⊥":"Has Type","⊏":"Part Of","⊐":"Composes","↔":"Mirrors","⇌":"Inverts","∥":"Parallel To",
-  "∼":"Adjacent To","→":"Next","⇒":"Sequence Of","⇐":"Preceded By","↠":"Follows","↗":"Spatially Above","↘":"Spatially Below",
-  "↝":"Symbolically Supports","↧":"Symbolically Depends","≠":"Contrasts","⊕":"Complements","⊛":"Associated With","∝":"Correlates With",
-  "⇝":"Causes","↼":"Caused By","*":"Evokes","≜":"Represents","★":"Symbolizes","↦":"Refers To","⊢":"Defines","⊣":"Is Defined By",
-  "↷":"Transforms To","↶":"Transformed From","∘":"Functions As","⊨":"Interpreted As","◁":"Used With","⇄":"Co-occurs With",
-  "⊗":"Synthesizes","÷":"Divides Into","⊘":"Opposes","↳":"Leads To","↲":"Results In","⟂":"Orthogonal To","≉":"Diverges From",
-  "≍":"Equivalent In Form","≓":"Approximately Equals","≔":"Defined As","⊚":"Hidden Adjacency"
+  '≡': 'Identity',
+  '⊃': 'Contains',
+  '⊂': 'Is Contained By',
+  '≈': 'Variant',
+  '∈': 'Is Instance Of',
+  '∋': 'Has Instance',
+  '⊤': 'Is Type Of',
+  '⊥': 'Has Type',
+  '⊏': 'Part Of',
+  '⊐': 'Composes',
+  '↔': 'Mirrors',
+  '⇌': 'Inverts',
+  '∥': 'Parallel To',
+  '∼': 'Adjacent To',
+  '→': 'Next',
+  '⇒': 'Sequence Of',
+  '⇐': 'Preceded By',
+  '↠': 'Follows',
+  '↗': 'Spatially Above',
+  '↘': 'Spatially Below',
+  '↝': 'Symbolically Supports',
+  '↧': 'Symbolically Depends',
+  '≠': 'Contrasts',
+  '⊕': 'Complements',
+  '⊛': 'Associated With',
+  '∝': 'Correlates With',
+  '⇝': 'Causes',
+  '↼': 'Caused By',
+  '*': 'Evokes',
+  '≜': 'Represents',
+  '★': 'Symbolizes',
+  '↦': 'Refers To',
+  '⊢': 'Defines',
+  '⊣': 'Is Defined By',
+  '↷': 'Transforms To',
+  '↶': 'Transformed From',
+  '∘': 'Functions As',
+  '⊨': 'Interpreted As',
+  '◁': 'Used With',
+  '⇄': 'Co-occurs With',
+  '⊗': 'Synthesizes',
+  '÷': 'Divides Into',
+  '⊘': 'Opposes',
+  '↳': 'Leads To',
+  '↲': 'Results In',
+  '⟂': 'Orthogonal To',
+  '≉': 'Diverges From',
+  '≍': 'Equivalent In Form',
+  '≓': 'Approximately Equals',
+  '≔': 'Defined As',
+  '⊚': 'Hidden Adjacency',
 };
 
 // Return "∼ Adjacent To"
-const relDisplay = k => `${k} ${REL_EN[k] ?? ''}`.trim();
+const relDisplay = (k) => `${k} ${REL_EN[k] ?? ''}`.trim();
 
 const RELKEY_ALIASES = (() => {
   const map = new Map();
@@ -798,13 +880,16 @@ const BatchLog = (() => {
     const now = performance.now();
     if (!ui || now - lastFlush < ms) return;
     lastFlush = now;
-    const tail = buf.slice(-200).map(e => {
-      const dt = (e.t / 1000).toFixed(3);
-      const tag = e.phase ? `[${e.phase}:${e.evt || 'mark'}]` : '';
-      const meta = e.meta ? ` ${JSON.stringify(e.meta)}` : '';
-      const msg = e.msg ? ` ${e.msg}` : '';
-      return `${dt} ${tag}${msg}${meta}`.trimEnd();
-    }).join('\n');
+    const tail = buf
+      .slice(-200)
+      .map((e) => {
+        const dt = (e.t / 1000).toFixed(3);
+        const tag = e.phase ? `[${e.phase}:${e.evt || 'mark'}]` : '';
+        const meta = e.meta ? ` ${JSON.stringify(e.meta)}` : '';
+        const msg = e.msg ? ` ${e.msg}` : '';
+        return `${dt} ${tag}${msg}${meta}`.trimEnd();
+      })
+      .join('\n');
     ui.textContent = tail;
   }
 
@@ -890,13 +975,16 @@ const HlsfLoading = (() => {
   function hide(delay = 200) {
     if (!ensure()) return;
     if (hideTimer) clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => {
-      if (!ensure()) return;
-      panel.classList.add('hidden');
-      panel.setAttribute('aria-hidden', 'true');
-      if (bar) bar.style.width = '0%';
-      if (detail) detail.textContent = defaultDetail;
-    }, Math.max(0, delay));
+    hideTimer = setTimeout(
+      () => {
+        if (!ensure()) return;
+        panel.classList.add('hidden');
+        panel.setAttribute('aria-hidden', 'true');
+        if (bar) bar.style.width = '0%';
+        if (detail) detail.textContent = defaultDetail;
+      },
+      Math.max(0, delay),
+    );
   }
 
   return { show, update, progress, hide };
@@ -907,18 +995,19 @@ function normRelKey(k) {
   if (!cleaned) return null;
   if (REL_EN[cleaned]) return cleaned;
   const normalized = cleaned.replace(/\s+/g, ' ');
-  const alias = RELKEY_ALIASES.get(normalized)
-    || RELKEY_ALIASES.get(normalized.toLowerCase())
-    || RELKEY_ALIASES.get(normalized.split(' ')[0]);
+  const alias =
+    RELKEY_ALIASES.get(normalized) ||
+    RELKEY_ALIASES.get(normalized.toLowerCase()) ||
+    RELKEY_ALIASES.get(normalized.split(' ')[0]);
   return REL_EN[alias] ? alias : null;
 }
 
-function normalizeRelKeyForStats(k){
+function normalizeRelKeyForStats(k) {
   const g = normRelKey(k);
   return REL_EN[g] ? g : null;
 }
 
-function renderRelTypeRow(glyph, count){
+function renderRelTypeRow(glyph, count) {
   return `${relDisplay(glyph)}: ${count} instances`;
 }
 
@@ -932,7 +1021,7 @@ function buildMatrixForRecord(rec) {
     if (!key) continue;
     const arr = Array.isArray(rels[rawKey]) ? rels[rawKey] : [];
     const items = arr
-      .filter(x => x && typeof x.weight === 'number')
+      .filter((x) => x && typeof x.weight === 'number')
       .sort((a, b) => b.weight - a.weight);
     if (!items.length) continue;
     const agg = {
@@ -940,17 +1029,18 @@ function buildMatrixForRecord(rec) {
       aggWeight: items[0].weight,
       sizeWeight: items.reduce((s, x) => s + x.weight, 0),
       count: items.length,
-      items
+      items,
     };
     edges.push(agg);
   }
-  const freq = typeof rec?.f === 'number'
-    ? rec.f
-    : typeof rec?.frequency === 'number'
-      ? rec.frequency
-      : typeof rec?.freq === 'number'
-        ? rec.freq
-        : 1;
+  const freq =
+    typeof rec?.f === 'number'
+      ? rec.f
+      : typeof rec?.frequency === 'number'
+        ? rec.frequency
+        : typeof rec?.freq === 'number'
+          ? rec.freq
+          : 1;
   return { token: rec?.token || '', edges, f: freq };
 }
 
@@ -969,7 +1059,7 @@ function buildHLSFMatrices(db) {
     ? {
         min: freqs[0],
         max: freqs[freqs.length - 1],
-        p90: freqs[Math.max(0, Math.floor(freqs.length * 0.9) - 1)]
+        p90: freqs[Math.max(0, Math.floor(freqs.length * 0.9) - 1)],
       }
     : { min: 0, max: 1, p90: 1 };
 
@@ -984,7 +1074,10 @@ function parseHlsfArgs(str) {
   const out = { mode: 'full', tokens: [], glyphs: [], depth: CONFIG.ADJACENCY_RECURSION_DEPTH };
   const s = (str || '').trim();
   if (!s) return out;
-  if (/^--conversation$/i.test(s)) { out.mode = 'conversation'; return out; }
+  if (/^--conversation$/i.test(s)) {
+    out.mode = 'conversation';
+    return out;
+  }
   const m = s.match(/^--\[(.*)\]$/s);
   if (!m) return out;
   const parts = m[1].split(/\s*,\s*/).filter(Boolean);
@@ -1020,10 +1113,22 @@ function extractHlsfFlags(str) {
     const part = parts[i];
     const lower = part.toLowerCase();
 
-    if (lower === '--nolog') { flags.batchLogging = false; continue; }
-    if (lower === '--nowait') { flags.deferredRender = false; continue; }
-    if (lower === '-db') { flags.metricScope = METRIC_SCOPE.DB; continue; }
-    if (lower === '-run') { flags.metricScope = METRIC_SCOPE.RUN; continue; }
+    if (lower === '--nolog') {
+      flags.batchLogging = false;
+      continue;
+    }
+    if (lower === '--nowait') {
+      flags.deferredRender = false;
+      continue;
+    }
+    if (lower === '-db') {
+      flags.metricScope = METRIC_SCOPE.DB;
+      continue;
+    }
+    if (lower === '-run') {
+      flags.metricScope = METRIC_SCOPE.RUN;
+      continue;
+    }
 
     if (lower.startsWith('--scope')) {
       const value = parseValue(part, i).toLowerCase();
@@ -1076,7 +1181,7 @@ function extractHlsfFlags(str) {
 
 function buildIndex(db) {
   const idx = new Map();
-  (db?.full_token_data || []).forEach(rec => {
+  (db?.full_token_data || []).forEach((rec) => {
     if (rec?.token) idx.set(rec.token, rec);
   });
   return idx;
@@ -1121,9 +1226,9 @@ function defaultAnchors(idx, k = 64) {
   recs.sort((a, b) => {
     const A = adjacencyStats(a);
     const B = adjacencyStats(b);
-    return (B.edges - A.edges) || (B.relTypes - A.relTypes);
+    return B.edges - A.edges || B.relTypes - A.relTypes;
   });
-  return recs.slice(0, k).map(r => r.token);
+  return recs.slice(0, k).map((r) => r.token);
 }
 
 function signatureFor(rec) {
@@ -1178,18 +1283,26 @@ function affinity(a, b) {
 
 function candidateMap(graph) {
   const nbr = new Map();
-  const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
+  const edges = Array.isArray(graph.links)
+    ? graph.links
+    : Array.isArray(graph.edges)
+      ? graph.edges
+      : [];
   for (const edge of edges) {
-    const fromSet = nbr.get(edge.from) || (() => {
-      const set = new Set();
-      nbr.set(edge.from, set);
-      return set;
-    })();
-    const toSet = nbr.get(edge.to) || (() => {
-      const set = new Set();
-      nbr.set(edge.to, set);
-      return set;
-    })();
+    const fromSet =
+      nbr.get(edge.from) ||
+      (() => {
+        const set = new Set();
+        nbr.set(edge.from, set);
+        return set;
+      })();
+    const toSet =
+      nbr.get(edge.to) ||
+      (() => {
+        const set = new Set();
+        nbr.set(edge.to, set);
+        return set;
+      })();
     fromSet.add(edge.to);
     toSet.add(edge.from);
   }
@@ -1302,7 +1415,11 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
     resolvedAnchorSet.add(resolved);
     resolvedAnchors.push(resolved);
   }
-  const anchorList = resolvedAnchors.length ? resolvedAnchors : (Array.isArray(rawAnchors) ? rawAnchors.slice() : []);
+  const anchorList = resolvedAnchors.length
+    ? resolvedAnchors
+    : Array.isArray(rawAnchors)
+      ? rawAnchors.slice()
+      : [];
   const graph = { nodes: new Map(), links: [], anchors: anchorList.slice() };
   const outSet = new Set();
   const inSet = new Set();
@@ -1315,7 +1432,9 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
   const maxDepth = Math.floor(depthFloat);
   const frac = depthFloat - maxDepth;
   const loggingActive = !opts.silent && window.HLSF?.config?.batchLogging !== false;
-  const logPhase = (evt, meta) => { if (loggingActive) BatchLog.phase('graph', evt, meta); };
+  const logPhase = (evt, meta) => {
+    if (loggingActive) BatchLog.phase('graph', evt, meta);
+  };
   const logProgress = (done, total) => {
     if (loggingActive) BatchLog.progress(done, total);
     HlsfLoading.progress(done, total);
@@ -1373,11 +1492,11 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
     if (!rec) return;
     ensureNode(token, depth);
     const matrix = buildMatrixForRecord(rec);
-    const relations = Array.isArray(matrix?.edges) ? matrix.edges.slice(0, getRelationTypeCap()) : [];
+    const relations = Array.isArray(matrix?.edges)
+      ? matrix.edges.slice(0, getRelationTypeCap())
+      : [];
     for (const relation of relations) {
-      const rawItems = Array.isArray(relation?.items)
-        ? relation.items.slice()
-        : [];
+      const rawItems = Array.isArray(relation?.items) ? relation.items.slice() : [];
       if (!rawItems.length) continue;
       const limit = getEdgesPerType();
       const visibleItems = limit === Infinity ? rawItems : rawItems.slice(0, limit);
@@ -1405,7 +1524,13 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
             ? item.w
             : relation?.aggWeight;
         const normalizedWeight = Number(weight) || 0;
-        const added = pushLink(token, canonicalTarget, relation?.rtype, normalizedWeight, hiddenTokens);
+        const added = pushLink(
+          token,
+          canonicalTarget,
+          relation?.rtype,
+          normalizedWeight,
+          hiddenTokens,
+        );
         if (added) {
           enumerated = true;
           if (depth < maxDepth) {
@@ -1438,7 +1563,12 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
     expandSource(resolvedTo, edge.depth);
     visitedSrc.add(resolvedTo);
     if (!opts.silent && expanded % 1000 === 0) {
-      logPhase('tick', { expanded, queued: Math.max(0, queue.length - head), nodes: graph.nodes.size, link_instances: graph.links.length });
+      logPhase('tick', {
+        expanded,
+        queued: Math.max(0, queue.length - head),
+        nodes: graph.nodes.size,
+        link_instances: graph.links.length,
+      });
       await microtask();
     }
   }
@@ -1461,7 +1591,13 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
     cap: Number(window.HLSF?.config?.hiddenAdjacencyCap),
   };
 
-  const hiddenNetwork = buildHiddenAdjacencyNetwork(graph, index, lowerIndexMap, ensureNode, hiddenConfig);
+  const hiddenNetwork = buildHiddenAdjacencyNetwork(
+    graph,
+    index,
+    lowerIndexMap,
+    ensureNode,
+    hiddenConfig,
+  );
   if (hiddenNetwork) {
     const { adjacency, scores, stats } = hiddenNetwork;
     let hiddenEdgeCount = 0;
@@ -1612,7 +1748,9 @@ function ensureGraphMetrics(graph) {
   const inn = new Set();
   const links = Array.isArray(graph.links)
     ? graph.links
-    : (Array.isArray(graph.edges) ? graph.edges : []);
+    : Array.isArray(graph.edges)
+      ? graph.edges
+      : [];
   const edgeTypes = new Set();
   const triples = new Set();
   for (const edge of links) {
@@ -1631,7 +1769,7 @@ function ensureGraphMetrics(graph) {
 }
 
 function microtask() {
-  return new Promise(resolve => queueMicrotask(resolve));
+  return new Promise((resolve) => queueMicrotask(resolve));
 }
 
 function activeRelationTypes(index, scope, stateRelTypes) {
@@ -1713,14 +1851,14 @@ function selectAnchors(index, D) {
   if (!(index instanceof Map) || D <= 0) return [];
   const sigs = new Map();
   const tokens = [...index.keys()].sort((a, b) => a.localeCompare(b));
-  const allSigs = tokens.map(token => {
+  const allSigs = tokens.map((token) => {
     const rec = index.get(token) || {};
     const sig = signature(rec);
     sigs.set(token, sig);
     return [token, sig];
   });
   const sample = allSigs.slice(0, Math.min(512, allSigs.length));
-  const scored = tokens.map(token => {
+  const scored = tokens.map((token) => {
     const rec = index.get(token) || {};
     const { out, in_ } = degrees(rec);
     const freq = Number.isFinite(rec?.frequency)
@@ -1739,8 +1877,8 @@ function selectAnchors(index, D) {
     const score = 0.4 * freq + 0.3 * out + 0.2 * in_ + 0.1 * ac;
     return { token, score, out, in_ };
   });
-  scored.sort((a, b) => (b.score - a.score) || a.token.localeCompare(b.token));
-  return scored.slice(0, D).map(entry => entry.token);
+  scored.sort((a, b) => b.score - a.score || a.token.localeCompare(b.token));
+  return scored.slice(0, D).map((entry) => entry.token);
 }
 
 function clusterToAnchors(index, anchors) {
@@ -1751,7 +1889,7 @@ function clusterToAnchors(index, anchors) {
     groups.set(anchor, []);
   }
   if (!orderedAnchors.length) return groups;
-  const anchorSigs = new Map(orderedAnchors.map(a => [a, signature(index.get(a) || {})]));
+  const anchorSigs = new Map(orderedAnchors.map((a) => [a, signature(index.get(a) || {})]));
   for (const [token, rec] of index.entries()) {
     if (anchorSigs.has(token)) continue;
     const sig = signature(rec || {});
@@ -1776,7 +1914,7 @@ function packLevels(index, scope, state) {
   const stateRelTypes = state?.relationTypes || {};
   let { D, types } = computeDimension(index, scope, stateRelTypes);
   const focusListRaw = Array.isArray(state?.focusTokens)
-    ? state.focusTokens.filter(token => typeof token === 'string' && index.has(token))
+    ? state.focusTokens.filter((token) => typeof token === 'string' && index.has(token))
     : [];
   const focusSet = new Set();
   const focusList = [];
@@ -1786,9 +1924,12 @@ function packLevels(index, scope, state) {
     focusList.push(token);
   }
 
-  const tokensCount = scope === 'state'
-    ? (state?.tokens instanceof Set ? state.tokens.size : index.size)
-    : index.size;
+  const tokensCount =
+    scope === 'state'
+      ? state?.tokens instanceof Set
+        ? state.tokens.size
+        : index.size
+      : index.size;
   if (focusList.length) {
     const minDimension = Math.max(focusList.length, 1);
     D = Math.max(D || minDimension, minDimension);
@@ -1797,7 +1938,7 @@ function packLevels(index, scope, state) {
   let anchors = selectAnchors(index, Math.min(D || tokensCount, tokensCount));
   if (focusList.length) {
     const ordered = focusList.slice();
-    anchors = [...ordered, ...anchors.filter(token => !focusSet.has(token))];
+    anchors = [...ordered, ...anchors.filter((token) => !focusSet.has(token))];
     if (anchors.length > D) {
       D = Math.max(D, anchors.length);
     }
@@ -1805,11 +1946,21 @@ function packLevels(index, scope, state) {
 
   let effectiveD = Math.min(D, Math.max(anchors.length, 0));
   if (focusList.length && effectiveD < focusList.length) {
-    effectiveD = Math.min(Math.max(focusList.length, 1), Math.max(anchors.length, focusList.length));
+    effectiveD = Math.min(
+      Math.max(focusList.length, 1),
+      Math.max(anchors.length, focusList.length),
+    );
   }
 
   const levels = [];
-  levels.push({ cells: [{ anchor: null, tokens: anchors.slice(0, Math.min(effectiveD || anchors.length, anchors.length)) }] });
+  levels.push({
+    cells: [
+      {
+        anchor: null,
+        tokens: anchors.slice(0, Math.min(effectiveD || anchors.length, anchors.length)),
+      },
+    ],
+  });
 
   if (!effectiveD || tokensCount <= effectiveD) {
     return { D, effectiveD: Math.min(tokensCount, effectiveD), levels, anchors, types };
@@ -1855,7 +2006,10 @@ function layoutPolygon(tokens, angles, radius, levelIndex) {
   const tau = Math.PI * 2;
   const out = [];
   if (!Array.isArray(tokens) || !tokens.length) return out;
-  const useAngles = Array.isArray(angles) && angles.length ? angles : tokens.map((_, i) => (tau * i) / Math.max(1, tokens.length));
+  const useAngles =
+    Array.isArray(angles) && angles.length
+      ? angles
+      : tokens.map((_, i) => (tau * i) / Math.max(1, tokens.length));
   for (let i = 0; i < tokens.length; i++) {
     const angle = useAngles[i % useAngles.length];
     const normAngle = normalizeAngle(angle);
@@ -1869,11 +2023,17 @@ function layoutSectorPolygon(tokens, baseAngle, sectorSpan, radius, levelIndex, 
   const out = [];
   if (!Array.isArray(tokens) || !tokens.length) return out;
   if (tokens.length === 1) {
-    out.push({ token: tokens[0], angle: normalizeAngle(baseAngle), radius, level: levelIndex, cellIndex });
+    out.push({
+      token: tokens[0],
+      angle: normalizeAngle(baseAngle),
+      radius,
+      level: levelIndex,
+      cellIndex,
+    });
     return out;
   }
   const step = sectorSpan / Math.max(tokens.length, 1);
-  const start = baseAngle - (sectorSpan / 2) + step / 2;
+  const start = baseAngle - sectorSpan / 2 + step / 2;
   for (let i = 0; i < tokens.length; i++) {
     const angle = normalizeAngle(start + i * step);
     out.push({ token: tokens[i], angle, radius, level: levelIndex, cellIndex });
@@ -1947,14 +2107,21 @@ function placeLevels(levels, effectiveD, activeAngles) {
         baseAngle = cellIndex * step;
       }
       const tokens = Array.isArray(cell?.tokens) ? cell.tokens : [];
-      const fresh = tokens.filter(token => !placed.has(token));
+      const fresh = tokens.filter((token) => !placed.has(token));
       const sectorSpan = step;
-      const placedEntries = layoutSectorPolygon(fresh, baseAngle, sectorSpan, radius, levelIndex, cellIndex);
+      const placedEntries = layoutSectorPolygon(
+        fresh,
+        baseAngle,
+        sectorSpan,
+        radius,
+        levelIndex,
+        cellIndex,
+      );
       for (const entry of placedEntries) {
         positions.set(entry.token, entry);
         placed.add(entry.token);
       }
-      const geomTokens = tokens.map(token => {
+      const geomTokens = tokens.map((token) => {
         const existing = positions.get(token);
         if (existing) {
           return Object.assign({}, existing, { cellIndex });
@@ -1977,7 +2144,7 @@ function computeLayout(graph, index, options = {}) {
   const desiredScope = (options?.scope || config.hlsfScope || 'db').toLowerCase();
   let scope = desiredScope === 'state' ? 'state' : 'db';
   const focusTokens = Array.isArray(options?.focusTokens)
-    ? options.focusTokens.filter(token => typeof token === 'string' && token.trim())
+    ? options.focusTokens.filter((token) => typeof token === 'string' && token.trim())
     : [];
 
   const sessionTokens = window.Session?.tokens instanceof Set ? window.Session.tokens : new Set();
@@ -2049,7 +2216,7 @@ function computeLayout(graph, index, options = {}) {
   graph.nodes = newNodes;
 
   const levelCount = Array.isArray(packed.levels) ? packed.levels.length : 0;
-  const lastLevelComponents = levelCount ? (packed.levels[levelCount - 1]?.cells?.length || 0) : 0;
+  const lastLevelComponents = levelCount ? packed.levels[levelCount - 1]?.cells?.length || 0 : 0;
   const layout = {
     scope,
     dimension: packed.D,
@@ -2075,7 +2242,9 @@ function computeLayout(graph, index, options = {}) {
 
   const linkCount = Array.isArray(graph.links)
     ? graph.links.length
-    : (Array.isArray(graph.edges) ? graph.edges.length : 0);
+    : Array.isArray(graph.edges)
+      ? graph.edges.length
+      : 0;
   return {
     nodes: newNodes.size,
     edges: linkCount,
@@ -2269,9 +2438,7 @@ function gatherHiddenAdjacencySeeds(graph, index, lowerMap, cap) {
 
 function ensureFullHiddenConnectivity(hiddenMap, nodeIterator, scoreMap) {
   if (!(hiddenMap instanceof Map)) return;
-  const baseNodes = Array.isArray(nodeIterator)
-    ? nodeIterator
-    : Array.from(nodeIterator || []);
+  const baseNodes = Array.isArray(nodeIterator) ? nodeIterator : Array.from(nodeIterator || []);
   if (!baseNodes.length) return;
   const visited = new Set();
   const components = [];
@@ -2332,15 +2499,18 @@ function ensureFullHiddenConnectivity(hiddenMap, nodeIterator, scoreMap) {
 function buildHiddenAdjacencyNetwork(graph, index, lowerMap, ensureNode, options = {}) {
   if (!(graph?.nodes instanceof Map) || !(index instanceof Map)) return null;
 
-  const limit = Number.isFinite(options.limit) && options.limit > 0
-    ? Math.floor(options.limit)
-    : DEFAULT_HIDDEN_ATTENTION_PER_TOKEN;
-  const depthLimit = Number.isFinite(options.depth) && options.depth >= 0
-    ? Math.floor(options.depth)
-    : DEFAULT_HIDDEN_ADJACENCY_DEPTH;
-  const baseCap = Number.isFinite(options.cap) && options.cap > 0
-    ? Math.floor(options.cap)
-    : DEFAULT_HIDDEN_ADJACENCY_CAP;
+  const limit =
+    Number.isFinite(options.limit) && options.limit > 0
+      ? Math.floor(options.limit)
+      : DEFAULT_HIDDEN_ATTENTION_PER_TOKEN;
+  const depthLimit =
+    Number.isFinite(options.depth) && options.depth >= 0
+      ? Math.floor(options.depth)
+      : DEFAULT_HIDDEN_ADJACENCY_DEPTH;
+  const baseCap =
+    Number.isFinite(options.cap) && options.cap > 0
+      ? Math.floor(options.cap)
+      : DEFAULT_HIDDEN_ADJACENCY_CAP;
   const cap = Math.max(baseCap, graph.nodes.size);
 
   const adjacency = new Map();
@@ -2380,7 +2550,10 @@ function buildHiddenAdjacencyNetwork(graph, index, lowerMap, ensureNode, options
   }
 
   let expansions = 0;
-  const maxExpansions = Math.max(cap * limit, graph.nodes.size * limit * Math.max(1, depthLimit || 1));
+  const maxExpansions = Math.max(
+    cap * limit,
+    graph.nodes.size * limit * Math.max(1, depthLimit || 1),
+  );
 
   while (queue.length && expansions < maxExpansions) {
     const current = queue.shift();
@@ -2400,14 +2573,18 @@ function buildHiddenAdjacencyNetwork(graph, index, lowerMap, ensureNode, options
       if (!neighborNode) continue;
       ensureEntry(token).add(resolvedNeighbor);
       ensureEntry(resolvedNeighbor).add(token);
-      const key = token < resolvedNeighbor ? `${token}|${resolvedNeighbor}` : `${resolvedNeighbor}|${token}`;
+      const key =
+        token < resolvedNeighbor ? `${token}|${resolvedNeighbor}` : `${resolvedNeighbor}|${token}`;
       const normalizedScore = normalizeHiddenWeight(neighbor?.score);
       if (!scores.has(key) || (scores.get(key) || 0) < normalizedScore) {
         scores.set(key, normalizedScore);
       }
       const nextDepth = depth + 1;
       const previousDepth = seenDepth.get(resolvedNeighbor);
-      if (nextDepth <= depthLimit && (!Number.isFinite(previousDepth) || previousDepth > nextDepth)) {
+      if (
+        nextDepth <= depthLimit &&
+        (!Number.isFinite(previousDepth) || previousDepth > nextDepth)
+      ) {
         if (seenDepth.size < cap) {
           seenDepth.set(resolvedNeighbor, nextDepth);
           queue.push({ token: resolvedNeighbor, depth: nextDepth });
@@ -2435,11 +2612,12 @@ function cloneRecordWithRelationships(rec) {
     return { token: '', relationships: {} };
   }
   const clone: any = Object.assign({}, rec);
-  const relationships = rec.relationships && typeof rec.relationships === 'object' ? rec.relationships : {};
+  const relationships =
+    rec.relationships && typeof rec.relationships === 'object' ? rec.relationships : {};
   const relClone: Record<string, any[]> = {};
   for (const [type, edges] of Object.entries(relationships)) {
     relClone[type] = Array.isArray(edges)
-      ? edges.map(edge => (edge && typeof edge === 'object' ? Object.assign({}, edge) : edge))
+      ? edges.map((edge) => (edge && typeof edge === 'object' ? Object.assign({}, edge) : edge))
       : [];
   }
   clone.relationships = relClone;
@@ -2515,9 +2693,8 @@ function resolveHlsfRelationshipBudget(overrideLimit = null) {
 
 function countRecordRelationships(record) {
   if (!record || typeof record !== 'object') return 0;
-  const relationships = record.relationships && typeof record.relationships === 'object'
-    ? record.relationships
-    : {};
+  const relationships =
+    record.relationships && typeof record.relationships === 'object' ? record.relationships : {};
   let total = 0;
   for (const edges of Object.values(relationships)) {
     if (!Array.isArray(edges)) continue;
@@ -2531,9 +2708,8 @@ function trimRecordRelationships(record, maxEdges) {
     return { removed: 0, kept: 0 };
   }
 
-  const relationships = record.relationships && typeof record.relationships === 'object'
-    ? record.relationships
-    : {};
+  const relationships =
+    record.relationships && typeof record.relationships === 'object' ? record.relationships : {};
 
   const collected = [];
   for (const [rel, edges] of Object.entries(relationships)) {
@@ -2557,14 +2733,16 @@ function trimRecordRelationships(record, maxEdges) {
     record.relationships = relationships;
     record.total_relationships = collected.length;
     if ('relationshipTypes' in record) {
-      record.relationshipTypes = typeof record.relationshipTypes === 'number'
-        ? Object.keys(relationships).length
-        : Object.keys(relationships);
+      record.relationshipTypes =
+        typeof record.relationshipTypes === 'number'
+          ? Object.keys(relationships).length
+          : Object.keys(relationships);
     }
     if ('relationship_types' in record) {
-      record.relationship_types = typeof record.relationship_types === 'number'
-        ? Object.keys(relationships).length
-        : Object.keys(relationships);
+      record.relationship_types =
+        typeof record.relationship_types === 'number'
+          ? Object.keys(relationships).length
+          : Object.keys(relationships);
     }
     return { removed: 0, kept: collected.length };
   }
@@ -2584,14 +2762,12 @@ function trimRecordRelationships(record, maxEdges) {
   record.total_relationships = selected.length;
   const nextKeys = Object.keys(next);
   if ('relationshipTypes' in record) {
-    record.relationshipTypes = typeof record.relationshipTypes === 'number'
-      ? nextKeys.length
-      : nextKeys;
+    record.relationshipTypes =
+      typeof record.relationshipTypes === 'number' ? nextKeys.length : nextKeys;
   }
   if ('relationship_types' in record) {
-    record.relationship_types = typeof record.relationship_types === 'number'
-      ? nextKeys.length
-      : nextKeys;
+    record.relationship_types =
+      typeof record.relationship_types === 'number' ? nextKeys.length : nextKeys;
   }
 
   return { removed: collected.length - selected.length, kept: selected.length };
@@ -2601,7 +2777,12 @@ function resolveRecordTimestamp(record, fallbackIndex = 0) {
   if (!record || typeof record !== 'object') {
     return Number.MIN_SAFE_INTEGER;
   }
-  const candidates = [record.cached_at, record.updated_at, record.last_ingested_at, record.timestamp];
+  const candidates = [
+    record.cached_at,
+    record.updated_at,
+    record.last_ingested_at,
+    record.timestamp,
+  ];
   for (const candidate of candidates) {
     if (typeof candidate !== 'string') continue;
     const trimmed = candidate.trim();
@@ -2714,9 +2895,8 @@ function applyConversationOverlay(index) {
       if (value && typeof value === 'object') summaries.push(value);
     }
   }
-  const lastAdjacency = memory?.lastAdjacency && typeof memory.lastAdjacency === 'object'
-    ? memory.lastAdjacency
-    : null;
+  const lastAdjacency =
+    memory?.lastAdjacency && typeof memory.lastAdjacency === 'object' ? memory.lastAdjacency : null;
   if (lastAdjacency) summaries.push(lastAdjacency);
 
   if (!summaries.length) {
@@ -2762,9 +2942,8 @@ function applyConversationOverlay(index) {
       const ensured = ensureRecord(item.token);
       if (!ensured) continue;
       const { key, record } = ensured;
-      const relationships = item.relationships && typeof item.relationships === 'object'
-        ? item.relationships
-        : {};
+      const relationships =
+        item.relationships && typeof item.relationships === 'object' ? item.relationships : {};
       for (const [relType, edges] of Object.entries(relationships)) {
         if (!Array.isArray(edges) || !edges.length) continue;
         const normalizedEdges = [];
@@ -2775,7 +2954,9 @@ function applyConversationOverlay(index) {
           const mergedEdge = normalizeEdgeRecord(Object.assign({}, edge, { token: neighbor.key }));
           if (mergedEdge) normalizedEdges.push(mergedEdge);
         }
-        const existing = Array.isArray(record.relationships[relType]) ? record.relationships[relType] : [];
+        const existing = Array.isArray(record.relationships[relType])
+          ? record.relationships[relType]
+          : [];
         record.relationships[relType] = mergeEdgeLists(existing, normalizedEdges);
       }
 
@@ -2814,7 +2995,7 @@ function applyConversationOverlay(index) {
   return { index: augmented, focusTokens };
 }
 
-function anchorsForMode(args, idx){
+function anchorsForMode(args, idx) {
   let index = idx;
   if (!(index instanceof Map)) {
     const db = getDb();
@@ -2828,13 +3009,13 @@ function anchorsForMode(args, idx){
   const focusTokens = Array.isArray(overlay.focusTokens) ? overlay.focusTokens : [];
 
   if (args.mode === 'conversation') {
-    const conv = [...(Session?.tokens || [])].filter(t => index.has(t));
+    const conv = [...(Session?.tokens || [])].filter((t) => index.has(t));
     const anchors = conv.length ? conv : defaultAnchors(index, 32);
     return { anchors, idx: index, focusTokens };
   }
 
   if (args.mode === 'tokens') {
-    let anchors = args.tokens.filter(t => index.has(t));
+    let anchors = args.tokens.filter((t) => index.has(t));
     if (!anchors.length) anchors = defaultAnchors(index, 32);
     return { anchors, idx: index, focusTokens };
   }
@@ -2848,7 +3029,7 @@ function anchorsForMode(args, idx){
       else if (Array.isArray(val)) glyphTokens.push(...val);
       else glyphTokens.push(val);
     }
-    const toks = glyphTokens.filter(t => index.has(t));
+    const toks = glyphTokens.filter((t) => index.has(t));
     const anchors = toks.length ? toks : defaultAnchors(index, 32);
     return { anchors, idx: index, glyphOnly: true, focusTokens };
   }
@@ -2884,11 +3065,12 @@ function edgeLabel(rtype) {
 }
 
 function legacyPositions(graph, width, height, scale, centerX, centerY) {
-  const anchorList = Array.isArray(graph?.anchors) && graph.anchors.length
-    ? graph.anchors
-    : Array.isArray(graph?.seeds) && graph.seeds.length
-      ? graph.seeds
-      : [...graph.nodes.keys()].slice(0, 1);
+  const anchorList =
+    Array.isArray(graph?.anchors) && graph.anchors.length
+      ? graph.anchors
+      : Array.isArray(graph?.seeds) && graph.seeds.length
+        ? graph.seeds
+        : [...graph.nodes.keys()].slice(0, 1);
   const pos = new Map();
   const rotation = 0;
   const Rc = Math.min(width, height) * 0.35 * scale;
@@ -2903,8 +3085,12 @@ function legacyPositions(graph, width, height, scale, centerX, centerY) {
   });
 
   const groupByRoot = new Map();
-  const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
-  edges.forEach(edge => {
+  const edges = Array.isArray(graph.links)
+    ? graph.links
+    : Array.isArray(graph.edges)
+      ? graph.edges
+      : [];
+  edges.forEach((edge) => {
     if (!groupByRoot.has(edge.from)) groupByRoot.set(edge.from, []);
     groupByRoot.get(edge.from).push(edge);
   });
@@ -2937,8 +3123,8 @@ function clusterLevelLayout(graph, width, height, scale, centerX, centerY) {
 
   const layerCluster = new Map();
   for (const [token, node] of graph.nodes) {
-    const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
-    const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+    const layer = Number.isFinite(node?.layer) ? node.layer | 0 : 0;
+    const cluster = Number.isFinite(node?.cluster) ? node.cluster | 0 : 0;
     const key = `${layer}:${cluster}`;
     const arr = layerCluster.get(key) || [];
     arr.push(token);
@@ -2960,8 +3146,9 @@ function clusterLevelLayout(graph, width, height, scale, centerX, centerY) {
   const pos = new Map();
 
   for (let layer = 0; layer < layers.length; layer++) {
-    const entries = [...layers[layer].entries()]
-      .sort((a, b) => b[1].length - a[1].length || a[0] - b[0]);
+    const entries = [...layers[layer].entries()].sort(
+      (a, b) => b[1].length - a[1].length || a[0] - b[0],
+    );
     const R = Math.max(20, dr * (layer + 1));
     const sectors = Math.max(1, entries.length);
     for (let s = 0; s < entries.length; s++) {
@@ -2975,7 +3162,7 @@ function clusterLevelLayout(graph, width, height, scale, centerX, centerY) {
         const r = R * wobble;
         pos.set(tokens[i], {
           x: cx + r * Math.cos(theta),
-          y: cy + r * Math.sin(theta)
+          y: cy + r * Math.sin(theta),
         });
       }
     }
@@ -2995,14 +3182,14 @@ function ringPositions(graph, width, height, scale, centerX, centerY) {
 
   const rings = Array.from({ length: L + 1 }, () => []);
   for (const [token, node] of graph.nodes.entries()) {
-    const layer = node && Number.isFinite(node.layer)
-      ? Math.max(0, Math.floor(node.layer))
-      : 0;
+    const layer = node && Number.isFinite(node.layer) ? Math.max(0, Math.floor(node.layer)) : 0;
     rings[layer].push({ token, node });
   }
 
   for (const ring of rings) {
-    ring.sort((a, b) => ((b.node?.degree || 0) - (a.node?.degree || 0)) || a.token.localeCompare(b.token));
+    ring.sort(
+      (a, b) => (b.node?.degree || 0) - (a.node?.degree || 0) || a.token.localeCompare(b.token),
+    );
   }
 
   const Rmax = Math.min(width, height) * 0.42 * scale;
@@ -3019,7 +3206,7 @@ function ringPositions(graph, width, height, scale, centerX, centerY) {
       const theta = (i / N) * 2 * Math.PI + rotation;
       pos.set(ring[i].token, {
         x: cx + R * Math.cos(theta),
-        y: cy + R * Math.sin(theta)
+        y: cy + R * Math.sin(theta),
       });
     }
   }
@@ -3030,8 +3217,8 @@ function ringPositions(graph, width, height, scale, centerX, centerY) {
 function drawClusterOverlays(ctx, graph, positions) {
   const byLC = new Map();
   for (const [token, node] of graph.nodes) {
-    const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
-    const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+    const layer = Number.isFinite(node?.layer) ? node.layer | 0 : 0;
+    const cluster = Number.isFinite(node?.cluster) ? node.cluster | 0 : 0;
     const key = `${layer}:${cluster}`;
     const arr = byLC.get(key) || [];
     arr.push(token);
@@ -3040,7 +3227,7 @@ function drawClusterOverlays(ctx, graph, positions) {
   ctx.save();
   for (const [key, tokens] of byLC) {
     if (tokens.length < 3) continue;
-    const pts = tokens.map(t => positions.get(t)).filter(Boolean);
+    const pts = tokens.map((t) => positions.get(t)).filter(Boolean);
     if (pts.length < 3) continue;
     const color = paletteColor(`cluster-${key}`);
     ctx.globalAlpha = 0.12;
@@ -3062,7 +3249,10 @@ function colorWithAlpha(color, alpha) {
   if (color.startsWith('#')) {
     let hex = color.slice(1);
     if (hex.length === 3) {
-      hex = hex.split('').map((ch) => ch + ch).join('');
+      hex = hex
+        .split('')
+        .map((ch) => ch + ch)
+        .join('');
     }
     if (hex.length >= 6) {
       const r = parseInt(hex.slice(0, 2), 16);
@@ -3099,7 +3289,17 @@ function drawRoundedRectPath(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function renderNodeLabelOverlay(ctx, text, centerX, baselineY, radius, theme, nodeColor, inFocus, alphaValue) {
+function renderNodeLabelOverlay(
+  ctx,
+  text,
+  centerX,
+  baselineY,
+  radius,
+  theme,
+  nodeColor,
+  inFocus,
+  alphaValue,
+) {
   if (!text) return;
   const metrics = ctx.measureText(text);
   const width = metrics.width || 0;
@@ -3111,12 +3311,15 @@ function renderNodeLabelOverlay(ctx, text, centerX, baselineY, radius, theme, no
   const boxHeight = ascent + descent + padY * 2;
   const boxX = centerX - boxWidth / 2;
   const boxY = baselineY - ascent - padY;
-  const overlayAlpha = Math.max(0.2, Math.min(1, (Number.isFinite(alphaValue) ? alphaValue : 0.1) * 1.2));
+  const overlayAlpha = Math.max(
+    0.2,
+    Math.min(1, (Number.isFinite(alphaValue) ? alphaValue : 0.1) * 1.2),
+  );
   const baseColor = inFocus
     ? 'rgba(0, 255, 153, 0.35)'
-    : (theme.bg === '#fff'
-        ? 'rgba(255, 255, 255, 0.82)'
-        : 'rgba(0, 0, 0, 0.72)');
+    : theme.bg === '#fff'
+      ? 'rgba(255, 255, 255, 0.82)'
+      : 'rgba(0, 0, 0, 0.72)';
 
   ctx.save();
   ctx.globalAlpha = overlayAlpha;
@@ -3152,7 +3355,8 @@ function drawComposite(graph, opts = {}) {
   }
 
   const cfg = window.HLSF.config;
-  const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
+  const canvas =
+    window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
   if (!canvas) {
     console.warn('HLSF canvas element not found');
     return;
@@ -3223,7 +3427,7 @@ function drawComposite(graph, opts = {}) {
     const radiusScale = Math.min(width, height) * 0.42 * layoutScale;
     pos = new Map();
     for (const [token, entry] of dim.positions.entries()) {
-      const radius = (entry?.radius || 1) / radialMax * radiusScale;
+      const radius = ((entry?.radius || 1) / radialMax) * radiusScale;
       const angle = entry?.angle || 0;
       const x = Math.cos(angle) * radius;
       const y = Math.sin(angle) * radius;
@@ -3258,9 +3462,7 @@ function drawComposite(graph, opts = {}) {
     const cells = Array.isArray(graph.dimensionLayout.cells) ? graph.dimensionLayout.cells : [];
     for (const cell of cells) {
       const tokens = Array.isArray(cell?.tokens) ? cell.tokens : [];
-      const pts = tokens
-        .map(t => rotatedPositions.get(t.token))
-        .filter(Boolean);
+      const pts = tokens.map((t) => rotatedPositions.get(t.token)).filter(Boolean);
       if (pts.length < 3) continue;
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -3272,19 +3474,23 @@ function drawComposite(graph, opts = {}) {
   }
 
   const glyphOnly = opts.glyphOnly === true;
-  const focusSet = window.HLSF?.state?.documentFocus instanceof Set
-    ? window.HLSF.state.documentFocus
-    : null;
+  const focusSet =
+    window.HLSF?.state?.documentFocus instanceof Set ? window.HLSF.state.documentFocus : null;
 
   ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
 
   const hitAreas = new Map();
 
-  const edges = Array.isArray(graph.links) ? graph.links : Array.isArray(graph.edges) ? graph.edges : [];
+  const edges = Array.isArray(graph.links)
+    ? graph.links
+    : Array.isArray(graph.edges)
+      ? graph.edges
+      : [];
   updateRelationLegend(graph, edges, edgeColorMode);
-  const renderState = window.HLSF.rendering && typeof window.HLSF.rendering === 'object'
-    ? window.HLSF.rendering
-    : (window.HLSF.rendering = {});
+  const renderState =
+    window.HLSF.rendering && typeof window.HLSF.rendering === 'object'
+      ? window.HLSF.rendering
+      : (window.HLSF.rendering = {});
 
   const labelEntries = [];
   let visibleEdgeCount = 0;
@@ -3301,7 +3507,7 @@ function drawComposite(graph, opts = {}) {
       const viewScale = window.HLSF?.view?.scale ?? zoom;
       const dx = dxWorld * viewScale;
       const dy = dyWorld * viewScale;
-      if ((dx * dx + dy * dy) < 0.25) continue;
+      if (dx * dx + dy * dy < 0.25) continue;
       visibleEdgeCount++;
       const fromFocus = focusSet && focusSet.has((edge.from || '').toLowerCase());
       const toFocus = focusSet && focusSet.has((edge.to || '').toLowerCase());
@@ -3318,7 +3524,9 @@ function drawComposite(graph, opts = {}) {
           });
         }
       }
-      const strokeColor = edgeFocus ? '#00ffcc' : compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
+      const strokeColor = edgeFocus
+        ? '#00ffcc'
+        : compositeEdgeStrokeColor(edge, edgeColorMode) || theme.fg;
       if (!batches.has(strokeColor)) batches.set(strokeColor, []);
       batches.get(strokeColor).push({ from: fromPos, to: toPos, edge, edgeFocus });
     }
@@ -3326,7 +3534,8 @@ function drawComposite(graph, opts = {}) {
       ctx.strokeStyle = color;
       for (const { from, to, edge, edgeFocus } of edges) {
         ctx.globalAlpha = edgeFocus ? Math.min(1, baseAlpha() * 1.5) : edgeAlphaFromWeight(edge.w);
-        ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation * (edgeFocus ? 1.8 : 1)) * dpr;
+        ctx.lineWidth =
+          Math.max(0.01, edgeWidthValue * zoomAttenuation * (edgeFocus ? 1.8 : 1)) * dpr;
         ctx.beginPath();
         ctx.moveTo(from.x, from.y);
         ctx.lineTo(to.x, to.y);
@@ -3344,10 +3553,8 @@ function drawComposite(graph, opts = {}) {
     ? Math.max(1, Math.round(cfg.edgeLabelDensityThreshold))
     : EDGE_LABEL_DENSITY_THRESHOLD;
   const highDensity = visibleEdgeCount > labelThreshold;
-  const canRenderEdgeLabels = cfg.showEdges !== false
-    && labelEnabled
-    && !highDensity
-    && labelEntries.length > 0;
+  const canRenderEdgeLabels =
+    cfg.showEdges !== false && labelEnabled && !highDensity && labelEntries.length > 0;
 
   if (renderState) {
     renderState.edgeLabelSuppressed = cfg.showEdges === false || !labelEnabled || highDensity;
@@ -3371,11 +3578,14 @@ function drawComposite(graph, opts = {}) {
     const freq = typeof data.f === 'number' ? data.f : 1;
     const nodeKey = (token || '').toLowerCase();
     const inFocus = focusSet && focusSet.has(nodeKey);
-    const radius = Math.max(2, (4 + 2 * Math.log2(1 + Math.max(0, freq))) * nodeScale * (inFocus ? 1.6 : 1));
+    const radius = Math.max(
+      2,
+      (4 + 2 * Math.log2(1 + Math.max(0, freq))) * nodeScale * (inFocus ? 1.6 : 1),
+    );
     const nodeColor = inFocus
       ? '#00ff88'
-      : data?.color
-        || (data?.status === 'cached' ? '#44ff44' : data?.status === 'unknown' ? '#ff8800' : theme.fg);
+      : data?.color ||
+        (data?.status === 'cached' ? '#44ff44' : data?.status === 'unknown' ? '#ff8800' : theme.fg);
     const alphaValue = baseAlpha();
     ctx.save();
     if (showGlow) {
@@ -3397,7 +3607,17 @@ function drawComposite(graph, opts = {}) {
     if (cfg.showLabels !== false) {
       const labelText = nodeLabel(token, glyphOnly);
       const labelY = position.y - (radius + 12);
-      renderNodeLabelOverlay(ctx, labelText, position.x, labelY, radius, theme, nodeColor, inFocus, alphaValue);
+      renderNodeLabelOverlay(
+        ctx,
+        labelText,
+        position.x,
+        labelY,
+        radius,
+        theme,
+        nodeColor,
+        inFocus,
+        alphaValue,
+      );
       ctx.globalAlpha = alphaValue;
       ctx.fillStyle = inFocus ? '#00ffcc' : theme.fg;
       ctx.fillText(labelText, position.x, labelY);
@@ -3532,7 +3752,7 @@ async function gatherAdjacencyEntries(token) {
     return bw - aw;
   });
 
-  const uncached = entries.filter(entry => entry && entry.cached === false);
+  const uncached = entries.filter((entry) => entry && entry.cached === false);
   const focusSet = new Set();
   focusSet.add(token.toLowerCase());
   for (const entry of uncached) {
@@ -3568,10 +3788,9 @@ function buildAdjacencyLogHtml(token, uncachedEntries) {
       const bw = Number.isFinite(b.weight) ? b.weight : 0;
       return bw - aw;
     });
-    const preview = list.slice(0, 6).map(item => {
-      const weightText = Number.isFinite(item.weight) && item.weight > 0
-        ? ` (${item.weight.toFixed(2)})`
-        : '';
+    const preview = list.slice(0, 6).map((item) => {
+      const weightText =
+        Number.isFinite(item.weight) && item.weight > 0 ? ` (${item.weight.toFixed(2)})` : '';
       return `${sanitize(item.token)}${weightText}`;
     });
     const remainder = list.length - preview.length;
@@ -3616,9 +3835,11 @@ async function cacheAdjacencyNeighbors(token) {
     return;
   }
 
-  const targets = Array.from(new Set(info.uncached.map(entry => entry.token).filter(Boolean)));
+  const targets = Array.from(new Set(info.uncached.map((entry) => entry.token).filter(Boolean)));
   const focusSummary = targets.slice(0, 6).join(', ');
-  const status = logStatus(`Caching ${targets.length} adjacent token${targets.length === 1 ? '' : 's'} near ${token}…`);
+  const status = logStatus(
+    `Caching ${targets.length} adjacent token${targets.length === 1 ? '' : 's'} near ${token}…`,
+  );
 
   try {
     const context = `Manual adjacency expansion triggered by double-click on ${token}. Focus tokens: ${focusSummary}.`;
@@ -3661,8 +3882,8 @@ async function cacheAdjacencyNeighbors(token) {
 function computePatches(graph, pos) {
   const groups = new Map();
   for (const [token, node] of graph.nodes) {
-    const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
-    const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+    const layer = Number.isFinite(node?.layer) ? node.layer | 0 : 0;
+    const cluster = Number.isFinite(node?.cluster) ? node.cluster | 0 : 0;
     const key = `${layer}:${cluster}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(token);
@@ -3670,7 +3891,7 @@ function computePatches(graph, pos) {
   const patches = new Map();
   const prev = window.HLSF?.state?.patches;
   for (const [key, toks] of groups) {
-    const pts = toks.map(t => pos.get(t)).filter(Boolean);
+    const pts = toks.map((t) => pos.get(t)).filter(Boolean);
     if (!pts.length) continue;
     const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
     const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
@@ -3699,8 +3920,8 @@ function rotatedPos(token, basePos, node) {
   if (!basePos) return basePos;
   const state = window.HLSF?.state;
   if (!state?.emergent?.on) return basePos;
-  const layer = Number.isFinite(node?.layer) ? (node.layer | 0) : 0;
-  const cluster = Number.isFinite(node?.cluster) ? (node.cluster | 0) : 0;
+  const layer = Number.isFinite(node?.layer) ? node.layer | 0 : 0;
+  const cluster = Number.isFinite(node?.cluster) ? node.cluster | 0 : 0;
   const patchKey = `${layer}:${cluster}`;
   const patch = state.patches instanceof Map ? state.patches.get(patchKey) : null;
   if (!patch) return basePos;
@@ -3723,7 +3944,7 @@ function buildO20Layout(width, height, margin = 32) {
     slots.push({
       x: cx + R * Math.cos(theta),
       y: cy - R * Math.sin(theta),
-      theta
+      theta,
     });
   }
   return { cx, cy, R, slots };
@@ -3771,7 +3992,9 @@ function isEmergentAnimationActive() {
   if (!emergent || emergent.on !== true) return false;
   const speed = Number.isFinite(emergent.speed)
     ? emergent.speed
-    : (Number.isFinite(cfg.rotationOmega) ? cfg.rotationOmega : 0);
+    : Number.isFinite(cfg.rotationOmega)
+      ? cfg.rotationOmega
+      : 0;
   return Math.abs(speed) > 1e-3;
 }
 
@@ -3817,7 +4040,7 @@ function animateComposite(graph, glyphOnly = false) {
   window.HLSF.currentGlyphOnly = glyphOnly === true;
   const drawFrame = () => drawComposite(graph, { glyphOnly });
   drawFrame();
-  startHlsfAnimation(dt => {
+  startHlsfAnimation((dt) => {
     stepRotation(dt);
     drawFrame();
   });
@@ -3825,7 +4048,8 @@ function animateComposite(graph, glyphOnly = false) {
 
 function animateHLSF(graph, glyphOnly = false) {
   if (!graph) return;
-  const canvas = window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
+  const canvas =
+    window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
   if (!canvas) {
     console.warn('HLSF canvas element not found for animation');
     return;
@@ -3839,7 +4063,7 @@ function animateHLSF(graph, glyphOnly = false) {
   window.HLSF.currentGlyphOnly = glyphOnly === true;
   const drawFrame = () => drawHLSFMatrix(graph, { glyphOnly });
   drawFrame();
-  startHlsfAnimation(dt => {
+  startHlsfAnimation((dt) => {
     stepRotation(dt);
     drawFrame();
   });
@@ -3936,13 +4160,8 @@ function normalizeLayout(value) {
 function describeAffinityMentalState(threshold, iterations) {
   const thr = Number.isFinite(threshold) ? threshold : 0.35;
   const iters = Number.isFinite(iterations) ? iterations : 8;
-  const thrBand = thr <= 0.2 ? 'low'
-    : thr <= 0.4 ? 'medium'
-    : thr <= 0.6 ? 'high'
-    : 'veryHigh';
-  const iterBand = iters <= 4 ? 'brief'
-    : iters <= 9 ? 'steady'
-    : 'extended';
+  const thrBand = thr <= 0.2 ? 'low' : thr <= 0.4 ? 'medium' : thr <= 0.6 ? 'high' : 'veryHigh';
+  const iterBand = iters <= 4 ? 'brief' : iters <= 9 ? 'steady' : 'extended';
 
   const mechanics = `Neighbors must score at least ${thr.toFixed(2)} on the 60/40 cosine–Jaccard affinity mix to influence clustering. The loop allows up to ${iters} iteration${iters === 1 ? '' : 's'} before settling.`;
 
@@ -3950,64 +4169,62 @@ function describeAffinityMentalState(threshold, iterations) {
     low: {
       brief: {
         name: 'Impulsive ideation',
-        desc: 'Weak ties are welcomed but the loop stops quickly, so early, noisy neighbors shape the clusters.'
+        desc: 'Weak ties are welcomed but the loop stops quickly, so early, noisy neighbors shape the clusters.',
       },
       steady: {
         name: 'Expansive brainstorming',
-        desc: 'Low thresholds keep associative links flowing while a few passes weave them into loose but lively groups.'
+        desc: 'Low thresholds keep associative links flowing while a few passes weave them into loose but lively groups.',
       },
       extended: {
         name: 'Hypnagogic free association',
-        desc: 'Almost every tenuous link survives repeated revisits, letting clusters blend in a dreamlike drift.'
-      }
+        desc: 'Almost every tenuous link survives repeated revisits, letting clusters blend in a dreamlike drift.',
+      },
     },
     medium: {
       brief: {
         name: 'Decisive synthesis',
-        desc: 'Moderate evidence is required but only a handful of passes occur, yielding balanced snap decisions.'
+        desc: 'Moderate evidence is required but only a handful of passes occur, yielding balanced snap decisions.',
       },
       steady: {
         name: 'Focused yet flexible attention',
-        desc: 'Clustering balances evidence with patience, producing well-formed communities without overthinking.'
+        desc: 'Clustering balances evidence with patience, producing well-formed communities without overthinking.',
       },
       extended: {
         name: 'Reflective integration',
-        desc: 'Moderate filters paired with long deliberation polish clusters through repeated, thoughtful reconciliation.'
-      }
+        desc: 'Moderate filters paired with long deliberation polish clusters through repeated, thoughtful reconciliation.',
+      },
     },
     high: {
       brief: {
         name: 'Surgical categorization',
-        desc: 'Only strong alignments are heeded and the loop resolves quickly, carving crisp, selective groups.'
+        desc: 'Only strong alignments are heeded and the loop resolves quickly, carving crisp, selective groups.',
       },
       steady: {
         name: 'Structured analytical focus',
-        desc: 'Strict similarity demands with measured revisits create tight, compartmentalized communities.'
+        desc: 'Strict similarity demands with measured revisits create tight, compartmentalized communities.',
       },
       extended: {
         name: 'Perfectionistic rumination',
-        desc: 'High selectivity and many passes continually prune ambiguous members in search of immaculate boundaries.'
-      }
+        desc: 'High selectivity and many passes continually prune ambiguous members in search of immaculate boundaries.',
+      },
     },
     veryHigh: {
       brief: {
         name: 'Rigid snap judgments',
-        desc: 'Only the strongest neighbors are considered and the process halts fast, leaving fragmented results.'
+        desc: 'Only the strongest neighbors are considered and the process halts fast, leaving fragmented results.',
       },
       steady: {
         name: 'Guarded deliberation',
-        desc: 'Strict gates with limited revisits keep clusters narrow while cautiously revisiting edge cases.'
+        desc: 'Strict gates with limited revisits keep clusters narrow while cautiously revisiting edge cases.',
       },
       extended: {
         name: 'Tunnel-vision fixation',
-        desc: 'Extreme selectivity applied over many rounds replays only the most forceful convictions.'
-      }
-    }
+        desc: 'Extreme selectivity applied over many rounds replays only the most forceful convictions.',
+      },
+    },
   };
 
-  const preset = STATES[thrBand] && STATES[thrBand][iterBand]
-    ? STATES[thrBand][iterBand]
-    : null;
+  const preset = STATES[thrBand] && STATES[thrBand][iterBand] ? STATES[thrBand][iterBand] : null;
   if (preset) return Object.assign({ mechanics }, preset);
   return {
     name: 'Adaptive clustering',
@@ -4031,7 +4248,7 @@ const MENTAL_STATE_PRESET_CONFIGS = [
   { id: 'veryHigh-extended', threshold: 0.72, iterations: 12 },
 ];
 
-const MENTAL_STATE_PRESETS = MENTAL_STATE_PRESET_CONFIGS.map(preset => {
+const MENTAL_STATE_PRESETS = MENTAL_STATE_PRESET_CONFIGS.map((preset) => {
   const meta = describeAffinityMentalState(preset.threshold, preset.iterations) || {};
   const label = `${meta.name || 'Preset'} — ${preset.threshold.toFixed(2)} · ${preset.iterations}`;
   return Object.assign({ label }, preset, meta);
@@ -4040,16 +4257,20 @@ const MENTAL_STATE_PRESETS = MENTAL_STATE_PRESET_CONFIGS.map(preset => {
 const MENTAL_STATE_THRESHOLD_TOLERANCE = 0.005;
 
 function getMentalStatePresetById(id) {
-  return MENTAL_STATE_PRESETS.find(preset => preset.id === id) || null;
+  return MENTAL_STATE_PRESETS.find((preset) => preset.id === id) || null;
 }
 
 function matchMentalStatePreset(threshold, iterations) {
   const thr = Number(threshold);
   const iters = Math.round(Number(iterations));
   if (!Number.isFinite(thr) || !Number.isFinite(iters)) return null;
-  return MENTAL_STATE_PRESETS.find(preset =>
-    Math.abs(preset.threshold - thr) <= MENTAL_STATE_THRESHOLD_TOLERANCE && preset.iterations === iters
-  ) || null;
+  return (
+    MENTAL_STATE_PRESETS.find(
+      (preset) =>
+        Math.abs(preset.threshold - thr) <= MENTAL_STATE_THRESHOLD_TOLERANCE &&
+        preset.iterations === iters,
+    ) || null
+  );
 }
 
 function populateMentalStatePresetOptions(select) {
@@ -4118,7 +4339,9 @@ function updateAffinityAnnotations(wrapper, threshold, iterations) {
     overlayThreshold.textContent = Number.isFinite(threshold) ? Number(threshold).toFixed(2) : '—';
   const overlayIterations = wrapper.querySelector('#hlsf-overlay-iterations');
   if (overlayIterations)
-    overlayIterations.textContent = Number.isFinite(iterations) ? String(Math.round(iterations)) : '—';
+    overlayIterations.textContent = Number.isFinite(iterations)
+      ? String(Math.round(iterations))
+      : '—';
   syncMentalStatePresetControl(wrapper, threshold, iterations);
 }
 
@@ -4331,7 +4554,7 @@ function ensureHLSFCanvas() {
     BatchLog.mount();
   }
 
-  const canvas = /** @type {HTMLCanvasElement|null} */ (wrapper.querySelector('#hlsf-canvas'));
+  const canvas = /** @type {HTMLCanvasElement|null} */ wrapper.querySelector('#hlsf-canvas');
   if (canvas) {
     window.HLSF.canvas = canvas;
     window.HLSF.ctx = canvas.getContext('2d');
@@ -4518,7 +4741,9 @@ function bindHlsfControls(wrapper) {
       const raw = Number(thresholdSlider.value);
       const clamped = Number.isFinite(raw) ? Math.min(0.8, Math.max(0.1, raw)) : 0.35;
       const value = Math.round(clamped * 100) / 100;
-      window.HLSF.config.affinity = Object.assign({}, window.HLSF.config.affinity, { threshold: value });
+      window.HLSF.config.affinity = Object.assign({}, window.HLSF.config.affinity, {
+        threshold: value,
+      });
       thresholdSlider.value = value.toFixed(2);
       if (thresholdVal) thresholdVal.textContent = value.toFixed(2);
       const currentIters = window.HLSF.config.affinity?.iterations;
@@ -4533,11 +4758,17 @@ function bindHlsfControls(wrapper) {
     iterSlider.addEventListener('input', () => {
       const raw = Number(iterSlider.value);
       const value = Number.isFinite(raw) ? Math.min(20, Math.max(1, Math.round(raw))) : 8;
-      window.HLSF.config.affinity = Object.assign({}, window.HLSF.config.affinity, { iterations: value });
+      window.HLSF.config.affinity = Object.assign({}, window.HLSF.config.affinity, {
+        iterations: value,
+      });
       iterSlider.value = String(value);
       if (iterVal) iterVal.textContent = String(value);
       const currentThresh = window.HLSF.config.affinity?.threshold;
-      updateAffinityAnnotations(wrapper, Number.isFinite(currentThresh) ? currentThresh : 0.35, value);
+      updateAffinityAnnotations(
+        wrapper,
+        Number.isFinite(currentThresh) ? currentThresh : 0.35,
+        value,
+      );
       recomputeAndRender();
     });
   }
@@ -4650,7 +4881,7 @@ function bindHlsfControls(wrapper) {
   const adjacencyBtn = wrapper.querySelector('#hlsf-toggle-adjacency');
   if (adjacencyBtn) {
     adjacencyBtn.addEventListener('click', () => {
-      toggleAdjacencyExpansion({ root: wrapper, source: 'button' }).catch(err => {
+      toggleAdjacencyExpansion({ root: wrapper, source: 'button' }).catch((err) => {
         console.warn('Failed to toggle adjacency expansion:', err);
       });
     });
@@ -4662,7 +4893,7 @@ function bindHlsfControls(wrapper) {
       if (levelUpBtn.disabled) return;
       levelUpBtn.disabled = true;
       Promise.resolve(levelUpHlsfGraph({ root: wrapper }))
-        .catch(err => {
+        .catch((err) => {
           console.warn('Failed to level up graph:', err);
         })
         .finally(() => {
@@ -4758,7 +4989,7 @@ function bindHlsfControls(wrapper) {
       if (clickTimer) clearTimeout(clickTimer);
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        revealAdjacenciesForToken(token).catch(err => {
+        revealAdjacenciesForToken(token).catch((err) => {
           console.warn('Failed to reveal adjacencies:', err);
         });
       }, 200);
@@ -4776,7 +5007,7 @@ function bindHlsfControls(wrapper) {
       e.preventDefault();
       const token = findTokenAtCanvasEvent(e);
       if (!token) return;
-      cacheAdjacencyNeighbors(token).catch(err => {
+      cacheAdjacencyNeighbors(token).catch((err) => {
         console.warn('Failed to cache adjacency neighbors:', err);
       });
     });
@@ -4807,12 +5038,15 @@ function syncHlsfControls(wrapper) {
   const showAllAdj = isAdjacencyExpansionEnabled();
   const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
   const speedVal = wrapper.querySelector('#hlsf-speed-val');
-  const emergentState = window.HLSF.state && typeof window.HLSF.state.emergent === 'object'
-    ? window.HLSF.state.emergent
-    : null;
+  const emergentState =
+    window.HLSF.state && typeof window.HLSF.state.emergent === 'object'
+      ? window.HLSF.state.emergent
+      : null;
   const omega = Number.isFinite(emergentState?.speed)
     ? emergentState.speed
-    : (Number.isFinite(config.rotationOmega) ? config.rotationOmega : 0);
+    : Number.isFinite(config.rotationOmega)
+      ? config.rotationOmega
+      : 0;
   const clampedOmega = Math.max(-5, Math.min(5, omega));
   window.HLSF.config.rotationOmega = clampedOmega;
   if (emergentState) {
@@ -4854,45 +5088,49 @@ function syncHlsfControls(wrapper) {
   const relationInput = wrapper.querySelector('#hlsf-relation-cap');
   const relationVal = wrapper.querySelector('#hlsf-relation-cap-val');
   const relationCapRaw = config.relationTypeCap;
-  const relationCap = relationCapRaw === Infinity
-    ? Infinity
-    : clampRelationTypeCap(relationCapRaw);
+  const relationCap = relationCapRaw === Infinity ? Infinity : clampRelationTypeCap(relationCapRaw);
   window.HLSF.config.relationTypeCap = relationCap;
   if (relationInput) {
     relationInput.value = relationCap === Infinity ? String(MAX_REL_TYPES) : String(relationCap);
     relationInput.disabled = showAllAdj;
   }
   const effectiveRelationCap = showAllAdj ? Infinity : relationCap;
-  if (relationVal) relationVal.textContent = effectiveRelationCap === Infinity ? '∞' : String(effectiveRelationCap);
+  if (relationVal)
+    relationVal.textContent =
+      effectiveRelationCap === Infinity ? '∞' : String(effectiveRelationCap);
 
   const scopeSelect = wrapper.querySelector('#hlsf-scope');
   const normalizedScope = config.hlsfScope === 'state' ? 'state' : 'db';
   window.HLSF.config.hlsfScope = normalizedScope;
   if (scopeSelect) scopeSelect.value = normalizedScope;
 
-  const dimLayout = window.HLSF?.currentGraph?.dimensionLayout || window.HLSF?.currentLayoutSnapshot?.layout || null;
+  const dimLayout =
+    window.HLSF?.currentGraph?.dimensionLayout ||
+    window.HLSF?.currentLayoutSnapshot?.layout ||
+    null;
   const dimDSpan = wrapper.querySelector('#hlsf-dimension-d');
   const dimLevelSpan = wrapper.querySelector('#hlsf-dimension-levels');
   const dimLastSpan = wrapper.querySelector('#hlsf-dimension-last');
   if (dimDSpan) dimDSpan.textContent = dimLayout ? String(dimLayout.dimension || 0) : '—';
   if (dimLevelSpan) dimLevelSpan.textContent = dimLayout ? String(dimLayout.levelCount || 0) : '—';
-  if (dimLastSpan) dimLastSpan.textContent = dimLayout ? String(dimLayout.lastLevelComponents || 0) : '—';
+  if (dimLastSpan)
+    dimLastSpan.textContent = dimLayout ? String(dimLayout.lastLevelComponents || 0) : '—';
 
   const edgesInput = wrapper.querySelector('#hlsf-edges-per-type');
   const edgesVal = wrapper.querySelector('#hlsf-edges-per-type-val');
   const edgesRaw = config.edgesPerType;
-  const edgesPerType = edgesRaw === Infinity
-    ? Infinity
-    : clampEdgesPerType(edgesRaw);
+  const edgesPerType = edgesRaw === Infinity ? Infinity : clampEdgesPerType(edgesRaw);
   window.HLSF.config.edgesPerType = edgesPerType;
   if (edgesInput) {
-    edgesInput.value = edgesPerType === Infinity ? String(MAX_EDGES_PER_TYPE) : String(edgesPerType);
+    edgesInput.value =
+      edgesPerType === Infinity ? String(MAX_EDGES_PER_TYPE) : String(edgesPerType);
     edgesInput.disabled = showAllAdj;
   }
   const effectiveEdgesPerType = showAllAdj ? Infinity : edgesPerType;
-  if (edgesVal) edgesVal.textContent = effectiveEdgesPerType === Infinity ? '∞' : String(effectiveEdgesPerType);
+  if (edgesVal)
+    edgesVal.textContent = effectiveEdgesPerType === Infinity ? '∞' : String(effectiveEdgesPerType);
 
-  const affinityCfg = (config.affinity && typeof config.affinity === 'object') ? config.affinity : {};
+  const affinityCfg = config.affinity && typeof config.affinity === 'object' ? config.affinity : {};
   const threshold = (() => {
     const raw = Number(affinityCfg.threshold);
     const clamped = Number.isFinite(raw) ? Math.min(0.8, Math.max(0.1, raw)) : 0.35;
@@ -4961,9 +5199,10 @@ async function setAdjacencyExpansion(enabled, options = {}) {
   const desired = enabled === true;
   const previous = isAdjacencyExpansionEnabled();
   window.HLSF.config.showAllAdjacencies = desired;
-  const root = options.root instanceof HTMLElement
-    ? options.root
-    : document.getElementById('hlsf-canvas-container');
+  const root =
+    options.root instanceof HTMLElement
+      ? options.root
+      : document.getElementById('hlsf-canvas-container');
   if (root) syncHlsfControls(root);
   if (desired === previous) {
     return desired;
@@ -4999,7 +5238,17 @@ function isEditableTarget(target) {
   if (tag === 'textarea') return true;
   if (tag === 'input') {
     const type = (target.getAttribute('type') || '').toLowerCase();
-    const nonTextTypes = new Set(['button', 'checkbox', 'radio', 'submit', 'reset', 'range', 'color', 'file', 'image']);
+    const nonTextTypes = new Set([
+      'button',
+      'checkbox',
+      'radio',
+      'submit',
+      'reset',
+      'range',
+      'color',
+      'file',
+      'image',
+    ]);
     return !nonTextTypes.has(type);
   }
   return false;
@@ -5014,7 +5263,7 @@ window.addEventListener('keydown', (event) => {
   if (isEditableTarget(event.target)) return;
   event.preventDefault();
   const root = document.getElementById('hlsf-canvas-container');
-  toggleAdjacencyExpansion({ root, source: 'Alt+A shortcut' }).catch(err => {
+  toggleAdjacencyExpansion({ root, source: 'Alt+A shortcut' }).catch((err) => {
     console.warn('Adjacency shortcut toggle failed:', err);
   });
 });
@@ -5028,70 +5277,80 @@ const DEFAULT_BOOTSTRAP_DB = 'remote-db/metadata.json';
 const desiredRecursionDepth = clampRecursionDepth(
   (existingConfig as any).adjacencyRecursionDepth ?? CONFIG.ADJACENCY_RECURSION_DEPTH,
 );
-window.HLSF.config = Object.assign({
-  bootstrapDbUrl: typeof existingConfig.bootstrapDbUrl === 'string' ? existingConfig.bootstrapDbUrl : DEFAULT_BOOTSTRAP_DB,
-  rotationOmega: 0.30,
-  alpha: 0.67,
-  scale: 1,
-  tx: 0,
-  ty: 0,
-  emergentActive: false,
-  showEdges: true,
-  showLabels: true,
-  fillFaces: false,
-  whiteBg: false,
-  showEnglish: true,
-  fullAnchorCap: 0,
-  batchLogging: true,
-  deferredRender: false,
-  progressTick: 250,
-  layout: 'dimension',
-  hlsfScope: existingConfig.hlsfScope || 'db',
-  metricScope: METRIC_SCOPE.RUN,
-  relationTypeCap: DEFAULT_RELATION_TYPE_CAP,
-  edgesPerType: 3,
-  edgeWidth: 0.2,
-  nodeSize: 1,
-  edgeColorMode: 'relation',
-  showRelationLabels: existingConfig.showRelationLabels !== false,
-  edgeLabelDensityThreshold: Number.isFinite(existingConfig.edgeLabelDensityThreshold)
-    ? existingConfig.edgeLabelDensityThreshold
-    : EDGE_LABEL_DENSITY_THRESHOLD,
-  showNodeGlow: false,
-  autoHlsfOnChange: existingConfig.autoHlsfOnChange === true,
-  showAllAdjacencies: existingConfig.showAllAdjacencies !== false,
-  affinity: { threshold: 0.35, iterations: 8 },
-  relationshipBudget: DEFAULT_HLSF_RELATIONSHIP_LIMIT,
-  adjacencyRecursionDepth: desiredRecursionDepth,
-}, existingConfig);
+window.HLSF.config = Object.assign(
+  {
+    bootstrapDbUrl:
+      typeof existingConfig.bootstrapDbUrl === 'string'
+        ? existingConfig.bootstrapDbUrl
+        : DEFAULT_BOOTSTRAP_DB,
+    rotationOmega: 0.3,
+    alpha: 0.67,
+    scale: 1,
+    tx: 0,
+    ty: 0,
+    emergentActive: false,
+    showEdges: true,
+    showLabels: true,
+    fillFaces: false,
+    whiteBg: false,
+    showEnglish: true,
+    fullAnchorCap: 0,
+    batchLogging: true,
+    deferredRender: false,
+    progressTick: 250,
+    layout: 'dimension',
+    hlsfScope: existingConfig.hlsfScope || 'db',
+    metricScope: METRIC_SCOPE.RUN,
+    relationTypeCap: DEFAULT_RELATION_TYPE_CAP,
+    edgesPerType: 3,
+    edgeWidth: 0.2,
+    nodeSize: 1,
+    edgeColorMode: 'relation',
+    showRelationLabels: existingConfig.showRelationLabels !== false,
+    edgeLabelDensityThreshold: Number.isFinite(existingConfig.edgeLabelDensityThreshold)
+      ? existingConfig.edgeLabelDensityThreshold
+      : EDGE_LABEL_DENSITY_THRESHOLD,
+    showNodeGlow: false,
+    autoHlsfOnChange: existingConfig.autoHlsfOnChange === true,
+    showAllAdjacencies: existingConfig.showAllAdjacencies !== false,
+    affinity: { threshold: 0.35, iterations: 8 },
+    relationshipBudget: DEFAULT_HLSF_RELATIONSHIP_LIMIT,
+    adjacencyRecursionDepth: desiredRecursionDepth,
+  },
+  existingConfig,
+);
 const initialRelationCap = window.HLSF.config.relationTypeCap;
-window.HLSF.config.relationTypeCap = initialRelationCap === Infinity
-  ? Infinity
-  : clampRelationTypeCap(initialRelationCap);
+window.HLSF.config.relationTypeCap =
+  initialRelationCap === Infinity ? Infinity : clampRelationTypeCap(initialRelationCap);
 const initialEdgesPerType = window.HLSF.config.edgesPerType;
-window.HLSF.config.edgesPerType = initialEdgesPerType === Infinity
-  ? Infinity
-  : clampEdgesPerType(initialEdgesPerType);
+window.HLSF.config.edgesPerType =
+  initialEdgesPerType === Infinity ? Infinity : clampEdgesPerType(initialEdgesPerType);
 window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
 window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
 window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
 applyRecursionDepthSetting(window.HLSF.config.adjacencyRecursionDepth);
-window.HLSF.config.relationshipBudget = resolveHlsfRelationshipBudget(window.HLSF.config.relationshipBudget);
+window.HLSF.config.relationshipBudget = resolveHlsfRelationshipBudget(
+  window.HLSF.config.relationshipBudget,
+);
 if ('relationshipLimit' in window.HLSF.config) {
   window.HLSF.config.relationshipLimit = window.HLSF.config.relationshipBudget;
 }
 markRelationLegendDirty();
 window.HLSF.config.showRelationLabels = window.HLSF.config.showRelationLabels !== false;
 const rawEdgeLabelThreshold = Number(window.HLSF.config.edgeLabelDensityThreshold);
-window.HLSF.config.edgeLabelDensityThreshold = Number.isFinite(rawEdgeLabelThreshold) && rawEdgeLabelThreshold > 0
-  ? Math.round(rawEdgeLabelThreshold)
-  : EDGE_LABEL_DENSITY_THRESHOLD;
+window.HLSF.config.edgeLabelDensityThreshold =
+  Number.isFinite(rawEdgeLabelThreshold) && rawEdgeLabelThreshold > 0
+    ? Math.round(rawEdgeLabelThreshold)
+    : EDGE_LABEL_DENSITY_THRESHOLD;
 window.HLSF.config.showNodeGlow = window.HLSF.config.showNodeGlow === true;
 window.HLSF.config.showAllAdjacencies = window.HLSF.config.showAllAdjacencies !== false;
 window.HLSF.config.layout = normalizeLayout(window.HLSF.config.layout);
 window.HLSF.config.batchLogging = window.HLSF.config.batchLogging !== false;
 window.HLSF.config.deferredRender = window.HLSF.config.deferredRender !== false;
-window.HLSF.config.progressTick = Math.max(1, Math.round(Number(window.HLSF.config.progressTick) || 250));
+window.HLSF.config.progressTick = Math.max(
+  1,
+  Math.round(Number(window.HLSF.config.progressTick) || 250),
+);
 window.HLSF.config.metricScope = normalizeMetricScope(window.HLSF.config.metricScope);
 const affinityCfg = window.HLSF.config.affinity;
 if (!affinityCfg || typeof affinityCfg !== 'object') {
@@ -5108,17 +5367,20 @@ if (!affinityCfg || typeof affinityCfg !== 'object') {
 }
 const prevState = window.HLSF.state || {};
 window.HLSF.state = Object.assign({}, prevState);
-const emergentState = prevState.emergent && typeof prevState.emergent === 'object'
-  ? prevState.emergent
-  : {};
+const emergentState =
+  prevState.emergent && typeof prevState.emergent === 'object' ? prevState.emergent : {};
 const emergentDefaultOn = window.HLSF.config.emergentActive === true;
-window.HLSF.state.emergent = Object.assign({ on: emergentDefaultOn, speed: window.HLSF.config.rotationOmega || 0 }, emergentState);
+window.HLSF.state.emergent = Object.assign(
+  { on: emergentDefaultOn, speed: window.HLSF.config.rotationOmega || 0 },
+  emergentState,
+);
 window.HLSF.state.emergentRot = Number.isFinite(prevState.emergentRot) ? prevState.emergentRot : 0;
 if (!(window.HLSF.state.patches instanceof Map)) window.HLSF.state.patches = new Map();
 window.HLSF.view = Object.assign({ x: 0, y: 0, scale: 1 }, window.HLSF.view || {});
 if (!Number.isFinite(window.HLSF.view.x)) window.HLSF.view.x = 0;
 if (!Number.isFinite(window.HLSF.view.y)) window.HLSF.view.y = 0;
-if (!Number.isFinite(window.HLSF.view.scale) || window.HLSF.view.scale <= 0) window.HLSF.view.scale = 1;
+if (!Number.isFinite(window.HLSF.view.scale) || window.HLSF.view.scale <= 0)
+  window.HLSF.view.scale = 1;
 
 function syncViewToConfig() {
   if (!window.HLSF?.config || !window.HLSF?.view) return;
@@ -5166,8 +5428,16 @@ const edgeAlphaFromWeight = (w) => {
 };
 
 const EDGE_COLOR_PALETTE = [
-  '#00ff88', '#ffd54f', '#ff6f91', '#64b5f6', '#ce93d8',
-  '#ff8a65', '#4dd0e1', '#9ccc65', '#f06292', '#ba68c8'
+  '#00ff88',
+  '#ffd54f',
+  '#ff6f91',
+  '#64b5f6',
+  '#ce93d8',
+  '#ff8a65',
+  '#4dd0e1',
+  '#9ccc65',
+  '#f06292',
+  '#ba68c8',
 ];
 
 function paletteColor(key) {
@@ -5280,10 +5550,11 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
     return;
   }
 
-  const requiresUpdate = graph?.__legendDirty === true
-    || state.relationLegendSignature == null
-    || state.relationLegendGraph !== graph
-    || state.relationLegendColorMode !== edgeColorMode;
+  const requiresUpdate =
+    graph?.__legendDirty === true ||
+    state.relationLegendSignature == null ||
+    state.relationLegendGraph !== graph ||
+    state.relationLegendColorMode !== edgeColorMode;
 
   if (!requiresUpdate) {
     return;
@@ -5317,7 +5588,11 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
       group.setAttribute('aria-hidden', isEmpty ? 'true' : 'false');
     }
     if (countEl) countEl.textContent = sorted.length ? `${sorted.length}` : '';
-    if (!isEmpty && container.dataset.userCollapsed !== 'true' && state.relationLegendInitialized !== true) {
+    if (
+      !isEmpty &&
+      container.dataset.userCollapsed !== 'true' &&
+      state.relationLegendInitialized !== true
+    ) {
       container.open = true;
       container.dataset.userCollapsed = 'false';
     }
@@ -5375,7 +5650,9 @@ function stepRotation(dt) {
   if (!emergent?.on) return;
   const speed = Number.isFinite(emergent.speed)
     ? emergent.speed
-    : (Number.isFinite(window.HLSF.config.rotationOmega) ? window.HLSF.config.rotationOmega : 0);
+    : Number.isFinite(window.HLSF.config.rotationOmega)
+      ? window.HLSF.config.rotationOmega
+      : 0;
   if (!speed) return;
   emergent.speed = speed;
   window.HLSF.state.emergentRot = (window.HLSF.state.emergentRot + dt * speed) % tau;
@@ -5416,7 +5693,7 @@ window.CognitionEngine = window.CognitionEngine || {
 };
 window.CognitionEngine.userAvatar = userAvatarStore;
 window.CognitionEngine.export = window.CognitionEngine.export || {};
-window.CognitionEngine.export.session = options => {
+window.CognitionEngine.export.session = (options) => {
   const opts = options && typeof options === 'object' ? { ...options } : {};
   const extras = opts.extras && typeof opts.extras === 'object' ? { ...opts.extras } : {};
   try {
@@ -5429,15 +5706,20 @@ window.CognitionEngine.export.session = options => {
     console.warn('Unable to attach voice profile clone to session export:', err);
   }
   opts.extras = extras;
-  const tokens = Array.isArray(opts.tokens) ? opts.tokens : opts.tokens ? [].concat(opts.tokens) : [];
+  const tokens = Array.isArray(opts.tokens)
+    ? opts.tokens
+    : opts.tokens
+      ? [].concat(opts.tokens)
+      : [];
   const edges = Array.isArray(opts.edges) ? opts.edges : opts.edges || [];
   const lastPipeline = state.symbolMetrics?.lastPipeline;
   const metrics = opts.metrics || lastPipeline?.metrics || null;
   const topNodes = opts.top || lastPipeline?.top || null;
   const consciousness = opts.consciousness || lastPipeline?.consciousness || null;
-  const snapshot = opts.settingsSnapshot && typeof opts.settingsSnapshot === 'object'
-    ? opts.settingsSnapshot
-    : null;
+  const snapshot =
+    opts.settingsSnapshot && typeof opts.settingsSnapshot === 'object'
+      ? opts.settingsSnapshot
+      : null;
   return buildSessionExport({
     tokens,
     edges,
@@ -5457,10 +5739,10 @@ window.GlyphSystem = window.GlyphSystem || {
 };
 
 // ---- Glyph crypto core ----
-const LEDGER_KEY = "HLSF_GLYPH_LEDGER_V1";
-const GLYPH_SET = Array.from("⬣⬧⬩⬡⬪⬨⬤⬟⬢⬥⬠⬙⬘⬗⬖⬕⬔⬓⬒⬑"); // limited symbols
-const GLYPH_SEP = " "; // delimiter between glyph-weight pairs
-const NUM_FMT = n => Number(n).toString(); // unlimited precision as given
+const LEDGER_KEY = 'HLSF_GLYPH_LEDGER_V1';
+const GLYPH_SET = Array.from('⬣⬧⬩⬡⬪⬨⬤⬟⬢⬥⬠⬙⬘⬗⬖⬕⬔⬓⬒⬑'); // limited symbols
+const GLYPH_SEP = ' '; // delimiter between glyph-weight pairs
+const NUM_FMT = (n) => Number(n).toString(); // unlimited precision as given
 
 function hydrateLedgerMaps(ledger) {
   TokenToGlyph.clear();
@@ -5487,9 +5769,9 @@ function loadLedger() {
     ledger = null;
   }
   if (!ledger || typeof ledger !== 'object') {
-    ledger = { version: "1.0", created_at: new Date().toISOString(), glyph_map: {} };
+    ledger = { version: '1.0', created_at: new Date().toISOString(), glyph_map: {} };
   } else {
-    ledger.version = ledger.version || "1.0";
+    ledger.version = ledger.version || '1.0';
     ledger.created_at = ledger.created_at || new Date().toISOString();
     ledger.glyph_map = ledger.glyph_map || {};
   }
@@ -5506,9 +5788,9 @@ function saveLedger(ledger) {
 
 // ---- HLSF constants
 const TOKEN_CACHE_PREFIX = 'hlsf_token_';
-const DB_RAW_KEY = 'HLSF_DB_RAW';        // stores JSON export text
+const DB_RAW_KEY = 'HLSF_DB_RAW'; // stores JSON export text
 const API_KEY_STORAGE_KEY = 'HLSF_API_KEY';
-const DB_INDEX_KEY = 'HLSF_DB_INDEX';    // array of token strings
+const DB_INDEX_KEY = 'HLSF_DB_INDEX'; // array of token strings
 const EXPORT_KEY_STORAGE_KEY = 'HLSF_EXPORT_KEY';
 const EXPORT_PAYLOAD_FORMAT = 'HLSF_DB_EXPORT_V2';
 const EXPORT_PAYLOAD_VERSION = 2;
@@ -5519,16 +5801,18 @@ let storageQuotaHardLimitActive = false;
 
 function isQuotaExceededError(err) {
   if (!err) return false;
-  return err.name === 'QuotaExceededError'
-    || err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
-    || err.code === 22
-    || err.code === 1014;
+  return (
+    err.name === 'QuotaExceededError' ||
+    err.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    err.code === 22 ||
+    err.code === 1014
+  );
 }
 
 function purgeTokenCache() {
   let removed = 0;
   try {
-    const keys = Object.keys(localStorage).filter(k => k.startsWith(TOKEN_CACHE_PREFIX));
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith(TOKEN_CACHE_PREFIX));
     for (const key of keys) {
       localStorage.removeItem(key);
       removed++;
@@ -5572,17 +5856,24 @@ function purgeSpecificKey(key) {
 }
 
 function parseMaybeNdjson(text) {
-  try { return JSON.parse(text); } catch {}
-  const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  try {
+    return JSON.parse(text);
+  } catch {}
+  const lines = text
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   const rows = [];
   for (const ln of lines) {
-    try { rows.push(JSON.parse(ln)); } catch {}
+    try {
+      rows.push(JSON.parse(ln));
+    } catch {}
   }
   return rows.length ? rows : null;
 }
 
 function coerceDb(input) {
-  const data = (typeof input === 'string') ? parseMaybeNdjson(input.replace(/^\uFEFF/, '')) : input;
+  const data = typeof input === 'string' ? parseMaybeNdjson(input.replace(/^\uFEFF/, '')) : input;
   if (!data) throw new Error('Unparseable JSON/NDJSON');
   if (data && !Array.isArray(data) && Array.isArray(data.full_token_data)) {
     return Object.assign({}, data, { full_token_data: data.full_token_data });
@@ -5602,7 +5893,12 @@ function normalizeRecord(rec) {
   return out;
 }
 
-function ensureGlobalConnectionEdge(record, targetToken, relation = GLOBAL_CONNECTION_RELATION, weight = GLOBAL_CONNECTION_WEIGHT) {
+function ensureGlobalConnectionEdge(
+  record,
+  targetToken,
+  relation = GLOBAL_CONNECTION_RELATION,
+  weight = GLOBAL_CONNECTION_WEIGHT,
+) {
   if (!record || typeof record !== 'object') return false;
   if (!targetToken || typeof targetToken !== 'string') return false;
 
@@ -5661,11 +5957,12 @@ function applyGlobalConnectionRule(records, tokensToConnect = null) {
 
   if (!recordMap.size) return new Set();
 
-  const targets = tokensToConnect instanceof Set && tokensToConnect.size
-    ? Array.from(tokensToConnect)
-        .map(token => (typeof token === 'string' ? token.toLowerCase() : ''))
-        .filter(token => token && recordMap.has(token))
-    : orderedRecords.map(rec => rec.token.toLowerCase());
+  const targets =
+    tokensToConnect instanceof Set && tokensToConnect.size
+      ? Array.from(tokensToConnect)
+          .map((token) => (typeof token === 'string' ? token.toLowerCase() : ''))
+          .filter((token) => token && recordMap.has(token))
+      : orderedRecords.map((rec) => rec.token.toLowerCase());
 
   const changedTokens = new Set();
 
@@ -5718,7 +6015,9 @@ function announceDatabaseReady(reason = 'unknown') {
   const normalizedReason = typeof reason === 'string' && reason.trim() ? reason.trim() : 'unknown';
   const timestamp = Date.now();
   const db = getDb();
-  const tokenCount = Array.isArray(db?.full_token_data) ? db.full_token_data.length : getCachedTokenCount();
+  const tokenCount = Array.isArray(db?.full_token_data)
+    ? db.full_token_data.length
+    : getCachedTokenCount();
   const remoteReady = Boolean(window.HLSF?.remoteDb?.isReady?.());
   const detail = {
     reason: normalizedReason,
@@ -5768,9 +6067,10 @@ function resolveDbImportConcurrency() {
   if (Number.isFinite(configured) && configured > 0) {
     return Math.max(1, Math.min(8, Math.floor(configured)));
   }
-  const hardware = typeof navigator !== 'undefined'
-    && navigator
-    && typeof navigator.hardwareConcurrency === 'number'
+  const hardware =
+    typeof navigator !== 'undefined' &&
+    navigator &&
+    typeof navigator.hardwareConcurrency === 'number'
       ? navigator.hardwareConcurrency
       : 0;
   if (Number.isFinite(hardware) && hardware > 0) {
@@ -5789,10 +6089,10 @@ function resolveDbImportChunkSize(total, concurrency) {
 
 async function yieldDbImport() {
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    await new Promise(resolve => window.requestIdleCallback(resolve, { timeout: 100 }));
+    await new Promise((resolve) => window.requestIdleCallback(resolve, { timeout: 100 }));
     return;
   }
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function loadDbObject(dbLike, options = {}) {
@@ -5888,17 +6188,29 @@ async function loadDbObject(dbLike, options = {}) {
     const rawPersisted = safeStorageSet(DB_RAW_KEY, rawPayload);
     const indexPersisted = safeStorageSet(DB_INDEX_KEY, indexPayload);
     if (!rawPersisted || !indexPersisted) {
-      logWarning('Local storage quota reached. Database available for this session only — use /export to back up data.');
+      logWarning(
+        'Local storage quota reached. Database available for this session only — use /export to back up data.',
+      );
     }
 
     if (recorder && typeof recorder.schedulePersist === 'function') {
-      try { recorder.schedulePersist(); }
-      catch (err) { console.warn('Remote DB recorder persist scheduling failed:', err); }
+      try {
+        recorder.schedulePersist();
+      } catch (err) {
+        console.warn('Remote DB recorder persist scheduling failed:', err);
+      }
     }
 
-    if (recorder && window.HLSF?.remoteDb && typeof window.HLSF.remoteDb.attachRecorder === 'function') {
-      try { window.HLSF.remoteDb.attachRecorder(recorder); }
-      catch (err) { console.warn('Remote DB attachment failed:', err); }
+    if (
+      recorder &&
+      window.HLSF?.remoteDb &&
+      typeof window.HLSF.remoteDb.attachRecorder === 'function'
+    ) {
+      try {
+        window.HLSF.remoteDb.attachRecorder(recorder);
+      } catch (err) {
+        console.warn('Remote DB attachment failed:', err);
+      }
     }
 
     state.liveGraphMode = false;
@@ -5912,10 +6224,7 @@ async function loadDbObject(dbLike, options = {}) {
 }
 
 function refreshDbReference(recordLike, options = {}) {
-  const {
-    deferReload = false,
-    persist = true,
-  } = options || {};
+  const { deferReload = false, persist = true } = options || {};
   const normalized = normalizeRecord(recordLike);
   if (!normalized) return;
 
@@ -5949,7 +6258,7 @@ function refreshDbReference(recordLike, options = {}) {
   }
 
   const entries = db.full_token_data;
-  const idx = entries.findIndex(rec => rec && rec.token === normalized.token);
+  const idx = entries.findIndex((rec) => rec && rec.token === normalized.token);
   let storedRecord = null;
   if (idx >= 0) {
     const existing = entries[idx] || {};
@@ -6031,14 +6340,86 @@ function getDb() {
 
 // Symbolic glyphs for complex number representation
 const GLYPH_LIBRARY = [
-  '◉', '◈', '◇', '◆', '◊', '○', '●', '◐', '◑', '◒',
-  '◓', '☉', '⊙', '⊚', '⊛', '⊜', '⊝', '◎', '◍', '◌',
-  '△', '▲', '▽', '▼', '◁', '▷', '◀', '▶', '⬟', '⬠',
-  '⬡', '⬢', '⬣', '⬤', '⬥', '⬦', '⬧', '⬨', '⬩', '⬪',
-  '⬫', '⬬', '⬭', '⬮', '⬯', '⭐', '★', '☆', '✦', '✧',
-  '✶', '✷', '✸', '✹', '✺', '✻', '✼', '✽', '✾', '✿',
-  '❀', '❁', '❂', '❃', '❄', '❅', '❆', '❇', '❈', '❉',
-  '⚙', '⚛', '⚝', '⚞', '⚟', '⚬', '⚭', '⚮', '⚯', '⚰'
+  '◉',
+  '◈',
+  '◇',
+  '◆',
+  '◊',
+  '○',
+  '●',
+  '◐',
+  '◑',
+  '◒',
+  '◓',
+  '☉',
+  '⊙',
+  '⊚',
+  '⊛',
+  '⊜',
+  '⊝',
+  '◎',
+  '◍',
+  '◌',
+  '△',
+  '▲',
+  '▽',
+  '▼',
+  '◁',
+  '▷',
+  '◀',
+  '▶',
+  '⬟',
+  '⬠',
+  '⬡',
+  '⬢',
+  '⬣',
+  '⬤',
+  '⬥',
+  '⬦',
+  '⬧',
+  '⬨',
+  '⬩',
+  '⬪',
+  '⬫',
+  '⬬',
+  '⬭',
+  '⬮',
+  '⬯',
+  '⭐',
+  '★',
+  '☆',
+  '✦',
+  '✧',
+  '✶',
+  '✷',
+  '✸',
+  '✹',
+  '✺',
+  '✻',
+  '✼',
+  '✽',
+  '✾',
+  '✿',
+  '❀',
+  '❁',
+  '❂',
+  '❃',
+  '❄',
+  '❅',
+  '❆',
+  '❇',
+  '❈',
+  '❉',
+  '⚙',
+  '⚛',
+  '⚝',
+  '⚞',
+  '⚟',
+  '⚬',
+  '⚭',
+  '⚮',
+  '⚯',
+  '⚰',
 ];
 
 const HIDDEN_ADJACENCY_RELATION = '⊚';
@@ -6048,17 +6429,65 @@ const DEFAULT_HIDDEN_ADJACENCY_DEPTH = 6;
 const DEFAULT_HIDDEN_ADJACENCY_CAP = 2048;
 
 const RELATIONSHIP_PRIORITIES = new Map([
-  ['≡', 1.0], ['⊃', 1.0], ['⊂', 0.8], ['≈', 0.7], ['∈', 0.9], ['∋', 0.9],
-  ['⊤', 0.9], ['⊥', 0.9], ['⊏', 0.8], ['⊐', 0.8], ['↔', 0.7], ['⇌', 0.7],
-  ['∥', 0.6], ['∼', 0.5], ['→', 0.5], ['⇒', 0.5], ['⇐', 0.5], ['↠', 0.5],
-  ['↗', 0.4], ['↘', 0.4], ['⇝', 1.0], ['⇂', 0.7], ['≠', 0.8], ['⊕', 0.8],
-  ['⊛', 0.7], ['∝', 0.7], ['⇝ Causes', 1.0], ['⇐ Caused By', 0.9],
-  ['∗', 0.7], ['≜', 0.9], ['⋆', 0.8], ['7→', 0.7], ['⊢', 0.9], ['⊣', 0.9],
-  ['↷', 0.8], ['↶', 0.8], ['◦', 0.9], ['|=', 0.9], ['◁', 0.6], ['⇄', 0.6],
-  ['⊗', 0.9], ['÷', 0.7], ['⊘', 0.8], ['×', 0.8], ['¬', 0.8], ['†', 0.8],
-  ['⊠', 0.8], ['/∈', 0.8], ['⊬', 0.8], ['⊩', 0.9], ['⊨', 0.9], ['?', 0.5],
-  ['⚡', 0.7], ['⇒ Attention', 0.7], ['↶ Self-Reference', 0.7], ['∧', 0.6],
-  ['↭', 0.6], ['▷◁', 0.6], [HIDDEN_ADJACENCY_RELATION, 0.6]
+  ['≡', 1.0],
+  ['⊃', 1.0],
+  ['⊂', 0.8],
+  ['≈', 0.7],
+  ['∈', 0.9],
+  ['∋', 0.9],
+  ['⊤', 0.9],
+  ['⊥', 0.9],
+  ['⊏', 0.8],
+  ['⊐', 0.8],
+  ['↔', 0.7],
+  ['⇌', 0.7],
+  ['∥', 0.6],
+  ['∼', 0.5],
+  ['→', 0.5],
+  ['⇒', 0.5],
+  ['⇐', 0.5],
+  ['↠', 0.5],
+  ['↗', 0.4],
+  ['↘', 0.4],
+  ['⇝', 1.0],
+  ['⇂', 0.7],
+  ['≠', 0.8],
+  ['⊕', 0.8],
+  ['⊛', 0.7],
+  ['∝', 0.7],
+  ['⇝ Causes', 1.0],
+  ['⇐ Caused By', 0.9],
+  ['∗', 0.7],
+  ['≜', 0.9],
+  ['⋆', 0.8],
+  ['7→', 0.7],
+  ['⊢', 0.9],
+  ['⊣', 0.9],
+  ['↷', 0.8],
+  ['↶', 0.8],
+  ['◦', 0.9],
+  ['|=', 0.9],
+  ['◁', 0.6],
+  ['⇄', 0.6],
+  ['⊗', 0.9],
+  ['÷', 0.7],
+  ['⊘', 0.8],
+  ['×', 0.8],
+  ['¬', 0.8],
+  ['†', 0.8],
+  ['⊠', 0.8],
+  ['/∈', 0.8],
+  ['⊬', 0.8],
+  ['⊩', 0.9],
+  ['⊨', 0.9],
+  ['?', 0.5],
+  ['⚡', 0.7],
+  ['⇒ Attention', 0.7],
+  ['↶ Self-Reference', 0.7],
+  ['∧', 0.6],
+  ['↭', 0.6],
+  ['▷◁', 0.6],
+  [HIDDEN_ADJACENCY_RELATION, 0.6],
 ]);
 
 // ============================================
@@ -6154,7 +6583,7 @@ function audioExtensionForMime(mime) {
 }
 
 function getMembershipLevel() {
-  return (state?.membership?.level || MEMBERSHIP_LEVELS.DEMO);
+  return state?.membership?.level || MEMBERSHIP_LEVELS.DEMO;
 }
 
 function isDemoUser() {
@@ -6193,8 +6622,8 @@ function trackCommandExecution(command: string, args: string[], source: 'dispatc
 }
 
 const agent = new AgentKernel(loadAgentConfig(), () => makeAgentContext(), {
-  onConfigChange: cfg => persistAgentConfig(cfg),
-  recordEvent: event => recordAgentTelemetryEvent(event),
+  onConfigChange: (cfg) => persistAgentConfig(cfg),
+  recordEvent: (event) => recordAgentTelemetryEvent(event),
 });
 
 if (typeof window !== 'undefined') {
@@ -6214,7 +6643,7 @@ function cssEscape(value) {
   if (window.CSS && typeof window.CSS.escape === 'function') {
     return window.CSS.escape(str);
   }
-  return str.replace(/[^a-zA-Z0-9_\-]/g, ch => `\\${ch}`);
+  return str.replace(/[^a-zA-Z0-9_\-]/g, (ch) => `\\${ch}`);
 }
 
 const ExternalLoaders = (() => {
@@ -6253,18 +6682,20 @@ const ExternalLoaders = (() => {
   async function loadPdfJs() {
     if (window.pdfjsLib) {
       if (window.pdfjsLib.GlobalWorkerOptions) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = window.pdfjsLib.GlobalWorkerOptions.workerSrc
-          || 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc ||
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
       }
       return window.pdfjsLib;
     }
     if (!pdfPromise) {
       pdfPromise = loadScript(
         'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js',
-        () => window.pdfjsLib
-      ).then(lib => {
+        () => window.pdfjsLib,
+      ).then((lib) => {
         if (lib?.GlobalWorkerOptions) {
-          lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
+          lib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js';
         }
         return lib;
       });
@@ -6277,7 +6708,7 @@ const ExternalLoaders = (() => {
     if (!jszipPromise) {
       jszipPromise = loadScript(
         'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
-        () => window.JSZip
+        () => window.JSZip,
       );
     }
     return jszipPromise;
@@ -6296,7 +6727,7 @@ const DocumentReaders = (() => {
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const content = await page.getTextContent();
-      const pageText = content.items.map(item => item.str).join(' ');
+      const pageText = content.items.map((item) => item.str).join(' ');
       text += pageText + '\n';
     }
     return text;
@@ -6313,7 +6744,7 @@ const DocumentReaders = (() => {
     const parser = new DOMParser();
     const doc = parser.parseFromString(xml, 'application/xml');
     const nodes = Array.from(doc.getElementsByTagName('w:t'));
-    return nodes.map(node => node.textContent || '').join(' ');
+    return nodes.map((node) => node.textContent || '').join(' ');
   }
 
   async function extractDocBinary(file) {
@@ -6341,10 +6772,11 @@ const DocumentReaders = (() => {
   }
 
   async function preload(options = {}) {
-    const config = (options && typeof options === 'object') ? options : {};
-    const formats = Array.isArray(config.formats) && config.formats.length
-      ? new Set(config.formats.map(f => String(f).toLowerCase()))
-      : null;
+    const config = options && typeof options === 'object' ? options : {};
+    const formats =
+      Array.isArray(config.formats) && config.formats.length
+        ? new Set(config.formats.map((f) => String(f).toLowerCase()))
+        : null;
     const silent = config.silent === true;
 
     const shouldInclude = (format) => !formats || formats.has(format);
@@ -6353,22 +6785,22 @@ const DocumentReaders = (() => {
     if (shouldInclude('pdf')) {
       tasks.push(
         ExternalLoaders.loadPdfJs()
-          .then(lib => Boolean(lib))
-          .catch(err => {
+          .then((lib) => Boolean(lib))
+          .catch((err) => {
             if (!silent) console.warn('PDF preloader failed:', err);
             return false;
-          })
+          }),
       );
     }
 
     if (shouldInclude('docx')) {
       tasks.push(
         ExternalLoaders.loadJsZip()
-          .then(lib => Boolean(lib))
-          .catch(err => {
+          .then((lib) => Boolean(lib))
+          .catch((err) => {
             if (!silent) console.warn('DOCX preloader failed:', err);
             return false;
-          })
+          }),
       );
     }
 
@@ -6438,7 +6870,9 @@ function safeStorageSet(key, value) {
   const fallbackToMemory = (err = null) => {
     memoryStorageFallback.set(key, value);
     if (!storageQuotaWarningIssued) {
-      logWarning('Browser storage quota exceeded. Falling back to in-memory storage for this session.');
+      logWarning(
+        'Browser storage quota exceeded. Falling back to in-memory storage for this session.',
+      );
       storageQuotaWarningIssued = true;
     }
     if (err) {
@@ -6521,7 +6955,9 @@ function safeStorageKeys(prefix = '') {
   }
 
   const combined = new Set();
-  keys.forEach(key => { if (key.startsWith(prefix)) combined.add(key); });
+  keys.forEach((key) => {
+    if (key.startsWith(prefix)) combined.add(key);
+  });
   memoryStorageFallback.forEach((_, key) => {
     if (key.startsWith(prefix)) combined.add(key);
   });
@@ -6631,24 +7067,28 @@ const LessonStore = (() => {
           for (const entry of parsed) {
             if (!entry || typeof entry.key !== 'string' || !entry.key) continue;
             const { key, ...rest } = entry;
-            const original = typeof rest.originalResponse === 'string' && rest.originalResponse.trim()
-              ? rest.originalResponse
-              : typeof rest.reflection === 'string'
-                ? rest.reflection
+            const original =
+              typeof rest.originalResponse === 'string' && rest.originalResponse.trim()
+                ? rest.originalResponse
+                : typeof rest.reflection === 'string'
+                  ? rest.reflection
+                  : '';
+            const local =
+              typeof rest.localOutput === 'string' && rest.localOutput.trim()
+                ? rest.localOutput
+                : typeof rest.thoughtStream === 'string'
+                  ? rest.thoughtStream
+                  : '';
+            const refined =
+              typeof rest.refinedOutput === 'string' && rest.refinedOutput.trim()
+                ? rest.refinedOutput
+                : typeof rest.refinedResponse === 'string'
+                  ? rest.refinedResponse
+                  : '';
+            const grammar =
+              typeof rest.grammarOutput === 'string' && rest.grammarOutput.trim()
+                ? rest.grammarOutput
                 : '';
-            const local = typeof rest.localOutput === 'string' && rest.localOutput.trim()
-              ? rest.localOutput
-              : typeof rest.thoughtStream === 'string'
-                ? rest.thoughtStream
-                : '';
-            const refined = typeof rest.refinedOutput === 'string' && rest.refinedOutput.trim()
-              ? rest.refinedOutput
-              : typeof rest.refinedResponse === 'string'
-                ? rest.refinedResponse
-                : '';
-            const grammar = typeof rest.grammarOutput === 'string' && rest.grammarOutput.trim()
-              ? rest.grammarOutput
-              : '';
             map.set(key, {
               tokens: Array.isArray(rest.tokens) ? rest.tokens : [],
               originalResponse: original,
@@ -6671,24 +7111,28 @@ const LessonStore = (() => {
     if (!(map instanceof Map)) return;
     const payload = [];
     for (const [key, value] of map.entries()) {
-      const original = typeof value?.originalResponse === 'string' && value.originalResponse.trim()
-        ? value.originalResponse
-        : typeof value?.reflection === 'string'
-          ? value.reflection
+      const original =
+        typeof value?.originalResponse === 'string' && value.originalResponse.trim()
+          ? value.originalResponse
+          : typeof value?.reflection === 'string'
+            ? value.reflection
+            : '';
+      const local =
+        typeof value?.localOutput === 'string' && value.localOutput.trim()
+          ? value.localOutput
+          : typeof value?.thoughtStream === 'string'
+            ? value.thoughtStream
+            : '';
+      const refined =
+        typeof value?.refinedOutput === 'string' && value.refinedOutput.trim()
+          ? value.refinedOutput
+          : typeof value?.refinedResponse === 'string'
+            ? value.refinedResponse
+            : '';
+      const grammar =
+        typeof value?.grammarOutput === 'string' && value.grammarOutput.trim()
+          ? value.grammarOutput
           : '';
-      const local = typeof value?.localOutput === 'string' && value.localOutput.trim()
-        ? value.localOutput
-        : typeof value?.thoughtStream === 'string'
-          ? value.thoughtStream
-          : '';
-      const refined = typeof value?.refinedOutput === 'string' && value.refinedOutput.trim()
-        ? value.refinedOutput
-        : typeof value?.refinedResponse === 'string'
-          ? value.refinedResponse
-          : '';
-      const grammar = typeof value?.grammarOutput === 'string' && value.grammarOutput.trim()
-        ? value.grammarOutput
-        : '';
       payload.push({
         key,
         tokens: Array.isArray(value?.tokens) ? value.tokens : [],
@@ -6733,38 +7177,38 @@ const LessonStore = (() => {
     };
 
     const next = {
-      tokens: Array.isArray(existingEntry.tokens) && existingEntry.tokens.length
-        ? existingEntry.tokens
-        : tokens.slice(0, 160),
+      tokens:
+        Array.isArray(existingEntry.tokens) && existingEntry.tokens.length
+          ? existingEntry.tokens
+          : tokens.slice(0, 160),
       originalResponse: prefer(
         lesson.originalResponse,
         lesson.reflection,
         existingEntry.originalResponse,
-        existingEntry.reflection
+        existingEntry.reflection,
       ),
       localOutput: prefer(
         lesson.localOutput,
         lesson.thoughtStream,
         existingEntry.localOutput,
-        existingEntry.thoughtStream
+        existingEntry.thoughtStream,
       ),
       refinedOutput: prefer(
         lesson.refinedOutput,
         lesson.refinedResponse,
         existingEntry.refinedOutput,
-        existingEntry.refinedResponse
+        existingEntry.refinedResponse,
       ),
-      grammarOutput: prefer(
-        lesson.grammarOutput,
-        existingEntry.grammarOutput
-      ),
+      grammarOutput: prefer(lesson.grammarOutput, existingEntry.grammarOutput),
       updatedAt: Date.now(),
     };
 
     map.set(key, next);
 
     if (map.size > MAX_ENTRIES) {
-      const ordered = Array.from(map.entries()).sort((a, b) => (a[1]?.updatedAt || 0) - (b[1]?.updatedAt || 0));
+      const ordered = Array.from(map.entries()).sort(
+        (a, b) => (a[1]?.updatedAt || 0) - (b[1]?.updatedAt || 0),
+      );
       while (ordered.length > MAX_ENTRIES) {
         const [removeKey] = ordered.shift() || [];
         if (removeKey) map.delete(removeKey);
@@ -6790,12 +7234,10 @@ const CoherenceStore = (() => {
     if (!Number.isFinite(score) || !Number.isFinite(tokenCount)) {
       return null;
     }
-    const trimmedLocal = typeof entry.localResponse === 'string'
-      ? entry.localResponse.slice(0, 4000)
-      : '';
-    const trimmedCoherent = typeof entry.coherentResponse === 'string'
-      ? entry.coherentResponse.slice(0, 4000)
-      : '';
+    const trimmedLocal =
+      typeof entry.localResponse === 'string' ? entry.localResponse.slice(0, 4000) : '';
+    const trimmedCoherent =
+      typeof entry.coherentResponse === 'string' ? entry.coherentResponse.slice(0, 4000) : '';
     return {
       timestamp: Number.isFinite(entry.timestamp) ? entry.timestamp : Date.now(),
       chunkLabel: typeof entry.chunkLabel === 'string' ? entry.chunkLabel : '',
@@ -6812,11 +7254,15 @@ const CoherenceStore = (() => {
     const raw = safeStorageGet(STORAGE_KEY, []);
     const parsed = Array.isArray(raw)
       ? raw
-      : (typeof raw === 'string'
+      : typeof raw === 'string'
         ? (() => {
-          try { return JSON.parse(raw); } catch { return []; }
-        })()
-        : []);
+            try {
+              return JSON.parse(raw);
+            } catch {
+              return [];
+            }
+          })()
+        : [];
     const records = [];
     for (const entry of parsed) {
       const sanitized = sanitizeRecord(entry);
@@ -6846,7 +7292,13 @@ const CoherenceStore = (() => {
   function summarize(target = 0.99) {
     const records = load();
     if (!records.length) {
-      return { total: 0, targetCount: 0, averageTokens: 0, targetAverageTokens: 0, averageScore: 0 };
+      return {
+        total: 0,
+        targetCount: 0,
+        averageTokens: 0,
+        targetAverageTokens: 0,
+        averageScore: 0,
+      };
     }
     let totalTokens = 0;
     let totalCount = 0;
@@ -6932,7 +7384,7 @@ function normalizeCoherenceEvaluation(payload) {
     'refined_response',
     'refinedResponse',
     'rewrite',
-    'response'
+    'response',
   );
   if (response != null && normalized.coherent_response == null) {
     normalized.coherent_response = response;
@@ -6944,7 +7396,7 @@ function normalizeCoherenceEvaluation(payload) {
     'explanation',
     'rationale',
     'analysis',
-    'notes'
+    'notes',
   );
   if (explanation != null && normalized.explanation == null) {
     normalized.explanation = explanation;
@@ -6966,13 +7418,16 @@ function parseCoherenceEvaluation(raw) {
     if (typeof value === 'object' && !Array.isArray(value)) return value;
     try {
       const parsed = JSON.parse(value);
-      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
     } catch {
       return null;
     }
   };
 
-  const cleaned = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+  const cleaned = text
+    .replace(/```json\s*/gi, '')
+    .replace(/```/g, '')
+    .trim();
   let parsed = tryParse(cleaned);
   if (parsed) return normalizeCoherenceEvaluation(parsed) || parsed;
 
@@ -6998,7 +7453,6 @@ function parseCoherenceEvaluation(raw) {
   return null;
 }
 
-
 function isValidApiKey(key) {
   if (typeof key !== 'string') return false;
   const trimmed = key.trim();
@@ -7012,10 +7466,11 @@ function tokenize(text) {
   const normalized = String(text);
 
   if (!SETTINGS.tokenizeSymbols) {
-    return normalized.trim()
+    return normalized
+      .trim()
       .split(/[^\p{L}\p{N}\-']+/u)
       .filter(Boolean)
-      .map(t => t.toLowerCase());
+      .map((t) => t.toLowerCase());
   }
 
   const tokens = tokenizeWithSymbols(normalized);
@@ -7030,10 +7485,11 @@ function tokenize(text) {
   }
 
   if (words.length === 0) {
-    return normalized.trim()
+    return normalized
+      .trim()
       .split(/[^\p{L}\p{N}\-']+/u)
       .filter(Boolean)
-      .map(t => t.toLowerCase());
+      .map((t) => t.toLowerCase());
   }
 
   return words;
@@ -7049,7 +7505,7 @@ function recordSymbolMetrics(label, pipelineResult, baseTokenCount = 0) {
     baseTokenCount,
     ...pipelineResult.metrics,
     deltaTokens: pipelineResult.metrics.tokenCount - baseTokenCount,
-    topTokens: pipelineResult.top.map(node => node.token).filter(Boolean),
+    topTokens: pipelineResult.top.map((node) => node.token).filter(Boolean),
   };
   bucket.last = entry;
   bucket.lastRunGraph = pipelineResult.graph;
@@ -7109,11 +7565,12 @@ function recordLocalPromptMemory(
   const seenAdjacency = new Set<string>();
   for (const target of Array.isArray(adjacencyTargets) ? adjacencyTargets : []) {
     if (!target) continue;
-    const raw = typeof target === 'string'
-      ? target
-      : typeof target === 'object'
-        ? String(target.token || target.normalized || '')
-        : '';
+    const raw =
+      typeof target === 'string'
+        ? target
+        : typeof target === 'object'
+          ? String(target.token || target.normalized || '')
+          : '';
     const value = raw.trim();
     if (!value) continue;
     const key = value.toLowerCase();
@@ -7145,12 +7602,12 @@ function summarizeAdjacencyMapForLocal(
 ): LocalHlsfAdjacencyTokenSummary[] {
   if (!(adjacencyMap instanceof Map)) return [];
 
-  const limit = Number.isFinite(options.limit) && options.limit
-    ? Math.max(1, Math.floor(options.limit))
-    : 20;
-  const edgesPerToken = Number.isFinite(options.edgesPerToken) && options.edgesPerToken
-    ? Math.max(1, Math.floor(options.edgesPerToken))
-    : 6;
+  const limit =
+    Number.isFinite(options.limit) && options.limit ? Math.max(1, Math.floor(options.limit)) : 20;
+  const edgesPerToken =
+    Number.isFinite(options.edgesPerToken) && options.edgesPerToken
+      ? Math.max(1, Math.floor(options.edgesPerToken))
+      : 6;
   const minEdgeWeight = resolveLocalMemoryEdgeWeightFloor();
 
   const candidates: Array<{
@@ -7169,15 +7626,17 @@ function summarizeAdjacencyMapForLocal(
       minEdgeWeight,
     );
     const attention = Number(limited.attention_score) || 0;
-    const token = typeof limited.token === 'string' && limited.token.trim()
-      ? limited.token.trim()
-      : (typeof tokenKey === 'string' ? String(tokenKey).trim() : '');
+    const token =
+      typeof limited.token === 'string' && limited.token.trim()
+        ? limited.token.trim()
+        : typeof tokenKey === 'string'
+          ? String(tokenKey).trim()
+          : '';
     if (!token) continue;
     const hasRelationships = Object.keys(relationships).length > 0;
     if (!hasRelationships && attention <= 0) continue;
-    const totalRelationships = totalEdges > 0
-      ? totalEdges
-      : (Number(limited.total_relationships) || 0);
+    const totalRelationships =
+      totalEdges > 0 ? totalEdges : Number(limited.total_relationships) || 0;
     candidates.push({
       token,
       relationships,
@@ -7353,7 +7812,7 @@ function splitIntoSentences(text) {
   if (!normalized) return [];
   const matches = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g);
   if (!matches) return [normalized];
-  return matches.map(sentence => sentence.trim()).filter(Boolean);
+  return matches.map((sentence) => sentence.trim()).filter(Boolean);
 }
 
 function estimateTokensForText(text) {
@@ -7385,13 +7844,14 @@ function getModelPricing(model) {
 
 function estimateCostUsd(promptTokens = 0, completionTokens = 0, model = CONFIG.DEFAULT_MODEL) {
   const pricing = getModelPricing(model);
-  return ((promptTokens * pricing.inputPerMillion) + (completionTokens * pricing.outputPerMillion)) / 1_000_000;
+  return (
+    (promptTokens * pricing.inputPerMillion + completionTokens * pricing.outputPerMillion) /
+    1_000_000
+  );
 }
 
 const Session = (() => {
-  const existing = window.Session && typeof window.Session === 'object'
-    ? window.Session
-    : {};
+  const existing = window.Session && typeof window.Session === 'object' ? window.Session : {};
   const session = Object.assign({ tokens: new Set(), prompts: [] }, existing);
   if (!(session.tokens instanceof Set)) {
     const seedTokens = Array.isArray(session.tokens) ? session.tokens : [];
@@ -7412,9 +7872,7 @@ function addConversationTokens(arr) {
 
 function normalizeTokenList(input) {
   if (!input) return [];
-  const array = Array.isArray(input)
-    ? input
-    : String(input).split(/\s+/);
+  const array = Array.isArray(input) ? input : String(input).split(/\s+/);
   const out = [];
   const seen = new Set();
   for (const raw of array) {
@@ -7458,7 +7916,7 @@ function pruneInactiveTokens() {
       state.tokenSources.delete(token);
     }
   }
-  state.tokenOrder = state.tokenOrder.filter(token => state.tokenSources.has(token));
+  state.tokenOrder = state.tokenOrder.filter((token) => state.tokenSources.has(token));
 }
 
 function resolveLiveGraphTokenCap() {
@@ -7484,9 +7942,10 @@ function resolveLiveGraphEdgeWeightFloor() {
 function resolveLocalMemoryEdgeWeightFloor() {
   if (typeof window !== 'undefined') {
     const config = window?.HLSF?.config || {};
-    const raw = config.localMemoryEdgeWeightMin != null
-      ? Number(config.localMemoryEdgeWeightMin)
-      : Number(config.liveEdgeWeightMin);
+    const raw =
+      config.localMemoryEdgeWeightMin != null
+        ? Number(config.localMemoryEdgeWeightMin)
+        : Number(config.liveEdgeWeightMin);
     if (Number.isFinite(raw) && raw >= 0) {
       return Math.max(0, raw);
     }
@@ -7505,9 +7964,10 @@ function pruneRelationshipEdgesByWeight(relationships, minWeight = 0) {
     if (Number.isFinite(numeric) && numeric >= 0) return numeric;
     return 0.18;
   })();
-  const threshold = Number.isFinite(minWeight) && minWeight > 0
-    ? Math.max(minWeight, configuredThreshold)
-    : configuredThreshold;
+  const threshold =
+    Number.isFinite(minWeight) && minWeight > 0
+      ? Math.max(minWeight, configuredThreshold)
+      : configuredThreshold;
 
   if (!relationships || typeof relationships !== 'object') {
     return { relationships: result, totalWeight, totalEdges };
@@ -7537,11 +7997,18 @@ function pruneRelationshipEdgesByWeight(relationships, minWeight = 0) {
 
 function pruneLiveGraphNodes(nodes, edges, options = {}) {
   if (!(nodes instanceof Map)) {
-    return { edges: Array.isArray(edges) ? edges.filter(edge => edge && typeof edge === 'object') : [], removedTokens: [] };
+    return {
+      edges: Array.isArray(edges) ? edges.filter((edge) => edge && typeof edge === 'object') : [],
+      removedTokens: [],
+    };
   }
 
-  const minWeight = Number.isFinite(options.minWeight) ? Math.max(0, options.minWeight) : resolveLiveGraphEdgeWeightFloor();
-  const maxTokens = Number.isFinite(options.maxTokens) ? Math.max(1, Math.floor(options.maxTokens)) : resolveLiveGraphTokenCap();
+  const minWeight = Number.isFinite(options.minWeight)
+    ? Math.max(0, options.minWeight)
+    : resolveLiveGraphEdgeWeightFloor();
+  const maxTokens = Number.isFinite(options.maxTokens)
+    ? Math.max(1, Math.floor(options.maxTokens))
+    : resolveLiveGraphTokenCap();
 
   const weightMap = new Map();
   for (const token of nodes.keys()) {
@@ -7591,7 +8058,7 @@ function pruneLiveGraphNodes(nodes, edges, options = {}) {
 
   let remaining = nodes.size - removalSet.size;
   if (maxTokens > 0 && remaining > maxTokens) {
-    const candidates = orderedTokens.filter(token => !removalSet.has(token));
+    const candidates = orderedTokens.filter((token) => !removalSet.has(token));
     candidates.sort((a, b) => {
       const weightA = weightMap.get(a) || 0;
       const weightB = weightMap.get(b) || 0;
@@ -7616,7 +8083,7 @@ function pruneLiveGraphNodes(nodes, edges, options = {}) {
     }
   }
 
-  const finalEdges = filteredEdges.filter(edge => nodes.has(edge.from) && nodes.has(edge.to));
+  const finalEdges = filteredEdges.filter((edge) => nodes.has(edge.from) && nodes.has(edge.to));
 
   for (const node of nodes.values()) {
     node.degree = 0;
@@ -7632,7 +8099,7 @@ function pruneLiveGraphNodes(nodes, edges, options = {}) {
     for (const token of removalSet) {
       state.tokenSources.delete(token);
     }
-    state.tokenOrder = state.tokenOrder.filter(token => state.tokenSources.has(token));
+    state.tokenOrder = state.tokenOrder.filter((token) => state.tokenSources.has(token));
   }
 
   return { edges: finalEdges, removedTokens: Array.from(removalSet) };
@@ -7705,7 +8172,10 @@ function schedulePreviewTokenPreload(tokens) {
   previewPreloadTimer = setTimeout(async () => {
     previewPreloadTimer = null;
     try {
-      if (window.HLSF?.remoteDb?.isReady?.() && typeof window.HLSF.remoteDb.preloadTokens === 'function') {
+      if (
+        window.HLSF?.remoteDb?.isReady?.() &&
+        typeof window.HLSF.remoteDb.preloadTokens === 'function'
+      ) {
         await window.HLSF.remoteDb.preloadTokens(normalized);
       }
     } catch (err) {
@@ -7729,9 +8199,12 @@ function integrateCommittedTokens(tokens, options = {}) {
   const opts = typeof options === 'object' && options !== null ? options : {};
   const render = opts.render === true;
   const immediate = opts.immediate === true;
-  const reason = typeof opts.reason === 'string' && opts.reason.trim()
-    ? opts.reason.trim()
-    : (opts.source === 'voice' ? 'prompt-voice' : 'prompt-preload');
+  const reason =
+    typeof opts.reason === 'string' && opts.reason.trim()
+      ? opts.reason.trim()
+      : opts.source === 'voice'
+        ? 'prompt-voice'
+        : 'prompt-preload';
 
   if (render) {
     queueLiveGraphUpdate(immediate ? 32 : 96);
@@ -7740,10 +8213,12 @@ function integrateCommittedTokens(tokens, options = {}) {
   if (typeof window === 'undefined') return;
 
   const remote = window?.HLSF?.remoteDb;
-  if (!remote
-    || typeof remote.isReady !== 'function'
-    || !remote.isReady()
-    || typeof remote.preloadTokens !== 'function') {
+  if (
+    !remote ||
+    typeof remote.isReady !== 'function' ||
+    !remote.isReady() ||
+    typeof remote.preloadTokens !== 'function'
+  ) {
     return;
   }
 
@@ -7751,7 +8226,7 @@ function integrateCommittedTokens(tokens, options = {}) {
     const preloadResult = remote.preloadTokens(normalized);
     if (!preloadResult || typeof preloadResult.then !== 'function') return;
     preloadResult
-      .then(stats => {
+      .then((stats) => {
         const loaded = Number(stats?.loaded) || 0;
         const hits = Number(stats?.hits) || 0;
         if (loaded + hits > 0) {
@@ -7760,7 +8235,7 @@ function integrateCommittedTokens(tokens, options = {}) {
           queueLiveGraphUpdate(immediate ? 32 : 120);
         }
       })
-      .catch(err => {
+      .catch((err) => {
         console.warn('Remote adjacency preload failed for committed tokens:', err);
       });
   } catch (err) {
@@ -7943,8 +8418,11 @@ function getCachedTokenCount() {
 
   let index = safeStorageGet(DB_INDEX_KEY, []);
   if (typeof index === 'string') {
-    try { index = JSON.parse(index); }
-    catch { index = []; }
+    try {
+      index = JSON.parse(index);
+    } catch {
+      index = [];
+    }
   }
   if (Array.isArray(index) && index.length) {
     return index.length;
@@ -7971,8 +8449,11 @@ function getCachedTokenCount() {
 function listCachedTokens(limit = CONFIG.CACHE_SEED_LIMIT || 0) {
   let index = safeStorageGet(DB_INDEX_KEY, []);
   if (typeof index === 'string') {
-    try { index = JSON.parse(index); }
-    catch { index = []; }
+    try {
+      index = JSON.parse(index);
+    } catch {
+      index = [];
+    }
   }
 
   const tokens = [];
@@ -8067,7 +8548,12 @@ function scheduleHlsfReload(reason = 'cache-update', options = {}) {
         return;
       }
 
-      if (last && last.metricScope !== METRIC_SCOPE.DB && Array.isArray(last.anchors) && last.anchors.length) {
+      if (
+        last &&
+        last.metricScope !== METRIC_SCOPE.DB &&
+        Array.isArray(last.anchors) &&
+        last.anchors.length
+      ) {
         task = rebuildHlsfFromLastCommand(true);
       } else if (last) {
         const args = typeof last.rawArgs === 'string' ? last.rawArgs : '';
@@ -8091,7 +8577,7 @@ function scheduleHlsfReload(reason = 'cache-update', options = {}) {
       }
 
       hlsfReloadInFlight = true;
-      task.then(finalize).catch(err => {
+      task.then(finalize).catch((err) => {
         console.warn('Auto HLSF reload failed:', err);
         finalize();
       });
@@ -8120,7 +8606,8 @@ function shouldForceHlsfReload(reason) {
   if (label.includes('mental-state')) return true;
   if (label.includes('database') || label.includes('db')) return true;
   if (label.includes('document')) return true;
-  if (label === 'cache-update' || label === 'manual-cache' || label === 'hidden-token-sweep') return true;
+  if (label === 'cache-update' || label === 'manual-cache' || label === 'hidden-token-sweep')
+    return true;
   return false;
 }
 
@@ -8164,7 +8651,7 @@ function tokenToComplexNumber(token, tokenData) {
   // Generate phase from token's semantic properties
   let phaseHash = 0;
   for (let i = 0; i < token.length; i++) {
-    phaseHash = ((phaseHash << 5) - phaseHash) + token.charCodeAt(i);
+    phaseHash = (phaseHash << 5) - phaseHash + token.charCodeAt(i);
     phaseHash = phaseHash & phaseHash;
   }
 
@@ -8219,9 +8706,9 @@ function generateGlyphLedger() {
           real: complex.real.toFixed(4),
           imaginary: complex.imaginary.toFixed(4),
           magnitude: complex.magnitude.toFixed(4),
-          phase: complex.phase.toFixed(4)
+          phase: complex.phase.toFixed(4),
         },
-        attention_score: tokenData.attention_score || 0
+        attention_score: tokenData.attention_score || 0,
       });
 
       // Track consolidation - multiple tokens per glyph
@@ -8266,8 +8753,8 @@ function encodeMessage(message, ledger) {
 
   return {
     encoded: encoded.join(''),
-    coverage: ((tokens.length - unknown.length) / tokens.length * 100).toFixed(1),
-    unknown
+    coverage: (((tokens.length - unknown.length) / tokens.length) * 100).toFixed(1),
+    unknown,
   };
 }
 
@@ -8296,26 +8783,26 @@ function exportGlyphLedger() {
 
   const exportData = {
     export_timestamp: new Date().toISOString(),
-    ledger_version: "1.0",
-    description: "HLSF Symbolic Glyph Encryption Ledger - Complex Number Token Encoding",
+    ledger_version: '1.0',
+    description: 'HLSF Symbolic Glyph Encryption Ledger - Complex Number Token Encoding',
     specification: {
-      encoding: "Complex numbers (magnitude=attention, phase=semantic_hash)",
+      encoding: 'Complex numbers (magnitude=attention, phase=semantic_hash)',
       glyph_library_size: GLYPH_LIBRARY.length,
-      representation: "Unicode symbolic glyphs",
-      consolidation: "Similar tokens map to same glyph based on complex number proximity"
+      representation: 'Unicode symbolic glyphs',
+      consolidation: 'Similar tokens map to same glyph based on complex number proximity',
     },
     statistics: {
       total_tokens: ledger.size,
       unique_glyphs: reverseMap.size,
       consolidation_ratio: (ledger.size / reverseMap.size).toFixed(2),
-      consolidated_groups: consolidated.length
+      consolidated_groups: consolidated.length,
     },
     glyph_ledger: Object.fromEntries(ledger),
     reverse_mapping: Object.fromEntries(
-      Array.from(reverseMap.entries()).map(([glyph, tokens]) => [glyph, tokens])
+      Array.from(reverseMap.entries()).map(([glyph, tokens]) => [glyph, tokens]),
     ),
     consolidated_tokens: consolidated,
-    encryption_examples: generateEncryptionExamples(ledger, reverseMap)
+    encryption_examples: generateEncryptionExamples(ledger, reverseMap),
   };
 
   const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
@@ -8345,19 +8832,15 @@ window.GlyphSystem.export = function exportLedgerSnapshot() {
 };
 
 function generateEncryptionExamples(ledger, reverseMap) {
-  const examples = [
-    "hello world",
-    "consciousness",
-    "quantum entanglement"
-  ];
+  const examples = ['hello world', 'consciousness', 'quantum entanglement'];
 
-  return examples.map(msg => {
+  return examples.map((msg) => {
     const result = encodeMessage(msg, ledger);
     return {
       plaintext: msg,
       encoded: result.encoded,
       coverage: result.coverage + '%',
-      decoded: decodeMessage(result.encoded, reverseMap)
+      decoded: decodeMessage(result.encoded, reverseMap),
     };
   });
 }
@@ -8368,18 +8851,18 @@ function showGlyphLedger() {
 
   // Show sample encoded messages
   const sampleMessages = [
-    "What is consciousness?",
-    "Explain quantum mechanics",
-    "The nature of reality"
+    'What is consciousness?',
+    'Explain quantum mechanics',
+    'The nature of reality',
   ];
 
-  const encodedSamples = sampleMessages.map(msg => {
+  const encodedSamples = sampleMessages.map((msg) => {
     const result = encodeMessage(msg, ledger);
     return {
       original: msg,
       encoded: result.encoded,
       coverage: result.coverage,
-      decoded: decodeMessage(result.encoded, reverseMap)
+      decoded: decodeMessage(result.encoded, reverseMap),
     };
   });
 
@@ -8400,20 +8883,26 @@ function showGlyphLedger() {
       • Total tokens: <strong>${ledger.size}</strong><br>
       • Unique glyphs: <strong>${reverseMap.size}</strong><br>
       • Consolidation ratio: <strong>${(ledger.size / reverseMap.size).toFixed(2)}:1</strong><br>
-      • Efficiency gain: <strong>${(100 - (reverseMap.size / ledger.size * 100)).toFixed(1)}%</strong>
+      • Efficiency gain: <strong>${(100 - (reverseMap.size / ledger.size) * 100).toFixed(1)}%</strong>
     </div>
 
     <div class="adjacency-insight">
       <strong>🔄 Token Consolidation (Similar tokens → Same glyph):</strong><br>
-      ${consolidated.slice(0, 5).map(c => 
-        `• <span style="font-size: 1.5em;">${c.glyph}</span> → ${c.tokens.slice(0, 3).join(', ')}${c.tokens.length > 3 ? '...' : ''} (${c.count} tokens)`
-      ).join('<br>')}
+      ${consolidated
+        .slice(0, 5)
+        .map(
+          (c) =>
+            `• <span style="font-size: 1.5em;">${c.glyph}</span> → ${c.tokens.slice(0, 3).join(', ')}${c.tokens.length > 3 ? '...' : ''} (${c.count} tokens)`,
+        )
+        .join('<br>')}
       ${consolidated.length === 0 ? '<em>No consolidation yet - need more diverse tokens</em>' : ''}
     </div>
 
     <div class="adjacency-insight">
       <strong>🔐 Encrypted Message Examples:</strong><br>
-      ${encodedSamples.map(s => `
+      ${encodedSamples
+        .map(
+          (s) => `
         <div style="margin: 0.75rem 0; padding: 0.5rem; background: rgba(0,0,0,0.3); border-radius: 6px;">
           <div style="opacity: 0.7; font-size: 0.85em;">Original:</div>
           <div style="margin: 0.25rem 0;">${s.original}</div>
@@ -8422,14 +8911,17 @@ function showGlyphLedger() {
           <div style="opacity: 0.7; font-size: 0.85em; margin-top: 0.5rem;">Decoded:</div>
           <div style="margin: 0.25rem 0;">${s.decoded}</div>
         </div>
-      `).join('')}
+      `,
+        )
+        .join('')}
     </div>
 
     <details>
       <summary>📖 View full glyph mapping (first 20 tokens)</summary>
       <pre>${JSON.stringify(
         Object.fromEntries(Array.from(ledger.entries()).slice(0, 20)),
-        null, 2
+        null,
+        2,
       )}</pre>
     </details>
 
@@ -8446,7 +8938,7 @@ function showGlyphLedger() {
 // ============================================
 function batchLogUpdates(entries) {
   const fragment = document.createDocumentFragment();
-  entries.forEach(entry => fragment.appendChild(entry));
+  entries.forEach((entry) => fragment.appendChild(entry));
   elements.log.appendChild(fragment);
   elements.log.scrollTop = elements.log.scrollHeight;
 }
@@ -8462,9 +8954,11 @@ let activeTtsButton: HTMLButtonElement | null = null;
 let activeTtsUtterance: SpeechSynthesisUtterance | null = null;
 
 function canUseSpeechSynthesis() {
-  return typeof window !== 'undefined'
-    && typeof window.speechSynthesis !== 'undefined'
-    && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.speechSynthesis !== 'undefined' &&
+    typeof window.SpeechSynthesisUtterance !== 'undefined'
+  );
 }
 
 function stopActiveSpeech() {
@@ -8573,7 +9067,7 @@ function attachTtsButtons(entry) {
   titles.forEach((titleEl) => {
     const titleText = (titleEl.textContent || '').trim();
     if (!titleText) return;
-    const config = LOG_TTS_SECTION_TARGETS.find(target => target.match.test(titleText));
+    const config = LOG_TTS_SECTION_TARGETS.find((target) => target.match.test(titleText));
     if (!config) return;
     if (titleEl.querySelector('.tts-button')) return;
     const target = findSectionNarrationTarget(titleEl, config.selector);
@@ -8614,16 +9108,26 @@ function agentLogError(message: string) {
 }
 
 function logStatus(msg) {
-  return appendLog(`<div class="processing-indicator"><span class="spinner"></span>${sanitize(msg)}</div>`, 'status');
+  return appendLog(
+    `<div class="processing-indicator"><span class="spinner"></span>${sanitize(msg)}</div>`,
+    'status',
+  );
 }
-function logError(msg) { return appendLog(`🔴 ${sanitize(msg)}`, 'error'); }
+function logError(msg) {
+  return appendLog(`🔴 ${sanitize(msg)}`, 'error');
+}
 window.logOK = (msg) => addLog(`✅ ${sanitize(String(msg))}`, 'success');
-function logWarning(msg) { return appendLog(`⚠️ ${sanitize(msg)}`, 'warning'); }
-function logFinal(msg) { return appendLog(`✅ ${sanitize(msg)}`, 'success'); }
+function logWarning(msg) {
+  return appendLog(`⚠️ ${sanitize(msg)}`, 'warning');
+}
+function logFinal(msg) {
+  return appendLog(`✅ ${sanitize(msg)}`, 'success');
+}
 
-const nowMs = () => (typeof performance !== 'undefined' && typeof performance.now === 'function'
-  ? performance.now()
-  : Date.now());
+const nowMs = () =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 
 const RealtimeStatus = (() => {
   const activeStatuses = new Set();
@@ -8662,7 +9166,8 @@ const RealtimeStatus = (() => {
 
   const create = (label: string, options: Record<string, unknown> = {}) => {
     const resolvedLabel = typeof label === 'string' && label.trim() ? label.trim() : 'Processing';
-    const icon = typeof options.icon === 'string' && options.icon.trim() ? options.icon.trim() : '⏳';
+    const icon =
+      typeof options.icon === 'string' && options.icon.trim() ? options.icon.trim() : '⏳';
     const entry = logStatus(`${resolvedLabel}…`);
     const indicator = entry?.querySelector?.('.processing-indicator');
     if (!(indicator instanceof HTMLElement)) {
@@ -8671,8 +9176,12 @@ const RealtimeStatus = (() => {
         update() {},
         render() {},
         complete() {},
-        fail(message?: string) { if (message) logWarning(message); },
-        cancel(message?: string) { if (message) logWarning(message); },
+        fail(message?: string) {
+          if (message) logWarning(message);
+        },
+        cancel(message?: string) {
+          if (message) logWarning(message);
+        },
         isActive: () => false,
       };
     }
@@ -8701,7 +9210,8 @@ const RealtimeStatus = (() => {
 
       let etaMs: number | null = null;
       if (statusState.info.averageMsPerUnit > 0 && statusState.info.pendingWorkUnits > 0) {
-        const activeStart = typeof statusState.info.activeStart === 'number' ? statusState.info.activeStart : null;
+        const activeStart =
+          typeof statusState.info.activeStart === 'number' ? statusState.info.activeStart : null;
         const activeWork = Math.max(0, statusState.info.activeWorkUnits || 0);
         let consumedWork = 0;
         if (activeStart != null && activeWork > 0) {
@@ -8733,15 +9243,21 @@ const RealtimeStatus = (() => {
     const status = {
       element: entry,
       update(info: Record<string, unknown> = {}) {
-        const normalizeNumber = (value: unknown, fallback: number) => (
-          Number.isFinite(value)
-            ? Math.max(0, Number(value))
-            : fallback
-        );
+        const normalizeNumber = (value: unknown, fallback: number) =>
+          Number.isFinite(value) ? Math.max(0, Number(value)) : fallback;
 
-        statusState.info.queueLength = normalizeNumber(info.queueLength, statusState.info.queueLength);
-        statusState.info.pendingWorkUnits = normalizeNumber(info.pendingWorkUnits, statusState.info.pendingWorkUnits);
-        statusState.info.pendingChunks = normalizeNumber(info.pendingChunks, statusState.info.pendingChunks);
+        statusState.info.queueLength = normalizeNumber(
+          info.queueLength,
+          statusState.info.queueLength,
+        );
+        statusState.info.pendingWorkUnits = normalizeNumber(
+          info.pendingWorkUnits,
+          statusState.info.pendingWorkUnits,
+        );
+        statusState.info.pendingChunks = normalizeNumber(
+          info.pendingChunks,
+          statusState.info.pendingChunks,
+        );
         if (Number.isFinite(info.averageMsPerUnit)) {
           statusState.info.averageMsPerUnit = Math.max(0, Number(info.averageMsPerUnit));
         }
@@ -8750,7 +9266,10 @@ const RealtimeStatus = (() => {
         } else if (Number.isFinite(info.activeStart)) {
           statusState.info.activeStart = Number(info.activeStart);
         }
-        statusState.info.activeWorkUnits = normalizeNumber(info.activeWorkUnits, statusState.info.activeWorkUnits);
+        statusState.info.activeWorkUnits = normalizeNumber(
+          info.activeWorkUnits,
+          statusState.info.activeWorkUnits,
+        );
         if (typeof info.extraDetails === 'string' && info.extraDetails.trim()) {
           statusState.info.extraDetails = info.extraDetails.trim();
         }
@@ -8762,35 +9281,48 @@ const RealtimeStatus = (() => {
         statusState.completed = true;
         unregister(status);
         const totalElapsed = Math.max(0, nowMs() - statusState.createdAt);
-        const summary = typeof opts.summary === 'string' && opts.summary.trim()
-          ? opts.summary.trim()
-          : `${statusState.label} complete`;
+        const summary =
+          typeof opts.summary === 'string' && opts.summary.trim()
+            ? opts.summary.trim()
+            : `${statusState.label} complete`;
         statusState.entry.classList.remove('status');
         statusState.entry.classList.add('success');
         statusState.indicator.classList.remove('processing-indicator');
-        statusState.indicator.innerHTML = sanitize(`✅ ${summary} (${formatDuration(totalElapsed)}).`);
+        statusState.indicator.innerHTML = sanitize(
+          `✅ ${summary} (${formatDuration(totalElapsed)}).`,
+        );
       },
       fail(message?: string) {
         if (statusState.completed) return;
         statusState.completed = true;
         unregister(status);
         const totalElapsed = Math.max(0, nowMs() - statusState.createdAt);
-        const summary = message && String(message).trim() ? String(message).trim() : `${statusState.label} failed`;
+        const summary =
+          message && String(message).trim()
+            ? String(message).trim()
+            : `${statusState.label} failed`;
         statusState.entry.classList.remove('status');
         statusState.entry.classList.add('error');
         statusState.indicator.classList.remove('processing-indicator');
-        statusState.indicator.innerHTML = sanitize(`🔴 ${summary} (${formatDuration(totalElapsed)}).`);
+        statusState.indicator.innerHTML = sanitize(
+          `🔴 ${summary} (${formatDuration(totalElapsed)}).`,
+        );
       },
       cancel(message?: string) {
         if (statusState.completed) return;
         statusState.completed = true;
         unregister(status);
         const totalElapsed = Math.max(0, nowMs() - statusState.createdAt);
-        const summary = message && String(message).trim() ? String(message).trim() : `${statusState.label} cancelled`;
+        const summary =
+          message && String(message).trim()
+            ? String(message).trim()
+            : `${statusState.label} cancelled`;
         statusState.entry.classList.remove('status');
         statusState.entry.classList.add('warning');
         statusState.indicator.classList.remove('processing-indicator');
-        statusState.indicator.innerHTML = sanitize(`⚠️ ${summary} (${formatDuration(totalElapsed)}).`);
+        statusState.indicator.innerHTML = sanitize(
+          `⚠️ ${summary} (${formatDuration(totalElapsed)}).`,
+        );
       },
       isActive: () => !statusState.completed,
     };
@@ -8812,7 +9344,7 @@ function debounce(fn, delay) {
 }
 
 async function safeAsync(fn, errorMsg, options = null) {
-  const config = (options && typeof options === 'object') ? options : {};
+  const config = options && typeof options === 'object' ? options : {};
   try {
     return await fn();
   } catch (err) {
@@ -8828,7 +9360,9 @@ async function safeAsync(fn, errorMsg, options = null) {
         console.error(errorMsg, err);
       }
       if (!state.networkErrorNotified) {
-        logWarning('Network connection unavailable. Continuing in offline mode; live synthesis may be limited.');
+        logWarning(
+          'Network connection unavailable. Continuing in offline mode; live synthesis may be limited.',
+        );
         state.networkErrorNotified = true;
       }
       return config.fallbackValue ?? null;
@@ -8876,7 +9410,7 @@ const CacheBatch = (() => {
     updateCachedTokenDisplay(state.lastComputedCacheBase || 0);
     if (tracker.listeners.size) {
       const original = token == null ? '' : String(token);
-      tracker.listeners.forEach(listener => {
+      tracker.listeners.forEach((listener) => {
         try {
           listener(original);
         } catch (err) {
@@ -8920,9 +9454,15 @@ const CacheBatch = (() => {
     updateStats();
   }
 
-  function isActive() { return tracker.depth > 0; }
-  function getBaseline() { return tracker.baseline; }
-  function getPending() { return tracker.pendingTokens.size; }
+  function isActive() {
+    return tracker.depth > 0;
+  }
+  function getBaseline() {
+    return tracker.baseline;
+  }
+  function getPending() {
+    return tracker.pendingTokens.size;
+  }
   function resolvedBase(baseCount) {
     return isActive() ? tracker.baseline : normalizeCount(baseCount);
   }
@@ -8936,7 +9476,19 @@ const CacheBatch = (() => {
     return `${base} +${getPending()}`;
   }
 
-  return { begin, end, cancel, record, isActive, getBaseline, getPending, resolvedBase, total, format, listen };
+  return {
+    begin,
+    end,
+    cancel,
+    record,
+    isActive,
+    getBaseline,
+    getPending,
+    resolvedBase,
+    total,
+    format,
+    listen,
+  };
 })();
 
 const DEFAULT_REMOTE_DB_MIN_RELATION_WEIGHT = 0.1;
@@ -8966,16 +9518,16 @@ function resolveRemoteDbPruneThreshold(override) {
 function pruneRemoteRecordRelationships(record, options = {}) {
   if (!record || typeof record !== 'object') return false;
   const relationshipsSource = record.relationships;
-  const relationships = relationshipsSource && typeof relationshipsSource === 'object'
-    ? relationshipsSource
-    : {};
+  const relationships =
+    relationshipsSource && typeof relationshipsSource === 'object' ? relationshipsSource : {};
   if (relationshipsSource !== relationships) {
     record.relationships = relationships;
   }
 
-  const overrides = options.relationThresholds instanceof Map
-    ? options.relationThresholds
-    : REMOTE_DB_RELATION_WEIGHT_OVERRIDES;
+  const overrides =
+    options.relationThresholds instanceof Map
+      ? options.relationThresholds
+      : REMOTE_DB_RELATION_WEIGHT_OVERRIDES;
   const defaultThreshold = resolveRemoteDbPruneThreshold(options.threshold);
 
   let changed = false;
@@ -8984,9 +9536,7 @@ function pruneRemoteRecordRelationships(record, options = {}) {
   for (const rel of Object.keys(relationships)) {
     const edges = Array.isArray(relationships[rel]) ? relationships[rel] : null;
     const override = overrides.has(rel) ? overrides.get(rel) : undefined;
-    const minWeight = Number.isFinite(override)
-      ? Math.max(0, Number(override))
-      : defaultThreshold;
+    const minWeight = Number.isFinite(override) ? Math.max(0, Number(override)) : defaultThreshold;
 
     if (!edges || edges.length === 0) {
       if (relationships[rel] != null) {
@@ -9058,9 +9608,11 @@ function pruneRemoteRecordRelationships(record, options = {}) {
         record.relationshipTypes = relationKeys.length;
         changed = true;
       }
-    } else if (!Array.isArray(record.relationshipTypes)
-      || record.relationshipTypes.length !== relationKeys.length
-      || record.relationshipTypes.some((value, idx) => value !== relationKeys[idx])) {
+    } else if (
+      !Array.isArray(record.relationshipTypes) ||
+      record.relationshipTypes.length !== relationKeys.length ||
+      record.relationshipTypes.some((value, idx) => value !== relationKeys[idx])
+    ) {
       record.relationshipTypes = relationKeys.slice();
       changed = true;
     }
@@ -9072,9 +9624,11 @@ function pruneRemoteRecordRelationships(record, options = {}) {
         record.relationship_types = relationKeys.length;
         changed = true;
       }
-    } else if (!Array.isArray(record.relationship_types)
-      || record.relationship_types.length !== relationKeys.length
-      || record.relationship_types.some((value, idx) => value !== relationKeys[idx])) {
+    } else if (
+      !Array.isArray(record.relationship_types) ||
+      record.relationship_types.length !== relationKeys.length ||
+      record.relationship_types.some((value, idx) => value !== relationKeys[idx])
+    ) {
       record.relationship_types = relationKeys.slice();
       changed = true;
     }
@@ -9109,8 +9663,11 @@ const RemoteDbRecorder = (() => {
       for (const [key, value] of Object.entries(record)) {
         if (value == null) continue;
         if (typeof value === 'object') {
-          try { fallback[key] = JSON.parse(JSON.stringify(value)); }
-          catch { fallback[key] = value; }
+          try {
+            fallback[key] = JSON.parse(JSON.stringify(value));
+          } catch {
+            fallback[key] = value;
+          }
         } else {
           fallback[key] = value;
         }
@@ -9173,9 +9730,10 @@ const RemoteDbRecorder = (() => {
       for (const record of chunk.tokens || []) {
         if (!record || typeof record.token !== 'string') continue;
         tokenSet.add(record.token);
-        const rels = record.relationships && typeof record.relationships === 'object'
-          ? record.relationships
-          : {};
+        const rels =
+          record.relationships && typeof record.relationships === 'object'
+            ? record.relationships
+            : {};
         for (const value of Object.values(rels)) {
           if (Array.isArray(value)) totalRelationships += value.length;
         }
@@ -9183,7 +9741,7 @@ const RemoteDbRecorder = (() => {
     }
 
     const tokenIndex = Array.from(tokenSet)
-      .filter(token => typeof token === 'string' && token.trim())
+      .filter((token) => typeof token === 'string' && token.trim())
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
     return { chunks, totalTokens, totalRelationships, tokenIndex };
@@ -9200,7 +9758,7 @@ const RemoteDbRecorder = (() => {
       total_tokens: stats.totalTokens,
       total_relationships: stats.totalRelationships,
       chunk_prefix_length: 1,
-      chunks: stats.chunks.map(chunk => ({
+      chunks: stats.chunks.map((chunk) => ({
         prefix: chunk.prefix,
         href: `chunks/${chunk.prefix}.json`,
         token_count: chunk.token_count,
@@ -9229,8 +9787,11 @@ const RemoteDbRecorder = (() => {
     if (type === 'idle') {
       const cancelIdle = typeof window !== 'undefined' ? window.cancelIdleCallback : null;
       if (typeof cancelIdle === 'function') {
-        try { cancelIdle(id); }
-        catch (err) { console.warn('Failed to cancel idle persist callback:', err); }
+        try {
+          cancelIdle(id);
+        } catch (err) {
+          console.warn('Failed to cancel idle persist callback:', err);
+        }
       }
     } else {
       clearTimeout(id);
@@ -9248,7 +9809,11 @@ const RemoteDbRecorder = (() => {
     } catch (err) {
       console.warn('Remote DB writer notification failed:', err);
     }
-    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.dispatchEvent === 'function' &&
+      typeof window.CustomEvent === 'function'
+    ) {
       try {
         const event = new window.CustomEvent('hlsf:remote-db-updated', { detail: payload });
         window.dispatchEvent(event);
@@ -9275,14 +9840,20 @@ const RemoteDbRecorder = (() => {
     const chunksPayload = stats.chunks;
     safeStorageSet(STORAGE_KEY, JSON.stringify(chunksPayload));
     safeStorageSet(META_KEY, JSON.stringify(manifestPayload));
-    const payload = { metadata: manifestPayload, chunks: chunksPayload, tokenIndex: stats.tokenIndex };
+    const payload = {
+      metadata: manifestPayload,
+      chunks: chunksPayload,
+      tokenIndex: stats.tokenIndex,
+    };
     broadcastPersistResult(payload);
     return payload;
   };
 
   const schedulePersist = () => {
     if (persistPromise) return persistPromise;
-    persistPromise = new Promise(resolve => { persistResolver = resolve; });
+    persistPromise = new Promise((resolve) => {
+      persistResolver = resolve;
+    });
 
     const run = () => {
       persistSchedule = null;
@@ -9297,12 +9868,16 @@ const RemoteDbRecorder = (() => {
       persistPromise = null;
       persistResolver = null;
       if (typeof resolve === 'function') {
-        try { resolve(result); }
-        catch (resolveErr) { console.warn('Persist promise resolution failed:', resolveErr); }
+        try {
+          resolve(result);
+        } catch (resolveErr) {
+          console.warn('Persist promise resolution failed:', resolveErr);
+        }
       }
     };
 
-    const useIdle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function';
+    const useIdle =
+      typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function';
     if (useIdle) {
       try {
         const id = window.requestIdleCallback(run, { timeout: 1000 });
@@ -9328,8 +9903,11 @@ const RemoteDbRecorder = (() => {
     }
     const result = persistNow();
     if (persistResolver) {
-      try { persistResolver(result); }
-      catch (err) { console.warn('Persist flush resolution failed:', err); }
+      try {
+        persistResolver(result);
+      } catch (err) {
+        console.warn('Persist flush resolution failed:', err);
+      }
       persistResolver = null;
     }
     persistPromise = null;
@@ -9424,8 +10002,11 @@ const RemoteDbRecorder = (() => {
     lastGeneratedAt = null;
     let stored = safeStorageGet(STORAGE_KEY, null);
     if (typeof stored === 'string') {
-      try { stored = JSON.parse(stored); }
-      catch { stored = null; }
+      try {
+        stored = JSON.parse(stored);
+      } catch {
+        stored = null;
+      }
     }
     if (Array.isArray(stored)) {
       for (const chunk of stored) {
@@ -9442,8 +10023,11 @@ const RemoteDbRecorder = (() => {
 
     let storedMeta = safeStorageGet(META_KEY, null);
     if (typeof storedMeta === 'string') {
-      try { storedMeta = JSON.parse(storedMeta); }
-      catch { storedMeta = null; }
+      try {
+        storedMeta = JSON.parse(storedMeta);
+      } catch {
+        storedMeta = null;
+      }
     }
     if (storedMeta && typeof storedMeta === 'object' && storedMeta.generated_at) {
       lastGeneratedAt = storedMeta.generated_at;
@@ -9493,7 +10077,11 @@ window.HLSF.remoteDbRecorder = RemoteDbRecorder;
 let remoteDbSyncStatus = null;
 
 const ensureRemoteDbSyncStatus = () => {
-  if (!remoteDbSyncStatus || typeof remoteDbSyncStatus.isActive !== 'function' || !remoteDbSyncStatus.isActive()) {
+  if (
+    !remoteDbSyncStatus ||
+    typeof remoteDbSyncStatus.isActive !== 'function' ||
+    !remoteDbSyncStatus.isActive()
+  ) {
     remoteDbSyncStatus = RealtimeStatus.create('Remote DB sync', { icon: '💾' });
   }
   return remoteDbSyncStatus;
@@ -9501,16 +10089,23 @@ const ensureRemoteDbSyncStatus = () => {
 
 const updateRemoteDbSyncStatus = (info: Record<string, unknown> = {}) => {
   const queueLength = Number.isFinite(info.queueLength) ? Number(info.queueLength) : 0;
-  const pendingWorkUnits = Number.isFinite(info.pendingWorkUnits) ? Number(info.pendingWorkUnits) : 0;
+  const pendingWorkUnits = Number.isFinite(info.pendingWorkUnits)
+    ? Number(info.pendingWorkUnits)
+    : 0;
   const activeWorkUnits = Number.isFinite(info.activeWorkUnits) ? Number(info.activeWorkUnits) : 0;
-  const hasActivity = queueLength > 0 || pendingWorkUnits > 0 || (typeof info.activeStart === 'number' && activeWorkUnits > 0);
+  const hasActivity =
+    queueLength > 0 ||
+    pendingWorkUnits > 0 ||
+    (typeof info.activeStart === 'number' && activeWorkUnits > 0);
   if (!remoteDbSyncStatus && !hasActivity) return;
   const status = ensureRemoteDbSyncStatus();
   status.update({
     queueLength,
     pendingWorkUnits,
     pendingChunks: Number.isFinite(info.pendingChunks) ? Number(info.pendingChunks) : undefined,
-    averageMsPerUnit: Number.isFinite(info.averageMsPerUnit) ? Number(info.averageMsPerUnit) : undefined,
+    averageMsPerUnit: Number.isFinite(info.averageMsPerUnit)
+      ? Number(info.averageMsPerUnit)
+      : undefined,
     activeStart: typeof info.activeStart === 'number' ? Number(info.activeStart) : null,
     activeWorkUnits,
   });
@@ -9519,11 +10114,15 @@ const updateRemoteDbSyncStatus = (info: Record<string, unknown> = {}) => {
 const remoteDbFileWriter = createRemoteDbFileWriter({
   onMissingDirectory(reason) {
     if (reason === 'unsupported') {
-      logWarning('Remote DB auto-save requires a Chromium browser with the File System Access API. Updates will remain in the session cache.');
+      logWarning(
+        'Remote DB auto-save requires a Chromium browser with the File System Access API. Updates will remain in the session cache.',
+      );
       return;
     }
     if (reason === 'permission') {
-      logWarning('Remote DB directory access was denied. Run /remotedir to reconnect and grant write permission.');
+      logWarning(
+        'Remote DB directory access was denied. Run /remotedir to reconnect and grant write permission.',
+      );
       return;
     }
     addLog(`
@@ -9544,24 +10143,29 @@ const remoteDbFileWriter = createRemoteDbFileWriter({
     const status = ensureRemoteDbSyncStatus();
     const count = Number.isFinite(info?.chunkCount) ? Number(info?.chunkCount) : 0;
     const suffix = count === 1 ? 'chunk' : 'chunks';
-    const summary = count > 0
-      ? `Remote DB files updated (${count} ${suffix})`
-      : 'Remote DB files synchronized';
+    const summary =
+      count > 0 ? `Remote DB files updated (${count} ${suffix})` : 'Remote DB files synchronized';
     status.complete({ summary });
     remoteDbSyncStatus = null;
   },
   onSyncIdle(info) {
-    if (!remoteDbSyncStatus || (typeof remoteDbSyncStatus.isActive === 'function' && !remoteDbSyncStatus.isActive())) return;
+    if (
+      !remoteDbSyncStatus ||
+      (typeof remoteDbSyncStatus.isActive === 'function' && !remoteDbSyncStatus.isActive())
+    )
+      return;
     const count = Number.isFinite(info?.chunkCount) ? Number(info?.chunkCount) : 0;
     const suffix = count === 1 ? 'chunk' : 'chunks';
-    const summary = count > 0
-      ? `Remote DB files updated (${count} ${suffix})`
-      : 'Remote DB files up to date';
+    const summary =
+      count > 0 ? `Remote DB files updated (${count} ${suffix})` : 'Remote DB files up to date';
     remoteDbSyncStatus.complete({ summary });
     remoteDbSyncStatus = null;
   },
   onSyncError(message) {
-    if (!remoteDbSyncStatus || (typeof remoteDbSyncStatus.isActive === 'function' && !remoteDbSyncStatus.isActive())) {
+    if (
+      !remoteDbSyncStatus ||
+      (typeof remoteDbSyncStatus.isActive === 'function' && !remoteDbSyncStatus.isActive())
+    ) {
       remoteDbSyncStatus = RealtimeStatus.create('Remote DB sync', { icon: '💾' });
     }
     remoteDbSyncStatus.fail(message || 'Remote DB sync failed');
@@ -9571,7 +10175,9 @@ const remoteDbFileWriter = createRemoteDbFileWriter({
 });
 
 window.HLSF.remoteDbFileWriter = remoteDbFileWriter;
-setRemotedirFlag(typeof remoteDbFileWriter?.hasDirectory === 'function' && remoteDbFileWriter.hasDirectory());
+setRemotedirFlag(
+  typeof remoteDbFileWriter?.hasDirectory === 'function' && remoteDbFileWriter.hasDirectory(),
+);
 
 function updateCachedTokenDisplay(baseCount) {
   const normalizedBase = Number.isFinite(baseCount) ? Math.max(0, Math.floor(baseCount)) : 0;
@@ -9676,7 +10282,9 @@ function getFromCache(token) {
     state.sessionStats.totalCacheHits++;
     updateStats();
     return raw;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 function buildRelationshipSignature(relationships) {
@@ -9738,9 +10346,8 @@ function saveToCache(token, data, options = {}) {
     const payloadData = Object.assign({ token }, data, {
       cached_at: new Date().toISOString(),
     });
-    const recordToken = (typeof payloadData.token === 'string' && payloadData.token)
-      ? payloadData.token
-      : token;
+    const recordToken =
+      typeof payloadData.token === 'string' && payloadData.token ? payloadData.token : token;
     payloadData.token = recordToken;
     const wasCached = isTokenCached(recordToken);
     const previousRecord = wasCached ? getCachedRecordForToken(recordToken) : null;
@@ -9799,11 +10406,14 @@ function removeTokensFromCache(tokens, options = {}) {
 
   let index = safeStorageGet(DB_INDEX_KEY, []);
   if (typeof index === 'string') {
-    try { index = JSON.parse(index); }
-    catch { index = []; }
+    try {
+      index = JSON.parse(index);
+    } catch {
+      index = [];
+    }
   }
   if (Array.isArray(index) && index.length) {
-    const filtered = index.filter(token => !map.has(String(token).toLowerCase()));
+    const filtered = index.filter((token) => !map.has(String(token).toLowerCase()));
     if (filtered.length !== index.length) {
       safeStorageSet(DB_INDEX_KEY, JSON.stringify(filtered));
     }
@@ -9811,7 +10421,7 @@ function removeTokensFromCache(tokens, options = {}) {
 
   const db = window.HLSF.dbCache;
   if (db && Array.isArray(db.full_token_data)) {
-    const filtered = db.full_token_data.filter(record => {
+    const filtered = db.full_token_data.filter((record) => {
       const key = record && record.token ? String(record.token).toLowerCase() : '';
       return key && !map.has(key);
     });
@@ -9871,7 +10481,9 @@ function updatePromptReviewSummary(review) {
     review.summaryElement.innerHTML = '<em>No new tokens cached in this prompt.</em>';
     return;
   }
-  const rendered = tokens.map(token => `<span class="token-highlight">${sanitize(token)}</span>`).join(', ');
+  const rendered = tokens
+    .map((token) => `<span class="token-highlight">${sanitize(token)}</span>`)
+    .join(', ');
   review.summaryElement.innerHTML = `Captured tokens: ${rendered}`;
 }
 
@@ -9925,7 +10537,9 @@ function registerPromptReview(promptId, tokenMap, matrices) {
   const review = {
     id: promptId,
     tokens: new Map(tokenMap),
-    adjacency: new Map(adjacencyEntries.map(record => [String(record.token).toLowerCase(), record])),
+    adjacency: new Map(
+      adjacencyEntries.map((record) => [String(record.token).toLowerCase(), record]),
+    ),
     serialized,
     element: entry,
     textarea,
@@ -9956,7 +10570,9 @@ function savePromptReviewEdits(review) {
   }
   const list = Array.isArray(parsed)
     ? parsed
-    : (parsed && typeof parsed === 'object') ? Object.values(parsed) : [];
+    : parsed && typeof parsed === 'object'
+      ? Object.values(parsed)
+      : [];
 
   const normalizedEntries = [];
   const newTokenMap = new Map();
@@ -9971,7 +10587,9 @@ function savePromptReviewEdits(review) {
   }
 
   review.tokens = newTokenMap;
-  review.adjacency = new Map(normalizedEntries.map(record => [record.token.toLowerCase(), record]));
+  review.adjacency = new Map(
+    normalizedEntries.map((record) => [record.token.toLowerCase(), record]),
+  );
   review.serialized = JSON.stringify(normalizedEntries, null, 2);
   if (review.textarea) review.textarea.value = review.serialized;
   updatePromptReviewSummary(review);
@@ -9989,7 +10607,9 @@ function cancelPromptReviewEdits(review) {
 function finalizePromptReview(review, message, tone = 'info') {
   if (!review || !review.element) return;
   const buttons = review.element.querySelectorAll('button[data-prompt-action]');
-  buttons.forEach(btn => { btn.disabled = true; });
+  buttons.forEach((btn) => {
+    btn.disabled = true;
+  });
   setPromptReviewEditorState(review, false);
   review.element.classList.add('prompt-review-completed');
   setPromptReviewStatus(review, message, tone);
@@ -10014,12 +10634,19 @@ function approvePromptReview(review) {
   }
 
   if (committed > 0) {
-    commitTokens(entries.map(entry => entry.token), { render: false });
+    commitTokens(
+      entries.map((entry) => entry.token),
+      { render: false },
+    );
     notifyHlsfAdjacencyChange('prompt-review-approve');
     rebuildLiveGraph();
   }
 
-  finalizePromptReview(review, `Committed ${committed} token${committed === 1 ? '' : 's'} to database.`, 'success');
+  finalizePromptReview(
+    review,
+    `Committed ${committed} token${committed === 1 ? '' : 's'} to database.`,
+    'success',
+  );
   logOK('Adjacency updates committed to database.');
 }
 
@@ -10043,7 +10670,11 @@ function discardPromptReview(review) {
   review.serialized = '[]';
   if (review.textarea) review.textarea.value = review.serialized;
   updatePromptReviewSummary(review);
-  finalizePromptReview(review, `Discarded ${removed} token${removed === 1 ? '' : 's'} from cache.`, 'warning');
+  finalizePromptReview(
+    review,
+    `Discarded ${removed} token${removed === 1 ? '' : 's'} from cache.`,
+    'warning',
+  );
   logWarning('Prompt tokens discarded without committing to database.');
 }
 
@@ -10116,11 +10747,12 @@ const RemoteDbStore = (() => {
     if (Number.isFinite(configured) && configured > 0) {
       return Math.max(1, Math.floor(configured));
     }
-    const hardware = typeof navigator !== 'undefined'
-      && navigator
-      && typeof navigator.hardwareConcurrency === 'number'
-      ? navigator.hardwareConcurrency
-      : 0;
+    const hardware =
+      typeof navigator !== 'undefined' &&
+      navigator &&
+      typeof navigator.hardwareConcurrency === 'number'
+        ? navigator.hardwareConcurrency
+        : 0;
     if (Number.isFinite(hardware) && hardware > 0) {
       const derived = Math.floor(hardware / 2) || 1;
       return Math.max(1, Math.min(6, derived));
@@ -10139,8 +10771,11 @@ const RemoteDbStore = (() => {
     if (remotePruneSchedule.type === 'idle') {
       const cancelIdle = typeof window !== 'undefined' ? window.cancelIdleCallback : null;
       if (typeof cancelIdle === 'function') {
-        try { cancelIdle(remotePruneSchedule.id); }
-        catch (err) { console.warn('Failed to cancel remote prune idle callback:', err); }
+        try {
+          cancelIdle(remotePruneSchedule.id);
+        } catch (err) {
+          console.warn('Failed to cancel remote prune idle callback:', err);
+        }
       }
     } else {
       clearTimeout(remotePruneSchedule.id);
@@ -10245,9 +10880,10 @@ const RemoteDbStore = (() => {
     }
     if (remotePruneSchedule) return null;
 
-    const idle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
-      ? window.requestIdleCallback.bind(window)
-      : null;
+    const idle =
+      typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback.bind(window)
+        : null;
 
     const execute = () => {
       remotePruneSchedule = null;
@@ -10297,7 +10933,7 @@ const RemoteDbStore = (() => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data && Array.isArray(data.tokens)) {
-        tokenIndex = data.tokens.map(tok => String(tok));
+        tokenIndex = data.tokens.map((tok) => String(tok));
       }
     } catch (err) {
       console.warn('Failed to load remote DB token index:', err);
@@ -10314,7 +10950,11 @@ const RemoteDbStore = (() => {
       chunkCache.set(key, empty);
       return empty;
     }
-    if (info.recorder === true && recorderSource && typeof recorderSource.getChunkTokens === 'function') {
+    if (
+      info.recorder === true &&
+      recorderSource &&
+      typeof recorderSource.getChunkTokens === 'function'
+    ) {
       const entries = new Map();
       const list = recorderSource.getChunkTokens(info.prefix) || [];
       for (const entry of list) {
@@ -10365,7 +11005,8 @@ const RemoteDbStore = (() => {
       changed = true;
     } else {
       const existing = getCachedRecordForToken(record.token);
-      const hasAdjacency = existing && existing.relationships && Object.keys(existing.relationships).length > 0;
+      const hasAdjacency =
+        existing && existing.relationships && Object.keys(existing.relationships).length > 0;
       if (!hasAdjacency) {
         const payload = JSON.stringify(record);
         const persisted = safeStorageSet(cacheKey, payload);
@@ -10383,7 +11024,9 @@ const RemoteDbStore = (() => {
   const preloadTokens = async (tokens) => {
     if (!hasMetadata()) return { loaded: 0, hits: 0 };
     const stats = { loaded: 0, hits: 0 };
-    const normalizedTokens = Array.from(new Set((tokens || []).map(normalizeToken).filter(Boolean)));
+    const normalizedTokens = Array.from(
+      new Set((tokens || []).map(normalizeToken).filter(Boolean)),
+    );
     const loadedTokens = new Set();
     const recordLoadedToken = (value) => {
       if (!value) return;
@@ -10397,7 +11040,8 @@ const RemoteDbStore = (() => {
     for (const token of normalizedTokens) {
       if (isTokenCached(token)) {
         const existing = getCachedRecordForToken(token);
-        const hasAdjacency = existing && existing.relationships && Object.keys(existing.relationships).length > 0;
+        const hasAdjacency =
+          existing && existing.relationships && Object.keys(existing.relationships).length > 0;
         if (hasAdjacency) {
           stats.hits++;
           recordLoadedToken(existing?.token || token);
@@ -10429,15 +11073,17 @@ const RemoteDbStore = (() => {
       const concurrency = Math.max(1, Math.min(resolveChunkConcurrency(), requests.length));
       for (let i = 0; i < requests.length; i += concurrency) {
         const batch = requests.slice(i, i + concurrency);
-        const results = await Promise.all(batch.map(async request => {
-          try {
-            const chunk = await ensureChunk(request.prefix);
-            return { request, chunk };
-          } catch (err) {
-            console.warn(`Failed to hydrate remote DB chunk ${request.prefix}:`, err);
-            return { request, chunk: null };
-          }
-        }));
+        const results = await Promise.all(
+          batch.map(async (request) => {
+            try {
+              const chunk = await ensureChunk(request.prefix);
+              return { request, chunk };
+            } catch (err) {
+              console.warn(`Failed to hydrate remote DB chunk ${request.prefix}:`, err);
+              return { request, chunk: null };
+            }
+          }),
+        );
 
         for (const { request, chunk } of results) {
           if (!chunk) continue;
@@ -10502,7 +11148,11 @@ const RemoteDbStore = (() => {
     window.HLSF.dbCache = { full_token_data: [] };
     window.HLSF.dbMeta = metadata;
     updateHeaderCounts();
-    scheduleRemoteCacheWarmup({ remote: RemoteDbStore, limit: CONFIG.CACHE_SEED_LIMIT, reason: 'configure' });
+    scheduleRemoteCacheWarmup({
+      remote: RemoteDbStore,
+      limit: CONFIG.CACHE_SEED_LIMIT,
+      reason: 'configure',
+    });
     scheduleRemotePruneRun({ immediate: true });
     return metadata;
   };
@@ -10536,7 +11186,7 @@ const RemoteDbStore = (() => {
     chunkCache.clear();
     tokenCache.clear();
     if (Array.isArray(manifest.token_index)) {
-      tokenIndex = manifest.token_index.map(tok => String(tok));
+      tokenIndex = manifest.token_index.map((tok) => String(tok));
     } else if (typeof recorder.tokenIndex === 'function') {
       tokenIndex = recorder.tokenIndex();
     } else {
@@ -10547,12 +11197,17 @@ const RemoteDbStore = (() => {
       window.HLSF.dbMeta = manifest;
     }
     updateHeaderCounts();
-    scheduleRemoteCacheWarmup({ remote: RemoteDbStore, limit: CONFIG.CACHE_SEED_LIMIT, reason: 'recorder', force: true });
+    scheduleRemoteCacheWarmup({
+      remote: RemoteDbStore,
+      limit: CONFIG.CACHE_SEED_LIMIT,
+      reason: 'recorder',
+      force: true,
+    });
     scheduleRemotePruneRun({ immediate: true });
     return manifest;
   };
 
-  const listTokens = () => Array.isArray(tokenIndex) ? [...tokenIndex] : [];
+  const listTokens = () => (Array.isArray(tokenIndex) ? [...tokenIndex] : []);
 
   const reset = () => {
     metadata = null;
@@ -10643,12 +11298,10 @@ function handleRemoteDbUpdatedEvent(event) {
   };
 
   if (warmupPromise && typeof warmupPromise.then === 'function') {
-    warmupPromise
-      .then(triggerReload)
-      .catch(err => {
-        console.warn('Remote cache warmup after update failed:', err);
-        triggerReload();
-      });
+    warmupPromise.then(triggerReload).catch((err) => {
+      console.warn('Remote cache warmup after update failed:', err);
+      triggerReload();
+    });
   } else {
     triggerReload();
   }
@@ -10665,7 +11318,9 @@ function computeRemoteDatasetKey(tokens, metadata) {
     const generated = metadata.generated_at || metadata.generatedAt || '';
     const total = Number.isFinite(metadata.total_tokens)
       ? metadata.total_tokens
-      : (Number.isFinite(metadata.totalTokens) ? metadata.totalTokens : '');
+      : Number.isFinite(metadata.totalTokens)
+        ? metadata.totalTokens
+        : '';
     const chunkCount = Array.isArray(metadata.chunks) ? metadata.chunks.length : '';
     return `meta:${version}|${generated}|${total}|${chunkCount}`;
   })();
@@ -10688,14 +11343,13 @@ function computeRemoteDatasetKey(tokens, metadata) {
 function scheduleRemoteCacheWarmup(options = {}) {
   const remote = options.remote || (typeof window !== 'undefined' ? window?.HLSF?.remoteDb : null);
   if (!remote || typeof remote.isReady !== 'function' || !remote.isReady()) return null;
-  if (typeof remote.listTokens !== 'function' || typeof remote.preloadTokens !== 'function') return null;
+  if (typeof remote.listTokens !== 'function' || typeof remote.preloadTokens !== 'function')
+    return null;
 
   const metadata = typeof remote.metadata === 'function' ? remote.metadata() : null;
   let tokens = remote.listTokens();
   if (!Array.isArray(tokens) || tokens.length === 0) return null;
-  tokens = tokens
-    .map(token => (typeof token === 'string' ? token.trim() : ''))
-    .filter(Boolean);
+  tokens = tokens.map((token) => (typeof token === 'string' ? token.trim() : '')).filter(Boolean);
   if (!tokens.length) return null;
 
   const datasetKey = computeRemoteDatasetKey(tokens, metadata);
@@ -10710,9 +11364,8 @@ function scheduleRemoteCacheWarmup(options = {}) {
     }
   }
 
-  const limitOption = Number.isFinite(options.limit) && options.limit > 0
-    ? Math.floor(options.limit)
-    : 0;
+  const limitOption =
+    Number.isFinite(options.limit) && options.limit > 0 ? Math.floor(options.limit) : 0;
   const limit = limitOption > 0 ? Math.min(tokens.length, limitOption) : tokens.length;
   if (limit <= 0) return null;
 
@@ -10736,7 +11389,11 @@ function scheduleRemoteCacheWarmup(options = {}) {
         const stats = await remote.preloadTokens(batch);
         if (stats && typeof stats.loaded === 'number') {
           warmed += stats.loaded;
-        } else if (stats && typeof stats.hits === 'number' && (stats.loaded == null || stats.loaded === undefined)) {
+        } else if (
+          stats &&
+          typeof stats.hits === 'number' &&
+          (stats.loaded == null || stats.loaded === undefined)
+        ) {
           warmed += stats.hits;
         } else {
           warmed += batch.length;
@@ -10751,9 +11408,10 @@ function scheduleRemoteCacheWarmup(options = {}) {
   remoteCacheWarmActiveKey = datasetKey;
 
   const schedule = (invoke) => {
-    const idle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
-      ? window.requestIdleCallback.bind(window)
-      : null;
+    const idle =
+      typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback.bind(window)
+        : null;
     if (idle) {
       idle(invoke, { timeout: 2000 });
     } else {
@@ -10762,20 +11420,24 @@ function scheduleRemoteCacheWarmup(options = {}) {
   };
 
   let currentPromise;
-  const startWarmup = () => run().catch(err => {
-    console.warn('Remote token cache warmup failed:', err);
-    return { warmed: 0, total: subset.length, error: err };
-  }).then(result => {
-    remoteCacheWarmCompletedKey = datasetKey;
-    return result;
-  }).finally(() => {
-    if (remoteCacheWarmPromise === currentPromise) {
-      remoteCacheWarmPromise = null;
-      remoteCacheWarmActiveKey = '';
-    }
-  });
+  const startWarmup = () =>
+    run()
+      .catch((err) => {
+        console.warn('Remote token cache warmup failed:', err);
+        return { warmed: 0, total: subset.length, error: err };
+      })
+      .then((result) => {
+        remoteCacheWarmCompletedKey = datasetKey;
+        return result;
+      })
+      .finally(() => {
+        if (remoteCacheWarmPromise === currentPromise) {
+          remoteCacheWarmPromise = null;
+          remoteCacheWarmActiveKey = '';
+        }
+      });
 
-  currentPromise = new Promise(resolve => {
+  currentPromise = new Promise((resolve) => {
     schedule(() => {
       startWarmup().then(resolve);
     });
@@ -10799,10 +11461,12 @@ try {
 
 function onAdjacencyPreloadComplete(triggerToken, loadedTokens = []) {
   const normalizedTrigger = typeof triggerToken === 'string' ? triggerToken.toLowerCase() : '';
-  const candidates = Array.isArray(loadedTokens) ? loadedTokens.filter(token => typeof token === 'string' && token.trim()) : [];
+  const candidates = Array.isArray(loadedTokens)
+    ? loadedTokens.filter((token) => typeof token === 'string' && token.trim())
+    : [];
   let focusToken = null;
   if (normalizedTrigger) {
-    focusToken = candidates.find(token => token.toLowerCase() === normalizedTrigger) || null;
+    focusToken = candidates.find((token) => token.toLowerCase() === normalizedTrigger) || null;
   }
   if (!focusToken && candidates.length) {
     focusToken = candidates[candidates.length - 1];
@@ -10821,7 +11485,11 @@ function getCachedRecordForToken(token) {
     const raw = safeStorageGet(getCacheKey(token));
     if (!raw) return null;
     if (typeof raw === 'string') {
-      try { return JSON.parse(raw); } catch { return null; }
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
     }
     return raw;
   } catch {
@@ -10861,7 +11529,8 @@ function computeLiveGraphEdges(nodes) {
       const candidate = candidates[i];
       const from = token;
       const to = candidate.neighbor;
-      const key = from < to ? `${from}->${to}->${candidate.rel}` : `${to}->${from}->${candidate.rel}`;
+      const key =
+        from < to ? `${from}->${to}->${candidate.rel}` : `${to}->${from}->${candidate.rel}`;
       if (seen.has(key)) continue;
       seen.add(key);
       const edge = { from, to, rtype: candidate.rel, w: candidate.weight, hiddenTokens: [] };
@@ -10936,9 +11605,7 @@ function rebuildLiveGraph(options = {}) {
   graph.nodeCount = nodes.size;
   graph.dimensionLayout = null;
   graph.live = true;
-  graph.removedTokens = Array.isArray(pruneResult.removedTokens)
-    ? pruneResult.removedTokens
-    : [];
+  graph.removedTokens = Array.isArray(pruneResult.removedTokens) ? pruneResult.removedTokens : [];
 
   if (!render) return graph;
 
@@ -10987,13 +11654,15 @@ async function callOpenAI(messages, options = {}) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${state.apiKey}`,
+          Authorization: `Bearer ${state.apiKey}`,
         },
         body: JSON.stringify(body),
       });
 
       if (response.status === 429 && attempt < CONFIG.MAX_RETRY_ATTEMPTS) {
-        await new Promise(r => setTimeout(r, CONFIG.RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)));
+        await new Promise((r) =>
+          setTimeout(r, CONFIG.RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)),
+        );
         continue;
       }
 
@@ -11113,12 +11782,19 @@ Determine whether this token is a valid standalone English word (proper nouns co
 Respond strictly with JSON: {"token": "${normalized}", "is_real_word": true | false}.`;
 
     const content = await safeAsync(
-      () => callOpenAI([
-        { role: 'system', content: 'You are a linguistic validator that answers with strict JSON.' },
-        { role: 'user', content: prompt },
-      ], { temperature: 0, max_tokens: 40 }),
+      () =>
+        callOpenAI(
+          [
+            {
+              role: 'system',
+              content: 'You are a linguistic validator that answers with strict JSON.',
+            },
+            { role: 'user', content: prompt },
+          ],
+          { temperature: 0, max_tokens: 40 },
+        ),
       `Real word validation failed for ${normalized}`,
-      { fallbackValue: null }
+      { fallbackValue: null },
     );
 
     if (!content) return true;
@@ -11160,7 +11836,7 @@ async function filterVariantRelationships(entry) {
   const relationships = entry.relationships;
   if (!relationships || typeof relationships !== 'object') return { entry, removed: 0 };
 
-  const variantKeys = Object.keys(relationships).filter(key => {
+  const variantKeys = Object.keys(relationships).filter((key) => {
     if (!key) return false;
     if (key === '≈') return true;
     return key.toLowerCase().includes('variant');
@@ -11174,16 +11850,16 @@ async function filterVariantRelationships(entry) {
     const edges = Array.isArray(relationships[key]) ? relationships[key] : null;
     if (!edges || edges.length === 0) continue;
 
-    const evaluations = await Promise.all(edges.map(async (edge) => {
-      const candidate = (edge && typeof edge.token === 'string') ? edge.token.trim() : '';
-      if (!candidate) return { edge, keep: false };
-      const isReal = await validateTokenIsRealWord(candidate);
-      return { edge, keep: isReal !== false };
-    }));
+    const evaluations = await Promise.all(
+      edges.map(async (edge) => {
+        const candidate = edge && typeof edge.token === 'string' ? edge.token.trim() : '';
+        if (!candidate) return { edge, keep: false };
+        const isReal = await validateTokenIsRealWord(candidate);
+        return { edge, keep: isReal !== false };
+      }),
+    );
 
-    const filtered = evaluations
-      .filter(item => item.keep && item.edge)
-      .map(item => item.edge);
+    const filtered = evaluations.filter((item) => item.keep && item.edge).map((item) => item.edge);
 
     removed += edges.length - filtered.length;
     relationships[key] = filtered;
@@ -11205,8 +11881,11 @@ async function fetchAdjacency(entry, context) {
   const cat = typeof entry === 'object' && entry ? entry.cat || null : null;
 
   let cached = getFromCache(token);
-  if (!cached && window.HLSF?.remoteDb?.isReady?.()
-    && typeof window.HLSF.remoteDb.preloadTokens === 'function') {
+  if (
+    !cached &&
+    window.HLSF?.remoteDb?.isReady?.() &&
+    typeof window.HLSF.remoteDb.preloadTokens === 'function'
+  ) {
     try {
       const preloadStats = await window.HLSF.remoteDb.preloadTokens([token]);
       if (preloadStats && (Number(preloadStats.loaded) > 0 || Number(preloadStats.hits) > 0)) {
@@ -11266,12 +11945,13 @@ Return JSON: {"token": "${token}", "relationships": {"≡": [{"token": "...", "w
   }
 
   const content = await safeAsync(
-    () => callOpenAI([
-      { role: 'system', content: 'You are an HLSF token adjacency analyzer.' },
-      { role: 'user', content: safePrompt },
-    ]),
+    () =>
+      callOpenAI([
+        { role: 'system', content: 'You are an HLSF token adjacency analyzer.' },
+        { role: 'user', content: safePrompt },
+      ]),
     `Adjacency fetch failed for ${token}`,
-    { dedupeNetworkError: true }
+    { dedupeNetworkError: true },
   );
 
   if (!content) {
@@ -11317,9 +11997,10 @@ function resolveAdjacencyConcurrency(base = CONFIG.MAX_CONCURRENCY) {
   if (Number.isFinite(configured) && configured > 0) {
     return Math.max(1, Math.floor(configured));
   }
-  const hardware = typeof navigator !== 'undefined'
-    && navigator
-    && typeof navigator.hardwareConcurrency === 'number'
+  const hardware =
+    typeof navigator !== 'undefined' &&
+    navigator &&
+    typeof navigator.hardwareConcurrency === 'number'
       ? navigator.hardwareConcurrency
       : 0;
   if (Number.isFinite(hardware) && hardware > 0) {
@@ -11354,7 +12035,7 @@ async function batchFetchAdjacencies(tokens, context, label) {
 
     if (window.HLSF?.remoteDb?.isReady?.()) {
       try {
-        await window.HLSF.remoteDb.preloadTokens(remoteTargets.map(entry => entry.token));
+        await window.HLSF.remoteDb.preloadTokens(remoteTargets.map((entry) => entry.token));
       } catch (err) {
         console.warn('Remote DB preload failed:', err);
       }
@@ -11371,7 +12052,9 @@ async function batchFetchAdjacencies(tokens, context, label) {
       }
 
       const batch = remoteTargets.slice(i, i + concurrency);
-      const settled = await Promise.allSettled(batch.map(entry => fetchAdjacency(entry, context)));
+      const settled = await Promise.allSettled(
+        batch.map((entry) => fetchAdjacency(entry, context)),
+      );
 
       settled.forEach((result, idx) => {
         if (result.status === 'fulfilled') {
@@ -11383,7 +12066,7 @@ async function batchFetchAdjacencies(tokens, context, label) {
       progress.increment(batch.length);
     }
 
-    const hits = Array.from(results.values()).filter(r => r.cache_hit).length;
+    const hits = Array.from(results.values()).filter((r) => r.cache_hit).length;
     progress.complete(`${label}: ${hits} cached, ${results.size - hits} new`);
     return results;
   } finally {
@@ -11462,7 +12145,7 @@ function gatherLevelUpSeeds(graph: any, anchors: string[], maxSeeds: number): st
 
   if (seeds.length < limit) {
     const global: { token: string; weight: number }[] = [];
-    adjacency.forEach(list => {
+    adjacency.forEach((list) => {
       for (const entry of list) global.push(entry);
     });
     global.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
@@ -11476,11 +12159,8 @@ function gatherLevelUpSeeds(graph: any, anchors: string[], maxSeeds: number): st
     const nodes = Array.from(graph.nodes.values());
     nodes.sort((a, b) => (Number(b?.degree) || 0) - (Number(a?.degree) || 0));
     for (const node of nodes) {
-      const token = typeof node?.token === 'string'
-        ? node.token
-        : typeof node?.id === 'string'
-          ? node.id
-          : '';
+      const token =
+        typeof node?.token === 'string' ? node.token : typeof node?.id === 'string' ? node.id : '';
       addSeed(token);
       if (seeds.length >= limit) break;
     }
@@ -11498,7 +12178,10 @@ async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
   }
 
   levelUpState.running = true;
-  const root = options.root instanceof HTMLElement ? options.root : document.getElementById('hlsf-canvas-container');
+  const root =
+    options.root instanceof HTMLElement
+      ? options.root
+      : document.getElementById('hlsf-canvas-container');
   let status: HTMLElement | null = null;
 
   try {
@@ -11523,7 +12206,9 @@ async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
     }
     last.idx = index;
 
-    const currentDepth = Number.isFinite(last.depth) ? Math.floor(last.depth) : getRecursionDepthSetting();
+    const currentDepth = Number.isFinite(last.depth)
+      ? Math.floor(last.depth)
+      : getRecursionDepthSetting();
     let desiredDepth = clampRecursionDepth(currentDepth + 1);
 
     const input = root?.querySelector<HTMLInputElement>('#hlsf-recursion-depth') || null;
@@ -11539,7 +12224,9 @@ async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
     }
 
     if (desiredDepth <= currentDepth) {
-      logStatus(`Recursion depth already at ${currentDepth}. Increase the depth value to expand further.`);
+      logStatus(
+        `Recursion depth already at ${currentDepth}. Increase the depth value to expand further.`,
+      );
       if (input) input.value = String(currentDepth);
       if (depthLabel) depthLabel.textContent = String(currentDepth);
       return;
@@ -11551,7 +12238,9 @@ async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
     last.depth = appliedDepth;
 
     const anchors = Array.isArray(last.anchors)
-      ? last.anchors.map(anchor => (typeof anchor === 'string' ? anchor.trim() : '')).filter(Boolean)
+      ? last.anchors
+          .map((anchor) => (typeof anchor === 'string' ? anchor.trim() : ''))
+          .filter(Boolean)
       : [];
     const seeds = gatherLevelUpSeeds(graph, anchors, MAX_LEVEL_UP_SEEDS);
     if (!seeds.length) {
@@ -11572,20 +12261,17 @@ async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
     ].filter(Boolean);
     const context = contextPieces.join('. ');
     const label = `graph level-up depth ${appliedDepth}`;
-    status = logStatus(`Leveling graph to depth ${appliedDepth} (${normalizedSeeds.length} seed${normalizedSeeds.length === 1 ? '' : 's'})…`);
-
-    const recursionResult = await fetchRecursiveAdjacencies(
-      normalizedSeeds,
-      context,
-      label,
-      {
-        depth: appliedDepth,
-        normalizedSeeds,
-        preferDb: true,
-        onTokenLoaded: () => queueLiveGraphUpdate(48),
-        requireCompleteGraph: false,
-      },
+    status = logStatus(
+      `Leveling graph to depth ${appliedDepth} (${normalizedSeeds.length} seed${normalizedSeeds.length === 1 ? '' : 's'})…`,
     );
+
+    const recursionResult = await fetchRecursiveAdjacencies(normalizedSeeds, context, label, {
+      depth: appliedDepth,
+      normalizedSeeds,
+      preferDb: true,
+      onTokenLoaded: () => queueLiveGraphUpdate(48),
+      requireCompleteGraph: false,
+    });
 
     if (recursionResult?.matrices instanceof Map && recursionResult.matrices.size) {
       window.HLSF.matrices = mergeAdjacencyMaps(window.HLSF.matrices, recursionResult.matrices);
@@ -11597,7 +12283,9 @@ async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
       `expansions ${stats.expansions ?? 0}`,
       `API ${stats.apiCalls ?? 0}`,
     ];
-    addLog(`<div class="adjacency-insight"><strong>🔺 Graph level up:</strong> ${sanitize(summaryParts.join(' · '))}</div>`);
+    addLog(
+      `<div class="adjacency-insight"><strong>🔺 Graph level up:</strong> ${sanitize(summaryParts.join(' · '))}</div>`,
+    );
 
     if (status) {
       status.textContent = `✅ Level up complete at depth ${appliedDepth}.`;
@@ -11614,11 +12302,7 @@ async function levelUpHlsfGraph(options: { root?: HTMLElement | null } = {}) {
   }
 }
 
-function limitAdjacencyEntryEdges(
-  entry,
-  maxEdges,
-  priorityTokens = [],
-) {
+function limitAdjacencyEntryEdges(entry, maxEdges, priorityTokens = []) {
   if (!entry || typeof entry !== 'object') return entry;
 
   const configuredLimit = Number.isFinite(maxEdges) && maxEdges > 0 ? Math.floor(maxEdges) : 0;
@@ -11652,14 +12336,23 @@ function limitAdjacencyEntryEdges(
     : 0;
   if (relationshipCap > 0) {
     const maxEdgesFromRelationships = Math.max(1, Math.floor(relationshipCap / 2));
-    hardEdgeLimit = hardEdgeLimit > 0 ? Math.min(hardEdgeLimit, maxEdgesFromRelationships) : maxEdgesFromRelationships;
+    hardEdgeLimit =
+      hardEdgeLimit > 0
+        ? Math.min(hardEdgeLimit, maxEdgesFromRelationships)
+        : maxEdgesFromRelationships;
   }
 
   if (hardEdgeLimit <= 0 && priorityMap.size === 0) {
     return { ...entry, relationships: {} };
   }
   if (hardEdgeLimit <= 0) {
-    hardEdgeLimit = Math.max(1, Math.min(priorityMap.size, relationshipCap > 0 ? Math.max(1, Math.floor(relationshipCap / 2)) : priorityMap.size));
+    hardEdgeLimit = Math.max(
+      1,
+      Math.min(
+        priorityMap.size,
+        relationshipCap > 0 ? Math.max(1, Math.floor(relationshipCap / 2)) : priorityMap.size,
+      ),
+    );
   }
 
   const relationshipLimit = relationshipCap > 0 ? relationshipCap : hardEdgeLimit * 2;
@@ -11669,7 +12362,8 @@ function limitAdjacencyEntryEdges(
   const isSeedEntry = entryKey && priorityMap.has(entryKey);
 
   const aggregated = [];
-  const rels = entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
+  const rels =
+    entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
   for (const [rel, edges] of Object.entries(rels)) {
     if (!Array.isArray(edges)) continue;
     for (const edge of edges) {
@@ -11745,7 +12439,8 @@ function limitAdjacencyEntryEdges(
 
 function collectNeighborCandidates(entry) {
   if (!entry || typeof entry !== 'object') return [];
-  const rels = entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
+  const rels =
+    entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
   const seen = new Set();
   const candidates = [];
   for (const edges of Object.values(rels)) {
@@ -11776,7 +12471,8 @@ function countEntryRelationships(entry) {
   if (!entry || typeof entry !== 'object') {
     return { edgeCount: 0, relationTypes: 0 };
   }
-  const rels = entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
+  const rels =
+    entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
   let relationTypes = 0;
   let edgeCount = 0;
   for (const edges of Object.values(rels)) {
@@ -11819,10 +12515,17 @@ Generate ${Math.max(needed * 2, 4)} unique adjacency expansions that would conne
 Respond strictly with JSON: {"seed":"${token}","expansions":[{"token":"...","weight":0.42}]}`;
 
   const content = await safeAsync(
-    () => callOpenAI([
-      { role: 'system', content: 'You expand the HLSF adjacency lattice by proposing tightly-coupled tokens.' },
-      { role: 'user', content: prompt },
-    ], { temperature: 0.35, max_tokens: 220 }),
+    () =>
+      callOpenAI(
+        [
+          {
+            role: 'system',
+            content: 'You expand the HLSF adjacency lattice by proposing tightly-coupled tokens.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        { temperature: 0.35, max_tokens: 220 },
+      ),
     `Adjacency expansion synthesis failed for ${token}`,
     { fallbackValue: null },
   );
@@ -11858,29 +12561,31 @@ Respond strictly with JSON: {"seed":"${token}","expansions":[{"token":"...","wei
 
 function mergeSyntheticRelationships(entry, syntheticEdges, minWeight) {
   if (!syntheticEdges.length) return entry;
-  const relationships = entry?.relationships && typeof entry.relationships === 'object'
-    ? Object.fromEntries(Object.entries(entry.relationships).map(([rel, edges]) => [
-      rel,
-      Array.isArray(edges)
-        ? edges.map(edge => ({ token: String(edge.token || '').trim(), weight: Number(edge.weight) || 0 }))
-        : [],
-    ]))
-    : {};
+  const relationships =
+    entry?.relationships && typeof entry.relationships === 'object'
+      ? Object.fromEntries(
+          Object.entries(entry.relationships).map(([rel, edges]) => [
+            rel,
+            Array.isArray(edges)
+              ? edges.map((edge) => ({
+                  token: String(edge.token || '').trim(),
+                  weight: Number(edge.weight) || 0,
+                }))
+              : [],
+          ]),
+        )
+      : {};
 
   const targetRel = GLOBAL_CONNECTION_RELATION;
-  const existing = Array.isArray(relationships[targetRel])
-    ? relationships[targetRel].slice()
-    : [];
-  const seen = new Set(existing.map(edge => (edge?.token || '').toLowerCase()));
+  const existing = Array.isArray(relationships[targetRel]) ? relationships[targetRel].slice() : [];
+  const seen = new Set(existing.map((edge) => (edge?.token || '').toLowerCase()));
   for (const edge of syntheticEdges) {
     const rawToken = typeof edge.token === 'string' ? edge.token.trim() : '';
     if (!rawToken) continue;
     const normalized = rawToken.toLowerCase();
     if (seen.has(normalized)) continue;
     seen.add(normalized);
-    const weight = Number.isFinite(edge.weight)
-      ? Math.max(minWeight, edge.weight)
-      : minWeight;
+    const weight = Number.isFinite(edge.weight) ? Math.max(minWeight, edge.weight) : minWeight;
     existing.push({ token: rawToken, weight });
   }
   if (existing.length) {
@@ -11903,13 +12608,19 @@ async function synthesizeBranchNeighbors(entry, needed, context, excludeSet, min
   }
 
   const cached = SYNTHETIC_BRANCH_CACHE.get(cacheKey) || [];
-  const available = cached.filter(item => !excludeSet.has(item.token.toLowerCase()));
+  const available = cached.filter((item) => !excludeSet.has(item.token.toLowerCase()));
 
   let remaining = needed - available.length;
   let generated = [];
 
   if (remaining > 0) {
-    const llmGenerated = await requestSyntheticNeighbors(token, context, remaining, excludeSet, minWeight);
+    const llmGenerated = await requestSyntheticNeighbors(
+      token,
+      context,
+      remaining,
+      excludeSet,
+      minWeight,
+    );
     if (llmGenerated.length) {
       cached.push(...llmGenerated);
       generated.push(...llmGenerated);
@@ -11926,7 +12637,8 @@ async function synthesizeBranchNeighbors(entry, needed, context, excludeSet, min
     }
   }
 
-  const combined = cached.filter(item => !excludeSet.has(item.token.toLowerCase()))
+  const combined = cached
+    .filter((item) => !excludeSet.has(item.token.toLowerCase()))
     .slice(0, needed);
 
   return { neighbors: combined, generated };
@@ -11936,7 +12648,7 @@ async function enforceEntryBranching(entry, spawnLimit, context) {
   const limit = Math.max(2, Math.floor(spawnLimit || 2));
   const existingNeighbors = collectNeighborCandidates(entry);
   const minWeight = Number(activeSettings().pruneWeightThreshold) || 0.18;
-  const exclude = new Set(existingNeighbors.map(item => item.token.toLowerCase()));
+  const exclude = new Set(existingNeighbors.map((item) => item.token.toLowerCase()));
   const tokenKey = typeof entry.token === 'string' ? entry.token.toLowerCase() : '';
   if (tokenKey) exclude.add(tokenKey);
 
@@ -11945,7 +12657,13 @@ async function enforceEntryBranching(entry, spawnLimit, context) {
 
   if (existingNeighbors.length < limit) {
     const needed = limit - existingNeighbors.length;
-    const { neighbors, generated } = await synthesizeBranchNeighbors(entry, needed, context, exclude, minWeight);
+    const { neighbors, generated } = await synthesizeBranchNeighbors(
+      entry,
+      needed,
+      context,
+      exclude,
+      minWeight,
+    );
     syntheticNeighbors = generated;
     if (neighbors.length) {
       updatedEntry = mergeSyntheticRelationships(entry, neighbors, minWeight);
@@ -11966,23 +12684,27 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const normalized = Array.isArray(options.normalizedSeeds)
       ? options.normalizedSeeds
       : normalizeAdjacencyInputs(tokens);
-    const depth = Number.isFinite(options.depth) && options.depth > 0
-      ? Math.floor(options.depth)
-      : CONFIG.ADJACENCY_RECURSION_DEPTH;
-    const edgesPerLevel = Number.isFinite(options.edgesPerLevel) && options.edgesPerLevel > 0
-      ? Math.floor(options.edgesPerLevel)
-      : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
-    const concurrency = Number.isFinite(options.concurrency) && options.concurrency > 0
-      ? Math.max(1, Math.floor(options.concurrency))
-      : resolveAdjacencyConcurrency(CONFIG.MAX_CONCURRENCY);
-    const onTokenLoaded = typeof options.onTokenLoaded === 'function' ? options.onTokenLoaded : null;
+    const depth =
+      Number.isFinite(options.depth) && options.depth > 0
+        ? Math.floor(options.depth)
+        : CONFIG.ADJACENCY_RECURSION_DEPTH;
+    const edgesPerLevel =
+      Number.isFinite(options.edgesPerLevel) && options.edgesPerLevel > 0
+        ? Math.floor(options.edgesPerLevel)
+        : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
+    const concurrency =
+      Number.isFinite(options.concurrency) && options.concurrency > 0
+        ? Math.max(1, Math.floor(options.concurrency))
+        : resolveAdjacencyConcurrency(CONFIG.MAX_CONCURRENCY);
+    const onTokenLoaded =
+      typeof options.onTokenLoaded === 'function' ? options.onTokenLoaded : null;
     const preferDb = options.preferDb === true;
-    const dbRecordIndex = preferDb && options.dbRecordIndex instanceof Map
-      ? options.dbRecordIndex
-      : null;
-    const configuredSpawnLimit = Number.isFinite(options.spawnLimit) && options.spawnLimit > 0
-      ? Math.floor(options.spawnLimit)
-      : CONFIG.ADJACENCY_SPAWN_LIMIT;
+    const dbRecordIndex =
+      preferDb && options.dbRecordIndex instanceof Map ? options.dbRecordIndex : null;
+    const configuredSpawnLimit =
+      Number.isFinite(options.spawnLimit) && options.spawnLimit > 0
+        ? Math.floor(options.spawnLimit)
+        : CONFIG.ADJACENCY_SPAWN_LIMIT;
     const spawnLimit = Math.max(
       1,
       Math.min(
@@ -11997,21 +12719,26 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
     const settingsCaps = activeSettings();
     const nodeCap = Math.max(1, Math.floor(Number(settingsCaps?.maxNodes) || 1600));
     const edgeCap = Math.max(0, Math.floor(Number(settingsCaps?.maxEdges) || 0));
-    const relationshipCapSetting = resolveHlsfRelationshipBudget(settingsCaps?.maxRelationships ?? null);
-    const relationshipCap = relationshipCapSetting === Infinity
-      ? Infinity
-      : Math.max(0, Number(relationshipCapSetting) || 0);
+    const relationshipCapSetting = resolveHlsfRelationshipBudget(
+      settingsCaps?.maxRelationships ?? null,
+    );
+    const relationshipCap =
+      relationshipCapSetting === Infinity
+        ? Infinity
+        : Math.max(0, Number(relationshipCapSetting) || 0);
     let totalEdgeCount = 0;
     let totalRelationTypes = 0;
 
     const seedTokensForPreload = normalized
-      .map(entry => (entry && entry.token ? String(entry.token).trim() : ''))
+      .map((entry) => (entry && entry.token ? String(entry.token).trim() : ''))
       .filter(Boolean);
-    if (seedTokensForPreload.length
-      && remoteDbStore
-      && typeof remoteDbStore.isReady === 'function'
-      && remoteDbStore.isReady()
-      && typeof remoteDbStore.preloadTokens === 'function') {
+    if (
+      seedTokensForPreload.length &&
+      remoteDbStore &&
+      typeof remoteDbStore.isReady === 'function' &&
+      remoteDbStore.isReady() &&
+      typeof remoteDbStore.preloadTokens === 'function'
+    ) {
       try {
         await remoteDbStore.preloadTokens(seedTokensForPreload);
       } catch (err) {
@@ -12087,11 +12814,19 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
             staged = stageDbRecordForCache(record) || staged;
           }
         }
-        if (!staged && remoteDb && typeof remoteDb.isReady === 'function' && remoteDb.isReady()
-          && typeof remoteDb.preloadTokens === 'function') {
+        if (
+          !staged &&
+          remoteDb &&
+          typeof remoteDb.isReady === 'function' &&
+          remoteDb.isReady() &&
+          typeof remoteDb.preloadTokens === 'function'
+        ) {
           try {
             const preloadStats = await remoteDb.preloadTokens([token]);
-            if (preloadStats && (Number(preloadStats.loaded) > 0 || Number(preloadStats.hits) > 0)) {
+            if (
+              preloadStats &&
+              (Number(preloadStats.loaded) > 0 || Number(preloadStats.hits) > 0)
+            ) {
               staged = true;
             }
           } catch (err) {
@@ -12112,7 +12847,9 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
 
     while (queue.length) {
       if (currentAbortController?.signal.aborted) {
-        progress.complete(`${label || 'adjacency recursion'} cancelled after ${visited.size} tokens`);
+        progress.complete(
+          `${label || 'adjacency recursion'} cancelled after ${visited.size} tokens`,
+        );
         break;
       }
 
@@ -12207,10 +12944,13 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
             for (const candidate of candidates) {
               const nextKey = candidate.token.toLowerCase();
               if (visited.has(nextKey) || enqueued.has(nextKey)) continue;
-              if (nodeCap > 0 && (results.size + queue.length + enqueuedCount) >= nodeCap) {
+              if (nodeCap > 0 && results.size + queue.length + enqueuedCount >= nodeCap) {
                 break;
               }
-              queue.push({ entry: { token: candidate.token, kind: 'word' }, depthRemaining: nextDepth });
+              queue.push({
+                entry: { token: candidate.token, kind: 'word' },
+                depthRemaining: nextDepth,
+              });
               enqueued.add(nextKey);
               enqueuedCount += 1;
             }
@@ -12223,7 +12963,11 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
           if (edgeCap > 0 && totalEdgeCount >= edgeCap) {
             queue.length = 0;
           }
-          if (relationshipCap !== Infinity && relationshipCap > 0 && totalEdgeCount >= relationshipCap) {
+          if (
+            relationshipCap !== Infinity &&
+            relationshipCap > 0 &&
+            totalEdgeCount >= relationshipCap
+          ) {
             queue.length = 0;
           }
         } else if (response.error && item.token) {
@@ -12243,7 +12987,11 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
             connectivitySatisfied = true;
             break;
           }
-        } else if (stopWhenConnected && !requireCompleteGraph && lastConnectivitySnapshot?.allSeedsConnected) {
+        } else if (
+          stopWhenConnected &&
+          !requireCompleteGraph &&
+          lastConnectivitySnapshot?.allSeedsConnected
+        ) {
           connectivitySatisfied = true;
           break;
         }
@@ -12252,13 +13000,18 @@ async function fetchRecursiveAdjacencies(tokens, context, label, options = {}) {
       if (connectivitySatisfied && stopWhenConnected) break;
     }
 
-    const finalConnectivity = lastConnectivitySnapshot || analyzeAdjacencyConnectivity(results, normalized);
+    const finalConnectivity =
+      lastConnectivitySnapshot || analyzeAdjacencyConnectivity(results, normalized);
     const finalCompleteGraph = isCompleteAdjacencyGraph(results);
 
     if (connectivitySatisfied && (finalCompleteGraph || finalConnectivity?.allSeedsConnected)) {
-      progress.complete(`${label || 'adjacency recursion'}: connected ${normalized.length} seed${normalized.length === 1 ? '' : 's'} across ${visited.size} token${visited.size === 1 ? '' : 's'}`);
+      progress.complete(
+        `${label || 'adjacency recursion'}: connected ${normalized.length} seed${normalized.length === 1 ? '' : 's'} across ${visited.size} token${visited.size === 1 ? '' : 's'}`,
+      );
     } else {
-      progress.complete(`${label || 'adjacency recursion'}: explored ${visited.size} token${visited.size === 1 ? '' : 's'} to depth ${depth}`);
+      progress.complete(
+        `${label || 'adjacency recursion'}: explored ${visited.size} token${visited.size === 1 ? '' : 's'} to depth ${depth}`,
+      );
     }
 
     return {
@@ -12320,8 +13073,8 @@ async function ensureSymbolicAdjacencyConnectivity(matrices, seedEntries, chunkL
   if (expansion?.matrices instanceof Map && expansion.matrices.size) {
     mergeAdjacencyMaps(matrices, expansion.matrices);
     calculateAttention(matrices);
-    const resolvedConnectivity = expansion.connectivity
-      || analyzeAdjacencyConnectivity(matrices, normalizedSeeds);
+    const resolvedConnectivity =
+      expansion.connectivity || analyzeAdjacencyConnectivity(matrices, normalizedSeeds);
     return {
       updated: true,
       connectivity: resolvedConnectivity,
@@ -12339,9 +13092,10 @@ async function ensureSymbolicAdjacencyConnectivity(matrices, seedEntries, chunkL
 }
 
 function collectHiddenAdjacencyTokens(options = {}) {
-  const minAdjacencies = Number.isFinite(options.minAdjacencies) && options.minAdjacencies >= 0
-    ? Math.floor(options.minAdjacencies)
-    : 2;
+  const minAdjacencies =
+    Number.isFinite(options.minAdjacencies) && options.minAdjacencies >= 0
+      ? Math.floor(options.minAdjacencies)
+      : 2;
 
   const stats = new Map();
   const neighborSources = new Map();
@@ -12364,7 +13118,11 @@ function collectHiddenAdjacencyTokens(options = {}) {
         adjacencyCount += 1;
         const neighborKey = neighborToken.toLowerCase();
         if (!neighborSources.has(neighborKey)) {
-          neighborSources.set(neighborKey, { token: neighborToken, sources: new Set(), edgeCount: 0 });
+          neighborSources.set(neighborKey, {
+            token: neighborToken,
+            sources: new Set(),
+            edgeCount: 0,
+          });
         }
         const info = neighborSources.get(neighborKey);
         if (!info.token) info.token = neighborToken;
@@ -12384,7 +13142,8 @@ function collectHiddenAdjacencyTokens(options = {}) {
     } else {
       const existing = stats.get(key);
       if (adjacencyCount > existing.adjacencyCount) existing.adjacencyCount = adjacencyCount;
-      if (relationshipTypes > existing.relationshipTypes) existing.relationshipTypes = relationshipTypes;
+      if (relationshipTypes > existing.relationshipTypes)
+        existing.relationshipTypes = relationshipTypes;
       if (origin) existing.origins.add(origin);
     }
   };
@@ -12473,9 +13232,8 @@ function isCompleteAdjacencyGraph(matrices) {
     const neighbors = adjacencyMap.get(key);
     if (!neighbors) continue;
 
-    const relationships = entry?.relationships && typeof entry.relationships === 'object'
-      ? entry.relationships
-      : {};
+    const relationships =
+      entry?.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
 
     for (const edges of Object.values(relationships)) {
       if (!Array.isArray(edges)) continue;
@@ -12532,7 +13290,8 @@ function analyzeAdjacencyConnectivity(matrices, seeds) {
     const fallbackToken = entry?.token || mapToken;
     const nodeKey = ensureNode(fallbackToken);
     if (!nodeKey) continue;
-    const rels = entry?.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
+    const rels =
+      entry?.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
     for (const edges of Object.values(rels)) {
       if (!Array.isArray(edges)) continue;
       for (const edge of edges) {
@@ -12573,15 +13332,19 @@ function analyzeAdjacencyConnectivity(matrices, seeds) {
     components.push({ nodes: componentNodes, seeds: componentSeeds });
   }
 
-  const componentSummaries = components.map(component => ({
-    size: component.nodes.size,
-    seedCount: component.seeds.size,
-    tokens: Array.from(component.nodes).slice(0, 12).map(key => tokenForKey.get(key) || key),
-    seedTokens: Array.from(component.seeds).map(key => tokenForKey.get(key) || key),
-  })).sort((a, b) => {
-    if (b.seedCount !== a.seedCount) return b.seedCount - a.seedCount;
-    return b.size - a.size;
-  });
+  const componentSummaries = components
+    .map((component) => ({
+      size: component.nodes.size,
+      seedCount: component.seeds.size,
+      tokens: Array.from(component.nodes)
+        .slice(0, 12)
+        .map((key) => tokenForKey.get(key) || key),
+      seedTokens: Array.from(component.seeds).map((key) => tokenForKey.get(key) || key),
+    }))
+    .sort((a, b) => {
+      if (b.seedCount !== a.seedCount) return b.seedCount - a.seedCount;
+      return b.size - a.size;
+    });
 
   let primarySeedComponent = null;
   for (const component of components) {
@@ -12593,7 +13356,10 @@ function analyzeAdjacencyConnectivity(matrices, seeds) {
       primarySeedComponent = component;
       continue;
     }
-    if (component.seeds.size === primarySeedComponent.seeds.size && component.nodes.size > primarySeedComponent.nodes.size) {
+    if (
+      component.seeds.size === primarySeedComponent.seeds.size &&
+      component.nodes.size > primarySeedComponent.nodes.size
+    ) {
       primarySeedComponent = component;
     }
   }
@@ -12604,14 +13370,15 @@ function analyzeAdjacencyConnectivity(matrices, seeds) {
     if (!connectedSeedKeys.has(key)) disconnectedSeedKeys.push(key);
   }
 
-  const isolatedSeedKeys = disconnectedSeedKeys.filter(key => {
+  const isolatedSeedKeys = disconnectedSeedKeys.filter((key) => {
     const neighbors = graph.get(key);
     return !neighbors || neighbors.size === 0;
   });
 
-  const allSeedsConnected = seedKeys.size === 0
-    ? true
-    : connectedSeedKeys.size === seedKeys.size && disconnectedSeedKeys.length === 0;
+  const allSeedsConnected =
+    seedKeys.size === 0
+      ? true
+      : connectedSeedKeys.size === seedKeys.size && disconnectedSeedKeys.length === 0;
 
   const bidirectionalComplete = isCompleteAdjacencyGraph(matrices);
 
@@ -12621,8 +13388,8 @@ function analyzeAdjacencyConnectivity(matrices, seeds) {
     seedCount: seedKeys.size,
     connectedSeedCount: connectedSeedKeys.size,
     allSeedsConnected,
-    disconnectedSeeds: disconnectedSeedKeys.map(key => tokenForKey.get(key) || key),
-    isolatedSeeds: isolatedSeedKeys.map(key => tokenForKey.get(key) || key),
+    disconnectedSeeds: disconnectedSeedKeys.map((key) => tokenForKey.get(key) || key),
+    isolatedSeeds: isolatedSeedKeys.map((key) => tokenForKey.get(key) || key),
     bidirectionalComplete,
   };
 }
@@ -12704,13 +13471,14 @@ function recordLatestLocalVoiceOutputs(payload) {
 
 function calculateAttention(matrices) {
   for (const entry of matrices.values()) {
-    let weightSum = 0, totalEdges = 0;
+    let weightSum = 0,
+      totalEdges = 0;
     const rels = entry?.relationships || {};
 
     for (const [rel, edges] of Object.entries(rels)) {
       const priority = RELATIONSHIP_PRIORITIES.get(rel) || 0.3;
       if (Array.isArray(edges)) {
-        edges.forEach(edge => {
+        edges.forEach((edge) => {
           weightSum += (edge.weight || 0) * priority;
           totalEdges++;
         });
@@ -12726,10 +13494,10 @@ function calculateAttention(matrices) {
 function summarizeAttention(matrices) {
   const summary = [];
   for (const [token, data] of matrices.entries()) {
-    summary.push({ 
-      token, 
-      attention: data.attention_score || 0, 
-      total: data.total_relationships || 0 
+    summary.push({
+      token,
+      attention: data.attention_score || 0,
+      total: data.total_relationships || 0,
     });
   }
   return summary.sort((a, b) => b.attention - a.attention).slice(0, 10);
@@ -12737,11 +13505,13 @@ function summarizeAttention(matrices) {
 
 function formatTopTokens(topTokens) {
   const { ledger } = generateGlyphLedger();
-  return topTokens.map(t => {
-    const glyphEntry = ledger.get(t.token);
-    const glyph = glyphEntry ? glyphEntry.glyph : '◌';
-    return `<span class="token-highlight">${glyph} ${t.token}</span> (${t.attention.toFixed(2)})`;
-  }).join(', ');
+  return topTokens
+    .map((t) => {
+      const glyphEntry = ledger.get(t.token);
+      const glyph = glyphEntry ? glyphEntry.glyph : '◌';
+      return `<span class="token-highlight">${glyph} ${t.token}</span> (${t.attention.toFixed(2)})`;
+    })
+    .join(', ');
 }
 
 function extractKeyRelationships(matrices) {
@@ -12770,12 +13540,11 @@ function gatherAdjacencyWalk(matrices, options = {}) {
   if (!(matrices instanceof Map) || matrices.size === 0) return steps;
 
   const opts = options || {};
-  const maxSteps = Number.isFinite(opts.maxSteps) && opts.maxSteps > 0
-    ? Math.floor(opts.maxSteps)
-    : 12;
+  const maxSteps =
+    Number.isFinite(opts.maxSteps) && opts.maxSteps > 0 ? Math.floor(opts.maxSteps) : 12;
 
   const topTokens = summarizeAttention(matrices);
-  const queue = topTokens.map(item => item.token).filter(Boolean);
+  const queue = topTokens.map((item) => item.token).filter(Boolean);
   const visitedTokens = new Set();
   const seenPairs = new Set();
 
@@ -12786,9 +13555,7 @@ function gatherAdjacencyWalk(matrices, options = {}) {
     if (visitedTokens.has(currentKey)) continue;
     visitedTokens.add(currentKey);
 
-    const entry = matrices.get(current)
-      || matrices.get(currentKey)
-      || null;
+    const entry = matrices.get(current) || matrices.get(currentKey) || null;
     if (!entry) continue;
 
     const rels = entry.relationships || {};
@@ -12826,16 +13593,19 @@ function buildRecursiveAdjacencyWalk(matrices, options = {}) {
 
   const opts = options || {};
   const threshold = Number.isFinite(opts.threshold) ? opts.threshold : null;
-  const iterations = Number.isFinite(opts.iterations) && opts.iterations > 0
-    ? Math.floor(opts.iterations)
-    : 4;
-  const maxSteps = Number.isFinite(opts.maxSteps) && opts.maxSteps > 0
-    ? Math.floor(opts.maxSteps)
-    : iterations * 4;
+  const iterations =
+    Number.isFinite(opts.iterations) && opts.iterations > 0 ? Math.floor(opts.iterations) : 4;
+  const maxSteps =
+    Number.isFinite(opts.maxSteps) && opts.maxSteps > 0
+      ? Math.floor(opts.maxSteps)
+      : iterations * 4;
 
-  const startTokens = Array.isArray(opts.startTokens) && opts.startTokens.length
-    ? opts.startTokens
-    : summarizeAttention(matrices).map(item => item.token).filter(Boolean);
+  const startTokens =
+    Array.isArray(opts.startTokens) && opts.startTokens.length
+      ? opts.startTokens
+      : summarizeAttention(matrices)
+          .map((item) => item.token)
+          .filter(Boolean);
 
   const seenStarts = new Set();
   const tokenMap = new Map();
@@ -12883,7 +13653,12 @@ function buildRecursiveAdjacencyWalk(matrices, options = {}) {
     recordToken(token);
 
     const traverse = (currentToken, depthRemaining) => {
-      if (depthRemaining <= 0 || sequenceSteps.length >= maxSteps || result.steps.length >= maxSteps) return;
+      if (
+        depthRemaining <= 0 ||
+        sequenceSteps.length >= maxSteps ||
+        result.steps.length >= maxSteps
+      )
+        return;
 
       const entry = getEntry(currentToken);
       const candidates = gatherCandidates(entry, currentToken);
@@ -12932,31 +13707,38 @@ function buildRecursiveAdjacencyWalk(matrices, options = {}) {
 
 function generateLocalHlsfOutput(matrices, options = {}) {
   const opts = options || {};
-  const inputWordCount = Number.isFinite(opts.inputWordCount) && opts.inputWordCount > 0
-    ? Math.floor(opts.inputWordCount)
-    : null;
-  const desiredResponseWordCount = inputWordCount != null
-    ? Math.max(0, inputWordCount * 2)
-    : null;
-  const baseWordLimit = Number.isFinite(opts.wordLimit) && opts.wordLimit > 0
-    ? Math.floor(opts.wordLimit)
-    : CONFIG.LOCAL_OUTPUT_WORD_LIMIT;
-  const wordLimit = desiredResponseWordCount != null
-    ? Math.max(baseWordLimit, desiredResponseWordCount)
-    : baseWordLimit;
+  const inputWordCount =
+    Number.isFinite(opts.inputWordCount) && opts.inputWordCount > 0
+      ? Math.floor(opts.inputWordCount)
+      : null;
+  const desiredResponseWordCount = inputWordCount != null ? Math.max(0, inputWordCount * 2) : null;
+  const baseWordLimit =
+    Number.isFinite(opts.wordLimit) && opts.wordLimit > 0
+      ? Math.floor(opts.wordLimit)
+      : CONFIG.LOCAL_OUTPUT_WORD_LIMIT;
+  const wordLimit =
+    desiredResponseWordCount != null
+      ? Math.max(baseWordLimit, desiredResponseWordCount)
+      : baseWordLimit;
 
   const affinityThreshold = Number.isFinite(opts.threshold) ? opts.threshold : undefined;
-  const affinityIterations = Number.isFinite(opts.iterations) && opts.iterations > 0
-    ? Math.floor(opts.iterations)
-    : undefined;
-  const topTokens = Array.isArray(opts.topTokens) && opts.topTokens.length
-    ? opts.topTokens
-    : summarizeAttention(matrices);
-  const keyRelationships = Array.isArray(opts.keyRelationships) && opts.keyRelationships.length
-    ? opts.keyRelationships
-    : extractKeyRelationships(matrices);
+  const affinityIterations =
+    Number.isFinite(opts.iterations) && opts.iterations > 0
+      ? Math.floor(opts.iterations)
+      : undefined;
+  const topTokens =
+    Array.isArray(opts.topTokens) && opts.topTokens.length
+      ? opts.topTokens
+      : summarizeAttention(matrices);
+  const keyRelationships =
+    Array.isArray(opts.keyRelationships) && opts.keyRelationships.length
+      ? opts.keyRelationships
+      : extractKeyRelationships(matrices);
 
-  const focusTokens = topTokens.map(t => t.token).filter(Boolean).slice(0, 6);
+  const focusTokens = topTokens
+    .map((t) => t.token)
+    .filter(Boolean)
+    .slice(0, 6);
   const walkResult = buildRecursiveAdjacencyWalk(matrices, {
     threshold: affinityThreshold,
     iterations: affinityIterations,
@@ -13029,26 +13811,27 @@ function generateLocalHlsfOutput(matrices, options = {}) {
     const depth = sequence.steps.length + 1;
     return depth > max ? depth : max;
   }, 0);
-  let responseTokenLimit = Number.isFinite(opts.responseTokenLimit) && opts.responseTokenLimit > 0
-    ? Math.floor(opts.responseTokenLimit)
-    : 4;
+  let responseTokenLimit =
+    Number.isFinite(opts.responseTokenLimit) && opts.responseTokenLimit > 0
+      ? Math.floor(opts.responseTokenLimit)
+      : 4;
   if (desiredResponseWordCount != null) {
     responseTokenLimit = Math.max(responseTokenLimit, desiredResponseWordCount);
   }
   const responseTokenCount = Math.max(
     1,
-    Math.min(
-      orderedThoughtTokens.length || 1,
-      Math.min(responseTokenLimit, longestSequence || 1),
-    ),
+    Math.min(orderedThoughtTokens.length || 1, Math.min(responseTokenLimit, longestSequence || 1)),
   );
   const chosenTokens = orderedThoughtTokens.slice(0, responseTokenCount);
   const responseTextRaw = chosenTokens.join(' ').trim();
   let responseWordLimit = Math.max(
     responseTokenCount,
-    Math.min(wordLimit, Number.isFinite(opts.responseWordLimit) && opts.responseWordLimit > 0
-      ? Math.floor(opts.responseWordLimit)
-      : 12),
+    Math.min(
+      wordLimit,
+      Number.isFinite(opts.responseWordLimit) && opts.responseWordLimit > 0
+        ? Math.floor(opts.responseWordLimit)
+        : 12,
+    ),
   );
   if (desiredResponseWordCount != null) {
     responseWordLimit = Math.max(responseWordLimit, desiredResponseWordCount);
@@ -13066,7 +13849,9 @@ function generateLocalHlsfOutput(matrices, options = {}) {
     }
     const fillerPool = orderedThoughtTokens.length
       ? orderedThoughtTokens
-      : (focusTokens.length ? focusTokens : []);
+      : focusTokens.length
+        ? focusTokens
+        : [];
     if (!workingTokens.length && fillerPool.length) {
       workingTokens = fillerPool.slice();
     }
@@ -13080,7 +13865,9 @@ function generateLocalHlsfOutput(matrices, options = {}) {
     let fillerIndex = 0;
     const safeFillerPool = fillerPool.length
       ? fillerPool
-      : (workingTokens.length ? workingTokens : ['…']);
+      : workingTokens.length
+        ? workingTokens
+        : ['…'];
     while (workingTokens.length < desiredResponseWordCount) {
       const filler = safeFillerPool[fillerIndex % safeFillerPool.length] || '…';
       workingTokens.push(filler);
@@ -13125,7 +13912,7 @@ function cloneAdjacencyEntry(entry, fallbackToken) {
   const relationships = {};
   for (const [rel, edges] of Object.entries(entry.relationships || {})) {
     if (!Array.isArray(edges)) continue;
-    relationships[rel] = edges.map(edge => ({
+    relationships[rel] = edges.map((edge) => ({
       token: edge?.token || '',
       weight: Number(edge?.weight) || 0,
     }));
@@ -13159,7 +13946,7 @@ function mergeAdjacencyMaps(target, source) {
       for (const edge of edges) {
         if (!edge || !edge.token) continue;
         const weight = Number(edge.weight) || 0;
-        const existingEdge = list.find(item => item.token === edge.token);
+        const existingEdge = list.find((item) => item.token === edge.token);
         if (existingEdge) {
           existingEdge.weight = Math.max(Number(existingEdge.weight) || 0, weight);
         } else {
@@ -13215,20 +14002,22 @@ function buildAfterStatePrompt(matrices) {
   if (topTokens.length) {
     const attentionSummary = topTokens
       .slice(0, 5)
-      .map(t => `${t.token} (${t.attention.toFixed(2)})`)
+      .map((t) => `${t.token} (${t.attention.toFixed(2)})`)
       .join(', ');
     focus.push(`prioritize attention hotspots ${attentionSummary}`);
   }
   if (keyRels.length) {
     focus.push(`highlight relationships such as ${keyRels.join('; ')}`);
   }
-  focus.push(`maintain coherence across ${nodeCount} active nodes and ${edgeCount} live adjacencies`);
+  focus.push(
+    `maintain coherence across ${nodeCount} active nodes and ${edgeCount} live adjacencies`,
+  );
 
   const lines = [
     'Craft the next response by reasoning over the stabilized HLSF state.',
     'Goals:',
-    ...focus.map(item => `- ${item}.`),
-    'Keep explanations grounded in observed tokens and their relationships.'
+    ...focus.map((item) => `- ${item}.`),
+    'Keep explanations grounded in observed tokens and their relationships.',
   ];
 
   return {
@@ -13251,10 +14040,7 @@ function polygonVertices(center, radius, sides) {
   const angleStep = (2 * Math.PI) / sides;
   for (let i = 0; i < sides; i++) {
     const angle = i * angleStep - Math.PI / 2;
-    vertices.push([
-      center[0] + radius * Math.cos(angle),
-      center[1] + radius * Math.sin(angle)
-    ]);
+    vertices.push([center[0] + radius * Math.cos(angle), center[1] + radius * Math.sin(angle)]);
   }
   return vertices;
 }
@@ -13271,7 +14057,7 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
       return {
         relType,
         count: edges.length,
-        avgWeight
+        avgWeight,
       };
     })
     .sort((a, b) => a.relType.localeCompare(b.relType));
@@ -13280,14 +14066,14 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
     return {
       vertices: polygonVertices(center, baseRadius * 0.8, 3),
       anchorIndex: 0,
-      adjacencyTypes: 0
+      adjacencyTypes: 0,
     };
   }
 
   const vertexCount = Math.max(entries.length + 1, 3);
   const baseAngle = -Math.PI / 2;
   const angleStep = (2 * Math.PI) / vertexCount;
-  const maxCount = Math.max(...entries.map(entry => entry.count));
+  const maxCount = Math.max(...entries.map((entry) => entry.count));
 
   const vertices = [];
   const anchor = [center[0], center[1] - baseRadius];
@@ -13300,10 +14086,7 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
     const radialFactor = 0.85 + normalizedWeight * 0.35 + countFactor * 0.25;
     const radius = baseRadius * radialFactor;
     const angle = baseAngle + angleStep * (i + 1);
-    vertices.push([
-      center[0] + radius * Math.cos(angle),
-      center[1] + radius * Math.sin(angle)
-    ]);
+    vertices.push([center[0] + radius * Math.cos(angle), center[1] + radius * Math.sin(angle)]);
   }
 
   let fillerIndex = entries.length;
@@ -13311,7 +14094,7 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
     const angle = baseAngle + angleStep * (fillerIndex + 1);
     vertices.push([
       center[0] + baseRadius * 0.75 * Math.cos(angle),
-      center[1] + baseRadius * 0.75 * Math.sin(angle)
+      center[1] + baseRadius * 0.75 * Math.sin(angle),
     ]);
     fillerIndex++;
   }
@@ -13319,15 +14102,17 @@ function deriveAdjacencyPolygon(center, baseRadius, relationships) {
   return {
     vertices,
     anchorIndex: 0,
-    adjacencyTypes: entries.length
+    adjacencyTypes: entries.length,
   };
 }
 
 function buildBaseTriangles(vertices, sides) {
   if (sides < 3) return [];
   const triangles = [];
-  const center = vertices.reduce((acc, v) =>
-    [acc[0] + v[0] / sides, acc[1] + v[1] / sides], [0, 0]);
+  const center = vertices.reduce(
+    (acc, v) => [acc[0] + v[0] / sides, acc[1] + v[1] / sides],
+    [0, 0],
+  );
 
   for (let i = 0; i < sides; i++) {
     const next = (i + 1) % sides;
@@ -13340,45 +14125,38 @@ function rotateTrianglesAround(triangles, center, angle) {
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
 
-  return triangles.map(tri => tri.map(vertex => {
-    const dx = vertex[0] - center[0];
-    const dy = vertex[1] - center[1];
-    return [
-      center[0] + dx * cos - dy * sin,
-      center[1] + dx * sin + dy * cos
-    ];
-  }));
+  return triangles.map((tri) =>
+    tri.map((vertex) => {
+      const dx = vertex[0] - center[0];
+      const dy = vertex[1] - center[1];
+      return [center[0] + dx * cos - dy * sin, center[1] + dx * sin + dy * cos];
+    }),
+  );
 }
 
 function rotatePointsAround(points, center, angle) {
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
 
-  return points.map(vertex => {
+  return points.map((vertex) => {
     const dx = vertex[0] - center[0];
     const dy = vertex[1] - center[1];
-    return [
-      center[0] + dx * cos - dy * sin,
-      center[1] + dx * sin + dy * cos
-    ];
+    return [center[0] + dx * cos - dy * sin, center[1] + dx * sin + dy * cos];
   });
 }
 
 function scalePointsAround(points, center, scale) {
   if (!Array.isArray(points)) return [];
-  return points.map(vertex => {
+  return points.map((vertex) => {
     const dx = vertex[0] - center[0];
     const dy = vertex[1] - center[1];
-    return [
-      center[0] + dx * scale,
-      center[1] + dy * scale
-    ];
+    return [center[0] + dx * scale, center[1] + dy * scale];
   });
 }
 
 function scaleTrianglesAround(triangles, center, scale) {
   if (!Array.isArray(triangles)) return [];
-  return triangles.map(tri => scalePointsAround(tri, center, scale));
+  return triangles.map((tri) => scalePointsAround(tri, center, scale));
 }
 
 window.HLSF.geometry = {
@@ -13423,7 +14201,7 @@ function buildHLSFNodes() {
     }
 
     if (graph) {
-      graph.tokens = new Map(tokenRecords.map(record => [record.token, record]));
+      graph.tokens = new Map(tokenRecords.map((record) => [record.token, record]));
     }
 
     sourceLabel = '(storage scan)';
@@ -13431,7 +14209,9 @@ function buildHLSFNodes() {
     sourceLabel = '(graph cache)';
   }
 
-  console.log(`Building HLSF nodes from ${tokenRecords.length} cached tokens ${sourceLabel}`.trim());
+  console.log(
+    `Building HLSF nodes from ${tokenRecords.length} cached tokens ${sourceLabel}`.trim(),
+  );
 
   const nodes = [];
 
@@ -13451,13 +14231,12 @@ function buildHLSFNodes() {
       for (const edges of Object.values(rels)) {
         if (Array.isArray(edges)) adjacencyCount += edges.length;
       }
-      const adjacencyTypes = Object.values(rels)
-        .filter(edges => Array.isArray(edges) && edges.length > 0)
-        .length;
+      const adjacencyTypes = Object.values(rels).filter(
+        (edges) => Array.isArray(edges) && edges.length > 0,
+      ).length;
 
-      const attention = typeof tokenData.attention_score === 'number'
-        ? tokenData.attention_score
-        : 0.5;
+      const attention =
+        typeof tokenData.attention_score === 'number' ? tokenData.attention_score : 0.5;
       const complex = memoizedComplexNumber(token, { ...tokenData, attention_score: attention });
       const glyph = complexToGlyph(complex);
 
@@ -13490,7 +14269,7 @@ function buildHLSFNodes() {
         anchorIndex: shape.anchorIndex,
         color,
         vertices: shape.vertices,
-        triangles: null // Will be computed
+        triangles: null, // Will be computed
       });
     } catch (err) {
       console.error('Failed to process token for HLSF:', tokenData, err);
@@ -13520,7 +14299,9 @@ function initHLSFCanvas() {
     hlsfNodes = buildHLSFNodes();
 
     if (hlsfNodes.length === 0) {
-      logWarning('No cached tokens found for HLSF. Process some queries first to populate the database.');
+      logWarning(
+        'No cached tokens found for HLSF. Process some queries first to populate the database.',
+      );
       return;
     }
 
@@ -13528,7 +14309,7 @@ function initHLSFCanvas() {
 
     const container = document.createElement('div');
     container.className = 'hlsf-canvas-container';
-  container.innerHTML = `
+    container.innerHTML = `
     <div style="margin-bottom: 1rem;">
       <div class="section-title">🌌 HLSF: Hierarchical-Level Semantic Framework</div>
       <div style="font-size: 0.9rem; opacity: 0.8; margin-top: 0.5rem;">
@@ -13586,243 +14367,252 @@ function initHLSFCanvas() {
     </div>
   `;
 
-  const entry = document.createElement('div');
-  entry.className = 'log-entry';
-  entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
-  entry.appendChild(container);
-  elements.log.appendChild(entry);
-  elements.log.scrollTop = elements.log.scrollHeight;
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `<div class="timestamp">${new Date().toLocaleTimeString()}</div>`;
+    entry.appendChild(container);
+    elements.log.appendChild(entry);
+    elements.log.scrollTop = elements.log.scrollHeight;
 
-  // Initialize canvas
-  window.HLSF.canvas = document.getElementById('hlsf-canvas');
-  if (window.HLSF.canvas) {
-    installClusterZoom(window.HLSF.canvas as HTMLCanvasElement);
-    window.HLSF.ctx = window.HLSF.canvas.getContext('2d');
-  } else {
-    window.HLSF.ctx = null;
-  }
+    // Initialize canvas
+    window.HLSF.canvas = document.getElementById('hlsf-canvas');
+    if (window.HLSF.canvas) {
+      installClusterZoom(window.HLSF.canvas as HTMLCanvasElement);
+      window.HLSF.ctx = window.HLSF.canvas.getContext('2d');
+    } else {
+      window.HLSF.ctx = null;
+    }
 
-  console.log('Canvas initialized:', window.HLSF.canvas ? 'success' : 'failed');
+    console.log('Canvas initialized:', window.HLSF.canvas ? 'success' : 'failed');
 
-  // Setup controls
-  const speedSlider = document.getElementById('hlsf-rotation-speed');
-  const speedVal = document.getElementById('hlsf-speed-val');
-  if (speedSlider && speedVal) {
-    const omega = Number.isFinite(window.HLSF.config.rotationOmega)
-      ? window.HLSF.config.rotationOmega
-      : 0;
-    speedSlider.value = omega.toFixed(2);
-    speedVal.textContent = omega.toFixed(2);
-    speedSlider.addEventListener('input', (e) => {
-      const next = parseFloat(e.target.value);
-      if (!Number.isFinite(next)) return;
-      const clamped = Math.max(-5, Math.min(5, next));
-      window.HLSF.config.rotationOmega = clamped;
-      window.HLSF.state = window.HLSF.state || {};
-      if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
-        window.HLSF.state.emergent = { on: true, speed: clamped };
-      } else {
-        window.HLSF.state.emergent.speed = clamped;
-      }
-      if (Math.abs(clamped - next) > 1e-6) {
-        speedSlider.value = clamped.toFixed(2);
-      }
-      speedVal.textContent = clamped.toFixed(2);
-      if (window.HLSF.state.emergent.on) {
-        requestRender();
-      } else {
+    // Setup controls
+    const speedSlider = document.getElementById('hlsf-rotation-speed');
+    const speedVal = document.getElementById('hlsf-speed-val');
+    if (speedSlider && speedVal) {
+      const omega = Number.isFinite(window.HLSF.config.rotationOmega)
+        ? window.HLSF.config.rotationOmega
+        : 0;
+      speedSlider.value = omega.toFixed(2);
+      speedVal.textContent = omega.toFixed(2);
+      speedSlider.addEventListener('input', (e) => {
+        const next = parseFloat(e.target.value);
+        if (!Number.isFinite(next)) return;
+        const clamped = Math.max(-5, Math.min(5, next));
+        window.HLSF.config.rotationOmega = clamped;
+        window.HLSF.state = window.HLSF.state || {};
+        if (!window.HLSF.state.emergent || typeof window.HLSF.state.emergent !== 'object') {
+          window.HLSF.state.emergent = { on: true, speed: clamped };
+        } else {
+          window.HLSF.state.emergent.speed = clamped;
+        }
+        if (Math.abs(clamped - next) > 1e-6) {
+          speedSlider.value = clamped.toFixed(2);
+        }
+        speedVal.textContent = clamped.toFixed(2);
+        if (window.HLSF.state.emergent.on) {
+          requestRender();
+        } else {
+          debouncedLegacyRender();
+        }
+      });
+    }
+
+    const alphaSlider = document.getElementById('hlsf-alpha');
+    const alphaVal = document.getElementById('hlsf-alpha-val');
+    if (alphaSlider && alphaVal) {
+      const alpha = baseAlpha();
+      alphaSlider.value = alpha.toFixed(2);
+      alphaVal.textContent = alpha.toFixed(2);
+      window.HLSF.config.alpha = alpha;
+      alphaSlider.addEventListener('input', (e) => {
+        const raw = parseFloat(e.target.value);
+        const next = clampAlpha(raw);
+        if (!Number.isFinite(next)) {
+          logError('Alpha value must be numeric.');
+          return;
+        }
+        window.HLSF.config.alpha = next;
+        alphaVal.textContent = next.toFixed(2);
+        if (Math.abs(next - parseFloat(alphaSlider.value)) > 1e-6) {
+          alphaSlider.value = next.toFixed(2);
+        }
         debouncedLegacyRender();
-      }
-    });
-  }
+      });
+    }
 
-  const alphaSlider = document.getElementById('hlsf-alpha');
-  const alphaVal = document.getElementById('hlsf-alpha-val');
-  if (alphaSlider && alphaVal) {
-    const alpha = baseAlpha();
-    alphaSlider.value = alpha.toFixed(2);
-    alphaVal.textContent = alpha.toFixed(2);
-    window.HLSF.config.alpha = alpha;
-    alphaSlider.addEventListener('input', (e) => {
-      const raw = parseFloat(e.target.value);
-      const next = clampAlpha(raw);
-      if (!Number.isFinite(next)) {
-        logError('Alpha value must be numeric.');
-        return;
-      }
-      window.HLSF.config.alpha = next;
-      alphaVal.textContent = next.toFixed(2);
-      if (Math.abs(next - parseFloat(alphaSlider.value)) > 1e-6) {
-        alphaSlider.value = next.toFixed(2);
-      }
-      debouncedLegacyRender();
-    });
-  }
+    const globalZoomIn = document.getElementById('hlsf-zoom-in');
+    if (globalZoomIn) {
+      globalZoomIn.addEventListener('click', () => {
+        const view = window.HLSF.view;
+        const next = Math.min(12, Math.max(0.25, view.scale * 1.2));
+        window.HLSF.view.scale = next;
+        syncViewToConfig();
+        requestRender();
+      });
+    }
 
-  const globalZoomIn = document.getElementById('hlsf-zoom-in');
-  if (globalZoomIn) {
-    globalZoomIn.addEventListener('click', () => {
-      const view = window.HLSF.view;
-      const next = Math.min(12, Math.max(0.25, view.scale * 1.2));
-      window.HLSF.view.scale = next;
-      syncViewToConfig();
-      requestRender();
-    });
-  }
+    const globalZoomOut = document.getElementById('hlsf-zoom-out');
+    if (globalZoomOut) {
+      globalZoomOut.addEventListener('click', () => {
+        const view = window.HLSF.view;
+        const next = Math.min(12, Math.max(0.25, view.scale * 0.8));
+        window.HLSF.view.scale = next;
+        syncViewToConfig();
+        requestRender();
+      });
+    }
 
-  const globalZoomOut = document.getElementById('hlsf-zoom-out');
-  if (globalZoomOut) {
-    globalZoomOut.addEventListener('click', () => {
-      const view = window.HLSF.view;
-      const next = Math.min(12, Math.max(0.25, view.scale * 0.8));
-      window.HLSF.view.scale = next;
-      syncViewToConfig();
-      requestRender();
-    });
-  }
+    const globalReset = document.getElementById('hlsf-reset-view');
+    if (globalReset) {
+      globalReset.addEventListener('click', () => {
+        window.HLSF.view.scale = 1;
+        const canvasEl = window.HLSF.canvas;
+        if (canvasEl) {
+          const width = canvasEl.clientWidth || canvasEl.width;
+          const height = canvasEl.clientHeight || canvasEl.height;
+          window.HLSF.view.x = width / 2;
+          window.HLSF.view.y = height / 2;
+        } else {
+          window.HLSF.view.x = 0;
+          window.HLSF.view.y = 0;
+        }
+        syncViewToConfig();
+        requestRender();
+      });
+    }
 
-  const globalReset = document.getElementById('hlsf-reset-view');
-  if (globalReset) {
-    globalReset.addEventListener('click', () => {
-      window.HLSF.view.scale = 1;
-      const canvasEl = window.HLSF.canvas;
-      if (canvasEl) {
+    const globalPortal = document.getElementById('hlsf-zoom-portal');
+    if (globalPortal) {
+      globalPortal.addEventListener('click', () => {
+        const canvasEl = window.HLSF.canvas;
+        if (!canvasEl) return;
         const width = canvasEl.clientWidth || canvasEl.width;
         const height = canvasEl.clientHeight || canvasEl.height;
-        window.HLSF.view.x = width / 2;
-        window.HLSF.view.y = height / 2;
-      } else {
-        window.HLSF.view.x = 0;
-        window.HLSF.view.y = 0;
+        animateViewport(
+          {
+            x: width / 2,
+            y: height / 2,
+            scale: Math.max(1.5, window.HLSF.view.scale * 2),
+          },
+          350,
+        );
+      });
+    }
+
+    const emergentBtn = document.getElementById('hlsf-toggle-emergent');
+    emergentBtn.addEventListener('click', () => {
+      const state = window.HLSF.state.emergent;
+      state.on = !state.on;
+      window.HLSF.config.emergentActive = state.on;
+      emergentBtn.textContent = state.on ? 'Stop Emergence' : 'Start Emergence';
+      if (state.on && window.HLSF.currentGraph) {
+        animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
+      } else if (!state.on && _anim) {
+        cancelAnimationFrame(_anim);
+        _anim = null;
       }
-      syncViewToConfig();
       requestRender();
     });
-  }
 
-  const globalPortal = document.getElementById('hlsf-zoom-portal');
-  if (globalPortal) {
-    globalPortal.addEventListener('click', () => {
-      const canvasEl = window.HLSF.canvas;
-      if (!canvasEl) return;
-      const width = canvasEl.clientWidth || canvasEl.width;
-      const height = canvasEl.clientHeight || canvasEl.height;
-      animateViewport({
-        x: width / 2,
-        y: height / 2,
-        scale: Math.max(1.5, window.HLSF.view.scale * 2),
-      }, 350);
+    const edgesBtn = document.getElementById('hlsf-toggle-edges');
+    edgesBtn.addEventListener('click', () => {
+      window.HLSF.config.showEdges = !window.HLSF.config.showEdges;
+      edgesBtn.textContent = window.HLSF.config.showEdges ? 'Edges: On' : 'Edges: Off';
+      debouncedLegacyRender();
     });
-  }
 
-  const emergentBtn = document.getElementById('hlsf-toggle-emergent');
-  emergentBtn.addEventListener('click', () => {
-    const state = window.HLSF.state.emergent;
-    state.on = !state.on;
-    window.HLSF.config.emergentActive = state.on;
-    emergentBtn.textContent = state.on ? 'Stop Emergence' : 'Start Emergence';
-    if (state.on && window.HLSF.currentGraph) {
-      animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
-    } else if (!state.on && _anim) {
-      cancelAnimationFrame(_anim);
-      _anim = null;
-    }
-    requestRender();
-  });
-
-  const edgesBtn = document.getElementById('hlsf-toggle-edges');
-  edgesBtn.addEventListener('click', () => {
-    window.HLSF.config.showEdges = !window.HLSF.config.showEdges;
-    edgesBtn.textContent = window.HLSF.config.showEdges ? 'Edges: On' : 'Edges: Off';
-    debouncedLegacyRender();
-  });
-
-  const adjacencyBtn = document.getElementById('hlsf-toggle-adjacency');
-  if (adjacencyBtn) {
-    adjacencyBtn.addEventListener('click', () => {
-      toggleAdjacencyExpansion({ root: document.getElementById('hlsf-canvas-container'), source: 'button' }).catch(err => {
-        console.warn('Failed to toggle adjacency expansion:', err);
+    const adjacencyBtn = document.getElementById('hlsf-toggle-adjacency');
+    if (adjacencyBtn) {
+      adjacencyBtn.addEventListener('click', () => {
+        toggleAdjacencyExpansion({
+          root: document.getElementById('hlsf-canvas-container'),
+          source: 'button',
+        }).catch((err) => {
+          console.warn('Failed to toggle adjacency expansion:', err);
+        });
       });
+    }
+
+    const labelsBtn = document.getElementById('hlsf-toggle-labels');
+    labelsBtn.addEventListener('click', () => {
+      window.HLSF.config.showLabels = !window.HLSF.config.showLabels;
+      labelsBtn.textContent = window.HLSF.config.showLabels ? 'Labels: On' : 'Labels: Off';
+      debouncedLegacyRender();
     });
-  }
 
-  const labelsBtn = document.getElementById('hlsf-toggle-labels');
-  labelsBtn.addEventListener('click', () => {
-    window.HLSF.config.showLabels = !window.HLSF.config.showLabels;
-    labelsBtn.textContent = window.HLSF.config.showLabels ? 'Labels: On' : 'Labels: Off';
-    debouncedLegacyRender();
-  });
+    const bgBtn = document.getElementById('hlsf-toggle-bg');
+    bgBtn.addEventListener('click', () => {
+      window.HLSF.config.whiteBg = !window.HLSF.config.whiteBg;
+      bgBtn.textContent = window.HLSF.config.whiteBg ? 'BG: Light' : 'BG: Dark';
+      debouncedLegacyRender();
+    });
 
-  const bgBtn = document.getElementById('hlsf-toggle-bg');
-  bgBtn.addEventListener('click', () => {
-    window.HLSF.config.whiteBg = !window.HLSF.config.whiteBg;
-    bgBtn.textContent = window.HLSF.config.whiteBg ? 'BG: Light' : 'BG: Dark';
-    debouncedLegacyRender();
-  });
+    // Mouse interaction
+    let isDragging = false;
+    let lastX = 0;
+    let lastY = 0;
 
-  // Mouse interaction
-  let isDragging = false;
-  let lastX = 0;
-  let lastY = 0;
-
-  window.HLSF.canvas.addEventListener('mousedown', (e) => {
-    isDragging = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-  });
-
-  window.HLSF.canvas.addEventListener('mousemove', (e) => {
-    if (isDragging) {
-      const dx = e.clientX - lastX;
-      const dy = e.clientY - lastY;
-      window.HLSF.view.x += dx;
-      window.HLSF.view.y += dy;
-      syncViewToConfig();
+    window.HLSF.canvas.addEventListener('mousedown', (e) => {
+      isDragging = true;
       lastX = e.clientX;
       lastY = e.clientY;
-      requestRender();
+    });
+
+    window.HLSF.canvas.addEventListener('mousemove', (e) => {
+      if (isDragging) {
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        window.HLSF.view.x += dx;
+        window.HLSF.view.y += dy;
+        syncViewToConfig();
+        lastX = e.clientX;
+        lastY = e.clientY;
+        requestRender();
+      }
+    });
+
+    window.HLSF.canvas.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    window.HLSF.canvas.addEventListener('mouseleave', () => {
+      isDragging = false;
+    });
+
+    window.HLSF.canvas.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.1 : 0.9;
+        window.HLSF.view.scale = Math.min(12, Math.max(0.25, window.HLSF.view.scale * factor));
+        syncViewToConfig();
+        requestRender();
+      },
+      { passive: false },
+    );
+
+    // Center view
+    if (window.HLSF.canvas) {
+      const width = window.HLSF.canvas.clientWidth || window.HLSF.canvas.width;
+      const height = window.HLSF.canvas.clientHeight || window.HLSF.canvas.height;
+      window.HLSF.view.x = width / 2;
+      window.HLSF.view.y = height / 2;
+    } else {
+      window.HLSF.view.x = 0;
+      window.HLSF.view.y = 0;
     }
-  });
-
-  window.HLSF.canvas.addEventListener('mouseup', () => {
-    isDragging = false;
-  });
-
-  window.HLSF.canvas.addEventListener('mouseleave', () => {
-    isDragging = false;
-  });
-
-  window.HLSF.canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.1 : 0.9;
-    window.HLSF.view.scale = Math.min(12, Math.max(0.25, window.HLSF.view.scale * factor));
     syncViewToConfig();
-    requestRender();
-  }, { passive: false });
 
-  // Center view
-  if (window.HLSF.canvas) {
-    const width = window.HLSF.canvas.clientWidth || window.HLSF.canvas.width;
-    const height = window.HLSF.canvas.clientHeight || window.HLSF.canvas.height;
-    window.HLSF.view.x = width / 2;
-    window.HLSF.view.y = height / 2;
-  } else {
-    window.HLSF.view.x = 0;
-    window.HLSF.view.y = 0;
-  }
-  syncViewToConfig();
+    // Build nodes
+    window.HLSF.nodes = hlsfNodes;
 
-  // Build nodes
-  window.HLSF.nodes = hlsfNodes;
+    // Initial render
+    renderLegacyHLSF();
 
-  // Initial render
-  renderLegacyHLSF();
+    // Start animation
+    animateLegacyHLSF();
 
-  // Start animation
-  animateLegacyHLSF();
-
-  logOK(`HLSF visualization initialized with ${hlsfNodes.length} token matrices`);
-
+    logOK(`HLSF visualization initialized with ${hlsfNodes.length} token matrices`);
   } catch (err) {
     logError(`Failed to initialize HLSF canvas: ${err.message}`);
     console.error('HLSF canvas error:', err);
@@ -13867,9 +14657,8 @@ function renderLegacyHLSF() {
     const edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
     const edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
     const effectiveEdgeWidth = edgeWidth * Math.max(0.6, window.HLSF.config.scale || 1);
-    const focusSet = window.HLSF?.state?.documentFocus instanceof Set
-      ? window.HLSF.state.documentFocus
-      : null;
+    const focusSet =
+      window.HLSF?.state?.documentFocus instanceof Set ? window.HLSF.state.documentFocus : null;
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1.0;
@@ -13921,7 +14710,7 @@ function renderLegacyHLSF() {
       triangles = Array.isArray(triangles) ? triangles : [];
       vertices = Array.isArray(vertices) ? vertices : [];
 
-      const screenTriangles = triangles.map(tri => tri.map(([x, y]) => worldToScreen(x, y)));
+      const screenTriangles = triangles.map((tri) => tri.map(([x, y]) => worldToScreen(x, y)));
       const screenVertices = vertices.map(([x, y]) => worldToScreen(x, y));
 
       ctx.globalAlpha = baseAlpha();
@@ -13945,7 +14734,8 @@ function renderLegacyHLSF() {
           if (i === anchorIndex) continue;
           const [vx, vy] = screenVertices[i];
           const strokeColor = nodeEdgeStrokeColor(node, i, edgeColorMode) || theme.fg;
-          const edgeFocus = inFocus && focusSet && focusSet.has((node.verticesLabels?.[i] || '').toLowerCase());
+          const edgeFocus =
+            inFocus && focusSet && focusSet.has((node.verticesLabels?.[i] || '').toLowerCase());
           ctx.strokeStyle = edgeFocus ? '#00ffcc' : strokeColor;
           ctx.lineWidth = effectiveEdgeWidth * (edgeFocus ? 1.5 : 1);
           ctx.beginPath();
@@ -13977,8 +14767,12 @@ function renderLegacyHLSF() {
         ctx.restore();
 
         ctx.fillStyle = inFocus
-          ? (window.HLSF.config.whiteBg ? 'rgba(0, 128, 128, 0.8)' : 'rgba(0, 255, 204, 0.8)')
-          : window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.7)';
+          ? window.HLSF.config.whiteBg
+            ? 'rgba(0, 128, 128, 0.8)'
+            : 'rgba(0, 255, 204, 0.8)'
+          : window.HLSF.config.whiteBg
+            ? 'rgba(0, 0, 0, 0.7)'
+            : 'rgba(255, 255, 255, 0.7)';
         ctx.font = `${Math.max(9, 11 * window.HLSF.config.scale)}px Fira Code, monospace`;
         ctx.fillText(node.token, sx, sy + 25 * window.HLSF.config.scale);
         ctx.globalAlpha = 1.0;
@@ -13989,8 +14783,11 @@ function renderLegacyHLSF() {
     ctx.fillStyle = window.HLSF.config.whiteBg ? 'rgba(0, 0, 0, 0.8)' : 'rgba(0, 255, 136, 0.8)';
     ctx.font = '12px Fira Code, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`Nodes: ${window.HLSF.nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`, 10, 20);
-
+    ctx.fillText(
+      `Nodes: ${window.HLSF.nodes.length} | Zoom: ${window.HLSF.config.scale.toFixed(2)}x`,
+      10,
+      20,
+    );
   } catch (err) {
     console.error('Error rendering HLSF:', err);
   }
@@ -14098,7 +14895,7 @@ function computeRelHistogramEntries(db) {
   return [...hist.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-function computeRelHistogram(db, entries){
+function computeRelHistogram(db, entries) {
   const base = Array.isArray(entries) ? entries : computeRelHistogramEntries(db);
   return base.map(([glyph, count]) => renderRelTypeRow(glyph, count));
 }
@@ -14330,13 +15127,13 @@ function analyzeDatabaseMetadata() {
     .slice(0, 20);
 
   const highAttentionTokens = tokens
-    .filter(t => t?.attention_score)
+    .filter((t) => t?.attention_score)
     .sort((a, b) => (b.attention_score || 0) - (a.attention_score || 0))
     .slice(0, 10);
 
   const adjacencyCostPerToken = estimateCostUsd(
     CONFIG.ADJACENCY_TOKEN_ESTIMATES.prompt,
-    CONFIG.ADJACENCY_TOKEN_ESTIMATES.completion
+    CONFIG.ADJACENCY_TOKEN_ESTIMATES.completion,
   );
 
   return {
@@ -14370,7 +15167,8 @@ function snapshotConversationLog() {
     return { html: '', entries: [] };
   }
   const entries = Array.from(logElement.querySelectorAll('.log-entry')).map((node: Element) => ({
-    className: typeof (node as HTMLElement).className === 'string' ? (node as HTMLElement).className : '',
+    className:
+      typeof (node as HTMLElement).className === 'string' ? (node as HTMLElement).className : '',
     html: (node as HTMLElement).innerHTML || '',
   }));
   return {
@@ -14430,18 +15228,22 @@ function snapshotLocalHlsfMemory() {
   if (!memory) return null;
 
   const prompts = Array.isArray(memory.prompts)
-    ? memory.prompts.map(entry => {
-        if (!entry || typeof entry !== 'object') return null;
-        const clone = Object.assign({}, entry);
-        if (Array.isArray(clone.tokens)) clone.tokens = clone.tokens.filter(Boolean);
-        if (Array.isArray(clone.adjacencySeeds)) clone.adjacencySeeds = clone.adjacencySeeds.filter(Boolean);
-        return clone;
-      }).filter(Boolean)
+    ? memory.prompts
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') return null;
+          const clone = Object.assign({}, entry);
+          if (Array.isArray(clone.tokens)) clone.tokens = clone.tokens.filter(Boolean);
+          if (Array.isArray(clone.adjacencySeeds))
+            clone.adjacencySeeds = clone.adjacencySeeds.filter(Boolean);
+          return clone;
+        })
+        .filter(Boolean)
     : [];
 
-  const adjacencySummaries = memory.adjacencySummaries instanceof Map
-    ? Array.from(memory.adjacencySummaries.entries()).map(([key, value]) => [key, value])
-    : [];
+  const adjacencySummaries =
+    memory.adjacencySummaries instanceof Map
+      ? Array.from(memory.adjacencySummaries.entries()).map(([key, value]) => [key, value])
+      : [];
 
   return {
     prompts,
@@ -14457,16 +15259,24 @@ function restoreLocalHlsfMemory(snapshot) {
 
   const resolvedPrompts = Array.isArray(snapshot?.prompts)
     ? snapshot.prompts
-        .map(entry => {
+        .map((entry) => {
           if (!entry || typeof entry !== 'object') return null;
           const text = typeof entry.text === 'string' ? entry.text : '';
           if (!text) return null;
           const normalized = {
-            id: typeof entry.id === 'string' ? entry.id : (entry.id != null ? String(entry.id) : undefined),
+            id:
+              typeof entry.id === 'string'
+                ? entry.id
+                : entry.id != null
+                  ? String(entry.id)
+                  : undefined,
             text,
             tokens: Array.isArray(entry.tokens) ? entry.tokens.filter(Boolean) : [],
-            adjacencySeeds: Array.isArray(entry.adjacencySeeds) ? entry.adjacencySeeds.filter(Boolean) : [],
-            timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : new Date().toISOString(),
+            adjacencySeeds: Array.isArray(entry.adjacencySeeds)
+              ? entry.adjacencySeeds.filter(Boolean)
+              : [],
+            timestamp:
+              typeof entry.timestamp === 'string' ? entry.timestamp : new Date().toISOString(),
           } as any;
           if (normalized.id == null || normalized.id === '') {
             normalized.id = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -14492,38 +15302,41 @@ function restoreLocalHlsfMemory(snapshot) {
 
   memory.prompts = resolvedPrompts;
   memory.adjacencySummaries = adjacency;
-  memory.lastPrompt = snapshot?.lastPrompt && typeof snapshot.lastPrompt === 'object'
-    ? snapshot.lastPrompt
-    : null;
-  memory.lastAdjacency = snapshot?.lastAdjacency && typeof snapshot.lastAdjacency === 'object'
-    ? snapshot.lastAdjacency
-    : null;
+  memory.lastPrompt =
+    snapshot?.lastPrompt && typeof snapshot.lastPrompt === 'object' ? snapshot.lastPrompt : null;
+  memory.lastAdjacency =
+    snapshot?.lastAdjacency && typeof snapshot.lastAdjacency === 'object'
+      ? snapshot.lastAdjacency
+      : null;
 }
 
 function showDatabaseMetadata() {
   const metadata = analyzeDatabaseMetadata();
-  const dbStats = Object.assign({
-    tokens: metadata.totalTokens,
-    relationships: metadata.totalRelationships,
-    nodes: 0,
-    edges: 0,
-    anchors: 0,
-    minEdges: { count: 0, tokens: [] },
-    maxEdges: { count: 0, tokens: [] },
-  }, metadata.dbStats || {});
+  const dbStats = Object.assign(
+    {
+      tokens: metadata.totalTokens,
+      relationships: metadata.totalRelationships,
+      nodes: 0,
+      edges: 0,
+      anchors: 0,
+      minEdges: { count: 0, tokens: [] },
+      maxEdges: { count: 0, tokens: [] },
+    },
+    metadata.dbStats || {},
+  );
 
   const formatEdgeTokens = (edgeInfo) => {
     if (!edgeInfo || !Array.isArray(edgeInfo.tokens) || edgeInfo.tokens.length === 0) {
       return '';
     }
     const maxDisplay = 5;
-    const rendered = edgeInfo.tokens.slice(0, maxDisplay)
-      .map(token => `<span class="token-highlight">${token}</span>`)
+    const rendered = edgeInfo.tokens
+      .slice(0, maxDisplay)
+      .map((token) => `<span class="token-highlight">${token}</span>`)
       .join(', ');
     const extraCount = edgeInfo.tokens.length - maxDisplay;
-    const extra = extraCount > 0
-      ? ` <small style="opacity: 0.65;">(+${extraCount} more)</small>`
-      : '';
+    const extra =
+      extraCount > 0 ? ` <small style="opacity: 0.65;">(+${extraCount} more)</small>` : '';
     return `${rendered}${extra}`;
   };
 
@@ -14543,24 +15356,26 @@ function showDatabaseMetadata() {
   const maxEdgeSummary = formatEdgeSummary(dbStats.maxEdges);
 
   const sessionTokenCount = metadata.sessionTokenCount || 0;
-  const coverageRatioRaw = (typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage))
-    ? metadata.sessionCoverage
-    : 0;
+  const coverageRatioRaw =
+    typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage)
+      ? metadata.sessionCoverage
+      : 0;
   const coverageRatio = Math.min(Math.max(coverageRatioRaw, 0), 1);
   const coverageDisplay = sessionTokenCount > 0 ? `${(coverageRatio * 100).toFixed(1)}%` : '0.0%';
-  const coverageCountSummary = sessionTokenCount > 0
-    ? `Coverage: <strong>${metadata.cachedSessionTokens || 0}</strong> / <strong>${sessionTokenCount}</strong> (${coverageDisplay})`
-    : 'Coverage: No session tokens observed yet';
+  const coverageCountSummary =
+    sessionTokenCount > 0
+      ? `Coverage: <strong>${metadata.cachedSessionTokens || 0}</strong> / <strong>${sessionTokenCount}</strong> (${coverageDisplay})`
+      : 'Coverage: No session tokens observed yet';
 
   const formatHighlightList = (tokens, maxDisplay = 5) => {
     if (!Array.isArray(tokens) || tokens.length === 0) return '';
-    const rendered = tokens.slice(0, maxDisplay)
-      .map(token => `<span class="token-highlight">${token}</span>`)
+    const rendered = tokens
+      .slice(0, maxDisplay)
+      .map((token) => `<span class="token-highlight">${token}</span>`)
       .join(', ');
     const extraCount = tokens.length - maxDisplay;
-    const extra = extraCount > 0
-      ? ` <small style="opacity: 0.65;">(+${extraCount} more)</small>`
-      : '';
+    const extra =
+      extraCount > 0 ? ` <small style="opacity: 0.65;">(+${extraCount} more)</small>` : '';
     return `${rendered}${extra}`;
   };
 
@@ -14578,16 +15393,19 @@ function showDatabaseMetadata() {
     const typeLabel = primary?.type ? relDisplay(primary.type) : 'Unknown';
     const tokenDisplay = formatHighlightList(primary?.tokens || []);
     const extraTypes = rest.length;
-    const extraTypeNote = extraTypes > 0
-      ? ` <small style="opacity: 0.65;">(+${extraTypes} other type${extraTypes === 1 ? '' : 's'})</small>`
-      : '';
+    const extraTypeNote =
+      extraTypes > 0
+        ? ` <small style="opacity: 0.65;">(+${extraTypes} other type${extraTypes === 1 ? '' : 's'})</small>`
+        : '';
     const tokenNote = tokenDisplay ? ` — ${tokenDisplay}` : '';
     return `<strong>${count}</strong> via <span class="token-highlight">${typeLabel}</span>${tokenNote}${extraTypeNote}`;
   })();
 
   const maxAdjacencyMatrixTokens = metadata.maxAdjacencyMatrixTokens || { count: 0, tokens: [] };
   const maxAdjacencySummary = (() => {
-    const count = Number.isFinite(maxAdjacencyMatrixTokens?.count) ? maxAdjacencyMatrixTokens.count : 0;
+    const count = Number.isFinite(maxAdjacencyMatrixTokens?.count)
+      ? maxAdjacencyMatrixTokens.count
+      : 0;
     if (count <= 0) {
       return `<strong>0</strong> <small style="opacity: 0.65;">(n/a)</small>`;
     }
@@ -14603,15 +15421,18 @@ function showDatabaseMetadata() {
   if (sessionTokenCount === 0) {
     maturityLevel = 'Early';
     maturityColor = 'var(--accent)';
-    maturityMessage = 'No session tokens analyzed yet. Run a prompt to begin building cache coverage.';
+    maturityMessage =
+      'No session tokens analyzed yet. Run a prompt to begin building cache coverage.';
   } else if (coverageRatio >= 0.95) {
     maturityLevel = 'Mature';
     maturityColor = 'var(--success)';
-    maturityMessage = 'Cached knowledge covers 95%+ of observed inputs and outputs. Most queries reuse stored insights.';
+    maturityMessage =
+      'Cached knowledge covers 95%+ of observed inputs and outputs. Most queries reuse stored insights.';
   } else if (coverageRatio >= 0.6) {
     maturityLevel = 'Growing';
     maturityColor = 'var(--warning)';
-    maturityMessage = 'Coverage is building. Many session tokens are cached but new ones still appear.';
+    maturityMessage =
+      'Coverage is building. Many session tokens are cached but new ones still appear.';
   } else {
     maturityLevel = 'Early';
     maturityColor = 'var(--accent)';
@@ -14646,70 +15467,93 @@ function showDatabaseMetadata() {
 
     <div class="adjacency-insight">
       <strong>📈 Most Common Relationship Types:</strong><br>
-      ${metadata.topRelationshipRows.map(row =>
-        `• <span class="token-highlight">${row}</span>`
-      ).join('<br>')}
+      ${metadata.topRelationshipRows
+        .map((row) => `• <span class="token-highlight">${row}</span>`)
+        .join('<br>')}
       ${metadata.topRelationshipRows.length === 0 ? '<em>No relationships cached yet</em>' : ''}
     </div>
 
     <div class="adjacency-insight">
       <strong>🔥 Most Referenced Tokens (Hub Concepts):</strong><br>
       <small style="opacity: 0.8;">These tokens appear most frequently across relationships - they represent core concepts in the knowledge graph.</small><br><br>
-      ${metadata.topTokens.slice(0, 10).map(([token, count]) => 
-        `• <span class="token-highlight">${token}</span>: ${count} references`
-      ).join('<br>')}
+      ${metadata.topTokens
+        .slice(0, 10)
+        .map(
+          ([token, count]) =>
+            `• <span class="token-highlight">${token}</span>: ${count} references`,
+        )
+        .join('<br>')}
       ${metadata.topTokens.length === 0 ? '<em>No hub concepts identified yet</em>' : ''}
     </div>
 
     <div class="adjacency-insight">
       <strong>⭐ Highest Attention Tokens:</strong><br>
       <small style="opacity: 0.8;">Tokens with the strongest weighted relationships - highly salient concepts.</small><br><br>
-      ${metadata.highAttentionTokens.map(t => 
-        `• <span class="token-highlight">${t.token}</span>: ${t.attention_score} (${t.total_relationships || 0} edges)`
-      ).join('<br>')}
+      ${metadata.highAttentionTokens
+        .map(
+          (t) =>
+            `• <span class="token-highlight">${t.token}</span>: ${t.attention_score} (${t.total_relationships || 0} edges)`,
+        )
+        .join('<br>')}
       ${metadata.highAttentionTokens.length === 0 ? '<em>No high-attention tokens yet</em>' : ''}
     </div>
 
-    ${metadata.oldestToken ? `
+    ${
+      metadata.oldestToken
+        ? `
     <div class="adjacency-insight">
       <strong>📅 Database Timeline:</strong><br>
       • Oldest entry: <strong>${metadata.oldestToken.token}</strong> (${new Date(metadata.oldestToken.cached_at).toLocaleString()})<br>
       • Newest entry: <strong>${metadata.newestToken.token}</strong> (${new Date(metadata.newestToken.cached_at).toLocaleString()})
     </div>
-    ` : ''}
+    `
+        : ''
+    }
 
     <details>
       <summary>📊 View knowledge graph analytics</summary>
-      <pre>${JSON.stringify({
-        database_maturity: maturityLevel,
-        network_density: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2),
-        top_5_relationship_types: metadata.topRelationships.slice(0, 5).map(([rel]) => relDisplay(rel)),
-        relationship_histogram_named: metadata.relHistogramRows,
-        top_5_hub_concepts: metadata.topTokens.slice(0, 5).map(([token]) => token),
-        db_graph_metrics: dbStats,
-        relationship_type_peaks: {
-          max_tokens: metadata.maxRelTypeTokens?.count || 0,
-          types: (metadata.maxRelTypeTokens?.types || []).map(entry => ({
-            type: entry.type,
-            type_display: relDisplay(entry.type),
-            tokens: entry.tokens,
-          })),
+      <pre>${JSON.stringify(
+        {
+          database_maturity: maturityLevel,
+          network_density: (
+            metadata.totalRelationships / Math.max(metadata.totalTokens, 1)
+          ).toFixed(2),
+          top_5_relationship_types: metadata.topRelationships
+            .slice(0, 5)
+            .map(([rel]) => relDisplay(rel)),
+          relationship_histogram_named: metadata.relHistogramRows,
+          top_5_hub_concepts: metadata.topTokens.slice(0, 5).map(([token]) => token),
+          db_graph_metrics: dbStats,
+          relationship_type_peaks: {
+            max_tokens: metadata.maxRelTypeTokens?.count || 0,
+            types: (metadata.maxRelTypeTokens?.types || []).map((entry) => ({
+              type: entry.type,
+              type_display: relDisplay(entry.type),
+              tokens: entry.tokens,
+            })),
+          },
+          adjacency_matrix_peaks: {
+            max_tokens: metadata.maxAdjacencyMatrixTokens?.count || 0,
+            tokens: metadata.maxAdjacencyMatrixTokens?.tokens || [],
+          },
+          growth_metrics: {
+            tokens_per_relationship: (
+              metadata.totalTokens / Math.max(metadata.totalRelationships, 1)
+            ).toFixed(3),
+            avg_edges_per_token: (
+              metadata.totalRelationships / Math.max(metadata.totalTokens, 1)
+            ).toFixed(2),
+          },
+          session_cache_coverage: {
+            observed_tokens: sessionTokenCount,
+            cached_tokens: metadata.cachedSessionTokens || 0,
+            coverage_ratio: Number(coverageRatio.toFixed(3)),
+            coverage_percent: sessionTokenCount > 0 ? Number((coverageRatio * 100).toFixed(1)) : 0,
+          },
         },
-        adjacency_matrix_peaks: {
-          max_tokens: metadata.maxAdjacencyMatrixTokens?.count || 0,
-          tokens: metadata.maxAdjacencyMatrixTokens?.tokens || [],
-        },
-        growth_metrics: {
-          tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
-          avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2)
-        },
-        session_cache_coverage: {
-          observed_tokens: sessionTokenCount,
-          cached_tokens: metadata.cachedSessionTokens || 0,
-          coverage_ratio: Number(coverageRatio.toFixed(3)),
-          coverage_percent: sessionTokenCount > 0 ? Number((coverageRatio * 100).toFixed(1)) : 0
-        }
-      }, null, 2)}</pre>
+        null,
+        2,
+      )}</pre>
     </details>
 
     <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,255,136,0.05); border-radius: 8px; font-size: 0.9rem;">
@@ -14723,25 +15567,34 @@ function showDatabaseMetadata() {
 
 function exportDatabaseMetadata(args = []) {
   const metadata = analyzeDatabaseMetadata();
-  const dbStats = Object.assign({
-    tokens: metadata.totalTokens,
-    relationships: metadata.totalRelationships,
-    nodes: 0,
-    edges: 0,
-    anchors: 0,
-    minEdges: { count: 0, tokens: [] },
-    maxEdges: { count: 0, tokens: [] },
-  }, metadata.dbStats || {});
+  const dbStats = Object.assign(
+    {
+      tokens: metadata.totalTokens,
+      relationships: metadata.totalRelationships,
+      nodes: 0,
+      edges: 0,
+      anchors: 0,
+      minEdges: { count: 0, tokens: [] },
+      maxEdges: { count: 0, tokens: [] },
+    },
+    metadata.dbStats || {},
+  );
 
   const sessionTokenCount = metadata.sessionTokenCount || 0;
-  const coverageRatioRaw = (typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage))
-    ? metadata.sessionCoverage
-    : 0;
+  const coverageRatioRaw =
+    typeof metadata.sessionCoverage === 'number' && Number.isFinite(metadata.sessionCoverage)
+      ? metadata.sessionCoverage
+      : 0;
   const coverageRatio = Math.min(Math.max(coverageRatioRaw, 0), 1);
   const coveragePercent = sessionTokenCount > 0 ? Number((coverageRatio * 100).toFixed(1)) : 0;
-  const maturityLevel = sessionTokenCount === 0
-    ? 'early'
-    : (coverageRatio >= 0.95 ? 'mature' : coverageRatio >= 0.6 ? 'growing' : 'early');
+  const maturityLevel =
+    sessionTokenCount === 0
+      ? 'early'
+      : coverageRatio >= 0.95
+        ? 'mature'
+        : coverageRatio >= 0.6
+          ? 'growing'
+          : 'early';
 
   const sessionPromptLog = Array.isArray(Session?.prompts) ? Session.prompts : [];
   const promptsForExport = sessionPromptLog
@@ -14761,11 +15614,12 @@ function exportDatabaseMetadata(args = []) {
     })
     .filter(Boolean);
 
-  const sessionTokens = Session?.tokens instanceof Set
-    ? Array.from(Session.tokens).filter(token => typeof token === 'string' && token.trim())
-    : [];
+  const sessionTokens =
+    Session?.tokens instanceof Set
+      ? Array.from(Session.tokens).filter((token) => typeof token === 'string' && token.trim())
+      : [];
   const tokenOrderSnapshot = Array.isArray(state?.tokenOrder)
-    ? state.tokenOrder.filter(token => typeof token === 'string' && token.trim())
+    ? state.tokenOrder.filter((token) => typeof token === 'string' && token.trim())
     : [];
   const conversationSnapshot = snapshotConversationLog();
   const localMemorySnapshot = snapshotLocalHlsfMemory();
@@ -14789,18 +15643,32 @@ function exportDatabaseMetadata(args = []) {
     console.warn('Unable to capture voice profile snapshot for export:', err);
   }
 
-  const relationTypeCount = Array.isArray(metadata.relHistogramRows) ? metadata.relHistogramRows.length : null;
+  const relationTypeCount = Array.isArray(metadata.relHistogramRows)
+    ? metadata.relHistogramRows.length
+    : null;
   const cliArgs = Array.isArray(args) ? args : [];
-  const parseResult = resolveModelParamConfig(window.HLSF?.modelParamConfig || MODEL_PARAM_DEFAULTS, cliArgs, {
-    relationTypeCount,
-  });
+  const parseResult = resolveModelParamConfig(
+    window.HLSF?.modelParamConfig || MODEL_PARAM_DEFAULTS,
+    cliArgs,
+    {
+      relationTypeCount,
+    },
+  );
   const layoutSnapshot = window.HLSF?.currentLayoutSnapshot || null;
   const resolvedConfig = Object.assign({}, parseResult.config);
   if (layoutSnapshot && typeof layoutSnapshot === 'object') {
-    if (!parseResult.modified?.D && Number.isFinite(layoutSnapshot.dimension) && layoutSnapshot.dimension > 0) {
+    if (
+      !parseResult.modified?.D &&
+      Number.isFinite(layoutSnapshot.dimension) &&
+      layoutSnapshot.dimension > 0
+    ) {
       resolvedConfig.D = Math.round(layoutSnapshot.dimension);
     }
-    if (!parseResult.modified?.levels && Number.isFinite(layoutSnapshot.levelCount) && layoutSnapshot.levelCount >= 0) {
+    if (
+      !parseResult.modified?.levels &&
+      Number.isFinite(layoutSnapshot.levelCount) &&
+      layoutSnapshot.levelCount >= 0
+    ) {
       resolvedConfig.levels = Math.round(layoutSnapshot.levelCount);
     }
     if (
@@ -14827,7 +15695,7 @@ function exportDatabaseMetadata(args = []) {
     {
       fallbackRelationTypeCount: relationTypeCount ?? undefined,
       assumptions: parseResult.assumptions,
-    }
+    },
   );
 
   if (parseResult.warnings && parseResult.warnings.length) {
@@ -14848,10 +15716,12 @@ function exportDatabaseMetadata(args = []) {
   const exportData = {
     export_timestamp: new Date().toISOString(),
     readme: {
-      description: "HLSF Cognition Engine - Collective Database Metadata Export",
-      purpose: "This export contains the complete adjacency token database and analytics. It represents the collective intelligence built through token relationship analysis.",
-      usage: "This data can be imported into a server-side database to bootstrap a new deployment or shared for analysis.",
-      version: "2.0"
+      description: 'HLSF Cognition Engine - Collective Database Metadata Export',
+      purpose:
+        'This export contains the complete adjacency token database and analytics. It represents the collective intelligence built through token relationship analysis.',
+      usage:
+        'This data can be imported into a server-side database to bootstrap a new deployment or shared for analysis.',
+      version: '2.0',
     },
     database_stats: {
       total_tokens: metadata.totalTokens,
@@ -14869,7 +15739,7 @@ function exportDatabaseMetadata(args = []) {
       },
       max_tokens_per_relationship_type: {
         count: metadata.maxRelTypeTokens?.count || 0,
-        types: (metadata.maxRelTypeTokens?.types || []).map(entry => ({
+        types: (metadata.maxRelTypeTokens?.types || []).map((entry) => ({
           type: entry.type,
           type_display: relDisplay(entry.type),
           tokens: entry.tokens,
@@ -14891,21 +15761,33 @@ function exportDatabaseMetadata(args = []) {
       last_level_components: dimensionStats.last_level_components,
     },
     relationship_distribution: Object.fromEntries(metadata.topRelationships),
-    relationship_distribution_named: Object.fromEntries(metadata.topRelationships.map(([glyph, count]) => [relDisplay(glyph), count])),
+    relationship_distribution_named: Object.fromEntries(
+      metadata.topRelationships.map(([glyph, count]) => [relDisplay(glyph), count]),
+    ),
     hub_concepts: Object.fromEntries(metadata.topTokens),
-    high_attention_tokens: metadata.highAttentionTokens.map(t => ({
+    high_attention_tokens: metadata.highAttentionTokens.map((t) => ({
       token: t.token,
       attention_score: t.attention_score,
-      total_relationships: t.total_relationships
+      total_relationships: t.total_relationships,
     })),
     knowledge_graph_metrics: {
       network_density: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(3),
-      avg_edges_per_token: (metadata.totalRelationships / Math.max(metadata.totalTokens, 1)).toFixed(2),
-      tokens_per_relationship: (metadata.totalTokens / Math.max(metadata.totalRelationships, 1)).toFixed(3),
+      avg_edges_per_token: (
+        metadata.totalRelationships / Math.max(metadata.totalTokens, 1)
+      ).toFixed(2),
+      tokens_per_relationship: (
+        metadata.totalTokens / Math.max(metadata.totalRelationships, 1)
+      ).toFixed(3),
       oldest_entry: metadata.oldestToken?.cached_at,
       newest_entry: metadata.newestToken?.cached_at,
-      date_range_days: metadata.oldestToken && metadata.newestToken ?
-        Math.ceil((new Date(metadata.newestToken.cached_at) - new Date(metadata.oldestToken.cached_at)) / (1000 * 60 * 60 * 24)) : 0
+      date_range_days:
+        metadata.oldestToken && metadata.newestToken
+          ? Math.ceil(
+              (new Date(metadata.newestToken.cached_at) -
+                new Date(metadata.oldestToken.cached_at)) /
+                (1000 * 60 * 60 * 24),
+            )
+          : 0,
     },
     full_token_data: metadata.rawData,
     user_prompts: promptsForExport,
@@ -14919,21 +15801,17 @@ function exportDatabaseMetadata(args = []) {
 
   exportData.model_params = modelParams;
   if (modelParams?.total_parameters != null) {
-    logStatus(`Model parameter accounting → ${modelParams.total_parameters.toLocaleString()} parameters`);
+    logStatus(
+      `Model parameter accounting → ${modelParams.total_parameters.toLocaleString()} parameters`,
+    );
   }
 
   try {
     const recorder = window.HLSF?.remoteDbRecorder;
     if (recorder && typeof recorder.hasData === 'function' && recorder.hasData()) {
-      const remoteMetadata = typeof recorder.manifest === 'function'
-        ? recorder.manifest()
-        : null;
-      const remoteChunks = typeof recorder.listChunks === 'function'
-        ? recorder.listChunks()
-        : [];
-      const remoteIndex = typeof recorder.tokenIndex === 'function'
-        ? recorder.tokenIndex()
-        : [];
+      const remoteMetadata = typeof recorder.manifest === 'function' ? recorder.manifest() : null;
+      const remoteChunks = typeof recorder.listChunks === 'function' ? recorder.listChunks() : [];
+      const remoteIndex = typeof recorder.tokenIndex === 'function' ? recorder.tokenIndex() : [];
       if (remoteMetadata || (remoteChunks && remoteChunks.length)) {
         exportData.remote_db = {
           metadata: remoteMetadata,
@@ -14948,15 +15826,15 @@ function exportDatabaseMetadata(args = []) {
 
   const serialized = JSON.stringify(exportData, null, 2);
   const originalSizeKb = (serialized.length / 1024).toFixed(1);
-  const totalParamDisplay = modelParams?.total_parameters != null
-    ? modelParams.total_parameters.toLocaleString()
-    : '0';
+  const totalParamDisplay =
+    modelParams?.total_parameters != null ? modelParams.total_parameters.toLocaleString() : '0';
 
   void (async () => {
     let url = null;
     try {
       const key = await ensureExportEncryptionKey();
-      const { base64: compressedBase64, algorithm: compressionAlgorithm } = await compressStringToBase64(serialized);
+      const { base64: compressedBase64, algorithm: compressionAlgorithm } =
+        await compressStringToBase64(serialized);
       const { ciphertext, iv } = await encryptString(compressedBase64, key);
       const envelope = {
         format: EXPORT_PAYLOAD_FORMAT,
@@ -14983,8 +15861,12 @@ function exportDatabaseMetadata(args = []) {
       document.body.removeChild(link);
 
       const encryptedSizeKb = (blob.size / 1024).toFixed(1);
-      logOK(`Database metadata exported securely: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships. Raw payload ${originalSizeKb}KB → encrypted package ${encryptedSizeKb}KB, model parameters ${totalParamDisplay}.`);
-      logStatus(`Encryption key fingerprint: ${base64Preview(key)} (retain this to decrypt /import payloads).`);
+      logOK(
+        `Database metadata exported securely: ${metadata.totalTokens} tokens, ${metadata.totalRelationships} relationships. Raw payload ${originalSizeKb}KB → encrypted package ${encryptedSizeKb}KB, model parameters ${totalParamDisplay}.`,
+      );
+      logStatus(
+        `Encryption key fingerprint: ${base64Preview(key)} (retain this to decrypt /import payloads).`,
+      );
       logStatus(`Compression: ${compressionAlgorithm.toUpperCase()}, Encryption: AES-256-GCM`);
     } catch (err) {
       logError(`Failed to finalize encrypted export: ${err?.message || err}`);
@@ -15009,8 +15891,14 @@ async function decodeDatabaseExportPayload(rawText) {
   if (!parsed || typeof parsed !== 'object') return parsed;
   if (parsed.format !== EXPORT_PAYLOAD_FORMAT) return parsed;
 
-  if (typeof parsed.version === 'number' && Number.isFinite(parsed.version) && parsed.version > EXPORT_PAYLOAD_VERSION) {
-    logWarning('Encrypted export was produced by a newer engine. Attempting import with legacy compatibility.');
+  if (
+    typeof parsed.version === 'number' &&
+    Number.isFinite(parsed.version) &&
+    parsed.version > EXPORT_PAYLOAD_VERSION
+  ) {
+    logWarning(
+      'Encrypted export was produced by a newer engine. Attempting import with legacy compatibility.',
+    );
   }
 
   if (!parsed.ciphertext || !parsed.iv) {
@@ -15019,7 +15907,9 @@ async function decodeDatabaseExportPayload(rawText) {
 
   const key = getStoredExportKey();
   if (!key) {
-    throw new Error('Export encryption key not found. Import from the original device or restore your HLSF export key.');
+    throw new Error(
+      'Export encryption key not found. Import from the original device or restore your HLSF export key.',
+    );
   }
 
   let compressedBase64;
@@ -15159,7 +16049,8 @@ async function importDatabaseData(data, source = 'file') {
         if (!text.trim()) continue;
         const entry: any = {
           text,
-          timestamp: typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
+          timestamp:
+            typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
         };
         if (record.meta && typeof record.meta === 'object') {
           entry.meta = { ...record.meta };
@@ -15211,7 +16102,9 @@ async function importDatabaseData(data, source = 'file') {
 
     updateStats();
 
-    logOK(`Database imported from ${source}: ${summary.join(', ')}, normalized ${normalizedCount} tokens`);
+    logOK(
+      `Database imported from ${source}: ${summary.join(', ')}, normalized ${normalizedCount} tokens`,
+    );
     updateHeaderCounts();
 
     if (data?.database_stats) {
@@ -15300,11 +16193,16 @@ async function tryBootstrapDb() {
 function dbIndex() {
   const db = getDb();
   const idx = new Map();
-  (db?.full_token_data || []).forEach(record => {
+  (db?.full_token_data || []).forEach((record) => {
     if (record?.token) idx.set(record.token, record);
   });
   const remote = window.HLSF?.remoteDb;
-  if (remote && typeof remote.isReady === 'function' && remote.isReady() && typeof remote.listTokens === 'function') {
+  if (
+    remote &&
+    typeof remote.isReady === 'function' &&
+    remote.isReady() &&
+    typeof remote.listTokens === 'function'
+  ) {
     for (const token of remote.listTokens()) {
       if (!token || idx.has(token)) continue;
       idx.set(token, { token, relationships: {} });
@@ -15443,7 +16341,7 @@ const DbLexicon = (() => {
   function alignTokens(tokens) {
     const lex = ensure();
     if (!Array.isArray(tokens)) return [];
-    return tokens.map(token => {
+    return tokens.map((token) => {
       const lower = (token || '').toLowerCase();
       if (lex.idx.has(lower)) return lower;
       const replacement = findClosest(lower, lex);
@@ -15481,7 +16379,7 @@ const DbLexicon = (() => {
           }
           return trimmed
             .split(/(?<=[.!?])\s+/)
-            .map(part => part.trim())
+            .map((part) => part.trim())
             .filter(Boolean);
         })
         .filter(Boolean);
@@ -15491,8 +16389,8 @@ const DbLexicon = (() => {
     if (!fragments.length) return text;
 
     const fragmentTokens = fragments
-      .map(fragment => ({ fragment, tokens: tokenize(fragment) }))
-      .filter(entry => entry.tokens.length > 0);
+      .map((fragment) => ({ fragment, tokens: tokenize(fragment) }))
+      .filter((entry) => entry.tokens.length > 0);
 
     if (!fragmentTokens.length) return text;
 
@@ -15567,7 +16465,7 @@ function ledgerAdd(ledger, glyph, token, weight) {
   const arr = ledger.glyph_map[glyph];
   const numericWeight = Number(weight);
   const now = Date.now();
-  const found = arr.find(entry => entry.token === token);
+  const found = arr.find((entry) => entry.token === token);
   if (found) {
     found.w = numericWeight;
     found.t = now;
@@ -15651,7 +16549,7 @@ function encryptTextToGlyphs(plain, options = {}) {
 
   if (mutated) saveLedger(ledger);
   const encrypted = out.join(GLYPH_SEP);
-  const coverage = words.length ? (100 * covered / words.length).toFixed(1) : '0.0';
+  const coverage = words.length ? ((100 * covered) / words.length).toFixed(1) : '0.0';
   return { encrypted, coverage, unknown };
 }
 
@@ -15673,7 +16571,7 @@ function decryptGlyphsToText(cipher) {
     }
   }
 
-  const coverage = pairs.length ? (100 * resolved / pairs.length).toFixed(1) : '0.0';
+  const coverage = pairs.length ? ((100 * resolved) / pairs.length).toFixed(1) : '0.0';
   return { decrypted: out.join(' '), coverage, unresolved };
 }
 
@@ -15694,7 +16592,7 @@ function cmdLedger(arg) {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json,application/json';
-    input.onchange = async e => {
+    input.onchange = async (e) => {
       try {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -15765,9 +16663,10 @@ function cmdDecrypt(rest) {
 
 function selectVoiceTokenForPlayback(store) {
   if (!store || typeof store !== 'object') return '';
-  const assignments = store.assignments && typeof store.assignments === 'object'
-    ? Object.keys(store.assignments).filter(Boolean)
-    : [];
+  const assignments =
+    store.assignments && typeof store.assignments === 'object'
+      ? Object.keys(store.assignments).filter(Boolean)
+      : [];
   if (assignments.length) return assignments[0];
   if (Array.isArray(store.recordings) && store.recordings.length) {
     const first = store.recordings[0];
@@ -15778,10 +16677,12 @@ function selectVoiceTokenForPlayback(store) {
   return '';
 }
 
-
 async function cmdSaveAvatar(rawArgs = []) {
   const args = Array.isArray(rawArgs) ? rawArgs : [rawArgs];
-  const requestedName = args.map(part => String(part || '')).join(' ').trim();
+  const requestedName = args
+    .map((part) => String(part || ''))
+    .join(' ')
+    .trim();
   if (requestedName) {
     userAvatarStore.updateProfile({ name: requestedName }, { notify: true });
   }
@@ -15789,9 +16690,8 @@ async function cmdSaveAvatar(rawArgs = []) {
   let avatarState = userAvatarStore.getState();
   if (!avatarState.profile.name) {
     try {
-      const inputName = typeof window.prompt === 'function'
-        ? window.prompt('Name this avatar archive:', '')
-        : '';
+      const inputName =
+        typeof window.prompt === 'function' ? window.prompt('Name this avatar archive:', '') : '';
       if (inputName && inputName.trim()) {
         userAvatarStore.updateProfile({ name: inputName.trim() }, { notify: true });
         avatarState = userAvatarStore.getState();
@@ -15827,13 +16727,24 @@ async function cmdSaveAvatar(rawArgs = []) {
     avatarFolder.file('profile.json', JSON.stringify(avatarState.profile, null, 2));
     avatarFolder.file('interactions.json', JSON.stringify(avatarState.entries, null, 2));
     avatarFolder.file('metrics.json', JSON.stringify(avatarState.metrics, null, 2));
-    avatarFolder.file('meta.json', JSON.stringify({
-      version: '1.0',
-      name: avatarName,
-      savedAt: nowIso,
-      conversationEntryCount: Array.isArray(conversationSnapshot?.entries) ? conversationSnapshot.entries.length : 0,
-      voiceRecordingCount: Array.isArray(voiceStore?.recordings) ? voiceStore.recordings.length : 0,
-    }, null, 2));
+    avatarFolder.file(
+      'meta.json',
+      JSON.stringify(
+        {
+          version: '1.0',
+          name: avatarName,
+          savedAt: nowIso,
+          conversationEntryCount: Array.isArray(conversationSnapshot?.entries)
+            ? conversationSnapshot.entries.length
+            : 0,
+          voiceRecordingCount: Array.isArray(voiceStore?.recordings)
+            ? voiceStore.recordings.length
+            : 0,
+        },
+        null,
+        2,
+      ),
+    );
   }
 
   const conversationFolder = zip.folder('conversation');
@@ -15847,10 +16758,14 @@ async function cmdSaveAvatar(rawArgs = []) {
     if (recordingsFolder && Array.isArray(voiceStore.recordings)) {
       voiceStore.recordings.forEach((recording, index) => {
         if (!recording || typeof recording !== 'object') return;
-        const audioType = typeof recording.audioType === 'string' && recording.audioType ? recording.audioType : 'audio/webm';
+        const audioType =
+          typeof recording.audioType === 'string' && recording.audioType
+            ? recording.audioType
+            : 'audio/webm';
         const rawAudio = stripBase64Prefix(recording.audioBase64 || '');
         if (!rawAudio) return;
-        const tokenSlug = slugifyName(recording.token || `sample-${index + 1}`) || `sample-${index + 1}`;
+        const tokenSlug =
+          slugifyName(recording.token || `sample-${index + 1}`) || `sample-${index + 1}`;
         const ext = audioExtensionForMime(audioType);
         const fileName = `${tokenSlug}-${index + 1}.${ext}`;
         try {
@@ -15868,7 +16783,9 @@ async function cmdSaveAvatar(rawArgs = []) {
   if (dbSnapshot && typeof dbSnapshot === 'object') {
     zip.folder('hlsf')?.file('database.json', JSON.stringify(dbSnapshot, null, 2));
   }
-  zip.folder('hlsf')?.file('consciousness.json', JSON.stringify(consciousnessSnapshot ?? null, null, 2));
+  zip
+    .folder('hlsf')
+    ?.file('consciousness.json', JSON.stringify(consciousnessSnapshot ?? null, null, 2));
 
   const slug = slugifyName(avatarName) || 'avatar';
   const timestamp = nowIso.replace(/[:]/g, '-');
@@ -15891,7 +16808,6 @@ async function cmdSaveAvatar(rawArgs = []) {
   }
 }
 
-
 async function cmdLoadAvatar() {
   const input = elements.avatarBundleInput;
   if (!input) {
@@ -15900,7 +16816,7 @@ async function cmdLoadAvatar() {
   }
   input.value = '';
   input.accept = '.zip,application/zip';
-  input.onchange = async event => {
+  input.onchange = async (event) => {
     const file = event?.target?.files?.[0];
     if (!file) return;
     try {
@@ -15931,23 +16847,28 @@ async function cmdLoadAvatar() {
       const consciousnessSnapshot = await readJson('hlsf/consciousness.json', null);
 
       if (Array.isArray(voiceStore?.recordings)) {
-        await Promise.all(voiceStore.recordings.map(async recording => {
-          if (!recording || typeof recording !== 'object') return;
-          if (typeof recording.audioBase64 === 'string' && recording.audioBase64.trim()) {
-            recording.audioBase64 = ensureDataUrl(recording.audioBase64, recording.audioType || 'audio/webm');
-            return;
-          }
-          const reference = typeof recording.file === 'string' ? recording.file : null;
-          if (!reference) return;
-          const entry = zip.file(reference) || zip.file(reference.replace(/^\//, ''));
-          if (!entry) return;
-          try {
-            const base64 = await entry.async('base64');
-            recording.audioBase64 = ensureDataUrl(base64, recording.audioType || 'audio/webm');
-          } catch (err) {
-            console.warn('Failed to restore audio for recording:', err);
-          }
-        }));
+        await Promise.all(
+          voiceStore.recordings.map(async (recording) => {
+            if (!recording || typeof recording !== 'object') return;
+            if (typeof recording.audioBase64 === 'string' && recording.audioBase64.trim()) {
+              recording.audioBase64 = ensureDataUrl(
+                recording.audioBase64,
+                recording.audioType || 'audio/webm',
+              );
+              return;
+            }
+            const reference = typeof recording.file === 'string' ? recording.file : null;
+            if (!reference) return;
+            const entry = zip.file(reference) || zip.file(reference.replace(/^\//, ''));
+            if (!entry) return;
+            try {
+              const base64 = await entry.async('base64');
+              recording.audioBase64 = ensureDataUrl(base64, recording.audioType || 'audio/webm');
+            } catch (err) {
+              console.warn('Failed to restore audio for recording:', err);
+            }
+          }),
+        );
       }
 
       if (voiceStore && typeof voiceStore === 'object') {
@@ -15978,13 +16899,19 @@ async function cmdLoadAvatar() {
         restoreConversationLog(conversationSnapshot);
       }
 
-      const resolvedName = typeof profile?.name === 'string' && profile.name.trim()
-        ? profile.name.trim()
-        : (typeof meta?.name === 'string' ? meta.name : '');
-      userAvatarStore.replace({
-        entries: Array.isArray(interactions) ? interactions : [],
-        profile: { name: resolvedName },
-      }, { notify: true });
+      const resolvedName =
+        typeof profile?.name === 'string' && profile.name.trim()
+          ? profile.name.trim()
+          : typeof meta?.name === 'string'
+            ? meta.name
+            : '';
+      userAvatarStore.replace(
+        {
+          entries: Array.isArray(interactions) ? interactions : [],
+          profile: { name: resolvedName },
+        },
+        { notify: true },
+      );
 
       if (dbSnapshot && typeof dbSnapshot === 'object') {
         await loadDbObject(dbSnapshot, { replace: true });
@@ -15994,7 +16921,14 @@ async function cmdLoadAvatar() {
       }
 
       if (consciousnessSnapshot && typeof consciousnessSnapshot === 'object') {
-        state.symbolMetrics = state.symbolMetrics || { history: [], last: null, lastRunGraph: null, topNodes: [], lastTokens: [], lastPipeline: null };
+        state.symbolMetrics = state.symbolMetrics || {
+          history: [],
+          last: null,
+          lastRunGraph: null,
+          topNodes: [],
+          lastTokens: [],
+          lastPipeline: null,
+        };
         state.symbolMetrics.lastPipeline = state.symbolMetrics.lastPipeline || {};
         state.symbolMetrics.lastPipeline.consciousness = consciousnessSnapshot;
       }
@@ -16034,9 +16968,15 @@ async function cmdLoadAvatar() {
           }
         }
       }
-      if (!voiceAcknowledged && typeof window !== 'undefined' && typeof window.SpeechSynthesisUtterance === 'function') {
+      if (
+        !voiceAcknowledged &&
+        typeof window !== 'undefined' &&
+        typeof window.SpeechSynthesisUtterance === 'function'
+      ) {
         try {
-          const utterance = new window.SpeechSynthesisUtterance(`Avatar ${resolvedName || ''} restored.`.trim());
+          const utterance = new window.SpeechSynthesisUtterance(
+            `Avatar ${resolvedName || ''} restored.`.trim(),
+          );
           window.speechSynthesis?.speak?.(utterance);
         } catch (err) {
           console.warn('Fallback speech synthesis failed:', err);
@@ -16055,7 +16995,9 @@ async function cmdLoadAvatar() {
 }
 
 function cmdDeleteAvatar() {
-  const confirmed = window.confirm?.('Delete avatar conversation log and voice samples? This cannot be undone.');
+  const confirmed = window.confirm?.(
+    'Delete avatar conversation log and voice samples? This cannot be undone.',
+  );
   if (!confirmed) {
     logStatus('Avatar deletion cancelled.');
     return;
@@ -16071,13 +17013,16 @@ function cmdDeleteAvatar() {
   try {
     const voiceApi = window.CognitionEngine?.voice;
     if (voiceApi?.replaceStore) {
-      voiceApi.replaceStore({}, {
-        persist: true,
-        notify: true,
-        reason: 'avatar-deleted',
-        status: 'warning',
-        message: 'Voice profile cleared.',
-      });
+      voiceApi.replaceStore(
+        {},
+        {
+          persist: true,
+          notify: true,
+          reason: 'avatar-deleted',
+          status: 'warning',
+          message: 'Voice profile cleared.',
+        },
+      );
     } else if (voiceApi?.resetStore) {
       voiceApi.resetStore({ persist: true, notify: true });
     }
@@ -16100,7 +17045,7 @@ async function cmdImport() {
     return;
   }
   input.value = '';
-  input.onchange = async e => {
+  input.onchange = async (e) => {
     try {
       const f = e.target.files?.[0];
       if (!f) return;
@@ -16206,8 +17151,8 @@ async function cmdHlsf(rawArgs) {
   const prevBatchLogging = window.HLSF.config.batchLogging;
   const prevDeferred = window.HLSF.config.deferredRender;
   const runOptions = {
-    batchLogging: flags.batchLogging ?? (prevBatchLogging !== false),
-    deferredRender: flags.deferredRender ?? (prevDeferred !== false),
+    batchLogging: flags.batchLogging ?? prevBatchLogging !== false,
+    deferredRender: flags.deferredRender ?? prevDeferred !== false,
   };
   window.HLSF.config.batchLogging = runOptions.batchLogging;
   window.HLSF.config.deferredRender = runOptions.deferredRender;
@@ -16216,14 +17161,12 @@ async function cmdHlsf(rawArgs) {
     window.HLSF.config.metricScope = normalizeMetricScope(flags.metricScope);
   }
   if (Object.prototype.hasOwnProperty.call(flags, 'relationTypeCap')) {
-    window.HLSF.config.relationTypeCap = flags.relationTypeCap === Infinity
-      ? Infinity
-      : clampRelationTypeCap(flags.relationTypeCap);
+    window.HLSF.config.relationTypeCap =
+      flags.relationTypeCap === Infinity ? Infinity : clampRelationTypeCap(flags.relationTypeCap);
   }
   if (Object.prototype.hasOwnProperty.call(flags, 'edgesPerType')) {
-    window.HLSF.config.edgesPerType = flags.edgesPerType === Infinity
-      ? Infinity
-      : clampEdgesPerType(flags.edgesPerType);
+    window.HLSF.config.edgesPerType =
+      flags.edgesPerType === Infinity ? Infinity : clampEdgesPerType(flags.edgesPerType);
   }
 
   BatchLog.clear();
@@ -16245,7 +17188,10 @@ async function cmdHlsf(rawArgs) {
 
   const stageMessages = {
     index: { label: 'Indexing cached tokens…', detail: 'Hydrating adjacency index.' },
-    anchors: { label: 'Selecting anchor tokens…', detail: 'Evaluating entry points for the graph.' },
+    anchors: {
+      label: 'Selecting anchor tokens…',
+      detail: 'Evaluating entry points for the graph.',
+    },
     graph: { label: 'Assembling semantic graph…', detail: 'Expanding neighborhoods and edges.' },
     cluster: { label: 'Clustering adjacency…', detail: 'Balancing affinity across layers.' },
     layout: { label: 'Computing spatial layout…', detail: 'Solving multi-layer projection.' },
@@ -16283,12 +17229,15 @@ async function cmdHlsf(rawArgs) {
     }
 
     const index = await time('index', async () => loadOrGetIndex());
-    const { anchors, idx, glyphOnly, focusTokens } = await time('anchors', async () => anchorsForMode(args, index));
+    const { anchors, idx, glyphOnly, focusTokens } = await time('anchors', async () =>
+      anchorsForMode(args, index),
+    );
     const effectiveIndex = idx || index;
     const metricScope = window.HLSF.config.metricScope || METRIC_SCOPE.RUN;
     let anchorsToUse = Array.isArray(anchors) ? [...anchors] : [];
     if (metricScope === METRIC_SCOPE.DB) {
-      anchorsToUse = effectiveIndex instanceof Map ? Array.from(effectiveIndex.keys()) : anchorsToUse;
+      anchorsToUse =
+        effectiveIndex instanceof Map ? Array.from(effectiveIndex.keys()) : anchorsToUse;
     }
 
     if (!Array.isArray(anchorsToUse) || !anchorsToUse.length) {
@@ -16306,10 +17255,21 @@ async function cmdHlsf(rawArgs) {
     let layoutResult = null;
 
     if (metricScope === METRIC_SCOPE.RUN) {
-      graph = await time('graph', async () => assembleGraphFromAnchorsLogged(anchorsToUse, depth, effectiveIndex));
-      await time('cluster', async () => { applyAffinityClusters(graph, effectiveIndex); });
-      layoutResult = await time('layout', async () => computeLayout(graph, effectiveIndex, { scope: window.HLSF?.config?.hlsfScope, focusTokens }));
-      await time('stage', async () => prepareBuffers(graph, layoutResult, { glyphOnly: glyphOnly === true }));
+      graph = await time('graph', async () =>
+        assembleGraphFromAnchorsLogged(anchorsToUse, depth, effectiveIndex),
+      );
+      await time('cluster', async () => {
+        applyAffinityClusters(graph, effectiveIndex);
+      });
+      layoutResult = await time('layout', async () =>
+        computeLayout(graph, effectiveIndex, {
+          scope: window.HLSF?.config?.hlsfScope,
+          focusTokens,
+        }),
+      );
+      await time('stage', async () =>
+        prepareBuffers(graph, layoutResult, { glyphOnly: glyphOnly === true }),
+      );
       await time('render', async () => {
         showVisualizer();
         drawComposite(graph, { glyphOnly: glyphOnly === true });
@@ -16327,9 +17287,7 @@ async function cmdHlsf(rawArgs) {
       runMetrics = computeDbStats(effectiveIndex);
     }
 
-    const dbStats = metricScope === METRIC_SCOPE.RUN
-      ? computeDbStats(effectiveIndex)
-      : runMetrics;
+    const dbStats = metricScope === METRIC_SCOPE.RUN ? computeDbStats(effectiveIndex) : runMetrics;
 
     window.HLSF.metrics = Object.assign({}, window.HLSF.metrics || {}, { db: dbStats });
 
@@ -16338,8 +17296,12 @@ async function cmdHlsf(rawArgs) {
     const dimVal = layoutInfo ? layoutInfo.dimension || 0 : 0;
     const levelCount = layoutInfo ? layoutInfo.levelCount || 0 : 0;
     const lastComponents = layoutInfo ? layoutInfo.lastLevelComponents || 0 : 0;
-    const scopeUsed = (layoutInfo?.scope || window.HLSF?.config?.hlsfScope || 'db').toString().toLowerCase();
-    logOK(`/hlsf${suffix} → nodes ${runMetrics.nodes} / ${dbStats.nodes}, edges ${runMetrics.edges} / ${dbStats.edges}, relationships ${runMetrics.relationships} / ${dbStats.relationships}, anchors ${runMetrics.anchors} / ${dbStats.anchors} D=${dimVal}, levels=${levelCount}, last_level_components=${lastComponents}, scope=${scopeUsed}`);
+    const scopeUsed = (layoutInfo?.scope || window.HLSF?.config?.hlsfScope || 'db')
+      .toString()
+      .toLowerCase();
+    logOK(
+      `/hlsf${suffix} → nodes ${runMetrics.nodes} / ${dbStats.nodes}, edges ${runMetrics.edges} / ${dbStats.edges}, relationships ${runMetrics.relationships} / ${dbStats.relationships}, anchors ${runMetrics.anchors} / ${dbStats.anchors} D=${dimVal}, levels=${levelCount}, last_level_components=${lastComponents}, scope=${scopeUsed}`,
+    );
     addLog(`ⓘ run / db • tokens(db) ${dbStats.tokens}`);
 
     if (runMetrics.relationships < runMetrics.edges) {
@@ -16442,7 +17404,7 @@ async function rebuildHlsfFromLastCommand(logUpdate = false) {
     const anchorCandidates = Array.isArray(last.anchors) ? last.anchors : [];
     let anchors = anchorCandidates;
     if (index instanceof Map) {
-      const existing = anchorCandidates.filter(token => index.has(token));
+      const existing = anchorCandidates.filter((token) => index.has(token));
       if (existing.length) {
         anchors = existing;
       } else if (index.size) {
@@ -16455,11 +17417,16 @@ async function rebuildHlsfFromLastCommand(logUpdate = false) {
 
     last.anchors = anchors.slice();
 
-    const depth = applyRecursionDepthSetting(Number.isFinite(last.depth) ? last.depth : getRecursionDepthSetting());
+    const depth = applyRecursionDepthSetting(
+      Number.isFinite(last.depth) ? last.depth : getRecursionDepthSetting(),
+    );
     last.depth = depth;
     const graph = await assembleGraphFromAnchorsLogged(anchors, depth, index, { silent: true });
     applyAffinityClusters(graph, index);
-    const layout = computeLayout(graph, index, { scope: window.HLSF?.config?.hlsfScope, focusTokens });
+    const layout = computeLayout(graph, index, {
+      scope: window.HLSF?.config?.hlsfScope,
+      focusTokens,
+    });
     prepareBuffers(graph, layout, { glyphOnly: last.glyphOnly === true });
     showVisualizer();
     drawComposite(graph, { glyphOnly: last.glyphOnly === true });
@@ -16468,7 +17435,9 @@ async function rebuildHlsfFromLastCommand(logUpdate = false) {
     if (logUpdate) {
       const suffix = last.rawArgs ? ` ${last.rawArgs}` : '';
       const m = graph?._metrics || ensureGraphMetrics(graph);
-      logStatus(`↻ /hlsf${suffix} → nodes ${m.nodes}, edges ${m.edges}, relationships ${m.relationships}, anchors ${m.anchors}`);
+      logStatus(
+        `↻ /hlsf${suffix} → nodes ${m.nodes}, edges ${m.edges}, relationships ${m.relationships}, anchors ${m.anchors}`,
+      );
     }
     return graph;
   } catch (err) {
@@ -16483,7 +17452,9 @@ function cmdScheme(arg) {
   if (window.HLSF.currentGraph) {
     animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
   }
-  logStatus(`Scheme: ${window.HLSF.config.whiteBg ? 'Black lines on white' : 'White lines on black'}`);
+  logStatus(
+    `Scheme: ${window.HLSF.config.whiteBg ? 'Black lines on white' : 'White lines on black'}`,
+  );
 }
 
 function cmdSpin(arg) {
@@ -16572,32 +17543,33 @@ function collectActiveClusterInsights() {
       let attention = 0;
       for (const candidate of candidates) {
         const numeric = Number(candidate);
-        if (Number.isFinite(numeric)) { attention = numeric; break; }
+        if (Number.isFinite(numeric)) {
+          attention = numeric;
+          break;
+        }
       }
       entry.nodes.push({ token: String(token), attention });
       if (Number.isFinite(attention)) entry.attentionSum += attention;
     }
 
     const summaries = [...bucket.values()]
-      .map(entry => {
+      .map((entry) => {
         entry.nodes.sort((a, b) => {
           const attA = Number.isFinite(a.attention) ? a.attention : -Infinity;
           const attB = Number.isFinite(b.attention) ? b.attention : -Infinity;
           if (attB !== attA) return attB - attA;
           return a.token.localeCompare(b.token);
         });
-        const avgAttention = entry.nodes.length
-          ? entry.attentionSum / entry.nodes.length
-          : 0;
+        const avgAttention = entry.nodes.length ? entry.attentionSum / entry.nodes.length : 0;
         return {
           id: entry.id,
           size: entry.nodes.length,
           avgAttention: Number.isFinite(avgAttention) ? avgAttention : 0,
-          topTokens: entry.nodes.slice(0, 3).map(n => n.token),
+          topTokens: entry.nodes.slice(0, 3).map((n) => n.token),
           layerSpan: entry.layers.size || 0,
         };
       })
-      .filter(entry => entry.size > 0)
+      .filter((entry) => entry.size > 0)
       .sort((a, b) => {
         if (b.size !== a.size) return b.size - a.size;
         return b.avgAttention - a.avgAttention;
@@ -16614,10 +17586,10 @@ function collectActiveClusterInsights() {
   const fallback = buildHLSF();
   if (fallback && Array.isArray(fallback.nodes) && fallback.nodes.length) {
     const fallbackTop = fallback.nodes
-      .filter(n => n && typeof n.id === 'string')
+      .filter((n) => n && typeof n.id === 'string')
       .sort((a, b) => (Number(b.attention) || 0) - (Number(a.attention) || 0))
       .slice(0, 5)
-      .map(n => n.id);
+      .map((n) => n.id);
 
     return {
       summaries: [],
@@ -16686,10 +17658,15 @@ function summarizeCachedAdjacency(entries: LocalHlsfAdjacencyTokenSummary[], opt
 
   const tokenHighlights = [];
   const relationStats = new Map<string, { type: string; count: number; weight: number }>();
-  const connectionStats = new Map<string, { source: string; target: string; type: string; weight: number; baseWeight: number | null }>();
+  const connectionStats = new Map<
+    string,
+    { source: string; target: string; type: string; weight: number; baseWeight: number | null }
+  >();
   const pri = RELATIONSHIP_PRIORITIES || {};
-  const neighborCap = Number.isFinite(neighborLimit) && neighborLimit > 0 ? Math.floor(neighborLimit) : 0;
-  const connectionCap = Number.isFinite(connectionLimit) && connectionLimit > 0 ? Math.floor(connectionLimit) : 0;
+  const neighborCap =
+    Number.isFinite(neighborLimit) && neighborLimit > 0 ? Math.floor(neighborLimit) : 0;
+  const connectionCap =
+    Number.isFinite(connectionLimit) && connectionLimit > 0 ? Math.floor(connectionLimit) : 0;
 
   let totalEdges = 0;
   let totalWeighted = 0;
@@ -16704,15 +17681,14 @@ function summarizeCachedAdjacency(entries: LocalHlsfAdjacencyTokenSummary[], opt
     attentionSum += score;
 
     const neighborCandidates = collectNeighborCandidates(entry).slice(0, neighborCap);
-    const neighborLabels = neighborCandidates.map(candidate => {
+    const neighborLabels = neighborCandidates.map((candidate) => {
       const weightLabel = Number.isFinite(candidate.weight) ? candidate.weight.toFixed(2) : '0.00';
       return `${candidate.token} (${weightLabel})`;
     });
     tokenHighlights.push({ token, score, neighbors: neighborLabels });
 
-    const relationships = entry.relationships && typeof entry.relationships === 'object'
-      ? entry.relationships
-      : {};
+    const relationships =
+      entry.relationships && typeof entry.relationships === 'object' ? entry.relationships : {};
 
     for (const [rawType, edges] of Object.entries(relationships)) {
       const normalizedType = normRelKey(rawType) || rawType;
@@ -16720,7 +17696,7 @@ function summarizeCachedAdjacency(entries: LocalHlsfAdjacencyTokenSummary[], opt
       if (!list.length) continue;
 
       let relationWeight = 0;
-      const priority = (pri[normalizedType] ?? pri.get?.(normalizedType)) ?? 1;
+      const priority = pri[normalizedType] ?? pri.get?.(normalizedType) ?? 1;
 
       for (const edge of list) {
         if (!edge || typeof edge.token !== 'string') continue;
@@ -16746,21 +17722,30 @@ function summarizeCachedAdjacency(entries: LocalHlsfAdjacencyTokenSummary[], opt
         }
       }
 
-      const stats = relationStats.get(normalizedType) || { type: normalizedType, count: 0, weight: 0 };
-      stats.count += list.filter(edge => edge && typeof edge.token === 'string' && isTokenCached(edge.token)).length;
+      const stats = relationStats.get(normalizedType) || {
+        type: normalizedType,
+        count: 0,
+        weight: 0,
+      };
+      stats.count += list.filter(
+        (edge) => edge && typeof edge.token === 'string' && isTokenCached(edge.token),
+      ).length;
       stats.weight += relationWeight;
       relationStats.set(normalizedType, stats);
     }
   }
 
-  const relationTypes = Array.from(relationStats.values())
-    .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+  const relationTypes = Array.from(relationStats.values()).sort(
+    (a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0),
+  );
 
   const topConnections = connectionCap
     ? Array.from(connectionStats.values())
         .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
         .slice(0, connectionCap)
-    : Array.from(connectionStats.values()).sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+    : Array.from(connectionStats.values()).sort(
+        (a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0),
+      );
 
   return {
     sortedEntries,
@@ -16777,7 +17762,10 @@ function summarizeCachedAdjacency(entries: LocalHlsfAdjacencyTokenSummary[], opt
 }
 
 function buildCachedAdjacencyExcerpt(entries: LocalHlsfAdjacencyTokenSummary[], options = {}) {
-  const { maxRelations = 4, maxNeighbors = 4 } = options as { maxRelations?: number; maxNeighbors?: number };
+  const { maxRelations = 4, maxNeighbors = 4 } = options as {
+    maxRelations?: number;
+    maxNeighbors?: number;
+  };
   const lines: string[] = [];
 
   for (const entry of entries) {
@@ -16786,9 +17774,10 @@ function buildCachedAdjacencyExcerpt(entries: LocalHlsfAdjacencyTokenSummary[], 
     if (!token) continue;
 
     lines.push(`Token: ${token}`);
-    const relationships = entry.relationships && typeof entry.relationships === 'object'
-      ? Object.entries(entry.relationships)
-      : [];
+    const relationships =
+      entry.relationships && typeof entry.relationships === 'object'
+        ? Object.entries(entry.relationships)
+        : [];
 
     const sortedRelations = relationships
       .map(([relType, edges]) => {
@@ -16796,15 +17785,15 @@ function buildCachedAdjacencyExcerpt(entries: LocalHlsfAdjacencyTokenSummary[], 
         const weight = list.reduce((sum, edge) => sum + (Number(edge?.weight) || 0), 0);
         return { relType, edges: list, weight };
       })
-      .filter(item => item.edges.length)
+      .filter((item) => item.edges.length)
       .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
       .slice(0, Math.max(0, Number.isFinite(maxRelations) ? Math.floor(maxRelations) : 0));
 
     for (const relation of sortedRelations) {
       const neighbors = relation.edges
-        .filter(edge => edge && typeof edge.token === 'string' && isTokenCached(edge.token))
+        .filter((edge) => edge && typeof edge.token === 'string' && isTokenCached(edge.token))
         .slice(0, Math.max(0, Number.isFinite(maxNeighbors) ? Math.floor(maxNeighbors) : 0))
-        .map(edge => `${edge.token} (${Number(edge.weight || 0).toFixed(2)})`)
+        .map((edge) => `${edge.token} (${Number(edge.weight || 0).toFixed(2)})`)
         .join(', ');
       if (neighbors) {
         lines.push(`  ${relDisplay(relation.relType)} -> ${neighbors}`);
@@ -16821,7 +17810,7 @@ function buildCachedAdjacencyExcerpt(entries: LocalHlsfAdjacencyTokenSummary[], 
 
 function buildCachedClusterInfo(entries: LocalHlsfAdjacencyTokenSummary[]) {
   const tokens = entries
-    .map(entry => (entry && typeof entry.token === 'string' ? entry.token.trim() : ''))
+    .map((entry) => (entry && typeof entry.token === 'string' ? entry.token.trim() : ''))
     .filter(Boolean);
 
   return {
@@ -16833,10 +17822,16 @@ function buildCachedClusterInfo(entries: LocalHlsfAdjacencyTokenSummary[]) {
   };
 }
 
-function gatherSelfTokenPool(clusterInfo, dbStats, limit = 18, cachedEntries: LocalHlsfAdjacencyTokenSummary[] | null = null) {
-  const source = Array.isArray(cachedEntries) && cachedEntries.length
-    ? cachedEntries
-    : resolveCachedAdjacencyEntries(Math.max(limit * 3, 0)).entries;
+function gatherSelfTokenPool(
+  clusterInfo,
+  dbStats,
+  limit = 18,
+  cachedEntries: LocalHlsfAdjacencyTokenSummary[] | null = null,
+) {
+  const source =
+    Array.isArray(cachedEntries) && cachedEntries.length
+      ? cachedEntries
+      : resolveCachedAdjacencyEntries(Math.max(limit * 3, 0)).entries;
 
   if (!Array.isArray(source) || !source.length) {
     return [];
@@ -16869,8 +17864,7 @@ function gatherSelfTokenPool(clusterInfo, dbStats, limit = 18, cachedEntries: Lo
     if (tokenSet.size >= limit) break;
   }
 
-  return Array.from(tokenSet)
-    .slice(0, limit);
+  return Array.from(tokenSet).slice(0, limit);
 }
 
 function craftSelfThoughtStream(options) {
@@ -16885,16 +17879,17 @@ function craftSelfThoughtStream(options) {
     clusterInfo,
   } = options || {};
 
-  const moodLabel = typeof moodName === 'string' && moodName.trim()
-    ? moodName.trim()
-    : 'Adaptive clustering';
+  const moodLabel =
+    typeof moodName === 'string' && moodName.trim() ? moodName.trim() : 'Adaptive clustering';
   const moodLower = moodLabel.toLowerCase();
   const focusTokens = Array.isArray(tokenPool) ? tokenPool.filter(Boolean) : [];
   const primaryFocus = focusTokens.slice(0, 6);
   const secondaryFocus = focusTokens.slice(6, 10);
 
   const segments: string[] = [];
-  segments.push(`Deep-diving the remote-db, I settle into ${moodLower} currents calibrated to ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`);
+  segments.push(
+    `Deep-diving the remote-db, I settle into ${moodLower} currents calibrated to ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`,
+  );
 
   if (mentalState?.desc) {
     segments.push(mentalState.desc.trim());
@@ -16964,24 +17959,35 @@ function craftMentalStateStream(options = {}) {
   const focusList = Array.isArray(focusTokens) ? focusTokens.filter(Boolean) : [];
   const requestedList = Array.isArray(requestedTokens) ? requestedTokens.filter(Boolean) : [];
   const highlightTokens = Array.isArray(tokenHighlights)
-    ? tokenHighlights.map(entry => entry?.token).filter(Boolean)
+    ? tokenHighlights.map((entry) => entry?.token).filter(Boolean)
     : [];
 
   const relationSamples = Array.isArray(relationTypes)
-    ? relationTypes.slice(0, 2).map(rel => {
-      const label = relDisplay(rel?.type);
-      const count = Number.isFinite(rel?.count) ? rel.count : 0;
-      return `${label}×${count}`;
-    }).filter(Boolean)
+    ? relationTypes
+        .slice(0, 2)
+        .map((rel) => {
+          const label = relDisplay(rel?.type);
+          const count = Number.isFinite(rel?.count) ? rel.count : 0;
+          return `${label}×${count}`;
+        })
+        .filter(Boolean)
     : [];
 
   const connectionSamples = Array.isArray(topConnections)
-    ? topConnections.slice(0, 2).map(conn => `${conn?.source}↔${conn?.target}`).filter(Boolean)
+    ? topConnections
+        .slice(0, 2)
+        .map((conn) => `${conn?.source}↔${conn?.target}`)
+        .filter(Boolean)
     : [];
 
-  const adjacencyLines = typeof adjacencyExcerpt === 'string'
-    ? adjacencyExcerpt.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2)
-    : [];
+  const adjacencyLines =
+    typeof adjacencyExcerpt === 'string'
+      ? adjacencyExcerpt
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(0, 2)
+      : [];
 
   const clusterHighlights: string[] = [];
   if (Number.isFinite(clusterInfo?.clusterCount)) {
@@ -16992,7 +17998,9 @@ function craftMentalStateStream(options = {}) {
   }
 
   const segments: string[] = [];
-  segments.push(`Affinities in emergent rotation steady the ${moodName} frame at threshold ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`);
+  segments.push(
+    `Affinities in emergent rotation steady the ${moodName} frame at threshold ${threshold.toFixed(2)} after ${iterations} iteration${iterations === 1 ? '' : 's'}.`,
+  );
 
   if (mentalState.desc) {
     segments.push(mentalState.desc.trim());
@@ -17033,7 +18041,10 @@ function craftMentalStateStream(options = {}) {
   }
 
   if (clusterSummaryText) {
-    const summaryLine = clusterSummaryText.split('\n').map(line => line.trim()).filter(Boolean)[0];
+    const summaryLine = clusterSummaryText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)[0];
     if (summaryLine) {
       segments.push(`Cluster synopsis: ${summaryLine}.`);
     }
@@ -17070,27 +18081,36 @@ function craftMentalStateStructure(options = {}) {
 
   const sentences = [];
   const moodName = mentalState.name || 'Undefined mental state';
-  sentences.push(`Structural reading of ${moodName}: threshold ${threshold.toFixed(2)}, iterations ${iterations}, reported stats ${dbSummary}, computed stats ${computedSummary}.`);
+  sentences.push(
+    `Structural reading of ${moodName}: threshold ${threshold.toFixed(2)}, iterations ${iterations}, reported stats ${dbSummary}, computed stats ${computedSummary}.`,
+  );
 
   const focusList = Array.isArray(focusTokens) ? focusTokens.filter(Boolean) : [];
   const requestedList = Array.isArray(requestedTokens) ? requestedTokens.filter(Boolean) : [];
   if (focusList.length || requestedList.length) {
     const segments = [];
     if (focusList.length) {
-      segments.push(`Focus tokens (${focusList.length}) include ${joinWithAnd(focusList.slice(0, 10))}`);
+      segments.push(
+        `Focus tokens (${focusList.length}) include ${joinWithAnd(focusList.slice(0, 10))}`,
+      );
     }
     if (requestedList.length) {
-      segments.push(`Requested inputs (${requestedList.length}) cover ${joinWithAnd(requestedList.slice(0, 8))}`);
+      segments.push(
+        `Requested inputs (${requestedList.length}) cover ${joinWithAnd(requestedList.slice(0, 8))}`,
+      );
     }
     sentences.push(`${segments.join('; ')}.`);
   }
 
   if (Array.isArray(tokenHighlights) && tokenHighlights.length) {
-    const highlightDetails = tokenHighlights.slice(0, 4).map(entry => {
-      if (!entry?.token) return '';
-      const score = Number.isFinite(entry?.score) ? entry.score.toFixed(3) : '0.000';
-      return `${entry.token} (${score})`;
-    }).filter(Boolean);
+    const highlightDetails = tokenHighlights
+      .slice(0, 4)
+      .map((entry) => {
+        if (!entry?.token) return '';
+        const score = Number.isFinite(entry?.score) ? entry.score.toFixed(3) : '0.000';
+        return `${entry.token} (${score})`;
+      })
+      .filter(Boolean);
     if (highlightDetails.length) {
       sentences.push(`Top weighted highlights: ${joinWithAnd(highlightDetails)}.`);
     }
@@ -17099,12 +18119,15 @@ function craftMentalStateStructure(options = {}) {
   }
 
   if (Array.isArray(relationTypes) && relationTypes.length) {
-    const relationDetails = relationTypes.slice(0, 4).map(rel => {
-      const label = relDisplay(rel?.type);
-      const count = Number.isFinite(rel?.count) ? rel.count : 0;
-      const weight = Number.isFinite(rel?.weight) ? rel.weight.toFixed(3) : '0.000';
-      return `${label} (${count} edges, Σ=${weight})`;
-    }).filter(Boolean);
+    const relationDetails = relationTypes
+      .slice(0, 4)
+      .map((rel) => {
+        const label = relDisplay(rel?.type);
+        const count = Number.isFinite(rel?.count) ? rel.count : 0;
+        const weight = Number.isFinite(rel?.weight) ? rel.weight.toFixed(3) : '0.000';
+        return `${label} (${count} edges, Σ=${weight})`;
+      })
+      .filter(Boolean);
     if (relationDetails.length) {
       sentences.push(`Relation weighting emphasizes ${joinWithAnd(relationDetails)}.`);
     }
@@ -17113,11 +18136,14 @@ function craftMentalStateStructure(options = {}) {
   }
 
   if (Array.isArray(topConnections) && topConnections.length) {
-    const connectionDetails = topConnections.slice(0, 3).map(conn => {
-      const label = relDisplay(conn?.type);
-      const weight = Number.isFinite(conn?.weight) ? conn.weight.toFixed(3) : '0.000';
-      return `${conn?.source} ↔ ${conn?.target} (${label}, ${weight})`;
-    }).filter(Boolean);
+    const connectionDetails = topConnections
+      .slice(0, 3)
+      .map((conn) => {
+        const label = relDisplay(conn?.type);
+        const weight = Number.isFinite(conn?.weight) ? conn.weight.toFixed(3) : '0.000';
+        return `${conn?.source} ↔ ${conn?.target} (${label}, ${weight})`;
+      })
+      .filter(Boolean);
     if (connectionDetails.length) {
       sentences.push(`Peak connections: ${joinWithAnd(connectionDetails)}.`);
     }
@@ -17138,14 +18164,22 @@ function craftMentalStateStructure(options = {}) {
   }
 
   if (clusterSummaryText) {
-    const summaryLines = clusterSummaryText.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2);
+    const summaryLines = clusterSummaryText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 2);
     if (summaryLines.length) {
       sentences.push(`Cluster detail: ${summaryLines.join('; ')}.`);
     }
   }
 
   if (adjacencyExcerpt) {
-    const adjacencyLines = adjacencyExcerpt.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2);
+    const adjacencyLines = adjacencyExcerpt
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 2);
     if (adjacencyLines.length) {
       sentences.push(`Adjacency notes: ${adjacencyLines.join('; ')}.`);
     }
@@ -17157,13 +18191,19 @@ function craftMentalStateStructure(options = {}) {
 
   const filler = [];
   if (Array.isArray(tokenHighlights) && tokenHighlights.length > 4) {
-    const more = tokenHighlights.slice(4, 8).map(entry => entry?.token).filter(Boolean);
+    const more = tokenHighlights
+      .slice(4, 8)
+      .map((entry) => entry?.token)
+      .filter(Boolean);
     if (more.length) {
       filler.push(`Additional highlight tokens: ${joinWithAnd(more)}.`);
     }
   }
   if (Array.isArray(relationTypes) && relationTypes.length > 4) {
-    const moreRel = relationTypes.slice(4, 7).map(rel => relDisplay(rel?.type)).filter(Boolean);
+    const moreRel = relationTypes
+      .slice(4, 7)
+      .map((rel) => relDisplay(rel?.type))
+      .filter(Boolean);
     if (moreRel.length) {
       filler.push(`Supplementary relation modes: ${joinWithAnd(moreRel)}.`);
     }
@@ -17262,14 +18302,15 @@ function buildAdjacencyPromptSummary(tokens, idx, idxLower, options = {}) {
       .filter(([, edges]) => Array.isArray(edges) && edges.length)
       .map(([relType, edges]) => ({
         relType,
-        edges: edges.slice().sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+        edges: edges.slice().sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0)),
       }))
       .sort((a, b) => b.edges.length - a.edges.length)
       .slice(0, maxRelations);
 
     for (const entry of relations) {
-      const neighbors = entry.edges.slice(0, maxNeighbors)
-        .map(edge => `${edge.token} (${Number(edge.weight || 0).toFixed(2)})`)
+      const neighbors = entry.edges
+        .slice(0, maxNeighbors)
+        .map((edge) => `${edge.token} (${Number(edge.weight || 0).toFixed(2)})`)
         .join(', ');
       if (neighbors) {
         lines.push(`  ${relDisplay(entry.relType)} -> ${neighbors}`);
@@ -17297,13 +18338,12 @@ function formatClusterSummaryForPrompt(clusterInfo, options = {}) {
   }
 
   if (Array.isArray(clusterInfo.summaries) && clusterInfo.summaries.length) {
-    clusterInfo.summaries.slice(0, limit).forEach(summary => {
-      const tops = Array.isArray(summary.topTokens) && summary.topTokens.length
-        ? summary.topTokens.slice(0, 4).join(', ')
-        : '—';
-      const att = Number.isFinite(summary.avgAttention)
-        ? summary.avgAttention.toFixed(3)
-        : '—';
+    clusterInfo.summaries.slice(0, limit).forEach((summary) => {
+      const tops =
+        Array.isArray(summary.topTokens) && summary.topTokens.length
+          ? summary.topTokens.slice(0, 4).join(', ')
+          : '—';
+      const att = Number.isFinite(summary.avgAttention) ? summary.avgAttention.toFixed(3) : '—';
       lines.push(`Cluster ${summary.id}: size=${summary.size}, avgAttention=${att}, top=${tops}`);
     });
   } else if (Array.isArray(clusterInfo.fallbackTop) && clusterInfo.fallbackTop.length) {
@@ -17327,7 +18367,7 @@ function collectTopConnections(limit = 10) {
     for (const rawKey of Object.keys(rels)) {
       const type = normRelKey(rawKey);
       if (!type) continue;
-      const priority = (pri[type] ?? pri.get?.(type)) ?? 1;
+      const priority = pri[type] ?? pri.get?.(type) ?? 1;
       const edges = Array.isArray(rels[rawKey]) ? rels[rawKey] : [];
       for (const rel of edges) {
         const target = rel?.token;
@@ -17360,12 +18400,14 @@ function formatTopConnectionsForPrompt(connections) {
     return 'No connection data available.';
   }
 
-  return connections.map((conn, idx) => {
-    const rank = String(idx + 1).padStart(2, '0');
-    const total = Number.isFinite(conn.weight) ? conn.weight.toFixed(3) : '—';
-    const raw = Number.isFinite(conn.baseWeight) ? conn.baseWeight.toFixed(3) : '—';
-    return `${rank}. ${conn.source} ↔ ${conn.target} [${relDisplay(conn.type)}] weight=${total} (raw=${raw})`;
-  }).join('\n');
+  return connections
+    .map((conn, idx) => {
+      const rank = String(idx + 1).padStart(2, '0');
+      const total = Number.isFinite(conn.weight) ? conn.weight.toFixed(3) : '—';
+      const raw = Number.isFinite(conn.baseWeight) ? conn.baseWeight.toFixed(3) : '—';
+      return `${rank}. ${conn.source} ↔ ${conn.target} [${relDisplay(conn.type)}] weight=${total} (raw=${raw})`;
+    })
+    .join('\n');
 }
 
 function analyzeGlobalDatabase(options = {}) {
@@ -17385,9 +18427,8 @@ function analyzeGlobalDatabase(options = {}) {
 
     const neighborWeights = new Map();
     let tokenScore = 0;
-    const relationships = rec.relationships && typeof rec.relationships === 'object'
-      ? rec.relationships
-      : {};
+    const relationships =
+      rec.relationships && typeof rec.relationships === 'object' ? rec.relationships : {};
 
     for (const rawType of Object.keys(relationships)) {
       const edges = Array.isArray(relationships[rawType]) ? relationships[rawType] : [];
@@ -17462,14 +18503,17 @@ function formatTokenHighlightsForPrompt(highlights) {
     return 'No token highlights available.';
   }
 
-  return highlights.map(entry => {
-    const rank = String(entry.rank).padStart(2, '0');
-    const score = Number.isFinite(entry.score) ? entry.score.toFixed(3) : '0.000';
-    const neighbors = Array.isArray(entry.neighbors) && entry.neighbors.length
-      ? ` · neighbors: ${entry.neighbors.join(', ')}`
-      : '';
-    return `${rank}. ${entry.token} · weighted_attention=${score}${neighbors}`;
-  }).join('\n');
+  return highlights
+    .map((entry) => {
+      const rank = String(entry.rank).padStart(2, '0');
+      const score = Number.isFinite(entry.score) ? entry.score.toFixed(3) : '0.000';
+      const neighbors =
+        Array.isArray(entry.neighbors) && entry.neighbors.length
+          ? ` · neighbors: ${entry.neighbors.join(', ')}`
+          : '';
+      return `${rank}. ${entry.token} · weighted_attention=${score}${neighbors}`;
+    })
+    .join('\n');
 }
 
 function formatRelationTypeSummaryForPrompt(entries) {
@@ -17477,19 +18521,23 @@ function formatRelationTypeSummaryForPrompt(entries) {
     return 'No relationship data available.';
   }
 
-  return entries.map((entry, idx) => {
-    const rank = String(idx + 1).padStart(2, '0');
-    const label = relDisplay(entry.type);
-    const count = Number.isFinite(entry.count) ? entry.count : 0;
-    const weight = Number.isFinite(entry.weight) ? entry.weight.toFixed(3) : '0.000';
-    return `${rank}. ${label} · edges=${count} · weighted_sum=${weight}`;
-  }).join('\n');
+  return entries
+    .map((entry, idx) => {
+      const rank = String(idx + 1).padStart(2, '0');
+      const label = relDisplay(entry.type);
+      const count = Number.isFinite(entry.count) ? entry.count : 0;
+      const weight = Number.isFinite(entry.weight) ? entry.weight.toFixed(3) : '0.000';
+      return `${rank}. ${label} · edges=${count} · weighted_sum=${weight}`;
+    })
+    .join('\n');
 }
 
 function cmd_self() {
   const { entries } = resolveCachedAdjacencyEntries();
   if (!entries.length) {
-    logError('No cached adjacency tokens available for self-reflection. Run a prompt to populate the AGI cache.');
+    logError(
+      'No cached adjacency tokens available for self-reflection. Run a prompt to populate the AGI cache.',
+    );
     return;
   }
 
@@ -17502,18 +18550,20 @@ function cmd_self() {
     return;
   }
 
-  const uniqueTokens = Array.from(new Set(
-    tokenPool
-      .map(token => (typeof token === 'string' ? token.trim() : ''))
-      .filter(Boolean),
-  ));
+  const uniqueTokens = Array.from(
+    new Set(
+      tokenPool.map((token) => (typeof token === 'string' ? token.trim() : '')).filter(Boolean),
+    ),
+  );
   if (!uniqueTokens.length) {
     logError('Cached adjacency snapshot did not yield any usable tokens for self-reflection.');
     return;
   }
 
   const safeTokens = sanitize(uniqueTokens.join('\n'));
-  addLog(`<div class="section-divider"></div><div class="section-title">🪞 HLSF Self Tokens</div><pre>${safeTokens}</pre>`);
+  addLog(
+    `<div class="section-divider"></div><div class="section-title">🪞 HLSF Self Tokens</div><pre>${safeTokens}</pre>`,
+  );
 }
 
 async function cmd_import() {
@@ -17555,7 +18605,8 @@ async function cmd_remotestats(): Promise<boolean> {
 
   const safeText = (value) => sanitize(value == null ? '' : String(value));
   const formatCount = (value) => (Number.isFinite(value) ? Number(value).toLocaleString() : '—');
-  const formatDecimal = (value, digits = 1) => (Number.isFinite(value) ? Number(value).toFixed(digits) : '—');
+  const formatDecimal = (value, digits = 1) =>
+    Number.isFinite(value) ? Number(value).toFixed(digits) : '—';
   const formatDateTime = (value) => {
     if (!value) return 'Unknown';
     const date = new Date(value);
@@ -17614,24 +18665,38 @@ async function cmd_remotestats(): Promise<boolean> {
   const declaredRelationshipsRaw = metadata.total_relationships ?? metadata.totalRelationships;
   const declaredTokens = Number(declaredTokensRaw);
   const declaredRelationships = Number(declaredRelationshipsRaw);
-  const derivedTokenTotal = Number.isFinite(declaredTokens) && declaredTokens > 0
-    ? declaredTokens
-    : (totalChunkTokens > 0 ? totalChunkTokens : null);
-  const derivedRelationships = Number.isFinite(declaredRelationships) && declaredRelationships >= 0
-    ? declaredRelationships
-    : null;
-  const averageDegree = Number.isFinite(derivedTokenTotal) && Number.isFinite(derivedRelationships) && derivedTokenTotal > 0
-    ? derivedRelationships / derivedTokenTotal
-    : null;
+  const derivedTokenTotal =
+    Number.isFinite(declaredTokens) && declaredTokens > 0
+      ? declaredTokens
+      : totalChunkTokens > 0
+        ? totalChunkTokens
+        : null;
+  const derivedRelationships =
+    Number.isFinite(declaredRelationships) && declaredRelationships >= 0
+      ? declaredRelationships
+      : null;
+  const averageDegree =
+    Number.isFinite(derivedTokenTotal) &&
+    Number.isFinite(derivedRelationships) &&
+    derivedTokenTotal > 0
+      ? derivedRelationships / derivedTokenTotal
+      : null;
   const declaredTokenTotal = typeof derivedTokenTotal === 'number' ? derivedTokenTotal : null;
-  const declaredRelationshipTotal = typeof derivedRelationships === 'number' ? derivedRelationships : null;
+  const declaredRelationshipTotal =
+    typeof derivedRelationships === 'number' ? derivedRelationships : null;
 
-  const version = typeof metadata.version === 'string'
-    ? metadata.version
-    : (typeof metadata.db_version === 'string' ? metadata.db_version : '');
-  const source = typeof metadata.source === 'string'
-    ? metadata.source
-    : (typeof metadata.dataset === 'string' ? metadata.dataset : '');
+  const version =
+    typeof metadata.version === 'string'
+      ? metadata.version
+      : typeof metadata.db_version === 'string'
+        ? metadata.db_version
+        : '';
+  const source =
+    typeof metadata.source === 'string'
+      ? metadata.source
+      : typeof metadata.dataset === 'string'
+        ? metadata.dataset
+        : '';
   const generatedAt = metadata.generated_at || metadata.generatedAt || metadata.generated;
 
   const remoteCacheEstimate = estimateRemoteTokenCount();
@@ -17645,16 +18710,18 @@ async function cmd_remotestats(): Promise<boolean> {
   }
   const cacheStatus = remoteStateParts.join('; ');
 
-  const coverageRatio = Number.isFinite(tokenIndexCount) && Number.isFinite(derivedTokenTotal) && derivedTokenTotal > 0
-    ? tokenIndexCount / derivedTokenTotal
-    : null;
+  const coverageRatio =
+    Number.isFinite(tokenIndexCount) && Number.isFinite(derivedTokenTotal) && derivedTokenTotal > 0
+      ? tokenIndexCount / derivedTokenTotal
+      : null;
   const coverageDisplay = Number.isFinite(coverageRatio)
     ? `${(coverageRatio * 100).toFixed(1)}%`
     : null;
 
-  const chunkSummary = chunkCount > 0
-    ? `${formatCount(chunkCount)} chunks · avg ${formatDecimal(averageChunkSize, 1)} tokens/chunk`
-    : 'No chunk manifest entries found';
+  const chunkSummary =
+    chunkCount > 0
+      ? `${formatCount(chunkCount)} chunks · avg ${formatDecimal(averageChunkSize, 1)} tokens/chunk`
+      : 'No chunk manifest entries found';
   const largestChunkDisplay = largestChunk
     ? `${largestChunk.prefix} (${formatCount(largestChunk.count)} tokens)`
     : '—';
@@ -17671,16 +18738,19 @@ async function cmd_remotestats(): Promise<boolean> {
   const reposedGeneratedAt = reposedStats?.generatedAt ?? null;
   const reposedLargestDisplay = describeChunk(reposedStats?.largestChunk ?? null);
   const reposedSmallestDisplay = describeChunk(reposedStats?.smallestChunk ?? null);
-  const reposedTokenDelta = (reposedTokenTotal != null && declaredTokenTotal != null)
-    ? reposedTokenTotal - declaredTokenTotal
-    : null;
-  const reposedRelationshipDelta = (reposedRelationships != null && declaredRelationshipTotal != null)
-    ? reposedRelationships - declaredRelationshipTotal
-    : null;
+  const reposedTokenDelta =
+    reposedTokenTotal != null && declaredTokenTotal != null
+      ? reposedTokenTotal - declaredTokenTotal
+      : null;
+  const reposedRelationshipDelta =
+    reposedRelationships != null && declaredRelationshipTotal != null
+      ? reposedRelationships - declaredRelationshipTotal
+      : null;
 
-  const dbStats = metadata.database_stats && typeof metadata.database_stats === 'object'
-    ? metadata.database_stats
-    : null;
+  const dbStats =
+    metadata.database_stats && typeof metadata.database_stats === 'object'
+      ? metadata.database_stats
+      : null;
   const estimatedValueRaw = Number(dbStats?.estimated_value_usd ?? metadata.estimated_value_usd);
   const estimatedValue = Number.isFinite(estimatedValueRaw) ? estimatedValueRaw : null;
 
@@ -17691,7 +18761,9 @@ async function cmd_remotestats(): Promise<boolean> {
   if (source) {
     manifestSummaryLines.push(`• Source: <strong>${safeText(source)}</strong>`);
   }
-  manifestSummaryLines.push(`• Auto-save directory: <strong>${safeText(remotedir ? 'Connected' : 'Not connected')}</strong>`);
+  manifestSummaryLines.push(
+    `• Auto-save directory: <strong>${safeText(remotedir ? 'Connected' : 'Not connected')}</strong>`,
+  );
 
   const scaleLines = [
     `• Declared tokens: <strong>${safeText(formatCount(derivedTokenTotal))}</strong>`,
@@ -17710,21 +18782,41 @@ async function cmd_remotestats(): Promise<boolean> {
 
   const reposedLines: string[] = [];
   if (reposedConnected) {
-    reposedLines.push(`• Reposed tokens: <strong>${safeText(formatCount(reposedTokenTotal))}</strong>`);
-    reposedLines.push(`• Reposed relationships: <strong>${safeText(formatCount(reposedRelationships))}</strong>`);
+    reposedLines.push(
+      `• Reposed tokens: <strong>${safeText(formatCount(reposedTokenTotal))}</strong>`,
+    );
+    reposedLines.push(
+      `• Reposed relationships: <strong>${safeText(formatCount(reposedRelationships))}</strong>`,
+    );
     if (reposedTokenDelta != null) {
-      reposedLines.push(`• Token delta (reposed − declared): <strong>${safeText(formatDelta(reposedTokenDelta))}</strong>`);
+      reposedLines.push(
+        `• Token delta (reposed − declared): <strong>${safeText(formatDelta(reposedTokenDelta))}</strong>`,
+      );
     }
     if (reposedRelationshipDelta != null) {
-      reposedLines.push(`• Relationship delta: <strong>${safeText(formatDelta(reposedRelationshipDelta))}</strong>`);
+      reposedLines.push(
+        `• Relationship delta: <strong>${safeText(formatDelta(reposedRelationshipDelta))}</strong>`,
+      );
     }
-    reposedLines.push(`• Stored token index entries: <strong>${safeText(formatCount(reposedTokenIndexCount))}</strong>`);
-    reposedLines.push(`• Stored chunks: <strong>${safeText(formatCount(reposedChunkCount))}</strong>`);
-    reposedLines.push(`• Stored chunk prefix length: <strong>${safeText(formatCount(reposedChunkPrefixLength))}</strong>`);
-    reposedLines.push(`• Largest stored chunk: <strong>${safeText(reposedLargestDisplay)}</strong>`);
-    reposedLines.push(`• Smallest stored chunk: <strong>${safeText(reposedSmallestDisplay)}</strong>`);
+    reposedLines.push(
+      `• Stored token index entries: <strong>${safeText(formatCount(reposedTokenIndexCount))}</strong>`,
+    );
+    reposedLines.push(
+      `• Stored chunks: <strong>${safeText(formatCount(reposedChunkCount))}</strong>`,
+    );
+    reposedLines.push(
+      `• Stored chunk prefix length: <strong>${safeText(formatCount(reposedChunkPrefixLength))}</strong>`,
+    );
+    reposedLines.push(
+      `• Largest stored chunk: <strong>${safeText(reposedLargestDisplay)}</strong>`,
+    );
+    reposedLines.push(
+      `• Smallest stored chunk: <strong>${safeText(reposedSmallestDisplay)}</strong>`,
+    );
     if (reposedGeneratedAt) {
-      reposedLines.push(`• Stored manifest generated: <strong>${safeText(formatDateTime(reposedGeneratedAt))}</strong>`);
+      reposedLines.push(
+        `• Stored manifest generated: <strong>${safeText(formatDateTime(reposedGeneratedAt))}</strong>`,
+      );
     }
   } else if (reposedStats?.error) {
     reposedLines.push(`• Reposed totals unavailable: ${safeText(reposedStats.error)}`);
@@ -17745,13 +18837,19 @@ async function cmd_remotestats(): Promise<boolean> {
       dbStatsLines.push(`• Maturity: <strong>${safeText(dbStats.maturity_level)}</strong>`);
     }
     if (Number.isFinite(dbStats.total_tokens)) {
-      dbStatsLines.push(`• Source total tokens: <strong>${safeText(formatCount(dbStats.total_tokens))}</strong>`);
+      dbStatsLines.push(
+        `• Source total tokens: <strong>${safeText(formatCount(dbStats.total_tokens))}</strong>`,
+      );
     }
     if (Number.isFinite(dbStats.total_relationships)) {
-      dbStatsLines.push(`• Source relationships: <strong>${safeText(formatCount(dbStats.total_relationships))}</strong>`);
+      dbStatsLines.push(
+        `• Source relationships: <strong>${safeText(formatCount(dbStats.total_relationships))}</strong>`,
+      );
     }
     if (estimatedValue !== null) {
-      dbStatsLines.push(`• Estimated value: <strong>${safeText(formatCurrency(estimatedValue))}</strong>`);
+      dbStatsLines.push(
+        `• Estimated value: <strong>${safeText(formatCurrency(estimatedValue))}</strong>`,
+      );
     }
     if (typeof dbStats.maturity_message === 'string' && dbStats.maturity_message) {
       dbStatsLines.push(`• Note: ${safeText(dbStats.maturity_message)}`);
@@ -17797,7 +18895,9 @@ async function cmd_remotestats(): Promise<boolean> {
 async function cmd_remotedir(): Promise<boolean> {
   const writer = remoteDbFileWriter;
   if (!writer || typeof writer.isSupported !== 'function' || !writer.isSupported()) {
-    logWarning('Remote DB auto-save is unavailable in this browser. Use /export to capture updates manually.');
+    logWarning(
+      'Remote DB auto-save is unavailable in this browser. Use /export to capture updates manually.',
+    );
     setRemotedirFlag(false);
     return false;
   }
@@ -17805,7 +18905,9 @@ async function cmd_remotedir(): Promise<boolean> {
     const connected = await writer.chooseDirectory();
     if (connected) {
       setRemotedirFlag(true);
-      logOK('Remote DB save directory connected. Future adjacency updates will sync automatically.');
+      logOK(
+        'Remote DB save directory connected. Future adjacency updates will sync automatically.',
+      );
       return true;
     }
   } catch (err) {
@@ -17822,11 +18924,7 @@ async function cmd_load(
   options: { interactive?: boolean } = {},
 ): Promise<boolean> {
   const interactive = options.interactive !== false;
-  const rawArgs = Array.isArray(args)
-    ? args
-    : typeof args === 'string'
-      ? args.split(/\s+/)
-      : [];
+  const rawArgs = Array.isArray(args) ? args : typeof args === 'string' ? args.split(/\s+/) : [];
   const filtered: string[] = [];
   let requireRemotedir = false;
 
@@ -17851,7 +18949,9 @@ async function cmd_load(
       if (interactive) {
         await cmd_remotedir();
       } else {
-        logWarning('Remote DB auto-save directory not connected. Run /remotedir to select a location when ready.');
+        logWarning(
+          'Remote DB auto-save directory not connected. Run /remotedir to select a location when ready.',
+        );
       }
     }
   }
@@ -17937,9 +19037,10 @@ async function cmd_hidden(args = []) {
 
   try {
     const { options, manualTokens } = parseHiddenSweepArgs(Array.isArray(args) ? args : []);
-    const minAdjacencies = Number.isFinite(options.minAdjacencies) && options.minAdjacencies >= 0
-      ? Math.floor(options.minAdjacencies)
-      : 2;
+    const minAdjacencies =
+      Number.isFinite(options.minAdjacencies) && options.minAdjacencies >= 0
+        ? Math.floor(options.minAdjacencies)
+        : 2;
 
     const analysis = collectHiddenAdjacencyTokens({ minAdjacencies });
 
@@ -17955,12 +19056,17 @@ async function cmd_hidden(args = []) {
       if (!safeToken) return null;
       const key = safeToken.toLowerCase();
       if (!hiddenMap.has(key)) {
-        const stat = analysis.stats.get(key) || { adjacencyCount: 0, relationshipTypes: 0, origins: [] };
-        const initialOrigins = stat.origins instanceof Set
-          ? Array.from(stat.origins)
-          : Array.isArray(stat.origins)
-            ? stat.origins
-            : [];
+        const stat = analysis.stats.get(key) || {
+          adjacencyCount: 0,
+          relationshipTypes: 0,
+          origins: [],
+        };
+        const initialOrigins =
+          stat.origins instanceof Set
+            ? Array.from(stat.origins)
+            : Array.isArray(stat.origins)
+              ? stat.origins
+              : [];
         hiddenMap.set(key, {
           token: safeToken,
           adjacencyCount: Number.isFinite(stat.adjacencyCount) ? stat.adjacencyCount : 0,
@@ -17987,8 +19093,12 @@ async function cmd_hidden(args = []) {
       const entry = ensureEntry(record.token);
       if (!entry) continue;
       entry.reasons.add('sparse');
-      entry.adjacencyCount = Number.isFinite(record.adjacencyCount) ? record.adjacencyCount : entry.adjacencyCount;
-      entry.relationshipTypes = Number.isFinite(record.relationshipTypes) ? record.relationshipTypes : entry.relationshipTypes;
+      entry.adjacencyCount = Number.isFinite(record.adjacencyCount)
+        ? record.adjacencyCount
+        : entry.adjacencyCount;
+      entry.relationshipTypes = Number.isFinite(record.relationshipTypes)
+        ? record.relationshipTypes
+        : entry.relationshipTypes;
       if (Array.isArray(record.origins)) {
         for (const origin of record.origins) {
           if (origin) entry.sources.add(origin);
@@ -18009,8 +19119,12 @@ async function cmd_hidden(args = []) {
     }
 
     entries.sort((a, b) => {
-      const aPriority = Math.min(...Array.from(a.reasons).map(reason => reasonPriority.get(reason) ?? 3));
-      const bPriority = Math.min(...Array.from(b.reasons).map(reason => reasonPriority.get(reason) ?? 3));
+      const aPriority = Math.min(
+        ...Array.from(a.reasons).map((reason) => reasonPriority.get(reason) ?? 3),
+      );
+      const bPriority = Math.min(
+        ...Array.from(b.reasons).map((reason) => reasonPriority.get(reason) ?? 3),
+      );
       if (aPriority !== bPriority) return aPriority - bPriority;
       if ((a.adjacencyCount || 0) !== (b.adjacencyCount || 0)) {
         return (a.adjacencyCount || 0) - (b.adjacencyCount || 0);
@@ -18018,16 +19132,17 @@ async function cmd_hidden(args = []) {
       return a.token.localeCompare(b.token, undefined, { sensitivity: 'base' });
     });
 
-    const limit = Number.isFinite(options.limit) && options.limit > 0 ? Math.floor(options.limit) : null;
+    const limit =
+      Number.isFinite(options.limit) && options.limit > 0 ? Math.floor(options.limit) : null;
     const limitedEntries = limit && entries.length > limit ? entries.slice(0, limit) : entries;
     if (limit && entries.length > limit) {
       logWarning(`Processing limited to ${limit} hidden tokens (of ${entries.length}).`);
     }
 
-    const seeds = limitedEntries.map(entry => ({ token: entry.token, kind: 'word' }));
+    const seeds = limitedEntries.map((entry) => ({ token: entry.token, kind: 'word' }));
     const normalizedSeeds = normalizeAdjacencyInputs(seeds);
 
-    const seedPreview = formatTokenList(seeds.map(entry => entry.token));
+    const seedPreview = formatTokenList(seeds.map((entry) => entry.token));
     const unmappedCount = analysis.unmapped.length;
     const sparseCount = analysis.sparse.length;
     const manualCount = manualTokens.length;
@@ -18051,15 +19166,18 @@ async function cmd_hidden(args = []) {
     }
     const context = contextPieces.join(' ');
 
-    const depth = Number.isFinite(options.depth) && options.depth > 0
-      ? Math.floor(options.depth)
-      : CONFIG.ADJACENCY_RECURSION_DEPTH;
-    const edgesPerLevel = Number.isFinite(options.edgesPerLevel) && options.edgesPerLevel > 0
-      ? Math.floor(options.edgesPerLevel)
-      : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
-    const concurrency = Number.isFinite(options.concurrency) && options.concurrency > 0
-      ? Math.floor(options.concurrency)
-      : null;
+    const depth =
+      Number.isFinite(options.depth) && options.depth > 0
+        ? Math.floor(options.depth)
+        : CONFIG.ADJACENCY_RECURSION_DEPTH;
+    const edgesPerLevel =
+      Number.isFinite(options.edgesPerLevel) && options.edgesPerLevel > 0
+        ? Math.floor(options.edgesPerLevel)
+        : CONFIG.ADJACENCY_EDGES_PER_LEVEL;
+    const concurrency =
+      Number.isFinite(options.concurrency) && options.concurrency > 0
+        ? Math.floor(options.concurrency)
+        : null;
 
     const dbRecordIndex = buildDbRecordIndexMap();
     const preferDbHydration = window.HLSF?.remoteDb?.isReady?.() === true || dbRecordIndex.size > 0;
@@ -18079,7 +19197,8 @@ async function cmd_hidden(args = []) {
       },
     );
 
-    const matrices = recursionResult?.matrices instanceof Map ? recursionResult.matrices : new Map();
+    const matrices =
+      recursionResult?.matrices instanceof Map ? recursionResult.matrices : new Map();
     const stats = recursionResult?.stats || {};
     const provenance = recursionResult?.provenance || {};
     const connectivity = recursionResult?.connectivity || stats.connectivity || null;
@@ -18102,12 +19221,16 @@ async function cmd_hidden(args = []) {
 
     const cacheSummary = formatTokenList(provenance.cacheHits);
     if (cacheSummary) {
-      addLog(`<div class="adjacency-insight"><strong>📚 Cache hits:</strong> ${sanitize(cacheSummary)}</div>`);
+      addLog(
+        `<div class="adjacency-insight"><strong>📚 Cache hits:</strong> ${sanitize(cacheSummary)}</div>`,
+      );
     }
 
     const llmSummary = formatTokenList(provenance.llmGenerated);
     if (llmSummary) {
-      addLog(`<div class="adjacency-insight"><strong>🤖 New adjacencies:</strong> ${sanitize(llmSummary)}</div>`);
+      addLog(
+        `<div class="adjacency-insight"><strong>🤖 New adjacencies:</strong> ${sanitize(llmSummary)}</div>`,
+      );
     }
 
     if (Array.isArray(provenance.offline) && provenance.offline.length) {
@@ -18130,7 +19253,9 @@ async function cmd_hidden(args = []) {
     }
 
     const durationSec = ((performance.now() - start) / 1000).toFixed(1);
-    logOK(`Hidden adjacency sweep completed in ${durationSec}s (${seeds.length} seed${seeds.length === 1 ? '' : 's'}).`);
+    logOK(
+      `Hidden adjacency sweep completed in ${durationSec}s (${seeds.length} seed${seeds.length === 1 ? '' : 's'}).`,
+    );
   } catch (err) {
     logError(`Hidden adjacency sweep failed: ${err.message || err}`);
   } finally {
@@ -18148,7 +19273,9 @@ async function cmd_state(args = []) {
 
     const { entries } = resolveCachedAdjacencyEntries();
     if (!entries.length) {
-      logError('No cached adjacency tokens available. Run a prompt to populate the AGI cache before using /state.');
+      logError(
+        'No cached adjacency tokens available. Run a prompt to populate the AGI cache before using /state.',
+      );
       return;
     }
 
@@ -18217,7 +19344,7 @@ async function cmd_state(args = []) {
     }
 
     const focusTokens = focusEntries
-      .map(entry => (entry && typeof entry.token === 'string' ? entry.token : null))
+      .map((entry) => (entry && typeof entry.token === 'string' ? entry.token : null))
       .filter(Boolean) as string[];
     const combinedTokens: string[] = [];
     const seen = new Set<string>();
@@ -18245,7 +19372,9 @@ async function cmd_state(args = []) {
     }
 
     const safeTokens = sanitize(combinedTokens.join('\n'));
-    addLog(`<div class="section-divider"></div><div class="section-title">🧭 Mental State Tokens</div><pre>${safeTokens}</pre>`);
+    addLog(
+      `<div class="section-divider"></div><div class="section-title">🧭 Mental State Tokens</div><pre>${safeTokens}</pre>`,
+    );
 
     const elapsed = ((performance.now() - start) / 1000).toFixed(1);
     logOK(`Mental state tokens ready (${elapsed}s)`);
@@ -18279,8 +19408,9 @@ function* iterTokenRecords() {
   }
   const idxRaw = safeStorageGet(DB_INDEX_KEY, []);
   const idx = Array.isArray(idxRaw) ? idxRaw : [];
-  const keys = idx.length ? idx.map(t => TOKEN_CACHE_PREFIX + t)
-                          : safeStorageKeys(TOKEN_CACHE_PREFIX);
+  const keys = idx.length
+    ? idx.map((t) => TOKEN_CACHE_PREFIX + t)
+    : safeStorageKeys(TOKEN_CACHE_PREFIX);
   for (const k of keys) {
     const rec = safeStorageGet(k);
     if (rec) yield rec;
@@ -18299,7 +19429,7 @@ function buildHLSF() {
 
     for (const rawKey of Object.keys(rec.relationships)) {
       const type = normRelKey(rawKey);
-      const p = (pri[type] ?? pri.get?.(type)) ?? 1;
+      const p = pri[type] ?? pri.get?.(type) ?? 1;
       for (const rel of rec.relationships[rawKey]) {
         const w = rel.weight ?? 0;
         attention += w * p;
@@ -18337,7 +19467,7 @@ commandRegistry.register('/remotestats', () => cmd_remotestats());
 commandRegistry.register('/remotedb', () => cmd_remotestats());
 commandRegistry.register('/maphidden', cmd_hidden);
 commandRegistry.register('/hidden', cmd_hidden);
-commandRegistry.register('/sv-avatar', args => cmdSaveAvatar(args));
+commandRegistry.register('/sv-avatar', (args) => cmdSaveAvatar(args));
 commandRegistry.register('/ld-avatar', () => cmdLoadAvatar());
 commandRegistry.register('/del-avatar', () => cmdDeleteAvatar());
 // Router guard (prevents duplicate logs)
@@ -18350,18 +19480,18 @@ if (!(legacyCommands as Record<string, unknown>).__hlsf_bound) {
 commandRegistry.register('/visualize', cmd_hlsf);
 
 registerAgentCommands(commandRegistry, agent, {
-  info: line => agentLog(line),
-  error: line => agentLogError(line),
+  info: (line) => agentLog(line),
+  error: (line) => agentLogError(line),
 });
 
 registerVectorCommand(
   commandRegistry,
   {
-    info: message => addLog(sanitize(String(message))),
-    error: message => logError(String(message)),
+    info: (message) => addLog(sanitize(String(message))),
+    error: (message) => logError(String(message)),
   },
   {
-    ensureToken: async text => {
+    ensureToken: async (text) => {
       const kb = await ensureKBReady();
       return kb.ensureToken(text);
     },
@@ -18371,9 +19501,9 @@ registerVectorCommand(
 
 registerSaasCommands(saasPlatform, {
   registerCommand: (name, handler) => commandRegistry.register(name, handler),
-  addLog: html => addLog(html),
+  addLog: (html) => addLog(html),
   logError,
-  logSuccess: message => {
+  logSuccess: (message) => {
     if (typeof window.logOK === 'function') {
       window.logOK(message);
     } else {
@@ -18391,9 +19521,14 @@ function symbolMetricsSummary() {
   }
   const last = bucket.last;
   const density = (last.symbolDensity * 100).toFixed(1);
-  const topPreview = Array.isArray(bucket.topNodes) && bucket.topNodes.length
-    ? bucket.topNodes.slice(0, 3).map(node => node.token).filter(Boolean).join(', ')
-    : 'none';
+  const topPreview =
+    Array.isArray(bucket.topNodes) && bucket.topNodes.length
+      ? bucket.topNodes
+          .slice(0, 3)
+          .map((node) => node.token)
+          .filter(Boolean)
+          .join(', ')
+      : 'none';
   const time = new Date(last.timestamp).toLocaleTimeString();
   return `Last run ${time}: words=${last.wordCount}, symbols=${last.symbolCount} (${density}% density), edges=${last.edgeCount} (${last.symbolEdgeCount} symbol edges), Δtokens=${last.deltaTokens}. Top nodes: ${topPreview}.`;
 }
@@ -18404,7 +19539,9 @@ function cmdSymbols(args = []) {
 
   if (!action || action === 'status') {
     const summary = symbolMetricsSummary();
-    addLog(`<div class="adjacency-insight"><strong>Symbol settings</strong><br>${sanitize(summary)}</div>`);
+    addLog(
+      `<div class="adjacency-insight"><strong>Symbol settings</strong><br>${sanitize(summary)}</div>`,
+    );
     return;
   }
 
@@ -18442,7 +19579,9 @@ function cmdSymbols(args = []) {
   }
 
   const summary = symbolMetricsSummary();
-  addLog(`<div class="adjacency-insight"><strong>Symbol metrics</strong><br>${sanitize(summary)}</div>`);
+  addLog(
+    `<div class="adjacency-insight"><strong>Symbol metrics</strong><br>${sanitize(summary)}</div>`,
+  );
 }
 
 async function dispatchCommand(input) {
@@ -18456,9 +19595,21 @@ async function dispatchCommand(input) {
 
   if (!ensureCommandAvailable(command)) return true;
 
-  if (command === '/import') { trackCommandExecution(command, rest, 'dispatch'); await cmdImport(); return true; }
-  if (command === '/read' || command === '/ingest') { trackCommandExecution(command, rest, 'dispatch'); await cmdRead(); return true; }
-  if (command === '/loaddb') { trackCommandExecution(command, rest, 'dispatch'); await cmdLoadDb(arg); return true; }
+  if (command === '/import') {
+    trackCommandExecution(command, rest, 'dispatch');
+    await cmdImport();
+    return true;
+  }
+  if (command === '/read' || command === '/ingest') {
+    trackCommandExecution(command, rest, 'dispatch');
+    await cmdRead();
+    return true;
+  }
+  if (command === '/loaddb') {
+    trackCommandExecution(command, rest, 'dispatch');
+    await cmdLoadDb(arg);
+    return true;
+  }
   if (command === '/hlsf') {
     trackCommandExecution(command, rest, 'dispatch');
     if (!arg) {
@@ -18468,25 +19619,48 @@ async function dispatchCommand(input) {
     await runHlsfSafely(arg);
     return true;
   }
-  if (command === '/scheme') { trackCommandExecution(command, rest, 'dispatch'); cmdScheme(arg || 'black'); return true; }
-  if (command === '/spin') { trackCommandExecution(command, rest, 'dispatch'); cmdSpin(arg || 'on'); return true; }
-  if (command === '/omega') { trackCommandExecution(command, rest, 'dispatch'); cmdOmega(arg); return true; }
-  if (command === '/alpha') { trackCommandExecution(command, rest, 'dispatch'); cmdAlpha(arg); return true; }
-  if (command === '/symbols') { trackCommandExecution(command, rest, 'dispatch'); cmdSymbols(rest); return true; }
+  if (command === '/scheme') {
+    trackCommandExecution(command, rest, 'dispatch');
+    cmdScheme(arg || 'black');
+    return true;
+  }
+  if (command === '/spin') {
+    trackCommandExecution(command, rest, 'dispatch');
+    cmdSpin(arg || 'on');
+    return true;
+  }
+  if (command === '/omega') {
+    trackCommandExecution(command, rest, 'dispatch');
+    cmdOmega(arg);
+    return true;
+  }
+  if (command === '/alpha') {
+    trackCommandExecution(command, rest, 'dispatch');
+    cmdAlpha(arg);
+    return true;
+  }
+  if (command === '/symbols') {
+    trackCommandExecution(command, rest, 'dispatch');
+    cmdSymbols(rest);
+    return true;
+  }
 
   return false;
 }
 
-function isCommand(input) { return input.startsWith('/'); }
+function isCommand(input) {
+  return input.startsWith('/');
+}
 
 function helpCommandHtml() {
   const level = getMembershipLevel();
   const restrictions = COMMAND_RESTRICTIONS[level] || new Set();
-  const intro = level === MEMBERSHIP_LEVELS.DEMO
-    ? 'Demo mode active: upgrade to unlock ingestion and advanced slash commands. The /hlsf visualization remains available.'
-    : 'Full membership active: all commands available.';
+  const intro =
+    level === MEMBERSHIP_LEVELS.DEMO
+      ? 'Demo mode active: upgrade to unlock ingestion and advanced slash commands. The /hlsf visualization remains available.'
+      : 'Full membership active: all commands available.';
 
-  const rows = COMMAND_HELP_ENTRIES.map(entry => {
+  const rows = COMMAND_HELP_ENTRIES.map((entry) => {
     const locked = entry.requiresMembership && restrictions.has(entry.command.toLowerCase());
     const classes = ['command-entry'];
     if (locked) classes.push('command-entry--locked');
@@ -18512,7 +19686,10 @@ function showHelpCommand() {
 
 async function handleCommand(cmd) {
   const trimmed = cmd.trim();
-  const handled = await safeAsync(() => dispatchCommand(trimmed), `Command dispatch failed for ${trimmed}`);
+  const handled = await safeAsync(
+    () => dispatchCommand(trimmed),
+    `Command dispatch failed for ${trimmed}`,
+  );
   if (handled) return;
 
   const segments = trimmed.slice(1).split(/\s+/);
@@ -18542,7 +19719,7 @@ async function handleCommand(cmd) {
       trackCommandExecution(normalized, args, 'handler');
       if (confirm('Clear all cached data?')) {
         const keys = safeStorageKeys(TOKEN_CACHE_PREFIX);
-        keys.forEach(k => safeStorageRemove(k));
+        keys.forEach((k) => safeStorageRemove(k));
         safeStorageRemove(DB_INDEX_KEY);
         const hadDbSnapshot = safeStorageGet(DB_RAW_KEY, null) != null;
         safeStorageRemove(DB_RAW_KEY);
@@ -18724,12 +19901,17 @@ function enterProcessingState() {
   if (elements.cancelBtn) elements.cancelBtn.style.display = 'inline-block';
   if (elements.input) elements.input.disabled = true;
   state.processingStart = nowMs();
-  if (!state.processingStatus || typeof state.processingStatus.isActive !== 'function' || !state.processingStatus.isActive()) {
+  if (
+    !state.processingStatus ||
+    typeof state.processingStatus.isActive !== 'function' ||
+    !state.processingStatus.isActive()
+  ) {
     state.processingStatus = RealtimeStatus.create('Processing request', { icon: '⚙️' });
   }
-  const average = Number.isFinite(state.processingAverageMs) && state.processingAverageMs > 0
-    ? state.processingAverageMs
-    : 0;
+  const average =
+    Number.isFinite(state.processingAverageMs) && state.processingAverageMs > 0
+      ? state.processingAverageMs
+      : 0;
   if (state.processingStatus && typeof state.processingStatus.update === 'function') {
     state.processingStatus.update({
       queueLength: 1,
@@ -18755,45 +19937,58 @@ function setupLandingExperience() {
   const googleSigninButton = landingRoot.querySelector('[data-google-signin]');
   const quickSigninButton = landingRoot.querySelector('[data-quick-signin]');
   const googleProfilePreview = landingRoot.querySelector('[data-google-profile]');
-  const googleSigninDefaultLabel = googleSigninButton instanceof HTMLButtonElement
-    ? (googleSigninButton.textContent || 'Continue with Google').trim() || 'Continue with Google'
-    : 'Continue with Google';
+  const googleSigninDefaultLabel =
+    googleSigninButton instanceof HTMLButtonElement
+      ? (googleSigninButton.textContent || 'Continue with Google').trim() || 'Continue with Google'
+      : 'Continue with Google';
   let cachedGoogleProfile = null;
   let googleSignInInFlight = false;
 
   const paymentScreen = document.getElementById('payment-intake-screen');
-  const paymentForm = paymentScreen instanceof HTMLElement
-    ? paymentScreen.querySelector('#payment-intake-form')
-    : null;
-  const paymentBackBtn = paymentScreen instanceof HTMLElement
-    ? paymentScreen.querySelector('[data-payment-action="back"]')
-    : null;
-  const paymentName = paymentScreen instanceof HTMLElement
-    ? paymentScreen.querySelector('[data-payment-name]')
-    : null;
-  const paymentPlan = paymentScreen instanceof HTMLElement
-    ? paymentScreen.querySelector('[data-payment-plan]')
-    : null;
-  const paymentTrialDays = paymentScreen instanceof HTMLElement
-    ? paymentScreen.querySelector('[data-payment-trial-days]')
-    : null;
-  const paymentPrice = paymentScreen instanceof HTMLElement
-    ? paymentScreen.querySelector('[data-payment-price]')
-    : null;
-  const paymentCardFields: HTMLElement[] = paymentForm instanceof HTMLFormElement
-    ? Array.from(paymentForm.querySelectorAll<HTMLElement>('[data-payment-card-field]'))
-    : [];
-  const paymentSubmitButton = paymentForm instanceof HTMLFormElement
-    ? paymentForm.querySelector<HTMLButtonElement>('[data-payment-submit]')
-    : null;
-  const paymentFootnote = paymentForm instanceof HTMLFormElement
-    ? paymentForm.querySelector<HTMLElement>('[data-payment-footnote]')
-    : null;
-  const defaultPaymentSubmitLabel = paymentSubmitButton?.textContent?.trim() ?? 'Authorize & start trial';
-  const defaultPaymentFootnote = paymentFootnote?.textContent?.trim()
-    ?? 'You can cancel anytime before the trial ends to avoid charges.';
+  const paymentForm =
+    paymentScreen instanceof HTMLElement
+      ? paymentScreen.querySelector('#payment-intake-form')
+      : null;
+  const paymentBackBtn =
+    paymentScreen instanceof HTMLElement
+      ? paymentScreen.querySelector('[data-payment-action="back"]')
+      : null;
+  const paymentName =
+    paymentScreen instanceof HTMLElement
+      ? paymentScreen.querySelector('[data-payment-name]')
+      : null;
+  const paymentPlan =
+    paymentScreen instanceof HTMLElement
+      ? paymentScreen.querySelector('[data-payment-plan]')
+      : null;
+  const paymentTrialDays =
+    paymentScreen instanceof HTMLElement
+      ? paymentScreen.querySelector('[data-payment-trial-days]')
+      : null;
+  const paymentPrice =
+    paymentScreen instanceof HTMLElement
+      ? paymentScreen.querySelector('[data-payment-price]')
+      : null;
+  const paymentCardFields: HTMLElement[] =
+    paymentForm instanceof HTMLFormElement
+      ? Array.from(paymentForm.querySelectorAll<HTMLElement>('[data-payment-card-field]'))
+      : [];
+  const paymentSubmitButton =
+    paymentForm instanceof HTMLFormElement
+      ? paymentForm.querySelector<HTMLButtonElement>('[data-payment-submit]')
+      : null;
+  const paymentFootnote =
+    paymentForm instanceof HTMLFormElement
+      ? paymentForm.querySelector<HTMLElement>('[data-payment-footnote]')
+      : null;
+  const defaultPaymentSubmitLabel =
+    paymentSubmitButton?.textContent?.trim() ?? 'Authorize & start trial';
+  const defaultPaymentFootnote =
+    paymentFootnote?.textContent?.trim() ??
+    'You can cancel anytime before the trial ends to avoid charges.';
   const SECURE_BILLING_SUBMIT_LABEL = 'Request secure billing link';
-  const SECURE_BILLING_FOOTNOTE = 'We will email a PCI-compliant checkout link. Your trial activates after secure checkout.';
+  const SECURE_BILLING_FOOTNOTE =
+    'We will email a PCI-compliant checkout link. Your trial activates after secure checkout.';
   const DEFAULT_TRIAL_DAYS = Number.parseInt(paymentTrialDays?.textContent || '7', 10) || 7;
   const DEFAULT_PLAN_NAME = (paymentPlan?.textContent || 'Pro').trim();
   const DEFAULT_PRICE = (paymentPrice?.textContent || '$19.99/mo').trim();
@@ -18853,9 +20048,7 @@ function setupLandingExperience() {
     }
 
     if (paymentFootnote instanceof HTMLElement) {
-      paymentFootnote.textContent = enabled
-        ? SECURE_BILLING_FOOTNOTE
-        : defaultPaymentFootnote;
+      paymentFootnote.textContent = enabled ? SECURE_BILLING_FOOTNOTE : defaultPaymentFootnote;
     }
   }
 
@@ -18895,7 +20088,7 @@ function setupLandingExperience() {
 
   function setActiveView(view) {
     const activeKey = view && typeof view === 'string' ? view.toLowerCase() : 'signup';
-    tabButtons.forEach(btn => {
+    tabButtons.forEach((btn) => {
       const match = btn.dataset.view === activeKey;
       btn.classList.toggle('is-active', match);
       btn.setAttribute('aria-selected', match ? 'true' : 'false');
@@ -18937,16 +20130,18 @@ function setupLandingExperience() {
   function openPaymentIntake(level, details = {}) {
     pendingMembershipLevel = level;
     const baseDetails = details && typeof details === 'object' ? { ...details } : {};
-    const secureMode = typeof (details as any)?.secureBilling === 'boolean'
-      ? Boolean((details as any).secureBilling)
-      : Boolean(SETTINGS.secureBillingOnly);
+    const secureMode =
+      typeof (details as any)?.secureBilling === 'boolean'
+        ? Boolean((details as any).secureBilling)
+        : Boolean(SETTINGS.secureBillingOnly);
     pendingMembershipDetails = { ...baseDetails, secureBilling: secureMode };
     const viewDetails: Record<string, any> = pendingMembershipDetails || {};
     if (paymentName instanceof HTMLElement) {
       const rawLabel = viewDetails.name || viewDetails.email || 'your team';
-      const label = typeof rawLabel === 'string'
-        ? rawLabel.trim() || 'your team'
-        : String(rawLabel || 'your team').trim() || 'your team';
+      const label =
+        typeof rawLabel === 'string'
+          ? rawLabel.trim() || 'your team'
+          : String(rawLabel || 'your team').trim() || 'your team';
       paymentName.textContent = label;
     }
     if (paymentPlan instanceof HTMLElement) {
@@ -18958,7 +20153,9 @@ function setupLandingExperience() {
     }
     if (paymentTrialDays instanceof HTMLElement) {
       const trialProvided = viewDetails.trialDays;
-      const parsedTrial = Number.isFinite(Number(trialProvided)) ? Number(trialProvided) : DEFAULT_TRIAL_DAYS;
+      const parsedTrial = Number.isFinite(Number(trialProvided))
+        ? Number(trialProvided)
+        : DEFAULT_TRIAL_DAYS;
       const trialValue = parsedTrial > 0 ? parsedTrial : DEFAULT_TRIAL_DAYS;
       paymentTrialDays.textContent = String(trialValue);
     }
@@ -19000,7 +20197,8 @@ function setupLandingExperience() {
       nextMembership.demoMode = details.demoMode === 'offline' ? 'offline' : 'api';
     }
     state.membership = nextMembership;
-    state.networkOffline = level === MEMBERSHIP_LEVELS.DEMO && (nextMembership.demoMode === 'offline');
+    state.networkOffline =
+      level === MEMBERSHIP_LEVELS.DEMO && nextMembership.demoMode === 'offline';
     applyMembershipUi();
     document.body.classList.remove('onboarding-active');
     landingRoot.setAttribute('aria-hidden', 'true');
@@ -19015,19 +20213,33 @@ function setupLandingExperience() {
       }, 200);
     }
 
-    const displayName = nextMembership.name || nextMembership.email || (level === MEMBERSHIP_LEVELS.MEMBER ? 'member' : 'demo explorer');
+    const displayName =
+      nextMembership.name ||
+      nextMembership.email ||
+      (level === MEMBERSHIP_LEVELS.MEMBER ? 'member' : 'demo explorer');
     if (level === MEMBERSHIP_LEVELS.MEMBER) {
-      logOK(`Full membership activated for ${displayName} · Plan ${nextMembership.plan || 'pro'} with 7-day trial.`);
+      logOK(
+        `Full membership activated for ${displayName} · Plan ${nextMembership.plan || 'pro'} with 7-day trial.`,
+      );
     } else {
-      const modeLabel = nextMembership.demoMode === 'offline' ? 'offline sandbox' : 'API key + GitHub adjacency bridge';
-      logStatus(`Demo mode enabled for ${displayName} (${modeLabel}). Slash commands remain disabled until upgrade.`);
+      const modeLabel =
+        nextMembership.demoMode === 'offline'
+          ? 'offline sandbox'
+          : 'API key + GitHub adjacency bridge';
+      logStatus(
+        `Demo mode enabled for ${displayName} (${modeLabel}). Slash commands remain disabled until upgrade.`,
+      );
     }
 
     if (level === MEMBERSHIP_LEVELS.DEMO && nextMembership.demoMode !== 'offline') {
-      tryBootstrapDb().catch(err => console.warn('Demo bootstrap failed:', err));
+      tryBootstrapDb().catch((err) => console.warn('Demo bootstrap failed:', err));
     }
 
-    if (!state.apiKey && (level === MEMBERSHIP_LEVELS.MEMBER || (level === MEMBERSHIP_LEVELS.DEMO && nextMembership.demoMode === 'api'))) {
+    if (
+      !state.apiKey &&
+      (level === MEMBERSHIP_LEVELS.MEMBER ||
+        (level === MEMBERSHIP_LEVELS.DEMO && nextMembership.demoMode === 'api'))
+    ) {
       showApiModal();
     }
 
@@ -19059,12 +20271,14 @@ function setupLandingExperience() {
             emailInput.value = profile.email || '';
           }
         }
-        addLog(`
+        addLog(
+          `
           <div class="quick-signin-log">
             Google sign-in demo profile retrieved.<br>
             <strong>${sanitize(profile.name || 'Google user')}</strong> · ${sanitize(profile.email || '')}
           </div>
-        `.trim());
+        `.trim(),
+        );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         renderGoogleProfile(null, { status: `Unable to connect: ${message}`, isError: true });
@@ -19093,11 +20307,14 @@ function setupLandingExperience() {
         locale: cachedGoogleProfile.locale,
         quickSignIn: true,
       });
-      addLog(`
+      addLog(
+        `
         <div class="quick-signin-log quick-signin-log--success">
           Quick sign-in activated for ${sanitize(cachedGoogleProfile.email || 'member')} via Google.
         </div>
-      `.trim(), 'success');
+      `.trim(),
+        'success',
+      );
     });
   }
 
@@ -19113,10 +20330,14 @@ function setupLandingExperience() {
       if (!paymentForm.reportValidity()) return;
 
       if (paymentForm.dataset.secureBilling === 'true') {
-        const fallbackCardholder = (pendingMembershipDetails && (pendingMembershipDetails.name || pendingMembershipDetails.email))
-          ? String(pendingMembershipDetails.name || pendingMembershipDetails.email).trim()
-          : '';
-        logWarning('Direct card capture is disabled. A secure billing link will be emailed to complete activation.');
+        const fallbackCardholder =
+          pendingMembershipDetails &&
+          (pendingMembershipDetails.name || pendingMembershipDetails.email)
+            ? String(pendingMembershipDetails.name || pendingMembershipDetails.email).trim()
+            : '';
+        logWarning(
+          'Direct card capture is disabled. A secure billing link will be emailed to complete activation.',
+        );
         logOK('Secure billing link requested. Free trial provisioning will resume after checkout.');
         const membershipDetails = Object.assign({}, pendingMembershipDetails || {}, {
           paymentMethod: 'secure-link',
@@ -19145,7 +20366,7 @@ function setupLandingExperience() {
     });
   }
 
-  tabButtons.forEach(btn => {
+  tabButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
       const view = btn.dataset.view || 'signup';
       setActiveView(view);
@@ -19181,7 +20402,8 @@ function setupLandingExperience() {
       event.preventDefault();
       if (!forms.demo.reportValidity()) return;
       const data = new FormData(forms.demo);
-      const demoMode = String(data.get('demoMode') || 'api').toLowerCase() === 'offline' ? 'offline' : 'api';
+      const demoMode =
+        String(data.get('demoMode') || 'api').toLowerCase() === 'offline' ? 'offline' : 'api';
       finalizeOnboarding(MEMBERSHIP_LEVELS.DEMO, {
         name: String(data.get('demoName') || '').trim(),
         email: String(data.get('demoEmail') || '').trim(),
@@ -19204,13 +20426,17 @@ function exitProcessingState(options = {}) {
     cancelled = false,
   } = options || {};
 
-  const resolvedStatus = typeof status === 'string' && status.trim()
-    ? status.trim().toLowerCase()
-    : (cancelled ? 'cancelled' : 'success');
+  const resolvedStatus =
+    typeof status === 'string' && status.trim()
+      ? status.trim().toLowerCase()
+      : cancelled
+        ? 'cancelled'
+        : 'success';
 
-  const hasActiveStatus = state.processingStatus
-    && typeof state.processingStatus.isActive === 'function'
-    && state.processingStatus.isActive();
+  const hasActiveStatus =
+    state.processingStatus &&
+    typeof state.processingStatus.isActive === 'function' &&
+    state.processingStatus.isActive();
 
   if (state.processingStart) {
     const elapsed = Math.max(0, nowMs() - state.processingStart);
@@ -19218,23 +20444,27 @@ function exitProcessingState(options = {}) {
       const samples = Number.isFinite(state.processingSamples) ? state.processingSamples : 0;
       const average = Number.isFinite(state.processingAverageMs) ? state.processingAverageMs : 0;
       const nextSamples = samples + 1;
-      state.processingAverageMs = ((average * samples) + elapsed) / nextSamples;
+      state.processingAverageMs = (average * samples + elapsed) / nextSamples;
       state.processingSamples = nextSamples;
     }
   }
 
   if (hasActiveStatus) {
-    const summary = typeof statusMessage === 'string' && statusMessage.trim()
-      ? statusMessage.trim()
-      : resolvedStatus === 'failed'
-        ? 'Processing failed'
-        : resolvedStatus === 'cancelled'
-          ? 'Processing cancelled'
-          : 'Processing complete';
+    const summary =
+      typeof statusMessage === 'string' && statusMessage.trim()
+        ? statusMessage.trim()
+        : resolvedStatus === 'failed'
+          ? 'Processing failed'
+          : resolvedStatus === 'cancelled'
+            ? 'Processing cancelled'
+            : 'Processing complete';
 
     if (resolvedStatus === 'failed' && typeof state.processingStatus.fail === 'function') {
       state.processingStatus.fail(summary);
-    } else if (resolvedStatus === 'cancelled' && typeof state.processingStatus.cancel === 'function') {
+    } else if (
+      resolvedStatus === 'cancelled' &&
+      typeof state.processingStatus.cancel === 'function'
+    ) {
       state.processingStatus.cancel(summary);
     } else if (typeof state.processingStatus.complete === 'function') {
       state.processingStatus.complete({ summary });
@@ -19278,7 +20508,9 @@ async function processPrompt(prompt) {
     }
 
     if (limitedPrompt.trimmed) {
-      logWarning(`Prompt truncated to ${CONFIG.INPUT_WORD_LIMIT} words to meet pipeline constraints.`);
+      logWarning(
+        `Prompt truncated to ${CONFIG.INPUT_WORD_LIMIT} words to meet pipeline constraints.`,
+      );
     }
 
     const tokens = tokenize(normalizedPrompt);
@@ -19299,12 +20531,14 @@ async function processPrompt(prompt) {
     const adjacencyCallEstimate = state.apiKey
       ? uniqueTokens.length * CONFIG.ADJACENCY_RECURSION_DEPTH
       : 0;
-    const adjacencyCostEstimate = adjacencyCallEstimate > 0
-      ? adjacencyCallEstimate * estimateCostUsd(
-          CONFIG.ADJACENCY_TOKEN_ESTIMATES.prompt,
-          CONFIG.ADJACENCY_TOKEN_ESTIMATES.completion
-        )
-      : 0;
+    const adjacencyCostEstimate =
+      adjacencyCallEstimate > 0
+        ? adjacencyCallEstimate *
+          estimateCostUsd(
+            CONFIG.ADJACENCY_TOKEN_ESTIMATES.prompt,
+            CONFIG.ADJACENCY_TOKEN_ESTIMATES.completion,
+          )
+        : 0;
 
     addLog(`<div class="cost-estimate">
       📊 <strong>Estimate:</strong> ${tokens.length} input tokens observed (${newTokenCount} new, ${cachedTokens} cached).<br>
@@ -19323,7 +20557,9 @@ async function processPrompt(prompt) {
       const tokenSummary = formatTokenList(promptMemoryEntry.tokens, 10);
       const seedSummary = formatTokenList(promptMemoryEntry.adjacencySeeds, 10);
       const summaryParts: string[] = [
-        sanitize(`${promptMemoryEntry.tokens.length} token${promptMemoryEntry.tokens.length === 1 ? '' : 's'}`),
+        sanitize(
+          `${promptMemoryEntry.tokens.length} token${promptMemoryEntry.tokens.length === 1 ? '' : 's'}`,
+        ),
       ];
       if (tokenSummary) {
         summaryParts.push(sanitize(tokenSummary));
@@ -19331,7 +20567,9 @@ async function processPrompt(prompt) {
       if (seedSummary) {
         summaryParts.push(sanitize(`adjacency seeds ${seedSummary}`));
       }
-      addLog(`<div class="adjacency-insight"><strong>🧠 Local HLSF memory primed:</strong> ${summaryParts.join(' · ')}</div>`);
+      addLog(
+        `<div class="adjacency-insight"><strong>🧠 Local HLSF memory primed:</strong> ${summaryParts.join(' · ')}</div>`,
+      );
     }
     const normalizedSeeds = normalizeAdjacencyInputs(inputAdjTokens);
     const dbRecordIndex = buildDbRecordIndexMap();
@@ -19369,13 +20607,17 @@ async function processPrompt(prompt) {
 
     const dbSeedSummary = formatTokenList(dbSeedTokens);
     if (dbSeedSummary) {
-      addLog(`<div class="adjacency-insight"><strong>📚 Database adjacencies ready:</strong> ${sanitize(dbSeedSummary)}</div>`);
+      addLog(
+        `<div class="adjacency-insight"><strong>📚 Database adjacencies ready:</strong> ${sanitize(dbSeedSummary)}</div>`,
+      );
       notifyHlsfAdjacencyChange('prompt-db-seeds', { immediate: true });
     }
 
     const llmSeedSummary = formatTokenList(llmSeedTokens);
     if (llmSeedSummary) {
-      addLog(`<div class="adjacency-insight"><strong>🤖 Awaiting LLM adjacency generation:</strong> ${sanitize(llmSeedSummary)}</div>`);
+      addLog(
+        `<div class="adjacency-insight"><strong>🤖 Awaiting LLM adjacency generation:</strong> ${sanitize(llmSeedSummary)}</div>`,
+      );
     }
 
     const recursionResult = await fetchRecursiveAdjacencies(
@@ -19398,19 +20640,25 @@ async function processPrompt(prompt) {
     const provenance = recursionResult.provenance || {};
     const dbExpansionSummary = formatTokenList(provenance.cacheHits);
     if (dbExpansionSummary) {
-      addLog(`<div class="adjacency-insight"><strong>📈 Database coverage:</strong> ${sanitize(dbExpansionSummary)}</div>`);
+      addLog(
+        `<div class="adjacency-insight"><strong>📈 Database coverage:</strong> ${sanitize(dbExpansionSummary)}</div>`,
+      );
       notifyHlsfAdjacencyChange('prompt-db-expansion', { immediate: true });
     }
 
     const llmExpansionSummary = formatTokenList(provenance.llmGenerated);
     if (llmExpansionSummary) {
-      addLog(`<div class="adjacency-insight"><strong>🤖 LLM adjacency expansions:</strong> ${sanitize(llmExpansionSummary)}</div>`);
+      addLog(
+        `<div class="adjacency-insight"><strong>🤖 LLM adjacency expansions:</strong> ${sanitize(llmExpansionSummary)}</div>`,
+      );
     }
 
     if (Array.isArray(provenance.offline) && provenance.offline.length) {
       const offlineSummary = formatTokenList(provenance.offline);
       if (offlineSummary) {
-        addLog(`<div class="adjacency-insight"><strong>⚠️ Offline adjacencies skipped:</strong> ${sanitize(offlineSummary)}</div>`);
+        addLog(
+          `<div class="adjacency-insight"><strong>⚠️ Offline adjacencies skipped:</strong> ${sanitize(offlineSummary)}</div>`,
+        );
       }
     }
 
@@ -19437,7 +20685,9 @@ async function processPrompt(prompt) {
         ? connectivitySummary.disconnectedSeeds.slice(0, 8)
         : [];
       if (disconnected.length) {
-        logWarning(`Adjacency graph still has disconnected seeds: ${sanitize(disconnected.join(', '))}`);
+        logWarning(
+          `Adjacency graph still has disconnected seeds: ${sanitize(disconnected.join(', '))}`,
+        );
       }
       const isolated = Array.isArray(connectivitySummary.isolatedSeeds)
         ? connectivitySummary.isolatedSeeds.slice(0, 8)
@@ -19460,16 +20710,20 @@ async function processPrompt(prompt) {
     );
     if (adjacencyRecord) {
       const adjacencyTokenSummary = formatTokenList(
-        adjacencyRecord.summary.map(item => item.token),
+        adjacencyRecord.summary.map((item) => item.token),
         10,
       );
       const detailParts: string[] = [
-        sanitize(`${adjacencyRecord.tokenCount} adjacency token${adjacencyRecord.tokenCount === 1 ? '' : 's'}`),
+        sanitize(
+          `${adjacencyRecord.tokenCount} adjacency token${adjacencyRecord.tokenCount === 1 ? '' : 's'}`,
+        ),
       ];
       if (adjacencyTokenSummary) {
         detailParts.push(sanitize(adjacencyTokenSummary));
       }
-      addLog(`<div class="adjacency-insight"><strong>🗂️ Local adjacency cache updated:</strong> ${detailParts.join(' · ')}</div>`);
+      addLog(
+        `<div class="adjacency-insight"><strong>🗂️ Local adjacency cache updated:</strong> ${detailParts.join(' · ')}</div>`,
+      );
       notifyHlsfAdjacencyChange('prompt-local-memory', { immediate: true });
     }
     const topTokens = summarizeAttention(allMatrices);
@@ -19480,7 +20734,7 @@ async function processPrompt(prompt) {
     </div>
     <div class="adjacency-insight">
       <strong>🔗 Key Relationships:</strong><br>
-      ${keyRels.map(r => `• ${r}`).join('<br>')}
+      ${keyRels.map((r) => `• ${r}`).join('<br>')}
     </div>`);
 
     const affinityCfg = window.HLSF?.config?.affinity || {};
@@ -19511,7 +20765,8 @@ async function processPrompt(prompt) {
       logWarning(`Local thought stream trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
     }
     localThought = thoughtLimited.text;
-    const localThoughtWordCount = localOutputData.thoughtWordCount || thoughtLimited.wordCount || countWords(localThought);
+    const localThoughtWordCount =
+      localOutputData.thoughtWordCount || thoughtLimited.wordCount || countWords(localThought);
 
     let localOutput = localOutputData.responseText || localThought;
     if (localOutputData.responseTrimmed) {
@@ -19523,11 +20778,13 @@ async function processPrompt(prompt) {
       logWarning(`Local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
     }
     localOutput = localLimited.text;
-    const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
+    const localWordCount =
+      localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
 
-    const localResponseTokens = Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
-      ? localOutputData.responseTokens
-      : tokenize(localOutput);
+    const localResponseTokens =
+      Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
+        ? localOutputData.responseTokens
+        : tokenize(localOutput);
 
     if (localResponseTokens.length) {
       addConversationTokens(localResponseTokens);
@@ -19536,11 +20793,19 @@ async function processPrompt(prompt) {
 
     let localAdjacency = null;
     if (localResponseTokens.length) {
-      const localAdjTargets = await collectSymbolAwareTokens(localOutput, localResponseTokens, 'prompt-local-output');
+      const localAdjTargets = await collectSymbolAwareTokens(
+        localOutput,
+        localResponseTokens,
+        'prompt-local-output',
+      );
       if (localAdjTargets.length) {
         const localAdjStatus = logStatus('⏳ Caching local HLSF AGI adjacencies');
         try {
-          localAdjacency = await batchFetchAdjacencies(localAdjTargets, localOutput, 'local response adjacencies');
+          localAdjacency = await batchFetchAdjacencies(
+            localAdjTargets,
+            localOutput,
+            'local response adjacencies',
+          );
           localAdjStatus.innerHTML = `✅ ${sanitize('Local HLSF AGI adjacencies cached')}`;
         } catch (err) {
           localAdjStatus.innerHTML = `❌ ${sanitize(`Local HLSF AGI adjacency cache failed: ${err?.message || err}`)}`;
@@ -19559,19 +20824,28 @@ async function processPrompt(prompt) {
       }
     }
 
-    const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
-      ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
-      : '';
+    const walkDetails =
+      Array.isArray(localOutputData.walk) && localOutputData.walk.length
+        ? localOutputData.walk
+            .map(
+              (step) =>
+                `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`,
+            )
+            .join('<br>')
+        : '';
 
     const mentalSummary = [
       mentalState.name ? `<strong>${sanitize(mentalState.name)}</strong>` : '',
       mentalState.desc ? sanitize(mentalState.desc) : '',
       `Threshold ${affinityThreshold.toFixed(2)} · Iterations ${affinityIterations}`,
-    ].filter(Boolean).join('<br>');
+    ]
+      .filter(Boolean)
+      .join('<br>');
 
-    const visitedSummary = Array.isArray(localOutputData.visitedTokens) && localOutputData.visitedTokens.length
-      ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
-      : '';
+    const visitedSummary =
+      Array.isArray(localOutputData.visitedTokens) && localOutputData.visitedTokens.length
+        ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
+        : '';
 
     recordLatestLocalVoiceOutputs({
       prompt: normalizedPrompt,
@@ -19626,7 +20900,6 @@ async function processPrompt(prompt) {
     promptSucceeded = true;
 
     notifyHlsfAdjacencyChange('prompt-complete');
-
   } catch (err) {
     if (err.name === 'AbortError' || err.message === 'AbortError') {
       logWarning('Processing cancelled');
@@ -19687,14 +20960,21 @@ function buildDocumentChunks(text, maxUniqueTokens = CONFIG.DOCUMENT_CHUNK_SIZE 
 async function editForCoherence(kind, chunkLabel, text) {
   if (!state.apiKey || !text || !text.trim()) return text;
   const messages = [
-    { role: 'system', content: 'You are an editorial assistant who improves coherence and clarity while preserving intent and vocabulary.' },
-    { role: 'user', content: `Polish the following ${kind} so it reads smoothly while keeping terminology consistent with the cached lexicon. Do not add new ideas.\n\n${text}` },
+    {
+      role: 'system',
+      content:
+        'You are an editorial assistant who improves coherence and clarity while preserving intent and vocabulary.',
+    },
+    {
+      role: 'user',
+      content: `Polish the following ${kind} so it reads smoothly while keeping terminology consistent with the cached lexicon. Do not add new ideas.\n\n${text}`,
+    },
   ];
   const tokenCount = tokenize(text).length;
   const maxTokens = Math.min(420, Math.max(120, estimateCompletionTokens(tokenCount)));
   const polished = await safeAsync(
     () => callOpenAI(messages, { temperature: 0.2, max_tokens: maxTokens }),
-    `${chunkLabel} ${kind} edit failed`
+    `${chunkLabel} ${kind} edit failed`,
   );
   return polished?.trim() || text;
 }
@@ -19726,12 +21006,14 @@ class DocumentReadEstimator {
     const seedTokens = Array.isArray(options?.seedTokens)
       ? options.seedTokens
       : listCachedTokens(CONFIG.CACHE_SEED_LIMIT || 0);
-    const defaultLimit = Number.isFinite(CONFIG.CACHE_SEED_LIMIT) && CONFIG.CACHE_SEED_LIMIT > 0
-      ? Math.floor(CONFIG.CACHE_SEED_LIMIT)
-      : seedTokens.length;
-    const seedLimit = Number.isFinite(options?.seedLimit) && options.seedLimit > 0
-      ? Math.floor(options.seedLimit)
-      : defaultLimit;
+    const defaultLimit =
+      Number.isFinite(CONFIG.CACHE_SEED_LIMIT) && CONFIG.CACHE_SEED_LIMIT > 0
+        ? Math.floor(CONFIG.CACHE_SEED_LIMIT)
+        : seedTokens.length;
+    const seedLimit =
+      Number.isFinite(options?.seedLimit) && options.seedLimit > 0
+        ? Math.floor(options.seedLimit)
+        : defaultLimit;
     let seeded = 0;
     for (const token of seedTokens || []) {
       if (!token) continue;
@@ -19829,7 +21111,7 @@ class DocumentReadEstimator {
     const adjacencyDurationMs = Number(stats.adjacencyDurationMs) || 0;
     const adjacencyHits = Number(stats.adjacencyHits) || 0;
     const adjacencyMisses = Number(stats.adjacencyMisses) || 0;
-    const adjacencyRequests = Number(stats.adjacencyRequests) || (adjacencyHits + adjacencyMisses);
+    const adjacencyRequests = Number(stats.adjacencyRequests) || adjacencyHits + adjacencyMisses;
     const totalAdjEntries = adjacencyHits + adjacencyMisses;
 
     const nonAdjacencyMs = Math.max(0, durationMs - adjacencyDurationMs);
@@ -19855,9 +21137,8 @@ class DocumentReadEstimator {
   computeRemainingForecast() {
     const remainingChunks = this.totalChunks - this.chunksProcessed;
     if (remainingChunks <= 0) {
-      const hitRate = this.totalAdjacencyRequests > 0
-        ? this.totalAdjacencyHits / this.totalAdjacencyRequests
-        : 0;
+      const hitRate =
+        this.totalAdjacencyRequests > 0 ? this.totalAdjacencyHits / this.totalAdjacencyRequests : 0;
       return {
         remainingMs: 0,
         remainingChunks: 0,
@@ -19868,21 +21149,20 @@ class DocumentReadEstimator {
       };
     }
 
-    const avgChunkDuration = this.chunksProcessed > 0
-      ? this.totalDurationMs / this.chunksProcessed
-      : 0;
-    const avgNonAdjDuration = this.chunksProcessed > 0
-      ? this.totalNonAdjacencyDurationMs / this.chunksProcessed
-      : 0;
-    const avgAdjRequestsPerToken = this.totalUniqueTokensObserved > 0
-      ? this.totalAdjacencyRequests / this.totalUniqueTokensObserved
-      : 0;
-    const avgMissDuration = this.totalAdjacencyMisses > 0
-      ? this.totalAdjacencyMissDurationMs / this.totalAdjacencyMisses
-      : 0;
-    const avgHitDuration = this.totalAdjacencyHits > 0
-      ? this.totalAdjacencyHitDurationMs / this.totalAdjacencyHits
-      : 0;
+    const avgChunkDuration =
+      this.chunksProcessed > 0 ? this.totalDurationMs / this.chunksProcessed : 0;
+    const avgNonAdjDuration =
+      this.chunksProcessed > 0 ? this.totalNonAdjacencyDurationMs / this.chunksProcessed : 0;
+    const avgAdjRequestsPerToken =
+      this.totalUniqueTokensObserved > 0
+        ? this.totalAdjacencyRequests / this.totalUniqueTokensObserved
+        : 0;
+    const avgMissDuration =
+      this.totalAdjacencyMisses > 0
+        ? this.totalAdjacencyMissDurationMs / this.totalAdjacencyMisses
+        : 0;
+    const avgHitDuration =
+      this.totalAdjacencyHits > 0 ? this.totalAdjacencyHitDurationMs / this.totalAdjacencyHits : 0;
 
     const simSeen = this.getSimulationSeed();
     let simulatedUnique = 0;
@@ -19908,12 +21188,14 @@ class DocumentReadEstimator {
     const predictedCachedAdjRequests = Math.max(0, predictedAdjRequests - predictedNewAdjRequests);
 
     const effectiveMissDuration = avgMissDuration || avgHitDuration || avgNonAdjDuration;
-    const effectiveHitDuration = avgHitDuration || (avgMissDuration * 0.4) || (avgNonAdjDuration * 0.25);
+    const effectiveHitDuration =
+      avgHitDuration || avgMissDuration * 0.4 || avgNonAdjDuration * 0.25;
 
     let adjacencyMs = 0;
     if (predictedAdjRequests > 0 && Number.isFinite(effectiveMissDuration)) {
-      adjacencyMs = (predictedNewAdjRequests * (effectiveMissDuration || 0))
-        + (predictedCachedAdjRequests * (effectiveHitDuration || 0));
+      adjacencyMs =
+        predictedNewAdjRequests * (effectiveMissDuration || 0) +
+        predictedCachedAdjRequests * (effectiveHitDuration || 0);
     }
 
     let nonAdjMs = remainingChunks * Math.max(0, avgNonAdjDuration);
@@ -19971,9 +21253,10 @@ class DocumentReadEstimator {
 
     if (this.isComplete) {
       const elapsed = formatDuration(this.totalDurationMs);
-      const hitRate = this.totalAdjacencyRequests > 0
-        ? (this.totalAdjacencyHits / this.totalAdjacencyRequests) * 100
-        : 0;
+      const hitRate =
+        this.totalAdjacencyRequests > 0
+          ? (this.totalAdjacencyHits / this.totalAdjacencyRequests) * 100
+          : 0;
       this.statusElement.innerHTML = `✅ Document processed in ${elapsed} • cache hits ${hitRate.toFixed(1)}%.`;
       return;
     }
@@ -19983,14 +21266,16 @@ class DocumentReadEstimator {
       const chunkWord = this.totalChunks === 1 ? 'segment' : 'segments';
       const baseline = this.cachedTokenBaseline;
       const hasBaseline = baseline > 0;
-      const cachedSummary = preview.cachedBefore > 0
-        ? `${preview.cachedBefore} cached`
-        : hasBaseline
-          ? `${baseline.toLocaleString()} cached (warm cache)`
-          : '0 cached';
-      const baselineNote = hasBaseline && preview.cachedBefore === 0
-        ? ` Warm cache baseline detected: ${baseline.toLocaleString()} tokens.`
-        : '';
+      const cachedSummary =
+        preview.cachedBefore > 0
+          ? `${preview.cachedBefore} cached`
+          : hasBaseline
+            ? `${baseline.toLocaleString()} cached (warm cache)`
+            : '0 cached';
+      const baselineNote =
+        hasBaseline && preview.cachedBefore === 0
+          ? ` Warm cache baseline detected: ${baseline.toLocaleString()} tokens.`
+          : '';
       const warmup = this.warmupStats;
       const warmupLine = warmup
         ? `<br><small>Warmup: ${warmup.cachedBefore.toLocaleString()} cached · ${(warmup.stagedFromDb + warmup.remoteLoads).toLocaleString()} hydrated · ${warmup.remoteHits.toLocaleString()} remote hits</small>`
@@ -20004,9 +21289,10 @@ class DocumentReadEstimator {
     const percent = ((this.chunksProcessed / this.totalChunks) * 100).toFixed(1);
     const etaText = formatDuration(remainingMs);
     const elapsed = formatDuration(this.totalDurationMs);
-    const hitRate = this.totalAdjacencyRequests > 0
-      ? (this.totalAdjacencyHits / this.totalAdjacencyRequests) * 100
-      : 0;
+    const hitRate =
+      this.totalAdjacencyRequests > 0
+        ? (this.totalAdjacencyHits / this.totalAdjacencyRequests) * 100
+        : 0;
     const projected = (forecast.projectedHitRate || 0) * 100;
     const chunkWord = this.totalChunks === 1 ? 'segment' : 'segments';
 
@@ -20014,22 +21300,30 @@ class DocumentReadEstimator {
   }
 }
 
-
 async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta = {}) {
   const chunkLabel = `Segment ${index + 1}/${totalChunks}`;
   const chunkStart = performance.now();
   const previewTokens = chunkTokens.slice(0, 18).join(' ');
-  addLog(`<div class="section-divider"></div><div class="section-title">📚 ${sanitize(chunkLabel)}</div><div>${sanitize(previewTokens)}${chunkTokens.length > 18 ? ' …' : ''}</div>`);
+  addLog(
+    `<div class="section-divider"></div><div class="section-title">📚 ${sanitize(chunkLabel)}</div><div>${sanitize(previewTokens)}${chunkTokens.length > 18 ? ' …' : ''}</div>`,
+  );
 
-  const documentWordLimit = Math.min(CONFIG.DOCUMENT_WORD_LIMIT || CONFIG.INPUT_WORD_LIMIT, CONFIG.MAX_TOKENS_PER_PROMPT);
+  const documentWordLimit = Math.min(
+    CONFIG.DOCUMENT_WORD_LIMIT || CONFIG.INPUT_WORD_LIMIT,
+    CONFIG.MAX_TOKENS_PER_PROMPT,
+  );
   const limitedChunkTokens = chunkTokens.slice(0, documentWordLimit);
   if (chunkTokens.length > limitedChunkTokens.length) {
-    logWarning(`${chunkLabel}: prompt truncated to ${documentWordLimit} tokens for pipeline compliance.`);
+    logWarning(
+      `${chunkLabel}: prompt truncated to ${documentWordLimit} tokens for pipeline compliance.`,
+    );
   }
 
   const promptWordInfo = limitWords(limitedChunkTokens.join(' '), documentWordLimit);
   if (promptWordInfo.trimmed && chunkTokens.length <= limitedChunkTokens.length) {
-    logWarning(`${chunkLabel}: prompt trimmed to ${documentWordLimit} words for pipeline compliance.`);
+    logWarning(
+      `${chunkLabel}: prompt trimmed to ${documentWordLimit} words for pipeline compliance.`,
+    );
   }
 
   const promptText = promptWordInfo.text;
@@ -20056,8 +21350,14 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     return { result, duration: performance.now() - startTime };
   };
 
-  const promptAdjTokens = await collectSymbolAwareTokens(promptText, promptTokens, `${chunkLabel}-prompt`);
-  const inputData = await measure(() => batchFetchAdjacencies(promptAdjTokens, promptText, `${chunkLabel} prompt adjacencies`));
+  const promptAdjTokens = await collectSymbolAwareTokens(
+    promptText,
+    promptTokens,
+    `${chunkLabel}-prompt`,
+  );
+  const inputData = await measure(() =>
+    batchFetchAdjacencies(promptAdjTokens, promptText, `${chunkLabel} prompt adjacencies`),
+  );
 
   if (adjacencyStatus) {
     adjacencyStatus.innerHTML = `✅ ${sanitize(`${chunkLabel}: adjacency mapping cached`)}`;
@@ -20075,9 +21375,13 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
   let topTokens = summarizeAttention(allMatrices);
   let keyRels = extractKeyRelationships(allMatrices);
 
-  addLog(`<div class="adjacency-insight"><strong>🎯 ${sanitize(chunkLabel)} Focus:</strong> ${formatTopTokens(topTokens)}</div>`);
+  addLog(
+    `<div class="adjacency-insight"><strong>🎯 ${sanitize(chunkLabel)} Focus:</strong> ${formatTopTokens(topTokens)}</div>`,
+  );
   if (keyRels.length) {
-    addLog(`<div class="adjacency-insight"><strong>🔗 Relationships:</strong><br>${keyRels.map(rel => `• ${sanitize(rel)}`).join('<br>')}</div>`);
+    addLog(
+      `<div class="adjacency-insight"><strong>🔗 Relationships:</strong><br>${keyRels.map((rel) => `• ${sanitize(rel)}`).join('<br>')}</div>`,
+    );
   }
 
   const affinityCfg = window.HLSF?.config?.affinity || {};
@@ -20096,32 +21400,46 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     inputWordCount: promptWordInfo.wordCount || promptTokens.length,
   });
 
-  let localThought = localOutputData.thoughtText || localOutputData.text || 'Adjacency walk could not assemble a local output with the available data.';
+  let localThought =
+    localOutputData.thoughtText ||
+    localOutputData.text ||
+    'Adjacency walk could not assemble a local output with the available data.';
   if (localOutputData.thoughtTrimmed || localOutputData.trimmed) {
-    logWarning(`${chunkLabel}: local thought stream truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+    logWarning(
+      `${chunkLabel}: local thought stream truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`,
+    );
   }
   const thoughtLimited = limitWords(localThought, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
   if (thoughtLimited.trimmed && !(localOutputData.thoughtTrimmed || localOutputData.trimmed)) {
-    logWarning(`${chunkLabel}: local thought stream trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
+    logWarning(
+      `${chunkLabel}: local thought stream trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`,
+    );
   }
   localThought = thoughtLimited.text;
-  const localThoughtWordCount = localOutputData.thoughtWordCount || thoughtLimited.wordCount || countWords(localThought);
+  const localThoughtWordCount =
+    localOutputData.thoughtWordCount || thoughtLimited.wordCount || countWords(localThought);
 
   let localOutput = localOutputData.responseText || localThought;
   if (localOutputData.responseTrimmed) {
-    logWarning(`${chunkLabel}: local output truncated to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
+    logWarning(
+      `${chunkLabel}: local output truncated to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`,
+    );
   }
   localOutput = DbLexicon.rewriteText(localOutput);
   const localLimited = limitWords(localOutput, CONFIG.LOCAL_RESPONSE_WORD_LIMIT);
   if (localLimited.trimmed && !localOutputData.responseTrimmed) {
-    logWarning(`${chunkLabel}: local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words for archival.`);
+    logWarning(
+      `${chunkLabel}: local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words for archival.`,
+    );
   }
   localOutput = localLimited.text;
-  const localWordCount = localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
+  const localWordCount =
+    localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
 
-  const localResponseTokens = Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
-    ? localOutputData.responseTokens
-    : tokenize(localOutput);
+  const localResponseTokens =
+    Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
+      ? localOutputData.responseTokens
+      : tokenize(localOutput);
 
   if (localResponseTokens.length) {
     addConversationTokens(localResponseTokens);
@@ -20131,18 +21449,28 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
   let localAdjacency = null;
   let localAdjTargets = [];
   if (localResponseTokens.length) {
-    localAdjTargets = await collectSymbolAwareTokens(localOutput, localResponseTokens, `${chunkLabel}-local-output`);
+    localAdjTargets = await collectSymbolAwareTokens(
+      localOutput,
+      localResponseTokens,
+      `${chunkLabel}-local-output`,
+    );
     if (localAdjTargets.length) {
       const localAdjStatus = logStatus(`⏳ ${chunkLabel}: caching local HLSF AGI adjacencies`);
       const localAdjStart = performance.now();
       try {
-        localAdjacency = await batchFetchAdjacencies(localAdjTargets, localOutput, `${chunkLabel} local response adjacencies`);
+        localAdjacency = await batchFetchAdjacencies(
+          localAdjTargets,
+          localOutput,
+          `${chunkLabel} local response adjacencies`,
+        );
         localAdjDuration = performance.now() - localAdjStart;
         localAdjStatus.innerHTML = `✅ ${sanitize(`${chunkLabel}: Local HLSF AGI adjacencies cached`)}`;
       } catch (err) {
         localAdjDuration = performance.now() - localAdjStart;
         localAdjStatus.innerHTML = `❌ ${sanitize(`${chunkLabel}: Local HLSF AGI adjacency cache failed: ${err?.message || err}`)}`;
-        logError(`${chunkLabel}: failed to cache local HLSF AGI adjacencies: ${err?.message || err}`);
+        logError(
+          `${chunkLabel}: failed to cache local HLSF AGI adjacencies: ${err?.message || err}`,
+        );
         localAdjacency = null;
       }
     }
@@ -20155,10 +21483,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     calculateAttention(allMatrices);
   }
 
-  const symbolicSeeds = [
-    ...promptAdjTokens,
-    ...localAdjTargets,
-  ].filter(Boolean);
+  const symbolicSeeds = [...promptAdjTokens, ...localAdjTargets].filter(Boolean);
 
   if (symbolicSeeds.length) {
     const connectivityStatus = logStatus(`⏳ ${chunkLabel}: ensuring symbolic connectivity`);
@@ -20184,19 +21509,28 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     }
   }
 
-  const walkDetails = Array.isArray(localOutputData.walk) && localOutputData.walk.length
-    ? localOutputData.walk.map(step => `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`).join('<br>')
-    : '';
+  const walkDetails =
+    Array.isArray(localOutputData.walk) && localOutputData.walk.length
+      ? localOutputData.walk
+          .map(
+            (step) =>
+              `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`,
+          )
+          .join('<br>')
+      : '';
 
   const mentalSummary = [
     mentalState.name ? `<strong>${sanitize(mentalState.name)}</strong>` : '',
     mentalState.desc ? sanitize(mentalState.desc) : '',
     `Threshold ${affinityThreshold.toFixed(2)} · Iterations ${affinityIterations}`,
-  ].filter(Boolean).join('<br>');
+  ]
+    .filter(Boolean)
+    .join('<br>');
 
-  const visitedSummary = Array.isArray(localOutputData.visitedTokens) && localOutputData.visitedTokens.length
-    ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
-    : '';
+  const visitedSummary =
+    Array.isArray(localOutputData.visitedTokens) && localOutputData.visitedTokens.length
+      ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
+      : '';
 
   const safeThought = sanitize(localThought);
   const safeResponse = sanitize(localOutput);
@@ -20231,16 +21565,24 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
     const dbStats = db?.database_stats || {};
     const databaseSize = Number.isFinite(dbStats.total_tokens)
       ? dbStats.total_tokens
-      : (Array.isArray(db?.full_token_data) ? db.full_token_data.length : null);
+      : Array.isArray(db?.full_token_data)
+        ? db.full_token_data.length
+        : null;
     const adjacencyLexicon = Array.isArray(localOutputData.visitedTokens)
       ? localOutputData.visitedTokens.slice(0, 24)
       : [];
-    const historicalRefinementLexicon = CoherenceStore.getRefinementLexicon({ targetScore: 0.9, maxTokens: 16 });
-    const uncachedHistoricalHints = historicalRefinementLexicon.filter(token => token && !adjacencyLexicon.includes(token));
+    const historicalRefinementLexicon = CoherenceStore.getRefinementLexicon({
+      targetScore: 0.9,
+      maxTokens: 16,
+    });
+    const uncachedHistoricalHints = historicalRefinementLexicon.filter(
+      (token) => token && !adjacencyLexicon.includes(token),
+    );
     const coherenceMessages = [
       {
         role: 'system',
-        content: 'You evaluate text coherence. Compare the provided local response against adjacency lexicon hints and craft a coherent rewrite. Respond strictly in JSON with keys coherence_score (0-1 float) and coherent_response (string).',
+        content:
+          'You evaluate text coherence. Compare the provided local response against adjacency lexicon hints and craft a coherent rewrite. Respond strictly in JSON with keys coherence_score (0-1 float) and coherent_response (string).',
       },
       {
         role: 'user',
@@ -20248,28 +21590,30 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
 ${localOutput}
 
 Adjacency lexicon hints:${adjacencyLexicon.length ? ` ${adjacencyLexicon.join(', ')}` : ' (none)'}
-Historical refinement hints:${uncachedHistoricalHints.length ? ` ${uncachedHistoricalHints.join(', ')}` : ' (none available)' }
+Historical refinement hints:${uncachedHistoricalHints.length ? ` ${uncachedHistoricalHints.join(', ')}` : ' (none available)'}
 Instructions: Produce a grammatically coherent rewrite that incorporates adjacency hints and, when helpful, the historical refinement hints to fill gaps with coherent replacements. Rate the original response coherence on a 0-1 scale and explain improvements in the rewrite where relevant.`,
       },
     ];
     const rawCoherence = await safeAsync(
       () => callOpenAI(coherenceMessages, { temperature: 0.2, max_tokens: 420 }),
       `${chunkLabel} coherence assessment failed`,
-      { fallbackValue: null }
+      { fallbackValue: null },
     );
     const parsedCoherence = parseCoherenceEvaluation(rawCoherence);
     if (parsedCoherence) {
-      const coherentResponse = typeof parsedCoherence.coherent_response === 'string'
-        ? parsedCoherence.coherent_response.trim()
-        : '';
+      const coherentResponse =
+        typeof parsedCoherence.coherent_response === 'string'
+          ? parsedCoherence.coherent_response.trim()
+          : '';
       const coherenceScoreValue = Number(parsedCoherence.coherence_score);
       const coherenceScore = Number.isFinite(coherenceScoreValue)
         ? Math.max(0, Math.min(1, coherenceScoreValue))
         : null;
       if (coherenceScore != null) {
-        const tokenCount = Array.isArray(localResponseTokens) && localResponseTokens.length
-          ? localResponseTokens.length
-          : countWords(localOutput);
+        const tokenCount =
+          Array.isArray(localResponseTokens) && localResponseTokens.length
+            ? localResponseTokens.length
+            : countWords(localOutput);
         CoherenceStore.record({
           timestamp: Date.now(),
           chunkLabel,
@@ -20287,12 +21631,14 @@ Instructions: Produce a grammatically coherent rewrite that incorporates adjacen
       const decimalScoreLabel = coherenceScore != null ? coherenceScore.toFixed(2) : 'N/A';
       const lexiconLabel = adjacencyLexicon.slice(0, 12).join(', ') || 'none';
       const historicalLexiconLabel = uncachedHistoricalHints.slice(0, 12).join(', ') || 'none';
-      const summaryLabel = coherenceSummary && coherenceSummary.targetCount
-        ? `Avg tokens for ≥0.99 coherence: ${coherenceSummary.targetAverageTokens.toFixed(1)} (${coherenceSummary.targetCount} samples)`
-        : 'Collecting samples to estimate tokens for ≥0.99 coherence.';
-      const avgScoreLabel = coherenceSummary && coherenceSummary.total
-        ? `Offline average coherence: ${coherenceSummary.averageScore.toFixed(2)}`
-        : '';
+      const summaryLabel =
+        coherenceSummary && coherenceSummary.targetCount
+          ? `Avg tokens for ≥0.99 coherence: ${coherenceSummary.targetAverageTokens.toFixed(1)} (${coherenceSummary.targetCount} samples)`
+          : 'Collecting samples to estimate tokens for ≥0.99 coherence.';
+      const avgScoreLabel =
+        coherenceSummary && coherenceSummary.total
+          ? `Offline average coherence: ${coherenceSummary.averageScore.toFixed(2)}`
+          : '';
       addLog(`<div class="section-divider"></div>
         <div class="section-title">🧮 Coherence Evaluation</div>
         <div class="adjacency-insight"><strong>Local HLSF AGI coherence score:</strong> ${sanitize(decimalScoreLabel)} (${sanitize(scoreLabel)})<br><strong>Adjacency lexicon:</strong> ${sanitize(lexiconLabel)}<br><strong>Historical refinement lexicon:</strong> ${sanitize(historicalLexiconLabel)}<br>${sanitize(summaryLabel)}${avgScoreLabel ? `<br>${sanitize(avgScoreLabel)}` : ''}</div>
@@ -20317,7 +21663,8 @@ Instructions: Produce a grammatically coherent rewrite that incorporates adjacen
     }
     return uniqueSet.size;
   })();
-  const uniqueTokenCount = Number.isFinite(metaUnique) && metaUnique > 0 ? metaUnique : fallbackUnique;
+  const uniqueTokenCount =
+    Number.isFinite(metaUnique) && metaUnique > 0 ? metaUnique : fallbackUnique;
 
   const metaNew = Number(chunkMeta.newBefore);
   const metaCached = Number(chunkMeta.cachedBefore);
@@ -20384,29 +21731,42 @@ function updateVisualizationAfterChunk(matrices, focusTokens, chunkIndex, totalC
   }
 }
 
-
 async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, focusTokens, docName) {
   calculateAttention(aggregateMatrices);
   const docTopTokens = summarizeAttention(aggregateMatrices);
   const docRelationships = extractKeyRelationships(aggregateMatrices);
   const lexiconSeeds = Array.from(focusTokens).slice(0, 160);
-  const chunkSummaries = chunkResults.map((result, idx) => {
-    const tops = result.topTokens.slice(0, 5).map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ') || 'none';
-    const rels = result.keyRelationships.slice(0, 4).join('; ') || 'none';
-    return `Segment ${idx + 1}: tokens ${tops}; links ${rels}.`;
-  }).join('\n');
+  const chunkSummaries = chunkResults
+    .map((result, idx) => {
+      const tops =
+        result.topTokens
+          .slice(0, 5)
+          .map((t) => `${t.token} (${t.attention.toFixed(2)})`)
+          .join(', ') || 'none';
+      const rels = result.keyRelationships.slice(0, 4).join('; ') || 'none';
+      return `Segment ${idx + 1}: tokens ${tops}; links ${rels}.`;
+    })
+    .join('\n');
 
   let finalReflection = '';
   const reflectionStatus = logStatus('⏳ Building document-scale reflection');
   if (state.apiKey) {
     const messages = [
-      { role: 'system', content: 'You craft extensive reflections using cached database language and HLSF adjacency insights.' },
-      { role: 'user', content: `Document: ${docName}\nLexicon anchors: ${lexiconSeeds.join(', ')}\nGlobal attention: ${docTopTokens.map(t => `${t.token} (${t.attention.toFixed(2)})`).join(', ')}\nRelationships: ${docRelationships.join('; ')}\nChunk breakdown:\n${chunkSummaries}\nProduce an approximately 1000-token synthesis that traces these relationships, highlights correlated nodes, and concludes with an integrative perspective. Maintain vocabulary from the cached database.` }
+      {
+        role: 'system',
+        content:
+          'You craft extensive reflections using cached database language and HLSF adjacency insights.',
+      },
+      {
+        role: 'user',
+        content: `Document: ${docName}\nLexicon anchors: ${lexiconSeeds.join(', ')}\nGlobal attention: ${docTopTokens.map((t) => `${t.token} (${t.attention.toFixed(2)})`).join(', ')}\nRelationships: ${docRelationships.join('; ')}\nChunk breakdown:\n${chunkSummaries}\nProduce an approximately 1000-token synthesis that traces these relationships, highlights correlated nodes, and concludes with an integrative perspective. Maintain vocabulary from the cached database.`,
+      },
     ];
-    finalReflection = await safeAsync(
-      () => callOpenAI(messages, { temperature: 0.55, max_tokens: 1200 }),
-      'Document reflection failed'
-    ) || '';
+    finalReflection =
+      (await safeAsync(
+        () => callOpenAI(messages, { temperature: 0.55, max_tokens: 1200 }),
+        'Document reflection failed',
+      )) || '';
     reflectionStatus.innerHTML = '✅ Document reflection ready';
   } else {
     finalReflection = `Offline document reflection for ${docName}: ${lexiconSeeds.join(' ')}`;
@@ -20417,7 +21777,11 @@ async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, foc
 
   if (finalReflection.trim()) {
     const grammarStatus = logStatus('⏳ Polishing reflection for grammar');
-    const polishedReflection = await editForCoherence('document reflection', 'document reflection', finalReflection);
+    const polishedReflection = await editForCoherence(
+      'document reflection',
+      'document reflection',
+      finalReflection,
+    );
     if (!state.apiKey && grammarStatus) {
       grammarStatus.innerHTML = '⚠️ Reflection grammar refinement skipped (offline)';
     } else if (grammarStatus) {
@@ -20441,21 +21805,32 @@ async function synthesizeDocumentReflection(chunkResults, aggregateMatrices, foc
   if (reflectionTokens.length) {
     addConversationTokens(reflectionTokens);
     addOutputTokens(reflectionTokens, { render: false });
-    const reflectionAdjTokens = await collectSymbolAwareTokens(finalReflection, reflectionTokens, 'document-reflection');
-    const reflectionAdjacency = await batchFetchAdjacencies(reflectionAdjTokens, finalReflection, 'document reflection adjacencies');
+    const reflectionAdjTokens = await collectSymbolAwareTokens(
+      finalReflection,
+      reflectionTokens,
+      'document-reflection',
+    );
+    const reflectionAdjacency = await batchFetchAdjacencies(
+      reflectionAdjTokens,
+      finalReflection,
+      'document reflection adjacencies',
+    );
     calculateAttention(reflectionAdjacency);
     if (hasNewAdjacencyData(reflectionAdjacency)) {
       notifyHlsfAdjacencyChange('document-reflection', { immediate: true });
     }
   }
-  addLog(`<div class="section-divider"></div><div class="section-title">🧾 Document Reflection</div><div class="thought-stream">${sanitize(finalReflection)}</div>`);
+  addLog(
+    `<div class="section-divider"></div><div class="section-title">🧾 Document Reflection</div><div class="thought-stream">${sanitize(finalReflection)}</div>`,
+  );
 }
 
 async function warmDocumentIngestion(chunks, options = {}) {
-  const config = (options && typeof options === 'object') ? options : {};
-  const estimator = config.estimator && typeof config.estimator.recordWarmup === 'function'
-    ? config.estimator
-    : null;
+  const config = options && typeof options === 'object' ? options : {};
+  const estimator =
+    config.estimator && typeof config.estimator.recordWarmup === 'function'
+      ? config.estimator
+      : null;
 
   const tokenSet = new Set();
   for (const chunk of Array.isArray(chunks) ? chunks : []) {
@@ -20501,11 +21876,13 @@ async function warmDocumentIngestion(chunks, options = {}) {
   let remoteHits = 0;
   let remoteLoads = 0;
   const remote = window.HLSF?.remoteDb;
-  if (toWarm.length
-    && remote
-    && typeof remote.isReady === 'function'
-    && remote.isReady()
-    && typeof remote.preloadTokens === 'function') {
+  if (
+    toWarm.length &&
+    remote &&
+    typeof remote.isReady === 'function' &&
+    remote.isReady() &&
+    typeof remote.preloadTokens === 'function'
+  ) {
     try {
       const stats = await remote.preloadTokens(toWarm);
       remoteHits = Number(stats?.hits) || 0;
@@ -20527,12 +21904,12 @@ async function warmDocumentIngestion(chunks, options = {}) {
   if (warmupStatus) {
     const duration = formatDuration(elapsed);
     const summary = summaryParts.length
-      ? summaryParts.map(part => sanitize(part)).join(' · ')
+      ? summaryParts.map((part) => sanitize(part)).join(' · ')
       : sanitize('No additional warmup required');
     warmupStatus.innerHTML = `✅ Document cache warmed in ${sanitize(duration)} • ${summary}`;
   }
 
-  if ((stagedFromDb + remoteLoads + remoteHits) > 0) {
+  if (stagedFromDb + remoteLoads + remoteHits > 0) {
     notifyHlsfAdjacencyChange('document-warmup', { immediate: true });
   }
 
@@ -20584,17 +21961,27 @@ async function processDocumentFile(file) {
 
     if (!rawTokenCount) {
       logError('Document contained no readable tokens.');
-      exitProcessingState({ preserveInput: true, status: 'failed', statusMessage: 'Processing halted' });
+      exitProcessingState({
+        preserveInput: true,
+        status: 'failed',
+        statusMessage: 'Processing halted',
+      });
       return;
     }
 
     if (!chunks.length || !totalTokens) {
       logError('Unable to align document tokens with cached database vocabulary.');
-      exitProcessingState({ preserveInput: true, status: 'failed', statusMessage: 'Processing halted' });
+      exitProcessingState({
+        preserveInput: true,
+        status: 'failed',
+        statusMessage: 'Processing halted',
+      });
       return;
     }
 
-    addLog(`📥 Processing <strong>${sanitize(file.name || 'document')}</strong> (${totalTokens} tokens → ${chunks.length} segment${chunks.length === 1 ? '' : 's'} · ≤ ${chunkDimension} unique tokens each)`);
+    addLog(
+      `📥 Processing <strong>${sanitize(file.name || 'document')}</strong> (${totalTokens} tokens → ${chunks.length} segment${chunks.length === 1 ? '' : 's'} · ≤ ${chunkDimension} unique tokens each)`,
+    );
 
     const cachedTokenBaseline = Number.isFinite(state.documentCacheBaseline)
       ? state.documentCacheBaseline
@@ -20638,7 +22025,7 @@ async function processDocumentFile(file) {
 
         const chunkIndex = levelStart + offset;
         const chunk = levelChunks[offset];
-        chunk.forEach(token => focusTokens.add(token));
+        chunk.forEach((token) => focusTokens.add(token));
         commitTokens(chunk, { render: false });
         addConversationTokens(chunk);
         const chunkMeta = estimator ? estimator.prepareChunk(chunkIndex, chunk) : {};
@@ -20658,7 +22045,9 @@ async function processDocumentFile(file) {
         break;
       }
 
-      logOK(`HLSF level ${levelIndex} consolidated (${levelChunks.length} segment${levelChunks.length === 1 ? '' : 's'}).`);
+      logOK(
+        `HLSF level ${levelIndex} consolidated (${levelChunks.length} segment${levelChunks.length === 1 ? '' : 's'}).`,
+      );
     }
 
     if (cancelledMidway) {
@@ -20675,7 +22064,11 @@ async function processDocumentFile(file) {
 
     if (!chunkResults.length) {
       exitStatus = 'failed';
-      exitProcessingState({ preserveInput: true, status: 'failed', statusMessage: 'Processing halted' });
+      exitProcessingState({
+        preserveInput: true,
+        status: 'failed',
+        statusMessage: 'Processing halted',
+      });
       return;
     }
 
@@ -20684,7 +22077,12 @@ async function processDocumentFile(file) {
     notifyHlsfAdjacencyChange('document-read', { immediate: true });
 
     if (!currentAbortController?.signal.aborted) {
-      await synthesizeDocumentReflection(chunkResults, aggregateMatrices, focusTokens, file.name || 'document');
+      await synthesizeDocumentReflection(
+        chunkResults,
+        aggregateMatrices,
+        focusTokens,
+        file.name || 'document',
+      );
     }
 
     if (!wasCancelled) {
@@ -20716,11 +22114,12 @@ async function processDocumentFile(file) {
       setDocumentCacheBaseline(existingBaseline);
     }
     updateStats();
-    const summary = exitStatus === 'failed'
-      ? 'Processing failed'
-      : exitStatus === 'cancelled'
-        ? 'Processing cancelled'
-        : 'Processing complete';
+    const summary =
+      exitStatus === 'failed'
+        ? 'Processing failed'
+        : exitStatus === 'cancelled'
+          ? 'Processing cancelled'
+          : 'Processing complete';
     exitProcessingState({ preserveInput: true, status: exitStatus, statusMessage: summary });
   }
 }
@@ -20768,7 +22167,8 @@ elements.apiCancelBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('click', (event) => {
-  const target = event.target instanceof HTMLElement ? event.target.closest('.command-upgrade-link') : null;
+  const target =
+    event.target instanceof HTMLElement ? event.target.closest('.command-upgrade-link') : null;
   if (!target) return;
   event.preventDefault();
   if (window.CognitionEngine && typeof window.CognitionEngine.openLanding === 'function') {
@@ -20785,7 +22185,12 @@ async function submitPromptThroughEngine(
   const raw = typeof input === 'string' ? input : String(input ?? '');
   const trimmed = raw.trim();
   if (!trimmed) {
-    return { success: false, tokens: [], kind: 'prompt', error: new Error('Prompt cannot be empty') };
+    return {
+      success: false,
+      tokens: [],
+      kind: 'prompt',
+      error: new Error('Prompt cannot be empty'),
+    };
   }
 
   const annotate = Boolean(options?.annotateLog);
@@ -20826,12 +22231,12 @@ elements.sendBtn.addEventListener('click', () => {
   if (!rawValue || !rawValue.trim()) return;
 
   void submitPromptThroughEngine(rawValue, { source: 'input-field' })
-    .then(result => {
+    .then((result) => {
       if (result.kind === 'command') {
         elements.input.value = '';
       }
     })
-    .catch(error => {
+    .catch((error) => {
       console.error('Prompt submission failed:', error);
     });
 });
@@ -20858,11 +22263,10 @@ function makeAgentContext(): AgentContext {
   const promptLog = getSessionPromptLog();
   const historyEntries = Array.isArray(promptLog) ? promptLog.slice(-10) : [];
   const history = historyEntries
-    .map(entry => (entry && typeof entry.text === 'string' ? entry.text : ''))
-    .filter(text => typeof text === 'string' && text.trim().length > 0);
-  const lastEntry = Array.isArray(promptLog) && promptLog.length
-    ? promptLog[promptLog.length - 1]
-    : null;
+    .map((entry) => (entry && typeof entry.text === 'string' ? entry.text : ''))
+    .filter((text) => typeof text === 'string' && text.trim().length > 0);
+  const lastEntry =
+    Array.isArray(promptLog) && promptLog.length ? promptLog[promptLog.length - 1] : null;
   const lastPrompt = lastEntry && typeof lastEntry.text === 'string' ? lastEntry.text : '';
 
   const metrics: Record<string, number> = {};
@@ -20875,19 +22279,22 @@ function makeAgentContext(): AgentContext {
     }
   }
 
-  const graphSnapshot = state?.symbolMetrics?.lastRunGraph ?? (() => {
-    const live = state?.liveGraph;
-    if (!live || !(live.nodes instanceof Map)) return null;
-    return {
-      nodes: Array.from(live.nodes.values()),
-      links: Array.isArray(live.links) ? [...live.links] : [],
-    };
-  })();
+  const graphSnapshot =
+    state?.symbolMetrics?.lastRunGraph ??
+    (() => {
+      const live = state?.liveGraph;
+      if (!live || !(live.nodes instanceof Map)) return null;
+      return {
+        nodes: Array.from(live.nodes.values()),
+        links: Array.isArray(live.links) ? [...live.links] : [],
+      };
+    })();
 
   const maybeLlm = typeof window !== 'undefined' && window?.CognitionEngine?.llm;
-  const llm = typeof maybeLlm === 'function'
-    ? (input: string) => Promise.resolve(maybeLlm(input))
-    : undefined;
+  const llm =
+    typeof maybeLlm === 'function'
+      ? (input: string) => Promise.resolve(maybeLlm(input))
+      : undefined;
 
   return {
     now: Date.now(),
@@ -21021,9 +22428,8 @@ window.addEventListener('load', () => {
 setupLandingExperience();
 initialize();
 
-
 /* ===== HLSF limit controls wiring ===== */
-(function initHlsfLimitControls(){
+(function initHlsfLimitControls() {
   try {
     const root = document;
     const perfSel = root.getElementById('hlsf-performance') as HTMLSelectElement | null;
@@ -21038,7 +22444,9 @@ initialize();
     function applyHlsfLimitsFromControls(options = {}) {
       const forceDefaults = Boolean(options && options.forceDefaults);
       const cfg = (window as any).SETTINGS || ((window as any).SETTINGS = {});
-      const selectedId = perfSel ? perfSel.value.toLowerCase() : String(cfg.performanceProfileId || '').toLowerCase();
+      const selectedId = perfSel
+        ? perfSel.value.toLowerCase()
+        : String(cfg.performanceProfileId || '').toLowerCase();
       const profile = resolvePerformanceProfile(selectedId || cfg.performanceProfileId);
       cfg.performanceProfileId = profile.id;
       cfg.branchingFactor = profile.branchingFactor;
@@ -21096,4 +22504,3 @@ initialize();
     console.warn('HLSF limit controls init failed:', err);
   }
 })();
-

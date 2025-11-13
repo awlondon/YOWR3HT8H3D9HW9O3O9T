@@ -1,16 +1,36 @@
-import { createMessagingService, MessagingService } from './messaging';
-import { SubscriptionManager } from './subscription';
-import { SaasPlatformConfig, SubscriptionSummary, UserProfile } from './types';
-import { formatCurrency, formatDate } from './utils';
-import { createUserDirectory, UserDirectory } from './userDirectory';
+import { createMessagingService, MessagingService } from './messaging.js';
+import { SubscriptionManager } from './subscription.js';
+import {
+  type CreditTierConfig,
+  type PaymentRecipientConfig,
+  SaasPlatformConfig,
+  SubscriptionSummary,
+  UserProfile,
+} from './types.js';
+import { formatCurrency, formatDate } from '../../utils/format.js';
+import { createUserDirectory, UserDirectory } from './userDirectory.js';
+
+const DEFAULT_CREDIT_TIERS: CreditTierConfig[] = [
+  { id: 'starter', label: 'Starter · $10', amountUsd: 10 },
+  { id: 'growth', label: 'Growth · $50', amountUsd: 50, bonusPercent: 5 },
+  { id: 'scale', label: 'Scale · $100', amountUsd: 100, bonusPercent: 12 },
+  { id: 'enterprise', label: 'Enterprise · $250', amountUsd: 250, bonusPercent: 18 },
+];
+
+const DEFAULT_PAYMENT_RECIPIENTS: PaymentRecipientConfig[] = [
+  { handle: '@primarydesignco', label: 'Primary Design Cooperative', routingChannel: 'PayPal' },
+  { handle: '@hlsf.research', label: 'HLSF Research Commons', routingChannel: 'Stripe Connect' },
+];
 
 const DEFAULT_CONFIG: SaasPlatformConfig = {
   productName: 'HLSF Cognition Engine SaaS',
   trialDays: 7,
   monthlyPriceUsd: 19.99,
   includedCreditsUsd: 10,
-  creditTopUpOptionsUsd: [10, 20, 50, 100, 1000],
-  paymentRecipientHandle: '@primarydesignco',
+  creditTopUpOptionsUsd: DEFAULT_CREDIT_TIERS.map((tier) => tier.amountUsd),
+  creditTiers: DEFAULT_CREDIT_TIERS,
+  paymentRecipientHandle: DEFAULT_PAYMENT_RECIPIENTS[0].handle,
+  paymentRecipients: DEFAULT_PAYMENT_RECIPIENTS,
   paymentProcessor: 'PayPal credit-card exchange',
 };
 
@@ -23,19 +43,41 @@ export interface SaasPlatform {
   summarizeUser(userId: string): SubscriptionSummary;
 }
 
-export function initializeSaasPlatform(partialConfig: Partial<SaasPlatformConfig> = {}): SaasPlatform {
+export function initializeSaasPlatform(
+  partialConfig: Partial<SaasPlatformConfig> = {},
+): SaasPlatform {
+  const creditTiers = partialConfig.creditTiers || DEFAULT_CONFIG.creditTiers;
+  const paymentRecipients = partialConfig.paymentRecipients || DEFAULT_PAYMENT_RECIPIENTS;
+  const creditTopUpOptions =
+    partialConfig.creditTopUpOptionsUsd || creditTiers.map((tier) => tier.amountUsd);
+  const defaultRecipientHandle =
+    partialConfig.paymentRecipientHandle ||
+    (paymentRecipients[0]?.handle ?? DEFAULT_CONFIG.paymentRecipientHandle);
+
   const mergedConfig: SaasPlatformConfig = {
     ...DEFAULT_CONFIG,
     ...partialConfig,
-    creditTopUpOptionsUsd: partialConfig.creditTopUpOptionsUsd || DEFAULT_CONFIG.creditTopUpOptionsUsd,
+    creditTiers,
+    paymentRecipients,
+    creditTopUpOptionsUsd: creditTopUpOptions,
+    paymentRecipientHandle: defaultRecipientHandle,
   };
 
   const subscriptions = new SubscriptionManager(mergedConfig);
   const users = createUserDirectory(subscriptions);
   const messaging = createMessagingService(users);
+  const recipientLookup = new Map(
+    mergedConfig.paymentRecipients.map((recipient) => [recipient.handle, recipient] as const),
+  );
 
   function describePayment(amountUsd: number): string {
-    return `Send ${formatCurrency(amountUsd)} to ${mergedConfig.paymentRecipientHandle} via ${mergedConfig.paymentProcessor}.`;
+    const recipient =
+      recipientLookup.get(mergedConfig.paymentRecipientHandle) || mergedConfig.paymentRecipients[0];
+    const recipientLabel = recipient
+      ? `${recipient.label} (${recipient.handle})`
+      : mergedConfig.paymentRecipientHandle;
+    const channel = recipient?.routingChannel || mergedConfig.paymentProcessor;
+    return `Send ${formatCurrency(amountUsd)} to ${recipientLabel} via ${channel}.`;
   }
 
   function summarizeUser(userId: string): SubscriptionSummary {
@@ -53,7 +95,10 @@ export function initializeSaasPlatform(partialConfig: Partial<SaasPlatformConfig
 }
 
 export interface SaasCommandContext {
-  registerCommand: (name: string, handler: (args: string[], rawInput?: string) => Promise<void> | void) => void;
+  registerCommand: (
+    name: string,
+    handler: (args: string[], rawInput?: string) => Promise<void> | void,
+  ) => void;
   addLog: (html: string) => void;
   logError: (message: string) => void;
   logSuccess: (message: string) => void;
@@ -61,7 +106,10 @@ export interface SaasCommandContext {
   formatCurrency: (value: number) => string;
 }
 
-function formatSummaryHtml(summary: SubscriptionSummary, currencyFormatter: (value: number) => string): string {
+function formatSummaryHtml(
+  summary: SubscriptionSummary,
+  currencyFormatter: (value: number) => string,
+): string {
   const formattedStatus = summary.status === 'trial' ? 'evaluation' : summary.status;
   const lines = [
     `<strong>Status:</strong> ${formattedStatus}`,
@@ -84,11 +132,21 @@ function renderRegistrationPage(
   const sanitizedDisplayName = sanitize(user.displayName || user.handle);
   const productName = sanitize(platform.config.productName);
   const nextBilling = sanitize(formatDate(summary.nextBillingAt));
-  const paymentProcessor = sanitize(platform.config.paymentProcessor);
-  const recipientHandle = sanitize(platform.config.paymentRecipientHandle);
-  const membershipStatus = summary.status === 'trial'
-    ? 'Workspace access is currently in evaluation mode.'
-    : `Next billing on ${nextBilling}.`;
+  const paymentRecipient =
+    platform.config.paymentRecipients.find(
+      (recipient) => recipient.handle === platform.config.paymentRecipientHandle,
+    ) || platform.config.paymentRecipients[0];
+  const recipientLabel = paymentRecipient
+    ? `${paymentRecipient.label} (${paymentRecipient.handle})`
+    : platform.config.paymentRecipientHandle;
+  const paymentProcessor = sanitize(
+    paymentRecipient?.routingChannel || platform.config.paymentProcessor,
+  );
+  const recipientHandle = sanitize(recipientLabel);
+  const membershipStatus =
+    summary.status === 'trial'
+      ? 'Workspace access is currently in evaluation mode.'
+      : `Next billing on ${nextBilling}.`;
 
   return `<div class="saas-registration">
     <h2 class="saas-registration__title">Welcome, ${sanitizedDisplayName} (@${sanitizedHandle})</h2>
@@ -128,7 +186,14 @@ function renderRegistrationPage(
 }
 
 export function registerSaasCommands(platform: SaasPlatform, context: SaasCommandContext): void {
-  const { registerCommand, addLog, logError, logSuccess, sanitize, formatCurrency: formatCurrencyFn } = context;
+  const {
+    registerCommand,
+    addLog,
+    logError,
+    logSuccess,
+    sanitize,
+    formatCurrency: formatCurrencyFn,
+  } = context;
 
   registerCommand('/signup', async (args: string[]) => {
     const [handle, ...rest] = args;
@@ -140,7 +205,13 @@ export function registerSaasCommands(platform: SaasPlatform, context: SaasComman
       const displayName = rest.join(' ');
       const user = await platform.users.createUser(handle, displayName);
       const summary = platform.summarizeUser(user.id);
-      const registrationHtml = renderRegistrationPage(user, summary, platform, sanitize, formatCurrencyFn);
+      const registrationHtml = renderRegistrationPage(
+        user,
+        summary,
+        platform,
+        sanitize,
+        formatCurrencyFn,
+      );
       addLog(registrationHtml);
     } catch (err) {
       logError(err instanceof Error ? err.message : String(err));
@@ -168,9 +239,11 @@ export function registerSaasCommands(platform: SaasPlatform, context: SaasComman
       return;
     }
     const summary = platform.summarizeUser(active.id);
-    addLog(`<div class="saas-plan">${formatSummaryHtml(summary, formatCurrencyFn)}<br>` +
-      `Monthly subscription: ${formatCurrencyFn(platform.config.monthlyPriceUsd)} billed through ${sanitize(platform.config.paymentProcessor)}.` +
-      `<br>Included API credits: ${formatCurrencyFn(platform.config.includedCreditsUsd)}.</div>`);
+    addLog(
+      `<div class="saas-plan">${formatSummaryHtml(summary, formatCurrencyFn)}<br>` +
+        `Monthly subscription: ${formatCurrencyFn(platform.config.monthlyPriceUsd)} billed through ${sanitize(platform.config.paymentProcessor)}.` +
+        `<br>Included API credits: ${formatCurrencyFn(platform.config.includedCreditsUsd)}.</div>`,
+    );
   });
 
   registerCommand('/topup', async (args: string[]) => {
@@ -182,14 +255,24 @@ export function registerSaasCommands(platform: SaasPlatform, context: SaasComman
     const [amountRaw] = args;
     const amount = Number.parseFloat(amountRaw || '');
     if (!Number.isFinite(amount)) {
-      logError(`Specify a valid amount. Options: ${platform.config.creditTopUpOptionsUsd.join(', ')}.`);
+      const options = platform.config.creditTiers.length
+        ? platform.config.creditTiers
+            .map((tier) => `${tier.label} (${formatCurrencyFn(tier.amountUsd)})`)
+            .join(', ')
+        : platform.config.creditTopUpOptionsUsd.map((value) => formatCurrencyFn(value)).join(', ');
+      logError(`Specify a valid amount. Options: ${options}.`);
       return;
     }
     try {
       const entry = platform.subscriptions.addCreditTopUp(active.id, amount, 'Self-serve top-up');
-      addLog(`<div class="saas-topup">Added ${formatCurrencyFn(amount)} in API credits.<br>` +
-        `Balance: ${formatCurrencyFn(entry.balanceAfterCreditsUsd)}.<br>` +
-        `${sanitize(platform.describePayment(amount))}</div>`);
+      const tier = platform.config.creditTiers.find((t) => t.amountUsd === amount);
+      const tierLabel = tier ? sanitize(tier.label) : formatCurrencyFn(amount);
+      addLog(
+        `<div class="saas-topup">Added ${formatCurrencyFn(amount)} in API credits.<br>` +
+          `Balance: ${formatCurrencyFn(entry.balanceAfterCreditsUsd)}.<br>` +
+          `Tier: ${tierLabel}.<br>` +
+          `${sanitize(platform.describePayment(amount))}</div>`,
+      );
     } catch (err) {
       logError(err instanceof Error ? err.message : String(err));
     }
@@ -202,12 +285,16 @@ export function registerSaasCommands(platform: SaasPlatform, context: SaasComman
       return;
     }
     const now = Date.now();
-    const items = users.map(user => {
+    const items = users.map((user) => {
       const summary = platform.subscriptions.getSubscriptionSummary(user.id, now);
-      return `<li><strong>${sanitize(user.displayName)}</strong> (@${sanitize(user.handle)}) – ` +
-        `${summary.status} · credits ${formatCurrencyFn(summary.creditsBalanceUsd)}</li>`;
+      return (
+        `<li><strong>${sanitize(user.displayName)}</strong> (@${sanitize(user.handle)}) – ` +
+        `${summary.status} · credits ${formatCurrencyFn(summary.creditsBalanceUsd)}</li>`
+      );
     });
-    addLog(`<div class="saas-users"><strong>Registered users</strong><ul>${items.join('')}</ul></div>`);
+    addLog(
+      `<div class="saas-users"><strong>Registered users</strong><ul>${items.join('')}</ul></div>`,
+    );
   });
 
   registerCommand('/message', async (args: string[]) => {
@@ -224,8 +311,10 @@ export function registerSaasCommands(platform: SaasPlatform, context: SaasComman
     const content = contentParts.join(' ');
     try {
       const preview = await platform.messaging.sendMessage(active.id, recipient, content);
-      addLog(`<div class="saas-message">Encrypted message sent to @${sanitize(preview.recipientHandle)}.` +
-        `<br>Ciphertext preview: ${sanitize(preview.ciphertext)}</div>`);
+      addLog(
+        `<div class="saas-message">Encrypted message sent to @${sanitize(preview.recipientHandle)}.` +
+          `<br>Ciphertext preview: ${sanitize(preview.ciphertext)}</div>`,
+      );
     } catch (err) {
       logError(err instanceof Error ? err.message : String(err));
     }
@@ -242,8 +331,13 @@ export function registerSaasCommands(platform: SaasPlatform, context: SaasComman
       addLog('Inbox empty.');
       return;
     }
-    const rows = messages.map(msg => `#${sanitize(msg.id)} from @${sanitize(msg.senderHandle)} · ${new Date(msg.createdAt).toLocaleString()} · ${sanitize(msg.ciphertext)}`);
-    addLog(`<div class="saas-inbox"><strong>Encrypted messages</strong><br>${rows.join('<br>')}</div>`);
+    const rows = messages.map(
+      (msg) =>
+        `#${sanitize(msg.id)} from @${sanitize(msg.senderHandle)} · ${new Date(msg.createdAt).toLocaleString()} · ${sanitize(msg.ciphertext)}`,
+    );
+    addLog(
+      `<div class="saas-inbox"><strong>Encrypted messages</strong><br>${rows.join('<br>')}</div>`,
+    );
   });
 
   registerCommand('/decryptmsg', async (args: string[]) => {

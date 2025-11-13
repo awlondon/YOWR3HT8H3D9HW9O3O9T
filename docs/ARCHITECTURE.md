@@ -29,7 +29,7 @@ The cognition engine expands each token’s relationships in discrete semantic l
 
 ## SaaS platform layer
 
-The `src/saas/` directory introduces a modular software-as-a-service layer that wraps the existing
+The `src/features/saas/` directory introduces a modular software-as-a-service layer that wraps the existing
 interactive shell:
 
 - `platform.ts` composes the SaaS platform, wiring subscription management, user profiles, and

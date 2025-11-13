@@ -1,22 +1,35 @@
 import { SETTINGS, type Settings } from '../settings.js';
-import { tokenizeWithSymbols, tokenizeWords, type Token, computeWordNeighborMap } from '../tokens/tokenize.js';
-import { emitSymbolEdges } from '../graph/symbol_edges.js';
 import {
-  buildRecursiveAdjacency,
-  type RecursiveAdjacencyEdge,
-  type RecursiveAdjacencyOptions,
-} from '../graph/recursive_adjacency.js';
+  tokenizeWithSymbols,
+  tokenizeWords,
+  type Token,
+  computeWordNeighborMap,
+} from '../tokens/tokenize.js';
+import { emitSymbolEdges } from '../features/graph/symbolEdges.js';
+import {
+  buildLayeredAdjacency,
+  type LayeredAdjacencyEdge,
+  type LayeredExpansionOptions,
+} from '../features/graph/layeredAdjacency.js';
 import { computeCosineSimilarity } from '../vector/similarity.js';
 import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 import type { PipelineStage, TelemetryHook } from '../types/pipeline-messages.js';
 import { buildConsciousnessState, type ConsciousnessState } from './consciousness.js';
+import {
+  type CacheStore,
+  CompositeCacheStore,
+  LocalStorageStore,
+  MemoryStore,
+  wrapCacheLike,
+} from '../lib/storage/cacheStore.js';
 
 const TOKEN_CACHE_PREFIX = 'hlsf_token_';
 
 export interface PipelineRunHooks {
   telemetry?: TelemetryHook;
   shouldAbort?: () => boolean;
+  cacheStore?: CacheStore<unknown>;
 }
 
 interface CachedAdjacencyRecord {
@@ -56,16 +69,16 @@ function safeParseRecord(raw: unknown): CachedAdjacencyRecord | null {
   return null;
 }
 
-function readCachedAdjacencyRecord(token: string): CachedAdjacencyRecord | null {
-  const normalized = normalizeToken(token);
-  if (!normalized) return null;
-  const lower = lowerKey(normalized);
+let defaultCacheStore: CacheStore<unknown> | null = null;
 
-  const globalCache = (globalThis as any).__HLSF_ADJ_CACHE__;
-  if (globalCache && typeof globalCache.get === 'function') {
-    const record = globalCache.get(lower) ?? globalCache.get(normalized);
-    const parsed = safeParseRecord(record);
-    if (parsed) return parsed;
+function resolveDefaultCacheStore(): CacheStore<unknown> {
+  if (defaultCacheStore) {
+    return defaultCacheStore;
+  }
+  const stores: CacheStore<unknown>[] = [];
+  const globalCache = wrapCacheLike<unknown>((globalThis as any).__HLSF_ADJ_CACHE__);
+  if (globalCache) {
+    stores.push(globalCache);
   }
 
   const storage: Storage | null = (() => {
@@ -78,21 +91,53 @@ function readCachedAdjacencyRecord(token: string): CachedAdjacencyRecord | null 
   })();
 
   if (storage) {
-    const key = `${TOKEN_CACHE_PREFIX}${lower}`;
-    try {
-      const raw = storage.getItem(key);
-      const parsed = safeParseRecord(raw);
-      if (parsed) return parsed;
-    } catch {
-      // ignore storage access errors
+    stores.push(new LocalStorageStore(storage));
+  }
+
+  if (!stores.length) {
+    defaultCacheStore = new MemoryStore<unknown>();
+  } else if (stores.length === 1) {
+    defaultCacheStore = stores[0];
+  } else {
+    defaultCacheStore = new CompositeCacheStore(stores);
+  }
+
+  return defaultCacheStore;
+}
+
+function readCachedAdjacencyRecord(
+  token: string,
+  store: CacheStore<unknown>,
+): CachedAdjacencyRecord | null {
+  const normalized = normalizeToken(token);
+  if (!normalized) return null;
+  const lower = lowerKey(normalized);
+  const keyCandidates = Array.from(
+    new Set<string>([
+      `${TOKEN_CACHE_PREFIX}${lower}`,
+      `${TOKEN_CACHE_PREFIX}${normalized}`,
+      lower,
+      normalized,
+    ]),
+  );
+
+  for (const key of keyCandidates) {
+    const raw = store.get(key);
+    const parsed = safeParseRecord(raw);
+    if (parsed) {
+      return parsed;
     }
   }
 
   return null;
 }
 
-function gatherTopCachedNeighbors(token: string, limit = 2): CachedNeighbor[] {
-  const record = readCachedAdjacencyRecord(token);
+function gatherTopCachedNeighbors(
+  token: string,
+  store: CacheStore<unknown>,
+  limit = 2,
+): CachedNeighbor[] {
+  const record = readCachedAdjacencyRecord(token, store);
   if (!record || !record.relationships) return [];
 
   const neighborWeights = new Map<string, CachedNeighbor>();
@@ -130,7 +175,6 @@ function gatherTopCachedNeighbors(token: string, limit = 2): CachedNeighbor[] {
   return ranked;
 }
 
-
 /** ===== Synthetic branching expansion helpers (guaranteed growth from 1 token) ===== */
 
 type Limits = {
@@ -147,42 +191,46 @@ type Limits = {
 
 function resolveLimitsFromSettings(cfg: any): Limits {
   const dm = (typeof navigator !== 'undefined' && (navigator as any).deviceMemory) || 8;
-  const def = dm <= 4
-    ? {
-        branchingFactor: 2,
-        maxNodes: 600,
-        maxEdges: 1800,
-        maxRelationTypes: 24,
-        pruneWeightThreshold: 0.22,
-        maxLayers: 3,
-        maxDegreePerLayer: [4, 2, 1],
-        similarityThreshold: 0.35,
-        strongSimilarityThreshold: 0.85,
-      }
-    : dm >= 16
+  const def =
+    dm <= 4
       ? {
           branchingFactor: 2,
-          maxNodes: 3200,
-          maxEdges: 12800,
-          maxRelationTypes: 50,
-          pruneWeightThreshold: 0.15,
-          maxLayers: 4,
-          maxDegreePerLayer: [6, 5, 4, 3],
-          similarityThreshold: 0.26,
-          strongSimilarityThreshold: 0.78,
-        }
-      : {
-          branchingFactor: 2,
-          maxNodes: 1600,
-          maxEdges: 6400,
-          maxRelationTypes: 40,
-          pruneWeightThreshold: 0.18,
+          maxNodes: 600,
+          maxEdges: 1800,
+          maxRelationTypes: 24,
+          pruneWeightThreshold: 0.22,
           maxLayers: 3,
-          maxDegreePerLayer: [5, 3, 2],
-          similarityThreshold: 0.3,
-          strongSimilarityThreshold: 0.82,
-        };
-  const maxLayers = Math.max(1, Number(cfg?.maxAdjacencyLayers ?? cfg?.maxLayers ?? def.maxLayers ?? 3) || 3);
+          maxDegreePerLayer: [4, 2, 1],
+          similarityThreshold: 0.35,
+          strongSimilarityThreshold: 0.85,
+        }
+      : dm >= 16
+        ? {
+            branchingFactor: 2,
+            maxNodes: 3200,
+            maxEdges: 12800,
+            maxRelationTypes: 50,
+            pruneWeightThreshold: 0.15,
+            maxLayers: 4,
+            maxDegreePerLayer: [6, 5, 4, 3],
+            similarityThreshold: 0.26,
+            strongSimilarityThreshold: 0.78,
+          }
+        : {
+            branchingFactor: 2,
+            maxNodes: 1600,
+            maxEdges: 6400,
+            maxRelationTypes: 40,
+            pruneWeightThreshold: 0.18,
+            maxLayers: 3,
+            maxDegreePerLayer: [5, 3, 2],
+            similarityThreshold: 0.3,
+            strongSimilarityThreshold: 0.82,
+          };
+  const maxLayers = Math.max(
+    1,
+    Number(cfg?.maxAdjacencyLayers ?? cfg?.maxLayers ?? def.maxLayers ?? 3) || 3,
+  );
   const rawDegree = Array.isArray(cfg?.maxAdjacencyDegreePerLayer)
     ? cfg.maxAdjacencyDegreePerLayer.map((value: unknown) => Number(value) || 0)
     : Array.isArray(def.maxDegreePerLayer)
@@ -199,7 +247,8 @@ function resolveLimitsFromSettings(cfg: any): Limits {
     maxNodes: Number(cfg?.maxNodes ?? def.maxNodes) || def.maxNodes,
     maxEdges: Number(cfg?.maxEdges ?? def.maxEdges) || def.maxEdges,
     maxRelationTypes: Number(cfg?.maxRelationTypes ?? def.maxRelationTypes) || def.maxRelationTypes,
-    pruneWeightThreshold: Number(cfg?.pruneWeightThreshold ?? def.pruneWeightThreshold) || def.pruneWeightThreshold,
+    pruneWeightThreshold:
+      Number(cfg?.pruneWeightThreshold ?? def.pruneWeightThreshold) || def.pruneWeightThreshold,
     maxLayers,
     maxDegreePerLayer,
     similarityThreshold: Math.max(
@@ -211,9 +260,9 @@ function resolveLimitsFromSettings(cfg: any): Limits {
       Math.min(
         1,
         Number(
-          cfg?.adjacencyStrongSimilarityThreshold
-            ?? cfg?.strongSimilarityThreshold
-            ?? Math.max(0.8, Number(cfg?.adjacencySimilarityThreshold ?? 0.3) + 0.4),
+          cfg?.adjacencyStrongSimilarityThreshold ??
+            cfg?.strongSimilarityThreshold ??
+            Math.max(0.8, Number(cfg?.adjacencySimilarityThreshold ?? 0.3) + 0.4),
         ),
       ),
     ),
@@ -223,7 +272,7 @@ function resolveLimitsFromSettings(cfg: any): Limits {
 function generateChildrenForToken(token: string, n: number): string[] {
   const base = String(token || '').trim();
   const out: string[] = [];
-  const suffixes = ['·α','·β','·γ','·δ','·ε','-1','-2','s','ing'];
+  const suffixes = ['·α', '·β', '·γ', '·δ', '·ε', '-1', '-2', 's', 'ing'];
   for (const s of suffixes) {
     if (out.length >= n) break;
     const cand = base + s;
@@ -235,8 +284,11 @@ function generateChildrenForToken(token: string, n: number): string[] {
   return out.slice(0, n);
 }
 
-function stronglyConnectedFromEdges(nodes: Array<{token:string}>, edges: Array<{source:string,target:string}>): boolean {
-  const nodeSet = new Set(nodes.map(n => n.token));
+function stronglyConnectedFromEdges(
+  nodes: Array<{ token: string }>,
+  edges: Array<{ source: string; target: string }>,
+): boolean {
+  const nodeSet = new Set(nodes.map((n) => n.token));
   if (nodeSet.size <= 1) return true;
   const adj: Record<string, Set<string>> = Object.create(null);
   for (const t of nodeSet) adj[t] = new Set();
@@ -250,14 +302,24 @@ function stronglyConnectedFromEdges(nodes: Array<{token:string}>, edges: Array<{
   const q = [start];
   while (q.length) {
     const cur = q.shift()!;
-    for (const nb of adj[cur]) if (!seen.has(nb)) { seen.add(nb); q.push(nb); }
+    for (const nb of adj[cur])
+      if (!seen.has(nb)) {
+        seen.add(nb);
+        q.push(nb);
+      }
   }
   return seen.size === nodeSet.size;
 }
 
-function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, seeds: string[], limits: Limits) {
-  const seen = new Set(nodes.map(n => n.token.toLowerCase()));
-  const queue = seeds.map(token => normalizeToken(token)).filter(Boolean);
+function syntheticBranchingExpansion(
+  nodes: PipelineGraph['nodes'],
+  acc: any,
+  seeds: string[],
+  limits: Limits,
+  cacheStore: CacheStore<unknown>,
+) {
+  const seen = new Set(nodes.map((n) => n.token.toLowerCase()));
+  const queue = seeds.map((token) => normalizeToken(token)).filter(Boolean);
   const edgeKeys = new Set<string>();
   for (const edge of acc.edges as Array<{ source?: string; target?: string; type?: string }>) {
     const key = `${edge.source || ''}->${edge.target || ''}|${edge.type || ''}`;
@@ -272,7 +334,13 @@ function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, se
     if (nodes.length >= limits.maxNodes) return false;
     seen.add(lower);
     const safeWeight = Number.isFinite(weight) ? Math.max(0.5, Math.abs(weight)) : 1;
-    nodes.push({ token: normalized, kind: 'word', rawScore: safeWeight, index: nodes.length, cat: null });
+    nodes.push({
+      token: normalized,
+      kind: 'word',
+      rawScore: safeWeight,
+      index: nodes.length,
+      cat: null,
+    });
     return true;
   };
 
@@ -295,7 +363,11 @@ function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, se
   while (queue.length) {
     if (nodes.length >= limits.maxNodes || acc.edges.length >= limits.maxEdges) break;
     const parent = queue.shift()!;
-    const cachedNeighbors = gatherTopCachedNeighbors(parent, Math.max(2, limits.branchingFactor));
+    const cachedNeighbors = gatherTopCachedNeighbors(
+      parent,
+      cacheStore,
+      Math.max(2, limits.branchingFactor),
+    );
     const addedNeighbors: CachedNeighbor[] = [];
     let attachedSemanticNeighbor = false;
 
@@ -341,7 +413,10 @@ function syntheticBranchingExpansion(nodes: PipelineGraph['nodes'], acc: any, se
         const a = normalizeToken(addedNeighbors[i]?.token);
         const b = normalizeToken(addedNeighbors[i + 1]?.token);
         if (!a || !b) continue;
-        const similarityA = computeCosineSimilarity(addedNeighbors[i]!.token, addedNeighbors[i + 1]!.token);
+        const similarityA = computeCosineSimilarity(
+          addedNeighbors[i]!.token,
+          addedNeighbors[i + 1]!.token,
+        );
         if (similarityA < limits.similarityThreshold) continue;
         const bridgeWeight = Math.max(
           similarityA,
@@ -415,7 +490,7 @@ export interface PipelineResult {
 }
 
 export function legacyTokenizeDetailed(source: string): Token[] {
-  return tokenizeWords(source).map(token => ({ ...token, kind: 'word' as const }));
+  return tokenizeWords(source).map((token) => ({ ...token, kind: 'word' as const }));
 }
 
 function buildGraphNodes(tokens: Token[]): PipelineGraph['nodes'] {
@@ -491,8 +566,8 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
 function buildChunkedAdjacency(
   tokens: Token[],
   chunkSize: number,
-  options: RecursiveAdjacencyOptions,
-): RecursiveAdjacencyEdge[] {
+  options: LayeredExpansionOptions,
+): LayeredAdjacencyEdge[] {
   const total = tokens.length;
   if (total < 2) {
     return [];
@@ -500,10 +575,10 @@ function buildChunkedAdjacency(
 
   const normalizedSize = Math.max(1, Math.floor(Number.isFinite(chunkSize) ? chunkSize : 1));
   if (normalizedSize <= 1 || normalizedSize >= total) {
-    return buildRecursiveAdjacency(tokens, options);
+    return buildLayeredAdjacency(tokens, options);
   }
 
-  const edges: RecursiveAdjacencyEdge[] = [];
+  const edges: LayeredAdjacencyEdge[] = [];
 
   for (let start = 0, chunkIndex = 0; start < total; start += normalizedSize, chunkIndex += 1) {
     const end = Math.min(total, start + normalizedSize);
@@ -511,7 +586,7 @@ function buildChunkedAdjacency(
       continue;
     }
 
-    const chunkEdges = buildRecursiveAdjacency(tokens.slice(start, end), options);
+    const chunkEdges = buildLayeredAdjacency(tokens.slice(start, end), options);
     for (const edge of chunkEdges) {
       edges.push({
         ...edge,
@@ -523,7 +598,7 @@ function buildChunkedAdjacency(
   }
 
   if (!edges.length) {
-    return buildRecursiveAdjacency(tokens, options);
+    return buildLayeredAdjacency(tokens, options);
   }
 
   return edges;
@@ -535,9 +610,11 @@ export function runPipeline(
   hooks: PipelineRunHooks = {},
 ): PipelineResult {
   const telemetry = hooks.telemetry;
-  const hasPerformanceNow = typeof performance !== 'undefined' && typeof performance.now === 'function';
+  const hasPerformanceNow =
+    typeof performance !== 'undefined' && typeof performance.now === 'function';
   const now = hasPerformanceNow ? () => performance.now() : () => Date.now();
   const stageStartTimes = new Map<PipelineStage, number>();
+  const cacheStore = hooks.cacheStore ?? resolveDefaultCacheStore();
 
   const ensureNotAborted = () => {
     if (hooks.shouldAbort?.()) {
@@ -588,9 +665,8 @@ export function runPipeline(
     symbolCount,
   });
 
-  const symbolEdgeLimit = symbolCount === 0
-    ? 0
-    : Math.max(symbolCount * 4, Math.ceil(tokens.length * 0.6));
+  const symbolEdgeLimit =
+    symbolCount === 0 ? 0 : Math.max(symbolCount * 4, Math.ceil(tokens.length * 0.6));
 
   const accumulator = createEdgeAccumulator(tokens, symbolEdgeLimit);
 
@@ -607,7 +683,7 @@ export function runPipeline(
   }
 
   const adjacencyChunkSize = Math.max(1, Math.floor(cfg.promptAdjacencyChunkSize ?? 8));
-  const adjacencyOptions: RecursiveAdjacencyOptions = {
+  const adjacencyOptions: LayeredExpansionOptions = {
     maxDepth: cfg.maxAdjacencyDepth,
     maxDegree: cfg.maxAdjacencyDegree,
     maxLayers: cfg.maxAdjacencyLayers,
@@ -640,7 +716,7 @@ export function runPipeline(
       const seedText = firstToken ? String(firstToken.t ?? '') : '';
       const seeds = seedText ? [seedText] : [];
       if (seeds.length) {
-        syntheticBranchingExpansion(nodes, accumulator, seeds, limits);
+        syntheticBranchingExpansion(nodes, accumulator, seeds, limits, cacheStore);
       }
     }
   } catch (e) {
@@ -670,7 +746,7 @@ export function runPipeline(
       if (e.target) connected.add(e.target);
     }
     if (nodes.length > limits.maxNodes) {
-      const keep = nodes.filter(n => n?.token && connected.has(n.token));
+      const keep = nodes.filter((n) => n?.token && connected.has(n.token));
       if (keep.length) {
         nodes.length = 0;
         nodes.push(...keep.slice(0, limits.maxNodes));

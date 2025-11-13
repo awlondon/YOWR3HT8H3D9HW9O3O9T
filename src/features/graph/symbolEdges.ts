@@ -1,5 +1,5 @@
-import type { Token, WordNeighborIndex } from '../tokens/tokenize.js';
-import { computeWordNeighborMap } from '../tokens/tokenize.js';
+import type { Token, WordNeighborIndex } from '../../tokens/tokenize.js';
+import { computeWordNeighborMap } from '../../tokens/tokenize.js';
 
 export const LEFT_BIND = new Set(['!', '?', '.', ',', ':', ';']);
 export const RIGHT_BIND = new Set(['(', '[', '{', '“', '‘']);

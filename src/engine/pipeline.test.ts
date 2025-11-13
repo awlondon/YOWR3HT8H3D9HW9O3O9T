@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runPipeline } from './pipeline.js';
+import { MemoryStore } from '../lib/storage/cacheStore.js';
 import { SETTINGS } from '../settings.js';
 import { getPipelineTelemetryHistory } from '../analytics/telemetry.js';
 import { registerEmbedding, clearRegisteredEmbeddings } from '../vector/similarity.js';
@@ -100,10 +101,9 @@ test('single token prompt seeds cached highest-weight adjacencies', () => {
     },
   };
 
-  const cache = new Map<string, unknown>();
-  cache.set(token, cachedRecord);
-  cache.set(token.toLowerCase(), cachedRecord);
-  (globalThis as any).__HLSF_ADJ_CACHE__ = cache;
+  const cacheStore = new MemoryStore<unknown>();
+  cacheStore.set(token, cachedRecord);
+  cacheStore.set(token.toLowerCase(), cachedRecord);
 
   try {
     clearRegisteredEmbeddings();
@@ -117,7 +117,7 @@ test('single token prompt seeds cached highest-weight adjacencies', () => {
       tokenizeSymbols: false,
       adjacencySimilarityThreshold: 0.1,
       adjacencyStrongSimilarityThreshold: 0.9,
-    });
+    }, { cacheStore });
     const nodeTokens = result.graph.nodes.map(node => node.token);
 
     assert.equal(nodeTokens.includes('Alpha'), true, 'top adjacency token should be promoted to node');
@@ -131,7 +131,6 @@ test('single token prompt seeds cached highest-weight adjacencies', () => {
     assert.equal(neighborTargets.has('Gamma'), true, 'solo should connect to next highest-weight neighbor');
     assert.equal(soloEdges.length >= 2, true, 'solo should emit at least two cached adjacency edges');
   } finally {
-    delete (globalThis as any).__HLSF_ADJ_CACHE__;
     clearRegisteredEmbeddings();
   }
 });
