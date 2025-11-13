@@ -1,4 +1,4 @@
-import type { SaasPlatform } from '../saas/platform';
+import type { SaasPlatform } from '../features/saas/platform';
 import { MEMBERSHIP_LEVELS, type MembershipLevel } from './membership';
 
 export interface SessionStats {

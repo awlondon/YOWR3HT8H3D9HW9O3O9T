@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildRecursiveAdjacency } from './recursive_adjacency.js';
-import type { Token } from '../tokens/tokenize.js';
-import { registerEmbedding, clearRegisteredEmbeddings } from '../vector/similarity.js';
+import type { Token } from '../../tokens/tokenize.js';
+import { registerEmbedding, clearRegisteredEmbeddings } from '../../vector/similarity.js';
 
 function buildTokens(words: string[]): Token[] {
   return words.map((word, index) => ({

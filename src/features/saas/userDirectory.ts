@@ -1,7 +1,7 @@
-import { generateSymmetricKey } from './encryption';
-import { SubscriptionManager } from './subscription';
-import { UserProfile } from './types';
-import { assertHandle, generateId } from './utils';
+import { generateSymmetricKey } from '../../lib/crypto/encryption.js';
+import { SubscriptionManager } from './subscription.js';
+import { UserProfile } from './types.js';
+import { assertHandle, generateId } from './utils.js';
 
 export interface UserDirectory {
   createUser(handle: string, displayName?: string, email?: string): Promise<UserProfile>;
@@ -11,6 +11,7 @@ export interface UserDirectory {
   getActiveUser(): UserProfile | null;
   getActiveUserId(): string | null;
   setActiveUser(identifier: string): UserProfile;
+  updateEncryptionKey(userId: string, newKey: string): void;
 }
 
 export function createUserDirectory(subscriptions: SubscriptionManager): UserDirectory {
@@ -39,7 +40,11 @@ export function createUserDirectory(subscriptions: SubscriptionManager): UserDir
     return usersById.get(id) || null;
   }
 
-  async function createUser(handle: string, displayName?: string, email?: string): Promise<UserProfile> {
+  async function createUser(
+    handle: string,
+    displayName?: string,
+    email?: string,
+  ): Promise<UserProfile> {
     const normalized = assertHandle(handle);
     if (usersByHandle.has(normalized)) {
       throw new Error(`User @${normalized} already exists.`);
@@ -86,6 +91,14 @@ export function createUserDirectory(subscriptions: SubscriptionManager): UserDir
     throw new Error(`User ${identifier} not found.`);
   }
 
+  function updateEncryptionKey(userId: string, newKey: string): void {
+    const user = getUserById(userId);
+    if (!user) {
+      throw new Error('User not found.');
+    }
+    user.encryptionKey = newKey;
+  }
+
   return {
     createUser,
     listUsers,
@@ -94,5 +107,6 @@ export function createUserDirectory(subscriptions: SubscriptionManager): UserDir
     getActiveUser,
     getActiveUserId,
     setActiveUser,
+    updateEncryptionKey,
   };
 }

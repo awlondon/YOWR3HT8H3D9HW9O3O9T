@@ -1,12 +1,22 @@
-import { decryptString, encryptString, base64Preview } from './encryption';
-import { UserDirectory } from './userDirectory';
-import { MessageEnvelope, MessagingPreview } from './types';
-import { assertHandle, generateId } from './utils';
+import {
+  decryptString,
+  encryptString,
+  base64Preview,
+  generateSymmetricKey,
+} from '../../lib/crypto/encryption.js';
+import { UserDirectory } from './userDirectory.js';
+import { MessageEnvelope, MessagingPreview } from './types.js';
+import { assertHandle, generateId } from './utils.js';
 
 export interface MessagingService {
-  sendMessage(senderId: string, recipientHandle: string, plainText: string): Promise<MessagingPreview>;
+  sendMessage(
+    senderId: string,
+    recipientHandle: string,
+    plainText: string,
+  ): Promise<MessagingPreview>;
   listEncryptedMessages(userId: string): MessagingPreview[];
   decryptMessage(userId: string, messageId: string): Promise<string>;
+  rotateEncryptionKey(userId: string, newKey?: string): Promise<string>;
 }
 
 export function createMessagingService(directory: UserDirectory): MessagingService {
@@ -31,7 +41,11 @@ export function createMessagingService(directory: UserDirectory): MessagingServi
     };
   }
 
-  async function sendMessage(senderId: string, recipientHandle: string, plainText: string): Promise<MessagingPreview> {
+  async function sendMessage(
+    senderId: string,
+    recipientHandle: string,
+    plainText: string,
+  ): Promise<MessagingPreview> {
     const sender = directory.getUserById(senderId);
     if (!sender) {
       throw new Error('Active user not found.');
@@ -81,7 +95,7 @@ export function createMessagingService(directory: UserDirectory): MessagingServi
       .slice()
       .sort((a, b) => a.createdAt - b.createdAt)
       .map(toPreview)
-      .map(message => ({
+      .map((message) => ({
         ...message,
         ciphertext: base64Preview(message.ciphertext, 16),
       }));
@@ -93,16 +107,36 @@ export function createMessagingService(directory: UserDirectory): MessagingServi
       throw new Error('User not found.');
     }
     const messages = inbox.get(userId) || [];
-    const target = messages.find(msg => msg.id === messageId);
+    const target = messages.find((msg) => msg.id === messageId);
     if (!target) {
       throw new Error('Message not found in inbox.');
     }
     return decryptString(target.ciphertext, target.iv, user.encryptionKey);
   }
 
+  async function rotateEncryptionKey(userId: string, newKey?: string): Promise<string> {
+    const user = directory.getUserById(userId);
+    if (!user) {
+      throw new Error('User not found.');
+    }
+    const freshKey = newKey || (await generateSymmetricKey());
+    const messages = inbox.get(userId) || [];
+
+    for (const envelope of messages) {
+      const plainText = await decryptString(envelope.ciphertext, envelope.iv, user.encryptionKey);
+      const reencrypted = await encryptString(plainText, freshKey);
+      envelope.ciphertext = reencrypted.ciphertext;
+      envelope.iv = reencrypted.iv;
+    }
+
+    directory.updateEncryptionKey(userId, freshKey);
+    return freshKey;
+  }
+
   return {
     sendMessage,
     listEncryptedMessages,
     decryptMessage,
+    rotateEncryptionKey,
   };
 }

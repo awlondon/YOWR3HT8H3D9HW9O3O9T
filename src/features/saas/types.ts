@@ -7,12 +7,27 @@ export type LedgerEntryKind =
   | 'credit-topup'
   | 'credit-usage';
 
+export interface CreditTierConfig {
+  id: string;
+  label: string;
+  amountUsd: number;
+  bonusPercent?: number;
+}
+
+export interface PaymentRecipientConfig {
+  handle: string;
+  label: string;
+  routingChannel?: string;
+}
+
 export interface SubscriptionPlanConfig {
   trialDays: number;
   monthlyPriceUsd: number;
   includedCreditsUsd: number;
   creditTopUpOptionsUsd: number[];
+  creditTiers: CreditTierConfig[];
   paymentRecipientHandle: string;
+  paymentRecipients: PaymentRecipientConfig[];
   paymentProcessor: string;
 }
 

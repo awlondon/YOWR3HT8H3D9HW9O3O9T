@@ -1,5 +1,12 @@
-import { LedgerEntry, LedgerEntryKind, SaasPlatformConfig, SubscriptionRecord, SubscriptionStatus, SubscriptionSummary } from './types';
-import { generateId } from './utils';
+import {
+  LedgerEntry,
+  LedgerEntryKind,
+  SaasPlatformConfig,
+  SubscriptionRecord,
+  SubscriptionStatus,
+  SubscriptionSummary,
+} from './types.js';
+import { generateId } from './utils.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_MONTH = 30 * MS_PER_DAY;
@@ -13,7 +20,20 @@ export class SubscriptionManager {
   private readonly subscriptions = new Map<string, SubscriptionRecord>();
 
   constructor(config: SaasPlatformConfig) {
-    this.config = config;
+    const tierAmounts = (config.creditTiers ?? []).map((tier) => tier.amountUsd);
+    const mergedTopUps = Array.from(
+      new Set([...(config.creditTopUpOptionsUsd ?? []), ...tierAmounts]),
+    )
+      .filter((amount) => Number.isFinite(amount))
+      .map((amount) => Number(amount))
+      .sort((a, b) => a - b);
+
+    this.config = {
+      ...config,
+      creditTopUpOptionsUsd: mergedTopUps,
+      creditTiers: (config.creditTiers ?? []).map((tier) => ({ ...tier })),
+      paymentRecipients: (config.paymentRecipients ?? []).map((recipient) => ({ ...recipient })),
+    };
   }
 
   initializeSubscriptionForUser(userId: string, createdAt = Date.now()): SubscriptionRecord {
@@ -34,7 +54,16 @@ export class SubscriptionManager {
       ledger,
     };
 
-    ledger.push(this.createLedgerEntry(userId, 'trial-start', 0, 0, record.creditsBalanceUsd, `Trial ends ${new Date(trialEndsAt).toISOString()}`));
+    ledger.push(
+      this.createLedgerEntry(
+        userId,
+        'trial-start',
+        0,
+        0,
+        record.creditsBalanceUsd,
+        `Trial ends ${new Date(trialEndsAt).toISOString()}`,
+      ),
+    );
     if (this.config.includedCreditsUsd > 0) {
       ledger.push(
         this.createLedgerEntry(
@@ -43,8 +72,8 @@ export class SubscriptionManager {
           0,
           this.config.includedCreditsUsd,
           record.creditsBalanceUsd,
-          'Included LLM API credits'
-        )
+          'Included LLM API credits',
+        ),
       );
     }
 
@@ -58,7 +87,7 @@ export class SubscriptionManager {
     amountUsd: number,
     creditsDeltaUsd: number,
     balanceAfterCreditsUsd: number,
-    note?: string
+    note?: string,
   ): LedgerEntry {
     return {
       id: generateId('led'),
@@ -96,7 +125,7 @@ export class SubscriptionManager {
       -this.config.monthlyPriceUsd,
       this.config.includedCreditsUsd,
       record.creditsBalanceUsd,
-      `Monthly subscription charge on ${new Date(chargedAt).toISOString()}`
+      `Monthly subscription charge on ${new Date(chargedAt).toISOString()}`,
     );
     record.ledger.push(entry);
   }
@@ -108,13 +137,14 @@ export class SubscriptionManager {
     }
     record.creditsBalanceUsd += amountUsd;
     record.totalCreditsPurchasedUsd += amountUsd;
+    const tier = this.config.creditTiers.find((t) => t.amountUsd === amountUsd);
     const entry = this.createLedgerEntry(
       userId,
       'credit-topup',
       -amountUsd,
       amountUsd,
       record.creditsBalanceUsd,
-      note || 'Manual credit top-up'
+      note || (tier ? `Credit tier purchase · ${tier.label}` : 'Manual credit top-up'),
     );
     record.ledger.push(entry);
     return entry;
@@ -135,7 +165,7 @@ export class SubscriptionManager {
       0,
       -amountUsd,
       record.creditsBalanceUsd,
-      note || 'LLM API usage'
+      note || 'LLM API usage',
     );
     record.ledger.push(entry);
     return entry;
@@ -152,7 +182,8 @@ export class SubscriptionManager {
     if (status === 'trial' && now > record.trialEndsAt) {
       status = 'expired';
     }
-    const trialDaysRemaining = status === 'trial' ? Math.max(0, Math.ceil((record.trialEndsAt - now) / MS_PER_DAY)) : 0;
+    const trialDaysRemaining =
+      status === 'trial' ? Math.max(0, Math.ceil((record.trialEndsAt - now) / MS_PER_DAY)) : 0;
     return {
       userId,
       status,
@@ -165,10 +196,17 @@ export class SubscriptionManager {
   }
 
   listSummaries(now = Date.now()): SubscriptionSummary[] {
-    return Array.from(this.subscriptions.keys()).map(userId => this.getSubscriptionSummary(userId, now));
+    return Array.from(this.subscriptions.keys()).map((userId) =>
+      this.getSubscriptionSummary(userId, now),
+    );
   }
 
   getPlanConfig(): SaasPlatformConfig {
-    return { ...this.config, creditTopUpOptionsUsd: [...this.config.creditTopUpOptionsUsd] };
+    return {
+      ...this.config,
+      creditTopUpOptionsUsd: [...this.config.creditTopUpOptionsUsd],
+      creditTiers: this.config.creditTiers.map((tier) => ({ ...tier })),
+      paymentRecipients: this.config.paymentRecipients.map((recipient) => ({ ...recipient })),
+    };
   }
 }
