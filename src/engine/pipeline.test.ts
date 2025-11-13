@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { runPipeline } from './pipeline.js';
 import { SETTINGS } from '../settings.js';
 import { getPipelineTelemetryHistory } from '../analytics/telemetry.js';
+import { registerEmbedding, clearRegisteredEmbeddings } from '../vector/similarity.js';
 
 test('runPipeline emits symbol edges with cached neighbors', () => {
   const input = 'Hello, world!';
@@ -50,7 +51,16 @@ test('symbol edge limits scale with symbol density', () => {
 
 test('runPipeline builds bounded recursive adjacency graph', () => {
   const input = 'alpha beta gamma delta epsilon';
-  const result = runPipeline(input, { ...SETTINGS, tokenizeSymbols: false });
+  clearRegisteredEmbeddings();
+  for (const word of input.split(' ')) {
+    registerEmbedding(word, [1, 0, 0]);
+  }
+  const result = runPipeline(input, {
+    ...SETTINGS,
+    tokenizeSymbols: false,
+    adjacencySimilarityThreshold: 0.1,
+    adjacencyStrongSimilarityThreshold: 0.8,
+  });
 
   const adjacencyEdges = result.edges.filter(edge => edge.type && edge.type.startsWith('adjacency:'));
   const maxExpected = Math.floor((SETTINGS.maxAdjacencyEdgesMultiplier ?? 6) * result.tokens.length);
@@ -64,7 +74,7 @@ test('runPipeline builds bounded recursive adjacency graph', () => {
 
   const metadataLevels = new Set<number>();
   for (const edge of adjacencyEdges) {
-    const level = (edge.meta as { level?: number }).level;
+    const level = (edge.meta as { level?: number }).level ?? (edge as any).level;
     if (typeof level === 'number') {
       metadataLevels.add(level);
     }
@@ -96,7 +106,18 @@ test('single token prompt seeds cached highest-weight adjacencies', () => {
   (globalThis as any).__HLSF_ADJ_CACHE__ = cache;
 
   try {
-    const result = runPipeline(token, { ...SETTINGS, tokenizeSymbols: false });
+    clearRegisteredEmbeddings();
+    registerEmbedding('solo', [1, 0, 0]);
+    registerEmbedding('Alpha', [1, 0, 0]);
+    registerEmbedding('alpha', [1, 0, 0]);
+    registerEmbedding('Gamma', [1, 0, 0]);
+    registerEmbedding('Beta', [0, 1, 0]);
+    const result = runPipeline(token, {
+      ...SETTINGS,
+      tokenizeSymbols: false,
+      adjacencySimilarityThreshold: 0.1,
+      adjacencyStrongSimilarityThreshold: 0.9,
+    });
     const nodeTokens = result.graph.nodes.map(node => node.token);
 
     assert.equal(nodeTokens.includes('Alpha'), true, 'top adjacency token should be promoted to node');
@@ -111,6 +132,7 @@ test('single token prompt seeds cached highest-weight adjacencies', () => {
     assert.equal(soloEdges.length >= 2, true, 'solo should emit at least two cached adjacency edges');
   } finally {
     delete (globalThis as any).__HLSF_ADJ_CACHE__;
+    clearRegisteredEmbeddings();
   }
 });
 

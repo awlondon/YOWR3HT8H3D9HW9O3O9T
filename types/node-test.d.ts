@@ -17,3 +17,16 @@ declare module 'node:assert/strict' {
   const assert: Assert;
   export default assert;
 }
+
+declare module 'estree' {
+  interface Node {
+    type: string;
+    [key: string]: unknown;
+  }
+  export type BaseNode = Node;
+}
+
+declare module 'json5' {
+  const json5: any;
+  export default json5;
+}

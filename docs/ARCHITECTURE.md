@@ -16,6 +16,10 @@ Future work can split `src/app.ts` into dedicated feature modules (graph renderi
 
 Static adjacency data is generated from the exported database JSON using the scripts in the `scripts/` directory. Generated artifacts are written to `remote-db/` and consumed by the browser at runtime. The build pipeline now records chunk metadata, token indices, and supports future versioning improvements.
 
+### Layered semantic adjacency
+
+The cognition engine expands each token’s relationships in discrete semantic layers. Level 0 records the circular backbone between sequential tokens. Subsequent levels (up to `maxAdjacencyLayers`) introduce indirect connections that pass a cosine-similarity gate sourced from the vector store. The per-level degree caps defined by `maxAdjacencyDegreePerLayer` keep the graph sparse while still permitting high-similarity “long range” edges when no short path exists. These parameters, along with `adjacencySimilarityThreshold` and `adjacencyStrongSimilarityThreshold`, are surfaced through the runtime settings so operators can trade off recall against density for different performance profiles.
+
 ## Tooling
 
 - **TypeScript** provides gradual typing for browser logic and integrates with modern editors.

@@ -16,6 +16,10 @@ export interface PerformanceProfileConfig {
   maxRelationships: number;
   maxRelationTypes: number;
   pruneWeightThreshold: number;
+  maxLayers: number;
+  maxDegreePerLayer: number[];
+  similarityThreshold: number;
+  strongSimilarityThreshold: number;
 }
 
 export const PERFORMANCE_PROFILES: Record<PerformanceProfileId, PerformanceProfileConfig> = {
@@ -28,6 +32,10 @@ export const PERFORMANCE_PROFILES: Record<PerformanceProfileId, PerformanceProfi
     maxRelationships: 2200,
     maxRelationTypes: 24,
     pruneWeightThreshold: 0.22,
+    maxLayers: 3,
+    maxDegreePerLayer: [4, 2, 1],
+    similarityThreshold: 0.35,
+    strongSimilarityThreshold: 0.85,
   },
   balanced: {
     id: 'balanced',
@@ -38,6 +46,10 @@ export const PERFORMANCE_PROFILES: Record<PerformanceProfileId, PerformanceProfi
     maxRelationships: 4200,
     maxRelationTypes: 40,
     pruneWeightThreshold: 0.18,
+    maxLayers: 3,
+    maxDegreePerLayer: [5, 3, 2],
+    similarityThreshold: 0.3,
+    strongSimilarityThreshold: 0.82,
   },
   research: {
     id: 'research',
@@ -48,6 +60,10 @@ export const PERFORMANCE_PROFILES: Record<PerformanceProfileId, PerformanceProfi
     maxRelationships: 5200,
     maxRelationTypes: 50,
     pruneWeightThreshold: 0.16,
+    maxLayers: 4,
+    maxDegreePerLayer: [6, 4, 3, 2],
+    similarityThreshold: 0.28,
+    strongSimilarityThreshold: 0.8,
   },
   maximalist: {
     id: 'maximalist',
@@ -58,6 +74,10 @@ export const PERFORMANCE_PROFILES: Record<PerformanceProfileId, PerformanceProfi
     maxRelationships: 6400,
     maxRelationTypes: 50,
     pruneWeightThreshold: 0.15,
+    maxLayers: 4,
+    maxDegreePerLayer: [6, 5, 4, 3],
+    similarityThreshold: 0.26,
+    strongSimilarityThreshold: 0.78,
   },
   chaoslab: {
     id: 'chaoslab',
@@ -68,6 +88,10 @@ export const PERFORMANCE_PROFILES: Record<PerformanceProfileId, PerformanceProfi
     maxRelationships: 4800,
     maxRelationTypes: 50,
     pruneWeightThreshold: 0.26,
+    maxLayers: 3,
+    maxDegreePerLayer: [5, 4, 2],
+    similarityThreshold: 0.32,
+    strongSimilarityThreshold: 0.84,
   },
 };
 
@@ -139,6 +163,10 @@ const DEFAULT_SETTINGS = {
   maxAdjacencyDepth: 4,
   maxAdjacencyDegree: 4,
   maxAdjacencyEdgesMultiplier: 6,
+  maxAdjacencyLayers: defaultPerformanceProfile.maxLayers,
+  maxAdjacencyDegreePerLayer: defaultPerformanceProfile.maxDegreePerLayer,
+  adjacencySimilarityThreshold: defaultPerformanceProfile.similarityThreshold,
+  adjacencyStrongSimilarityThreshold: defaultPerformanceProfile.strongSimilarityThreshold,
   promptAdjacencyChunkSize: 8,
   secureBillingOnly: true,
   performanceProfileId: defaultPerformanceProfile.id,
