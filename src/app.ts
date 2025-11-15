@@ -8608,6 +8608,13 @@ function markHlsfDataDirty() {
   state.hlsfReady = false;
 }
 
+function shouldRunFullHlsf(reason) {
+  const label = typeof reason === 'string' ? reason.toLowerCase() : '';
+  if (!label) return false;
+  if (label.startsWith('prompt')) return true;
+  return false;
+}
+
 function scheduleHlsfReload(reason = 'cache-update', options = {}) {
   const { immediate = false, debounceMs = 400 } = options || {};
   if (reason) {
@@ -8650,7 +8657,11 @@ function scheduleHlsfReload(reason = 'cache-update', options = {}) {
         return;
       }
 
-      if (
+      const forceFullRun = shouldRunFullHlsf(reason);
+      if (forceFullRun) {
+        const args = last && typeof last.rawArgs === 'string' ? last.rawArgs : '';
+        task = runHlsfSafely(args);
+      } else if (
         last &&
         last.metricScope !== METRIC_SCOPE.DB &&
         Array.isArray(last.anchors) &&
