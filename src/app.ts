@@ -37,6 +37,12 @@ import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
 import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
 import { ensureKBReady } from './state/kbStore';
+import {
+  runCognitionCycle,
+  type CognitionConfig,
+  type CognitionRun,
+  type ThinkingStyle,
+} from './engine/cognitionCycle';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -5691,6 +5697,8 @@ window.CognitionEngine = window.CognitionEngine || {
   api: {},
   processing: {},
 };
+window.CognitionEngine.cognition = window.CognitionEngine.cognition || {};
+window.CognitionEngine.cognition.runCycle = runCognitionCycle;
 window.CognitionEngine.userAvatar = userAvatarStore;
 window.CognitionEngine.export = window.CognitionEngine.export || {};
 window.CognitionEngine.export.session = (options) => {
@@ -6535,6 +6543,12 @@ const elements = {
   dbFileInput: document.getElementById('db-file'),
   avatarBundleInput: document.getElementById('avatar-bundle-input'),
   readFileInput: document.getElementById('read-file'),
+  thoughtLog: document.getElementById('thought-log'),
+  thoughtLogStatus: document.getElementById('thought-log-status'),
+  llmResponse: document.getElementById('llm-response'),
+  cognitionSummary: document.getElementById('cognition-summary'),
+  cognitionStatus: document.getElementById('cognition-status'),
+  thinkingStyle: document.getElementById('cognition-thinking-style'),
 };
 
 // ============================================
@@ -6544,6 +6558,94 @@ function sanitize(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function setCognitionStatus(message = '') {
+  if (elements.cognitionStatus) {
+    elements.cognitionStatus.textContent = message;
+  }
+}
+
+function clearCognitionOutputs() {
+  if (elements.llmResponse) elements.llmResponse.textContent = '';
+  if (elements.cognitionSummary) elements.cognitionSummary.textContent = '';
+}
+
+function renderCognitionRun(run: CognitionRun) {
+  if (elements.cognitionSummary) {
+    const visible = run.graphs.visibleGraphSummary;
+    const hidden = run.graphs.hiddenGraphSummary;
+    const fmt = (value: number) =>
+      Number.isFinite(value) ? value.toFixed(2) : String(value ?? '0.00');
+    const lines = [
+      `Visible graph · Nodes ${visible.nodeCount} · Edges ${visible.edgeCount} · Coherence ${fmt(visible.coherenceScore)}`,
+      `Hidden graph · Nodes ${hidden.nodeCount} · Edges ${hidden.edgeCount} · Coherence ${fmt(hidden.coherenceScore)}`,
+    ];
+    elements.cognitionSummary.innerHTML = lines
+      .map((line) => `<div>${sanitize(line)}</div>`)
+      .join('');
+  }
+  if (elements.llmResponse) {
+    elements.llmResponse.textContent = run.llm.response || 'No response available yet.';
+  }
+  setCognitionStatus('Cognition pipeline complete.');
+}
+
+function resolveCognitionConfigFromUI(): CognitionConfig {
+  const readNumber = (id: string, fallback: number): number => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input) return fallback;
+    const value = Number(input.value);
+    return Number.isFinite(value) ? value : fallback;
+  };
+
+  const iterations = Math.max(1, Math.round(readNumber('hlsf-aff-iters', 4)));
+  const rotationSpeed = readNumber('hlsf-rotation-speed', 0.3);
+  const affinityThreshold = Math.min(1, Math.max(0, readNumber('hlsf-aff-thresh', 0.35)));
+
+  const select = elements.thinkingStyle instanceof HTMLSelectElement ? elements.thinkingStyle : null;
+  const rawStyle = String(select?.value || 'analytic').toLowerCase();
+  const styles: ThinkingStyle[] = ['concise', 'analytic', 'dreamlike', 'dense'];
+  const thinkingStyle: ThinkingStyle = styles.includes(rawStyle as ThinkingStyle)
+    ? (rawStyle as ThinkingStyle)
+    : 'analytic';
+
+  return {
+    thinkingStyle,
+    iterations,
+    rotationSpeed,
+    affinityThreshold,
+    maxPromptWords: CONFIG.INPUT_WORD_LIMIT,
+  };
+}
+
+function triggerCognitionCycle(prompt: string): void {
+  clearCognitionOutputs();
+  setCognitionStatus('Running cognition pipeline…');
+  if (elements.llmResponse) {
+    elements.llmResponse.textContent = 'Awaiting emergent thought synthesis…';
+  }
+  const config = resolveCognitionConfigFromUI();
+  runCognitionCycle(prompt, config)
+    .then((run) => {
+      renderCognitionRun(run);
+      if (typeof window !== 'undefined') {
+        const root = ((window as any).CognitionEngine = (window as any).CognitionEngine || {});
+        root.cognition = Object.assign(root.cognition || {}, {
+          lastRun: run,
+          lastConfig: config,
+        });
+      }
+    })
+    .catch((error) => {
+      console.warn('Cognition pipeline failed:', error);
+      setCognitionStatus(`Cognition pipeline failed: ${error?.message || error}`);
+    });
+}
+
+setCognitionStatus('Awaiting prompt…');
+if (elements.llmResponse && !elements.llmResponse.textContent) {
+  elements.llmResponse.textContent = 'No cognition run yet.';
 }
 
 function slugifyName(value) {
@@ -20512,6 +20614,8 @@ async function processPrompt(prompt) {
         `Prompt truncated to ${CONFIG.INPUT_WORD_LIMIT} words to meet pipeline constraints.`,
       );
     }
+
+    triggerCognitionCycle(normalizedPrompt);
 
     const tokens = tokenize(normalizedPrompt);
     if (tokens.length === 0) {
