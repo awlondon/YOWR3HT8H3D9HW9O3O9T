@@ -9,6 +9,7 @@ export interface CognitionConfig {
   rotationSpeed: number;
   affinityThreshold: number;
   maxPromptWords: number;
+  maxIterations: number;
 }
 
 export interface GraphSummary {
@@ -58,13 +59,28 @@ export interface LLMResult {
   };
 }
 
+export type CognitionMode = 'visible' | 'hidden';
+
+export interface CognitionHistoryEntry {
+  iteration: number;
+  mode: CognitionMode;
+  prompt: string;
+  normalizedPrompt: string;
+  response: string;
+  hiddenPrompt?: string;
+}
+
 export interface CognitionRun {
   id: string;
+  cycleIndex: number;
   timestamp: string;
+  mode: CognitionMode;
   config: CognitionConfig;
   input: {
     userPrompt: string;
+    rawPrompt?: string;
   };
+  historyContext: CognitionHistoryEntry[];
   graphs: {
     visibleGraphSummary: GraphSummary;
     hiddenGraphSummary: GraphSummary;
@@ -74,6 +90,17 @@ export interface CognitionRun {
     perIterationText: string[];
   };
   llm: LLMResult;
+}
+
+export type CognitionTerminationReason = 'maxIterations' | 'exit' | 'error';
+
+export interface CognitionCycleResult {
+  cycleId: string;
+  runs: CognitionRun[];
+  history: CognitionHistoryEntry[];
+  finalRun: CognitionRun | null;
+  terminatedBy: CognitionTerminationReason;
+  error?: string;
 }
 
 interface RotationResult {
@@ -90,13 +117,17 @@ interface ThoughtIterationDom {
 let activeRotationConfig: CognitionConfig | null = null;
 let activeIterationIndex = 0;
 const iterationDom = new Map<number, ThoughtIterationDom>();
+const tokenStreamQueues = new Map<number, Promise<void>>();
 
-export async function runCognitionCycle(
-  prompt: string,
+async function executeCognitionPass(
+  rawPrompt: string,
   config: CognitionConfig,
+  history: CognitionHistoryEntry[],
+  cycleIndex: number,
 ): Promise<CognitionRun> {
-  const sanitizedConfig = normalizeConfig(config);
-  const truncatedPrompt = truncateToWords(prompt, sanitizedConfig.maxPromptWords);
+  const mode = detectCognitionMode(rawPrompt);
+  const normalizedPrompt = normalizePromptForMode(rawPrompt, mode);
+  const truncatedPrompt = truncateToWords(normalizedPrompt, config.maxPromptWords);
 
   const visibleGraph = expandVisibleGraph(truncatedPrompt);
   const visibleSummary = summarizeGraph(visibleGraph);
@@ -104,22 +135,31 @@ export async function runCognitionCycle(
   const hiddenGraph = expandHiddenGraph(visibleGraph);
   const hiddenSummary = summarizeGraph(hiddenGraph);
 
-  activeRotationConfig = sanitizedConfig;
-  prepareThoughtLogUI(sanitizedConfig.iterations);
+  activeRotationConfig = config;
+  prepareThoughtLogUI(config.iterations);
   const { perIterationTokens, perIterationText } = await runEmergentRotation(
     hiddenGraph,
-    sanitizedConfig,
+    config,
   );
 
-  const llmResult = await callLLM(truncatedPrompt, perIterationText, sanitizedConfig);
+  const llmResult = await callLLM(
+    truncatedPrompt,
+    perIterationText,
+    config,
+    mode,
+    history,
+  );
 
   const run: CognitionRun = {
     id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    cycleIndex,
     timestamp: new Date().toISOString(),
-    config: sanitizedConfig,
-    input: { userPrompt: truncatedPrompt },
+    mode,
+    config,
+    input: { userPrompt: truncatedPrompt, rawPrompt },
+    historyContext: history.map(entry => ({ ...entry })),
     graphs: {
       visibleGraphSummary: visibleSummary,
       hiddenGraphSummary: hiddenSummary,
@@ -133,12 +173,123 @@ export async function runCognitionCycle(
   return run;
 }
 
+export async function runCognitionCycle(
+  initialPrompt: string,
+  config: CognitionConfig,
+): Promise<CognitionCycleResult> {
+  const sanitizedConfig = normalizeConfig(config);
+  const cycleId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  const runs: CognitionRun[] = [];
+  const history: CognitionHistoryEntry[] = [];
+  let termination: CognitionTerminationReason = 'maxIterations';
+  let errorMessage: string | undefined;
+
+  let currentPrompt = initialPrompt;
+  let iteration = 0;
+
+  while (iteration < sanitizedConfig.maxIterations) {
+    if (!currentPrompt || !currentPrompt.trim()) break;
+    try {
+      const run = await executeCognitionPass(
+        currentPrompt,
+        sanitizedConfig,
+        history,
+        iteration,
+      );
+      runs.push(run);
+      const entry: CognitionHistoryEntry = {
+        iteration,
+        mode: run.mode,
+        prompt: currentPrompt,
+        normalizedPrompt: run.input.userPrompt,
+        response: run.llm.response,
+      };
+      history.push(entry);
+
+      if (shouldExitCycle(run.llm.response)) {
+        termination = 'exit';
+        break;
+      }
+
+      if (run.mode === 'visible') {
+        const hiddenPrompt = composeHiddenPrompt(history);
+        entry.hiddenPrompt = hiddenPrompt;
+        currentPrompt = hiddenPrompt;
+      } else {
+        currentPrompt = truncateToWords(run.llm.response ?? '', sanitizedConfig.maxPromptWords);
+      }
+
+      if (shouldExitCycle(currentPrompt)) {
+        termination = 'exit';
+        break;
+      }
+    } catch (error) {
+      termination = 'error';
+      errorMessage = error instanceof Error ? error.message : String(error);
+      break;
+    }
+
+    iteration += 1;
+  }
+
+  const result: CognitionCycleResult = {
+    cycleId,
+    runs,
+    history,
+    finalRun: runs[runs.length - 1] ?? null,
+    terminatedBy: termination,
+    error: errorMessage,
+  };
+
+  await persistCycleResult(result);
+
+  return result;
+}
+
 export function truncateToWords(text: string, maxWords: number): string {
   const words = text.trim().split(/\s+/);
   if (!maxWords || words.length <= maxWords) {
     return text.trim();
   }
   return words.slice(0, Math.max(1, maxWords)).join(' ');
+}
+
+function detectCognitionMode(prompt: string): CognitionMode {
+  const normalized = prompt?.trim().toLowerCase() ?? '';
+  return normalized.startsWith('/hidden') ? 'hidden' : 'visible';
+}
+
+function normalizePromptForMode(prompt: string, mode: CognitionMode): string {
+  if (mode !== 'hidden') {
+    return prompt;
+  }
+  return prompt.replace(/^\s*\/hidden\s*/i, '').trim();
+}
+
+export function composeHiddenPrompt(history: CognitionHistoryEntry[]): string {
+  const lastVisible = [...history]
+    .reverse()
+    .find(entry => entry.mode === 'visible');
+  const fallback = history.length ? history[history.length - 1]?.response?.trim() : '';
+  const reference = lastVisible?.response?.trim() || fallback;
+  const promptLines = [
+    '/hidden Reflect on the previous visible answer using HLSF rotations.',
+    'Rotate sequentially through the horizontal, longitudinal, and sagittal axes.',
+    'Describe the intersections discovered at each axis crossing and summarize the emergent insights.',
+  ];
+  if (reference) {
+    promptLines.push('Reference answer:', reference);
+  }
+  return promptLines.join('\n');
+}
+
+function shouldExitCycle(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const normalized = text.trim().toLowerCase();
+  return normalized === '/exit' || normalized.startsWith('/exit ');
 }
 
 function normalizeConfig(config: CognitionConfig): CognitionConfig {
@@ -151,7 +302,10 @@ function normalizeConfig(config: CognitionConfig): CognitionConfig {
     ? Math.max(1, Math.round(config.maxPromptWords))
     : 100;
   const thinkingStyle: ThinkingStyle = config?.thinkingStyle ?? 'analytic';
-  return { thinkingStyle, iterations, rotationSpeed, affinityThreshold, maxPromptWords };
+  const maxIterations = Number.isFinite(config?.maxIterations)
+    ? Math.max(1, Math.round(config.maxIterations))
+    : Math.max(1, iterations * 2);
+  return { thinkingStyle, iterations, rotationSpeed, affinityThreshold, maxPromptWords, maxIterations };
 }
 
 function clamp01(value: number): number {
@@ -319,7 +473,7 @@ function runSingleRotationIteration(
       for (const inter of intersections) {
         if (inter.affinity >= config.affinityThreshold) {
           bufferTokens.push(...inter.tokens);
-          streamTokensToThoughtLog(inter.tokens, config.thinkingStyle);
+          streamTokensToThoughtLog(inter.tokens, config.thinkingStyle, iterationIndex);
         }
       }
 
@@ -406,17 +560,31 @@ function hash(value: string): number {
   return Math.abs(h);
 }
 
-function streamTokensToThoughtLog(tokens: string[], style: ThinkingStyle): void {
-  if (!tokens.length) return;
-  const entry = iterationDom.get(activeIterationIndex);
-  if (!entry || typeof document === 'undefined') return;
-  tokens.forEach(token => {
-    const span = document?.createElement?.('span');
-    if (!span) return;
-    span.className = `thought-token thought-token--${style}`;
-    span.textContent = token;
-    entry.tokensEl.appendChild(span);
-  });
+function streamTokensToThoughtLog(
+  tokens: string[],
+  style: ThinkingStyle,
+  iterationIndex: number,
+): void {
+  if (!tokens.length || typeof document === 'undefined') return;
+  const entry = iterationDom.get(iterationIndex);
+  if (!entry) return;
+  const line = tokens.join(' ');
+  const queued = tokenStreamQueues.get(iterationIndex) ?? Promise.resolve();
+  const task = queued
+    .catch(() => undefined)
+    .then(
+      () =>
+        new Promise<void>(resolve => {
+          scheduleAnimationFrame(() => {
+            const block = document.createElement('div');
+            block.className = `thought-token-line thought-token-line--${style}`;
+            block.textContent = line;
+            entry.tokensEl.appendChild(block);
+            resolve();
+          });
+        }),
+    );
+  tokenStreamQueues.set(iterationIndex, task);
 }
 
 function commitThoughtLineToUI(text: string): void {
@@ -428,15 +596,18 @@ function commitThoughtLineToUI(text: string): void {
 function prepareThoughtLogUI(iterations: number): void {
   if (typeof document === 'undefined') {
     iterationDom.clear();
+    tokenStreamQueues.clear();
     return;
   }
   const root = document.getElementById('thought-log');
   if (!root) {
     iterationDom.clear();
+    tokenStreamQueues.clear();
     return;
   }
   root.innerHTML = '';
   iterationDom.clear();
+  tokenStreamQueues.clear();
   const count = Math.max(1, iterations);
   for (let i = 0; i < count; i += 1) {
     const block = document.createElement('div');
@@ -495,24 +666,54 @@ function materializeThought(tokens: string[], style: ThinkingStyle): string {
   }
 }
 
+function formatHistoryContext(history: CognitionHistoryEntry[]): string {
+  if (!history.length) return '';
+  const recent = history.slice(-6);
+  return recent
+    .map(entry => {
+      const label = entry.mode === 'hidden' ? 'Hidden' : 'Visible';
+      const parts = [
+        `${label} #${entry.iteration + 1} prompt: ${entry.prompt}`,
+        entry.hiddenPrompt ? `Hidden prompt issued: ${entry.hiddenPrompt}` : null,
+        `Response: ${entry.response || '(empty)'}`,
+      ].filter((part): part is string => Boolean(part));
+      return parts.join('\n');
+    })
+    .join('\n---\n');
+}
+
 export async function callLLM(
   prompt: string,
   thoughts: string[],
   config: CognitionConfig,
+  mode: CognitionMode,
+  history: CognitionHistoryEntry[],
 ): Promise<LLMResult> {
   const systemStyle = thinkingStyleToSystemMessage(config.thinkingStyle);
+  const hiddenInstruction =
+    mode === 'hidden'
+      ? 'You are handling a /hidden reflection prompt. Describe your chain of thought by rotating through the horizontal, longitudinal, and sagittal axes of the HLSF. At each axis, report the intersection-based insights that emerge, but keep this reasoning private.'
+      : null;
+  const historyContext = formatHistoryContext(history);
+  const userSegments = [
+    mode === 'hidden'
+      ? 'Hidden rotation reflection request (keep response aligned to the user-visible voice).'
+      : 'Visible prompt to address for the user.',
+    `Prompt:\n${prompt}`,
+    historyContext ? `Conversation history:\n${historyContext}` : null,
+    thoughts.length
+      ? `Internal thought lines:\n${thoughts.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
+      : null,
+  ].filter((segment): segment is string => Boolean(segment));
+
   const messages = [
     { role: 'system', content: systemStyle },
-    {
-      role: 'user',
-      content: `Original prompt:\n${prompt}\n\nInternal thought trace:\n${thoughts
-        .map((t, i) => `${i + 1}. ${t}`)
-        .join('\n')}`,
-    },
+    ...(hiddenInstruction ? [{ role: 'system', content: hiddenInstruction }] : []),
+    { role: 'user', content: userSegments.join('\n\n') },
     {
       role: 'system',
       content:
-        'Produce a single coherent answer for the user that integrates the internal thoughts. Do not mention the hidden process or internal trace.',
+        'Produce a single coherent answer for the user that integrates the internal thoughts. Do not mention /hidden prompts, the hidden process, or expose the internal trace.',
     },
   ];
 
@@ -577,5 +778,27 @@ async function persistRun(run: CognitionRun): Promise<void> {
     await fs.appendFile('hlsf_runs.ndjson', `${JSON.stringify(run)}\n`, 'utf8');
   } catch (error) {
     console.warn('Failed to persist cognition run to file:', error);
+  }
+}
+
+async function persistCycleResult(result: CognitionCycleResult): Promise<void> {
+  if (typeof window !== 'undefined' && window?.localStorage) {
+    try {
+      const key = 'hlsf_cycle_runs';
+      const existing = window.localStorage.getItem(key);
+      const cycles: CognitionCycleResult[] = existing ? JSON.parse(existing) : [];
+      cycles.push(result);
+      window.localStorage.setItem(key, JSON.stringify(cycles));
+    } catch (error) {
+      console.warn('Failed to persist cognition cycle to localStorage:', error);
+    }
+    return;
+  }
+
+  try {
+    const fs = await import(/* @vite-ignore */ 'node:fs/promises');
+    await fs.appendFile('hlsf_cycle_runs.ndjson', `${JSON.stringify(result)}\n`, 'utf8');
+  } catch (error) {
+    console.warn('Failed to persist cognition cycle to file:', error);
   }
 }

@@ -40,6 +40,7 @@ import { ensureKBReady } from './state/kbStore';
 import {
   runCognitionCycle,
   type CognitionConfig,
+  type CognitionCycleResult,
   type CognitionRun,
   type ThinkingStyle,
 } from './engine/cognitionCycle';
@@ -6571,7 +6572,16 @@ function clearCognitionOutputs() {
   if (elements.cognitionSummary) elements.cognitionSummary.textContent = '';
 }
 
-function renderCognitionRun(run: CognitionRun) {
+function renderCognitionRun(run: CognitionRun | null) {
+  if (!run) {
+    if (elements.cognitionSummary) {
+      elements.cognitionSummary.textContent = 'No cognition run available.';
+    }
+    if (elements.llmResponse) {
+      elements.llmResponse.textContent = 'No response available yet.';
+    }
+    return;
+  }
   if (elements.cognitionSummary) {
     const visible = run.graphs.visibleGraphSummary;
     const hidden = run.graphs.hiddenGraphSummary;
@@ -6588,7 +6598,6 @@ function renderCognitionRun(run: CognitionRun) {
   if (elements.llmResponse) {
     elements.llmResponse.textContent = run.llm.response || 'No response available yet.';
   }
-  setCognitionStatus('Cognition pipeline complete.');
 }
 
 function resolveCognitionConfigFromUI(): CognitionConfig {
@@ -6616,6 +6625,7 @@ function resolveCognitionConfigFromUI(): CognitionConfig {
     rotationSpeed,
     affinityThreshold,
     maxPromptWords: CONFIG.INPUT_WORD_LIMIT,
+    maxIterations: Math.max(1, iterations * 2),
   };
 }
 
@@ -6627,12 +6637,20 @@ function triggerCognitionCycle(prompt: string): void {
   }
   const config = resolveCognitionConfigFromUI();
   runCognitionCycle(prompt, config)
-    .then((run) => {
-      renderCognitionRun(run);
+    .then((result: CognitionCycleResult) => {
+      renderCognitionRun(result.finalRun);
+      const statusMessage =
+        result.terminatedBy === 'exit'
+          ? 'Cognition cycle exited via /exit signal.'
+          : result.terminatedBy === 'error'
+            ? `Cognition cycle stopped due to error${result.error ? `: ${result.error}` : '.'}`
+            : 'Cognition cycle complete.';
+      setCognitionStatus(statusMessage);
       if (typeof window !== 'undefined') {
         const root = ((window as any).CognitionEngine = (window as any).CognitionEngine || {});
         root.cognition = Object.assign(root.cognition || {}, {
-          lastRun: run,
+          lastRun: result.finalRun,
+          lastCycle: result,
           lastConfig: config,
         });
       }
