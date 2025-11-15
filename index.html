@@ -249,6 +249,39 @@
         <button id="send-btn" class="btn btn-primary">Send</button>
       </div>
     </div>
+    <section id="cognition-panel" aria-labelledby="cognition-panel-title">
+      <header class="cognition-panel__header">
+        <div>
+          <p class="cognition-panel__eyebrow">Cognition pipeline</p>
+          <h2 id="cognition-panel-title">Emergent thought trace</h2>
+        </div>
+        <div class="cognition-panel__controls">
+          <label for="cognition-thinking-style">Thinking style</label>
+          <select id="cognition-thinking-style">
+            <option value="analytic" selected>Analytic</option>
+            <option value="concise">Concise</option>
+            <option value="dreamlike">Dreamlike</option>
+            <option value="dense">Dense</option>
+          </select>
+          <p class="cognition-panel__hint">
+            Iterations, rotation speed, and affinity threshold mirror the sliders in the HLSF controls.
+          </p>
+        </div>
+      </header>
+      <div id="cognition-status" class="cognition-status" role="status" aria-live="polite"></div>
+      <div class="cognition-output">
+        <section class="thought-log-panel" aria-labelledby="thought-log-title">
+          <h3 id="thought-log-title">Internal thought log</h3>
+          <div id="thought-log-status" class="thought-log-status" role="status" aria-live="polite"></div>
+          <div id="thought-log" class="thought-log-list"></div>
+        </section>
+        <section class="llm-panel" aria-labelledby="llm-panel-title">
+          <h3 id="llm-panel-title">Articulated response</h3>
+          <div id="cognition-summary" class="cognition-summary"></div>
+          <div id="llm-response" class="llm-response" aria-live="polite"></div>
+        </section>
+      </div>
+    </section>
     <section id="voice-clone-panel" class="voice-panel">
       <div class="voice-panel-header">
         <div class="section-title">🎙️ Voice Clone Studio</div>
