@@ -50,6 +50,8 @@ def now_iso() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 def ensure_layout(root: Path) -> None:
+    """Create the canonical 26×26 shard layout if it does not exist."""
+
     for a in ALPHABET:
         (root / a).mkdir(parents=True, exist_ok=True)
         for b in ALPHABET:
@@ -62,7 +64,8 @@ def ensure_layout(root: Path) -> None:
                 }, ensure_ascii=False, indent=2))
 
 def normalize_token(t: str) -> str:
-    # Lowercase, collapse spaces, strip
+    """Lowercase, collapse whitespace, and trim the provided token."""
+
     t = (t or "").strip()
     t = re.sub(r"\s+", " ", t)
     return t
@@ -82,12 +85,16 @@ def bigram_bucket(token: str, fallback_letter: str = "Z") -> Tuple[str, str]:
     return a, a + b
 
 def load_json(path: Path) -> Dict[str, Any]:
+    """Load a shard JSON file, returning an empty structure if missing."""
+
     if not path.exists():
         return {"schema_version": 1, "updated_at": now_iso(), "tokens": {}}
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 def atomic_write(path: Path, obj: Any) -> None:
+    """Write *obj* to *path* via an atomic rename."""
+
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
@@ -143,6 +150,8 @@ def merge_shard(dst: Dict[str, Any], src: Dict[str, Any]) -> Dict[str, Any]:
 # ---------- Importer
 
 def to_shard_obj(entry: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Normalize a raw token entry into the shard schema."""
+
     tok = normalize_token(entry.get("token", ""))
     if not tok:
         return "", {}
@@ -152,6 +161,8 @@ def to_shard_obj(entry: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     return tok, tok_obj
 
 def import_source_into_remote(source_json: Path, remote_root: Path, fallback_letter: str = "Z") -> None:
+    """Merge a canonical DB export into the on-disk shard layout."""
+
     ensure_layout(remote_root)
     with source_json.open("r", encoding="utf-8") as f:
         src = json.load(f)
