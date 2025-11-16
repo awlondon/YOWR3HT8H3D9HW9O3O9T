@@ -10,6 +10,10 @@ export interface CognitionConfig {
   affinityThreshold: number;
   maxPromptWords: number;
   maxIterations: number;
+  /** Optional cap on how many tokens are kept per rotation. */
+  maxTokensPerThought?: number;
+  /** Optional angle spacing (in degrees) before flushing token batches to the UI. */
+  tokenBatchAngle?: number;
 }
 
 export interface GraphSummary {
@@ -305,7 +309,22 @@ function normalizeConfig(config: CognitionConfig): CognitionConfig {
   const maxIterations = Number.isFinite(config?.maxIterations)
     ? Math.max(1, Math.round(config.maxIterations))
     : Math.max(1, iterations * 2);
-  return { thinkingStyle, iterations, rotationSpeed, affinityThreshold, maxPromptWords, maxIterations };
+  const maxTokensPerThought = Number.isFinite(config?.maxTokensPerThought)
+    ? Math.max(8, Math.round(config.maxTokensPerThought))
+    : 50;
+  const tokenBatchAngle = Number.isFinite(config?.tokenBatchAngle)
+    ? Math.min(90, Math.max(1, Number(config.tokenBatchAngle)))
+    : 12;
+  return {
+    thinkingStyle,
+    iterations,
+    rotationSpeed,
+    affinityThreshold,
+    maxPromptWords,
+    maxIterations,
+    maxTokensPerThought,
+    tokenBatchAngle,
+  };
 }
 
 function clamp01(value: number): number {
@@ -453,15 +472,40 @@ function runSingleRotationIteration(
   const speed = Math.abs(config.rotationSpeed) < 1e-3 ? 0.3 : config.rotationSpeed;
   const degreesPerSecond = Math.abs(speed) * (180 / Math.PI);
   const degreesPerFrame = Math.max(0.5, degreesPerSecond / 60);
+  const tokenFlushInterval = Math.min(90, Math.max(1, config.tokenBatchAngle ?? 12));
+  const maxTokensPerThought = Math.max(8, config.maxTokensPerThought ?? 50);
 
   return new Promise(resolve => {
     let angle = 0;
     const bufferTokens: string[] = [];
+    const pendingTokenSet = new Set<string>();
+    let lastFlushAngle = 0;
+
+    const flushPendingTokens = () => {
+      if (!pendingTokenSet.size) return;
+      streamTokensToThoughtLog(
+        Array.from(pendingTokenSet),
+        config.thinkingStyle,
+        iterationIndex,
+      );
+      pendingTokenSet.clear();
+    };
+
+    const collectTokens = (tokens: string[]) => {
+      if (!tokens.length || bufferTokens.length >= maxTokensPerThought) return;
+      for (const token of tokens) {
+        if (!token) continue;
+        if (bufferTokens.length >= maxTokensPerThought) break;
+        bufferTokens.push(token);
+        pendingTokenSet.add(token);
+      }
+    };
 
     const step = () => {
       angle += degreesPerFrame;
 
       if (angle >= 360) {
+        flushPendingTokens();
         stopRotationAnimation(iterationIndex);
         const text = materializeThought(bufferTokens, config.thinkingStyle);
         commitThoughtLineToUI(text);
@@ -472,9 +516,16 @@ function runSingleRotationIteration(
       const intersections = getIntersectionsAtAngle(hiddenGraph, angle);
       for (const inter of intersections) {
         if (inter.affinity >= config.affinityThreshold) {
-          bufferTokens.push(...inter.tokens);
-          streamTokensToThoughtLog(inter.tokens, config.thinkingStyle, iterationIndex);
+          collectTokens(inter.tokens);
         }
+      }
+
+      if (
+        pendingTokenSet.size &&
+        (angle - lastFlushAngle >= tokenFlushInterval || bufferTokens.length >= maxTokensPerThought)
+      ) {
+        flushPendingTokens();
+        lastFlushAngle = angle;
       }
 
       scheduleAnimationFrame(step);
@@ -649,10 +700,21 @@ function updateThoughtLogStatus(message: string): void {
 
 function materializeThought(tokens: string[], style: ThinkingStyle): string {
   if (!tokens.length) return '';
-  const unique = Array.from(new Set(tokens.filter(Boolean)));
+  const phrases: string[] = [];
+  for (let i = 0; i < tokens.length; i += 2) {
+    const current = tokens[i]?.trim();
+    const next = tokens[i + 1]?.trim();
+    if (current && next) {
+      phrases.push(`${current} → ${next}`);
+    } else if (current) {
+      phrases.push(current);
+    }
+  }
+  const unique = Array.from(new Set((phrases.length ? phrases : tokens).filter(Boolean)));
+  if (!unique.length) return '';
   switch (style) {
     case 'concise':
-      return unique.join(' ');
+      return unique.join('; ');
     case 'analytic':
       return unique
         .map((token, index) => `${index + 1}. ${token}`)
@@ -662,7 +724,7 @@ function materializeThought(tokens: string[], style: ThinkingStyle): string {
     case 'dense':
       return unique.join(' · ');
     default:
-      return tokens.join(' ');
+      return unique.join(' ');
   }
 }
 
@@ -695,6 +757,7 @@ export async function callLLM(
       ? 'You are handling a /hidden reflection prompt. Describe your chain of thought by rotating through the horizontal, longitudinal, and sagittal axes of the HLSF. At each axis, report the intersection-based insights that emerge, but keep this reasoning private.'
       : null;
   const historyContext = formatHistoryContext(history);
+  const thoughtsBlock = thoughts.map(thought => `- ${thought}`).join('\n');
   const userSegments = [
     mode === 'hidden'
       ? 'Hidden rotation reflection request (keep response aligned to the user-visible voice).'
@@ -702,7 +765,7 @@ export async function callLLM(
     `Prompt:\n${prompt}`,
     historyContext ? `Conversation history:\n${historyContext}` : null,
     thoughts.length
-      ? `Internal thought lines:\n${thoughts.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
+      ? `Internal thought summaries (context only, do not repeat verbatim):\n\`\`\`\n${thoughtsBlock}\n\`\`\``
       : null,
   ].filter((segment): segment is string => Boolean(segment));
 
@@ -713,7 +776,7 @@ export async function callLLM(
     {
       role: 'system',
       content:
-        'Produce a single coherent answer for the user that integrates the internal thoughts. Do not mention /hidden prompts, the hidden process, or expose the internal trace.',
+        'Produce a single coherent answer for the user that integrates the internal thoughts without echoing the bullet list verbatim. Do not mention /hidden prompts, the hidden process, or expose the internal trace.',
     },
   ];
 
