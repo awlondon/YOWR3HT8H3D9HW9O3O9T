@@ -74,6 +74,17 @@ export interface CognitionHistoryEntry {
   hiddenPrompt?: string;
 }
 
+export interface ThoughtSummary {
+  id: string;
+  input: string;
+  intersectionTokens: string[];
+  metrics: {
+    tokenCount: number;
+    edgeCount: number;
+    integrationScore: number;
+  };
+}
+
 export interface CognitionRun {
   id: string;
   cycleIndex: number;
@@ -94,6 +105,7 @@ export interface CognitionRun {
     perIterationText: string[];
   };
   llm: LLMResult;
+  summary: ThoughtSummary;
 }
 
 export type CognitionTerminationReason = 'maxIterations' | 'exit' | 'error';
@@ -154,10 +166,18 @@ async function executeCognitionPass(
     history,
   );
 
+  const runId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  const summary = buildThoughtSummary(
+    runId,
+    hiddenGraph,
+    truncatedPrompt,
+  );
+
   const run: CognitionRun = {
-    id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    id: runId,
     cycleIndex,
     timestamp: new Date().toISOString(),
     mode,
@@ -170,6 +190,7 @@ async function executeCognitionPass(
     },
     thoughts: { perIterationTokens, perIterationText },
     llm: llmResult,
+    summary,
   };
 
   await persistRun(run);
@@ -443,6 +464,75 @@ function estimateClusterCount(graph: HLSFGraph): number {
   return Math.max(1, Math.round(Math.sqrt(graph.nodes.length)));
 }
 
+function buildThoughtSummary(
+  runId: string,
+  hiddenGraph: HLSFGraph,
+  input: string,
+): ThoughtSummary {
+  const intersectionTokens = extractIntersectionTokens(hiddenGraph);
+  return {
+    id: runId,
+    input,
+    intersectionTokens,
+    metrics: {
+      tokenCount: hiddenGraph.nodes.length,
+      edgeCount: hiddenGraph.edges.length,
+      integrationScore: Number(computeCoherence(hiddenGraph).toFixed(2)),
+    },
+  };
+}
+
+function extractIntersectionTokens(graph: HLSFGraph, limit = 10): string[] {
+  if (!graph.nodes.length) return [];
+  const degree = new Map<string, number>();
+  for (const edge of graph.edges) {
+    degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
+  }
+
+  const maxDegree = Math.max(1, ...degree.values(), 0);
+  const maxWeight = Math.max(1, ...graph.nodes.map(node => node.weight ?? 0), 0);
+  const scored = graph.nodes.map(node => {
+    const nodeDegree = degree.get(node.id) ?? 0;
+    const normalizedDegree = maxDegree ? nodeDegree / maxDegree : 0;
+    const normalizedWeight = maxWeight ? (node.weight ?? 0) / maxWeight : 0;
+    const score = normalizedDegree * 0.6 + normalizedWeight * 0.4;
+    return {
+      token: node.label || node.id,
+      degree: nodeDegree,
+      weight: node.weight ?? 0,
+      score,
+    };
+  });
+
+  const avgDegree = scored.reduce((sum, entry) => sum + entry.degree, 0) /
+    Math.max(1, scored.length);
+  const avgScore = scored.reduce((sum, entry) => sum + entry.score, 0) /
+    Math.max(1, scored.length);
+  const minDegree = Math.max(2, Math.round(avgDegree));
+  const threshold = avgScore > 0 ? avgScore : 0.1;
+
+  const prioritized = scored
+    .filter(entry => entry.degree >= minDegree || entry.score >= threshold)
+    .sort((a, b) => b.score - a.score)
+    .map(entry => entry.token)
+    .filter(token => Boolean(token));
+
+  const unique = Array.from(new Set(prioritized));
+  if (unique.length >= limit) {
+    return unique.slice(0, limit);
+  }
+
+  for (const entry of scored.sort((a, b) => b.score - a.score)) {
+    if (unique.length >= limit) break;
+    if (entry.token && !unique.includes(entry.token)) {
+      unique.push(entry.token);
+    }
+  }
+
+  return unique.slice(0, limit);
+}
+
 async function runEmergentRotation(
   hiddenGraph: HLSFGraph,
   config: CognitionConfig,
@@ -650,7 +740,7 @@ function prepareThoughtLogUI(iterations: number): void {
     tokenStreamQueues.clear();
     return;
   }
-  const root = document.getElementById('thought-log');
+  const root = document.getElementById('thought-iteration-log');
   if (!root) {
     iterationDom.clear();
     tokenStreamQueues.clear();
