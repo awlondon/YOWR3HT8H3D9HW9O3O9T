@@ -6526,6 +6526,32 @@ syncSettings();
 
 let currentAbortController = null;
 
+const THOUGHT_RETENTION_LIMIT = 50;
+
+interface ThoughtLogState {
+  entries: CognitionRun[];
+  archived: CognitionRun[];
+  selectedId: string | null;
+  showDebug: boolean;
+  activeTokenFilter: string | null;
+  pinnedTokens: Map<string, string>;
+  unreadCount: number;
+  autoSelectLatest: boolean;
+  showingOlder: boolean;
+}
+
+const thoughtLogState: ThoughtLogState = {
+  entries: [],
+  archived: [],
+  selectedId: null,
+  showDebug: false,
+  activeTokenFilter: null,
+  pinnedTokens: new Map(),
+  unreadCount: 0,
+  autoSelectLatest: true,
+  showingOlder: false,
+};
+
 // ============================================
 // DOM ELEMENTS
 // ============================================
@@ -6546,11 +6572,34 @@ const elements = {
   readFileInput: document.getElementById('read-file'),
   thoughtLog: document.getElementById('thought-log'),
   thoughtLogStatus: document.getElementById('thought-log-status'),
+  thoughtLogFilters: document.getElementById('thought-log-filters'),
+  thoughtLogNewIndicator: document.getElementById('thought-log-new-indicator'),
+  thoughtLogLoadOlder: document.getElementById('thought-log-load-older'),
+  thoughtLogDebugToggle: document.getElementById('thought-log-debug-toggle'),
   llmResponse: document.getElementById('llm-response'),
   cognitionSummary: document.getElementById('cognition-summary'),
   cognitionStatus: document.getElementById('cognition-status'),
   thinkingStyle: document.getElementById('cognition-thinking-style'),
+  thoughtDetailTitle: document.getElementById('thought-detail-title'),
+  thoughtDetailMetrics: document.getElementById('thought-detail-metrics'),
+  thoughtDetailTokens: document.getElementById('thought-detail-tokens'),
+  thoughtDetailIterations: document.getElementById('thought-detail-iterations'),
+  thoughtLogPanel: document.querySelector('.thought-log-panel'),
 };
+
+(elements.thoughtLogDebugToggle as HTMLButtonElement | null)?.addEventListener('click', () => {
+  setThoughtLogDebugVisible(!thoughtLogState.showDebug);
+});
+(elements.thoughtLogLoadOlder as HTMLButtonElement | null)?.addEventListener('click', handleLoadOlderThoughts);
+(elements.thoughtLogNewIndicator as HTMLButtonElement | null)?.addEventListener(
+  'click',
+  handleNewThoughtIndicatorClick,
+);
+
+setThoughtLogDebugVisible(thoughtLogState.showDebug);
+renderTokenFilters();
+renderThoughtLog();
+updateThoughtLogNewIndicator();
 
 // ============================================
 // UTILITIES
@@ -6570,17 +6619,61 @@ function setCognitionStatus(message = '') {
 function clearCognitionOutputs() {
   if (elements.llmResponse) elements.llmResponse.textContent = '';
   if (elements.cognitionSummary) elements.cognitionSummary.textContent = '';
+  if (elements.thoughtDetailTokens) elements.thoughtDetailTokens.textContent = '';
+  if (elements.thoughtDetailMetrics) elements.thoughtDetailMetrics.textContent = '';
+  if (elements.thoughtDetailIterations) elements.thoughtDetailIterations.textContent = '';
+  if (elements.thoughtDetailTitle) {
+    elements.thoughtDetailTitle.textContent = 'Select a thought to anchor the articulated explanation.';
+  }
 }
 
-function renderCognitionRun(run: CognitionRun | null) {
-  if (!run) {
+function renderThoughtDetail(run: CognitionRun | null) {
+  const setPlaceholder = () => {
     if (elements.cognitionSummary) {
       elements.cognitionSummary.textContent = 'No cognition run available.';
     }
     if (elements.llmResponse) {
       elements.llmResponse.textContent = 'No response available yet.';
     }
+    if (elements.thoughtDetailTokens) {
+      elements.thoughtDetailTokens.textContent = '';
+    }
+    if (elements.thoughtDetailMetrics) {
+      elements.thoughtDetailMetrics.textContent = '';
+    }
+    if (elements.thoughtDetailIterations) {
+      elements.thoughtDetailIterations.textContent = '';
+    }
+    if (elements.thoughtDetailTitle) {
+      elements.thoughtDetailTitle.textContent = 'Select a thought to anchor the articulated explanation.';
+    }
+  };
+  if (!run) {
+    setPlaceholder();
     return;
+  }
+  const timestamp = new Date(run.timestamp);
+  const timeLabel = Number.isNaN(timestamp.getTime())
+    ? ''
+    : timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  if (elements.thoughtDetailTitle) {
+    const label = run.input.userPrompt || 'Untitled prompt';
+    elements.thoughtDetailTitle.textContent = timeLabel ? `${label} · ${timeLabel}` : label;
+  }
+  if (elements.thoughtDetailMetrics) {
+    const metrics = run.summary?.metrics;
+    const parts = metrics
+      ? [
+        ['Tokens', metrics.tokenCount],
+        ['Edges', metrics.edgeCount],
+        ['Integration', Number.isFinite(metrics.integrationScore)
+          ? metrics.integrationScore.toFixed(2)
+          : '0.00'],
+      ]
+      : [];
+    elements.thoughtDetailMetrics.innerHTML = parts
+      .map(([label, value]) => `<span><small>${sanitize(String(label))}</small><strong>${sanitize(String(value))}</strong></span>`)
+      .join('');
   }
   if (elements.cognitionSummary) {
     const visible = run.graphs.visibleGraphSummary;
@@ -6595,9 +6688,359 @@ function renderCognitionRun(run: CognitionRun | null) {
       .map((line) => `<div>${sanitize(line)}</div>`)
       .join('');
   }
+  const tokensContainer = elements.thoughtDetailTokens;
+  if (tokensContainer) {
+    tokensContainer.textContent = '';
+    const tokens = run.summary?.intersectionTokens ?? [];
+    if (!tokens.length) {
+      const empty = document.createElement('span');
+      empty.className = 'thought-chip is-empty';
+      empty.textContent = 'No high-salience intersections detected';
+      tokensContainer.appendChild(empty);
+    } else {
+      tokens.slice(0, 12).forEach((token) => {
+        const chip = document.createElement('span');
+        chip.className = 'thought-chip is-active';
+        chip.textContent = token;
+        tokensContainer.appendChild(chip);
+      });
+    }
+  }
+  if (elements.thoughtDetailIterations) {
+    const iterations = run.thoughts?.perIterationText?.filter((entry) => Boolean(entry?.trim())) ?? [];
+    if (!iterations.length) {
+      elements.thoughtDetailIterations.textContent = '';
+    } else {
+      const list = iterations
+        .map((entry, index) => `<li>${sanitize(`${index + 1}. ${entry}`)}</li>`)
+        .join('');
+      elements.thoughtDetailIterations.innerHTML = `<strong>Rotation narrative</strong><ol>${list}</ol>`;
+    }
+  }
   if (elements.llmResponse) {
     elements.llmResponse.textContent = run.llm.response || 'No response available yet.';
   }
+}
+
+function normalizeTokenLabel(token: string): string {
+  return token?.trim().toLowerCase() ?? '';
+}
+
+function setThoughtLogDebugVisible(flag: boolean): void {
+  const changed = thoughtLogState.showDebug !== flag;
+  thoughtLogState.showDebug = flag;
+  if (elements.thoughtLogPanel instanceof HTMLElement) {
+    elements.thoughtLogPanel.classList.toggle('is-debug-visible', flag);
+  }
+  const toggle = elements.thoughtLogDebugToggle as HTMLButtonElement | null;
+  if (toggle) {
+    toggle.textContent = flag ? 'Hide debug' : 'Show debug';
+  }
+  if (changed) {
+    renderThoughtLog();
+  }
+}
+
+function updateThoughtLogNewIndicator(): void {
+  const indicator = elements.thoughtLogNewIndicator as HTMLButtonElement | null;
+  if (!indicator) return;
+  if (thoughtLogState.unreadCount > 0) {
+    indicator.hidden = false;
+    indicator.textContent = `New thoughts (${thoughtLogState.unreadCount})`;
+  } else {
+    indicator.hidden = true;
+  }
+}
+
+function renderTokenFilters(): void {
+  const container = elements.thoughtLogFilters;
+  if (!container) return;
+  container.innerHTML = '';
+  const hasFilter = Boolean(thoughtLogState.activeTokenFilter);
+  const pinnedEntries = Array.from(thoughtLogState.pinnedTokens.entries());
+  if (!hasFilter && !pinnedEntries.length) {
+    container.classList.add('is-muted');
+    container.textContent = 'Intersection focus: All tokens';
+    return;
+  }
+  container.classList.remove('is-muted');
+  if (thoughtLogState.activeTokenFilter) {
+    const filterChip = document.createElement('button');
+    filterChip.type = 'button';
+    filterChip.className = 'thought-chip is-active';
+    filterChip.textContent = `Filter: ${thoughtLogState.activeTokenFilter} ✕`;
+    filterChip.addEventListener('click', () => {
+      thoughtLogState.activeTokenFilter = null;
+      renderTokenFilters();
+      renderThoughtLog();
+    });
+    container.appendChild(filterChip);
+  }
+  pinnedEntries.forEach(([normalized, label]) => {
+    const pinChip = document.createElement('button');
+    pinChip.type = 'button';
+    pinChip.className = 'thought-chip is-pinned';
+    pinChip.textContent = `Pinned: ${label} ✕`;
+    pinChip.addEventListener('click', () => {
+      thoughtLogState.pinnedTokens.delete(normalized);
+      renderTokenFilters();
+      renderThoughtLog();
+    });
+    container.appendChild(pinChip);
+  });
+}
+
+function getVisibleThoughtRuns(): CognitionRun[] {
+  const baseList = thoughtLogState.showingOlder
+    ? thoughtLogState.archived.slice(-THOUGHT_RETENTION_LIMIT)
+    : thoughtLogState.entries.slice();
+  const filterToken = thoughtLogState.activeTokenFilter
+    ? normalizeTokenLabel(thoughtLogState.activeTokenFilter)
+    : '';
+  return baseList
+    .filter((run) => {
+      const tokens = run.summary?.intersectionTokens ?? [];
+      const normalizedTokens = new Map<string, string>();
+      tokens.forEach((token) => {
+        const normalized = normalizeTokenLabel(token);
+        if (normalized) normalizedTokens.set(normalized, token);
+      });
+      if (filterToken && !normalizedTokens.has(filterToken)) {
+        return false;
+      }
+      for (const key of thoughtLogState.pinnedTokens.keys()) {
+        if (!normalizedTokens.has(key)) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .sort((a, b) => (a.timestamp > b.timestamp ? -1 : 1));
+}
+
+function findRunById(id: string | null): CognitionRun | null {
+  if (!id) return null;
+  const lookup = [...thoughtLogState.entries, ...thoughtLogState.archived];
+  return lookup.find((entry) => entry.id === id) ?? null;
+}
+
+function selectThought(runId: string | null, options: { auto?: boolean } = {}): void {
+  thoughtLogState.selectedId = runId;
+  if (options.auto) {
+    thoughtLogState.autoSelectLatest = true;
+  } else {
+    thoughtLogState.autoSelectLatest = false;
+  }
+  const run = findRunById(runId);
+  renderThoughtDetail(run);
+  thoughtLogState.unreadCount = 0;
+  updateThoughtLogNewIndicator();
+  renderThoughtLog();
+}
+
+function createThoughtRow(run: CognitionRun): HTMLElement {
+  const row = document.createElement('article');
+  row.className = 'thought-row';
+  row.dataset.id = run.id;
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  if (thoughtLogState.selectedId === run.id) {
+    row.classList.add('is-selected');
+  }
+  const timestamp = new Date(run.timestamp);
+  const timeLabel = Number.isNaN(timestamp.getTime())
+    ? '—'
+    : timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  row.title = `${run.id} · ${timeLabel}`;
+  const header = document.createElement('div');
+  header.className = 'thought-row__header';
+  header.innerHTML = `<span>${sanitize(timeLabel)}</span><span>${sanitize(run.id.slice(-6))}</span>`;
+  const title = document.createElement('div');
+  title.className = 'thought-row__title';
+  title.textContent = run.input.userPrompt || 'Untitled prompt';
+  const chips = document.createElement('div');
+  chips.className = 'thought-row__chips';
+  const tokens = run.summary?.intersectionTokens ?? [];
+  if (!tokens.length) {
+    const empty = document.createElement('span');
+    empty.className = 'thought-chip is-empty';
+    empty.textContent = 'No intersections logged';
+    chips.appendChild(empty);
+  } else {
+    tokens.slice(0, 10).forEach((token) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'thought-chip';
+      chip.textContent = token;
+      const normalized = normalizeTokenLabel(token);
+      if (
+        thoughtLogState.activeTokenFilter &&
+        normalizeTokenLabel(thoughtLogState.activeTokenFilter) === normalized
+      ) {
+        chip.classList.add('is-active');
+      }
+      if (thoughtLogState.pinnedTokens.has(normalized)) {
+        chip.classList.add('is-pinned');
+      }
+      chip.addEventListener('click', (event) => handleTokenChipClick(token, event));
+      chip.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        togglePinnedToken(token);
+      });
+      chips.appendChild(chip);
+    });
+  }
+  const metrics = document.createElement('div');
+  metrics.className = 'thought-row__metrics';
+  const summary = run.summary?.metrics;
+  const metricParts = summary
+    ? [
+      `${summary.tokenCount} tokens`,
+      `${summary.edgeCount} edges`,
+      `Σ ${Number.isFinite(summary.integrationScore)
+        ? summary.integrationScore.toFixed(2)
+        : '0.00'}`,
+    ]
+    : [];
+  metrics.textContent = metricParts.join(' · ');
+  row.append(header, title, chips, metrics);
+  if (thoughtLogState.showDebug) {
+    const debug = document.createElement('details');
+    debug.className = 'thought-row__debug';
+    const summaryEl = document.createElement('summary');
+    summaryEl.textContent = 'Debug telemetry';
+    const pre = document.createElement('pre');
+    const payload = {
+      tokens: run.thoughts?.perIterationTokens?.map((entry) => entry.slice(0, 12)) ?? [],
+      text: run.thoughts?.perIterationText ?? [],
+    };
+    pre.textContent = JSON.stringify(payload, null, 2);
+    debug.append(summaryEl, pre);
+    row.appendChild(debug);
+  }
+  const handleActivate = (event?: Event) => {
+    event?.preventDefault();
+    selectThought(run.id, { auto: false });
+  };
+  row.addEventListener('click', handleActivate);
+  row.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      handleActivate(event);
+    }
+  });
+  return row;
+}
+
+function renderThoughtLog(): void {
+  const container = elements.thoughtLog;
+  if (!container) return;
+  const runs = getVisibleThoughtRuns();
+  container.innerHTML = '';
+  if (!runs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'thought-log-empty';
+    empty.textContent = thoughtLogState.showingOlder
+      ? 'No archived thoughts to display.'
+      : 'No cognition runs recorded yet.';
+    container.appendChild(empty);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  runs.forEach((run) => fragment.appendChild(createThoughtRow(run)));
+  container.appendChild(fragment);
+  const loadOlderBtn = elements.thoughtLogLoadOlder as HTMLButtonElement | null;
+  if (loadOlderBtn) {
+    const archiveCount = thoughtLogState.archived.length;
+    loadOlderBtn.disabled = archiveCount === 0 && !thoughtLogState.showingOlder;
+    loadOlderBtn.textContent = thoughtLogState.showingOlder
+      ? 'Back to latest'
+      : archiveCount
+        ? `Load older thoughts (${archiveCount})`
+        : 'Load older thoughts';
+  }
+}
+
+function handleTokenChipClick(token: string, event: MouseEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.shiftKey) {
+    togglePinnedToken(token);
+    return;
+  }
+  if (
+    thoughtLogState.activeTokenFilter &&
+    normalizeTokenLabel(thoughtLogState.activeTokenFilter) === normalizeTokenLabel(token)
+  ) {
+    thoughtLogState.activeTokenFilter = null;
+  } else {
+    thoughtLogState.activeTokenFilter = token;
+  }
+  renderTokenFilters();
+  renderThoughtLog();
+}
+
+function togglePinnedToken(token: string): void {
+  const normalized = normalizeTokenLabel(token);
+  if (!normalized) return;
+  if (thoughtLogState.pinnedTokens.has(normalized)) {
+    thoughtLogState.pinnedTokens.delete(normalized);
+  } else {
+    thoughtLogState.pinnedTokens.set(normalized, token);
+  }
+  renderTokenFilters();
+  renderThoughtLog();
+}
+
+function ingestThoughtRuns(runs: CognitionRun[]): void {
+  if (!Array.isArray(runs) || !runs.length) return;
+  let inserted = false;
+  runs.forEach((run) => {
+    if (!run?.id) return;
+    if (thoughtLogState.entries.some((entry) => entry.id === run.id)) return;
+    if (thoughtLogState.archived.some((entry) => entry.id === run.id)) return;
+    thoughtLogState.entries.push(run);
+    inserted = true;
+  });
+  if (!inserted) return;
+  while (thoughtLogState.entries.length > THOUGHT_RETENTION_LIMIT) {
+    const shifted = thoughtLogState.entries.shift();
+    if (shifted) {
+      thoughtLogState.archived.push(shifted);
+    }
+  }
+  if (thoughtLogState.autoSelectLatest || !thoughtLogState.selectedId) {
+    const latest = thoughtLogState.entries[thoughtLogState.entries.length - 1];
+    if (latest) {
+      selectThought(latest.id, { auto: true });
+    }
+  } else {
+    thoughtLogState.unreadCount += runs.length;
+    updateThoughtLogNewIndicator();
+    renderThoughtLog();
+  }
+}
+
+function handleLoadOlderThoughts(): void {
+  if (!thoughtLogState.showingOlder && thoughtLogState.archived.length === 0) return;
+  thoughtLogState.showingOlder = !thoughtLogState.showingOlder;
+  if (thoughtLogState.showingOlder) {
+    thoughtLogState.autoSelectLatest = false;
+    renderThoughtLog();
+  } else {
+    thoughtLogState.autoSelectLatest = true;
+    const latest = thoughtLogState.entries[thoughtLogState.entries.length - 1];
+    selectThought(latest?.id ?? null, { auto: true });
+  }
+}
+
+function handleNewThoughtIndicatorClick(): void {
+  thoughtLogState.autoSelectLatest = true;
+  thoughtLogState.showingOlder = false;
+  const latest = thoughtLogState.entries[thoughtLogState.entries.length - 1];
+  selectThought(latest?.id ?? null, { auto: true });
+  thoughtLogState.unreadCount = 0;
+  updateThoughtLogNewIndicator();
 }
 
 function resolveCognitionConfigFromUI(): CognitionConfig {
@@ -6638,7 +7081,10 @@ function triggerCognitionCycle(prompt: string): void {
   const config = resolveCognitionConfigFromUI();
   runCognitionCycle(prompt, config)
     .then((result: CognitionCycleResult) => {
-      renderCognitionRun(result.finalRun);
+      ingestThoughtRuns(result.runs);
+      if (!result.finalRun) {
+        renderThoughtDetail(null);
+      }
       const statusMessage =
         result.terminatedBy === 'exit'
           ? 'Cognition cycle exited via /exit signal.'
