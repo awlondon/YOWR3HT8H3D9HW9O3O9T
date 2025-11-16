@@ -214,6 +214,9 @@ Compiles the test bundle (`tsconfig.test.json`) and executes Node-based unit tes
 
 ### Partition adjacency exports
 
+Detailed command examples for the Python utilities live in
+[`docs/DATA_PROCESSING.md`](docs/DATA_PROCESSING.md).
+
 1. Initialize the shard layout:
    ```bash
    python hlsf_partition.py --remote-db ./remote-db --init-layout
