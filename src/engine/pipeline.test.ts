@@ -5,6 +5,11 @@ import { MemoryStore } from '../lib/storage/cacheStore.js';
 import { SETTINGS } from '../settings.js';
 import { getPipelineTelemetryHistory } from '../analytics/telemetry.js';
 import { registerEmbedding, clearRegisteredEmbeddings } from '../vector/similarity.js';
+import {
+  resolveLimitsFromSettings,
+  syntheticBranchingExpansion,
+  stronglyConnectedFromEdges,
+} from './syntheticExpansion.js';
 
 test('runPipeline emits symbol edges with cached neighbors', () => {
   const input = 'Hello, world!';
@@ -48,6 +53,49 @@ test('symbol edge limits scale with symbol density', () => {
   const emphasisEdges = last.edgeHistogram['modifier:emphasis'] || 0;
   assert.equal(emphasisEdges >= 5, true, 'modifier emphasis edges should be counted');
   assert.equal(Array.isArray(last.topDrift.entered), true, 'top drift should expose entered tokens');
+});
+
+test('syntheticBranchingExpansion respects limits and deterministic rng', () => {
+  const nodes = [
+    { token: 'alpha', kind: 'word', rawScore: 1, index: 0, cat: null as string | null },
+  ];
+  const acc = { edges: [] as Array<{ source?: string; target?: string; type?: string; w?: number }> };
+  const limits = resolveLimitsFromSettings({
+    branchingFactor: 12,
+    maxNodes: 15,
+    maxEdges: 60,
+    maxAdjacencyLayers: 2,
+    maxAdjacencyDegreePerLayer: [3, 2],
+    adjacencySimilarityThreshold: 0,
+    adjacencyStrongSimilarityThreshold: 0.5,
+  });
+  const cacheStore = new MemoryStore<unknown>();
+  const deterministicValues = [0.1, 0.2, 0.3];
+  let idx = 0;
+  const rng = () => {
+    const value = deterministicValues[idx % deterministicValues.length];
+    idx += 1;
+    return value;
+  };
+
+  syntheticBranchingExpansion(nodes, acc, ['alpha'], limits, cacheStore, rng);
+
+  assert.equal(nodes.length <= limits.maxNodes, true, 'node count should respect limit');
+  assert.equal(acc.edges.length <= limits.maxEdges, true, 'edge count should respect limit');
+  const undirectedEdges = acc.edges
+    .filter((edge) => Boolean(edge.source && edge.target))
+    .map((edge) => ({ source: edge.source as string, target: edge.target as string }));
+  assert.equal(
+    stronglyConnectedFromEdges(nodes, undirectedEdges),
+    true,
+    'graph should stay connected',
+  );
+  const generatedLabels = nodes.map((node) => node.token).filter((token) => token !== 'alpha');
+  assert.equal(
+    generatedLabels.some((token) => token.includes('3ll')),
+    true,
+    'deterministic rng suffix should appear in fallback child tokens',
+  );
 });
 
 test('runPipeline builds bounded recursive adjacency graph', () => {
@@ -133,6 +181,73 @@ test('single token prompt seeds cached highest-weight adjacencies', () => {
   } finally {
     clearRegisteredEmbeddings();
   }
+});
+
+test('runPipeline aborts when shouldAbort flips during execution', () => {
+  let checks = 0;
+  const hooks = {
+    shouldAbort: () => {
+      checks += 1;
+      return checks > 3;
+    },
+  };
+  assert.throws(
+    () => runPipeline('Abort me softly', { ...SETTINGS }, hooks),
+    (err: unknown) => err instanceof Error && err.name === 'AbortError',
+    'pipeline should raise AbortError when hook triggers',
+  );
+});
+
+test('runPipeline metrics remain consistent across symbol densities', () => {
+  const plainResult = runPipeline('hello world', { ...SETTINGS, tokenizeSymbols: true });
+  assert.equal(plainResult.metrics.tokenCount, plainResult.tokens.length);
+  assert.equal(plainResult.metrics.wordCount, 2);
+  assert.equal(plainResult.metrics.symbolCount, 0);
+  assert.equal(plainResult.metrics.symbolDensity, 0);
+
+  const symbolRich = runPipeline('hello, world!', { ...SETTINGS, tokenizeSymbols: true });
+  assert.equal(symbolRich.metrics.tokenCount, symbolRich.tokens.length);
+  assert.equal(symbolRich.metrics.wordCount >= 2, true);
+  assert.equal(symbolRich.metrics.symbolCount >= 1, true, 'punctuation should be counted as symbol tokens');
+  assert.equal(
+    symbolRich.metrics.symbolDensity,
+    symbolRich.metrics.tokenCount === 0
+      ? 0
+      : symbolRich.metrics.symbolCount / symbolRich.metrics.tokenCount,
+  );
+  assert.equal(symbolRich.metrics.edgeCount, symbolRich.edges.length);
+  assert.equal(symbolRich.metrics.symbolEdgeCount >= 0, true);
+});
+
+test('adjacency edges respect configured multiplier caps', () => {
+  const input = 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda';
+  const settings = {
+    ...SETTINGS,
+    tokenizeSymbols: false,
+    maxAdjacencyEdgesMultiplier: 1,
+  };
+  const result = runPipeline(input, settings);
+  const adjacencyEdges = result.edges.filter((edge) => edge.type?.startsWith('adjacency:'));
+  const expectedCap = Math.max(result.tokens.length, Math.floor(result.tokens.length));
+  assert.equal(
+    adjacencyEdges.length <= expectedCap,
+    true,
+    'adjacency edge count should remain within multiplier-derived cap',
+  );
+});
+
+test('pipeline enforces small graph limits without emptying results', () => {
+  const settings = {
+    ...SETTINGS,
+    maxNodes: 10,
+    maxEdges: 50,
+    branchingFactor: 2,
+  };
+  const result = runPipeline('delta epsilon zeta eta theta iota kappa lambda mu nu', settings);
+  assert.equal(result.graph.nodes.length > 0, true, 'should still produce nodes');
+  assert.equal(result.edges.length > 0, true, 'should still produce edges');
+  assert.equal(result.graph.nodes.length <= settings.maxNodes, true);
+  assert.equal(result.edges.length <= settings.maxEdges, true);
 });
 
 test('runPipeline synthesizes a consciousness workspace with recurrent monitoring', () => {

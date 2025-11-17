@@ -1,5 +1,11 @@
-import { SETTINGS, PERFORMANCE_PROFILES, resolvePerformanceProfile } from './settings';
-import type { Settings } from './settings';
+import {
+  SETTINGS,
+  PERFORMANCE_PROFILES,
+  resolvePerformanceProfile,
+  getPerformanceProfile,
+  getProfileSettings,
+} from './settings';
+import type { Settings, PerformanceProfile } from './settings';
 import { runPipeline } from './engine/pipeline';
 import { PipelineWorkerClient } from './engine/pipelineClient';
 import type { TelemetryHook } from './types/pipeline-messages';
@@ -32,6 +38,7 @@ import { AgentKernel } from './agent';
 import type { AgentConfig, AgentContext } from './agent/types';
 import { registerAgentCommands } from './app/commands/agent';
 import { registerVectorCommand } from './app/commands/vector';
+import { callOpenAIChat } from './engine/openaiClient';
 import { recordAgentTelemetryEvent } from './analytics/agentTelemetry';
 import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
@@ -569,11 +576,53 @@ function installClusterZoom(canvas: HTMLCanvasElement | null) {
   resetOverlay();
 }
 
+type CommandHelpCategoryId = 'graph' | 'state' | 'remote' | 'saas' | 'voice' | 'system';
+
 interface CommandHelpEntry {
   command: string;
   description: string;
   requiresMembership: boolean;
+  category: CommandHelpCategoryId;
 }
+
+interface CommandHelpCategoryMeta {
+  title: string;
+  description: string;
+  examples: string[];
+}
+
+const COMMAND_HELP_CATEGORY_DETAILS: Record<CommandHelpCategoryId, CommandHelpCategoryMeta> = {
+  graph: {
+    title: 'Graph & adjacency',
+    description: 'Ingest documents, tune adjacency, and explore the HLSF visualization.',
+    examples: ['/read notes.pdf', '/hlsf', '/symbols status'],
+  },
+  state: {
+    title: 'State & diagnostics',
+    description: 'Inspect runtime metrics, caches, and engine health.',
+    examples: ['/state', '/self'],
+  },
+  remote: {
+    title: 'Remote database',
+    description: 'Manage remote manifests, sync directories, and view stats.',
+    examples: ['/load remote.zip', '/remotestats'],
+  },
+  saas: {
+    title: 'SaaS workspace',
+    description: 'Create hosted profiles, manage plans, and handle encrypted messages.',
+    examples: ['/signup', '/plan'],
+  },
+  voice: {
+    title: 'Voice & avatar',
+    description: 'Archive or restore avatar conversation logs and voice profiles.',
+    examples: ['/sv-avatar', '/ld-avatar'],
+  },
+  system: {
+    title: 'System utilities',
+    description: 'Console housekeeping, exports, and performance tuning.',
+    examples: ['/perfprofile high', '/clear'],
+  },
+};
 
 interface LocalHlsfAdjacencyTokenSummary {
   token: string;
@@ -606,76 +655,89 @@ interface LocalHlsfMemoryState {
 }
 
 const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
-  { command: '/help', description: 'Show this command catalog', requiresMembership: false },
-  { command: '/clear', description: 'Clear log history', requiresMembership: true },
+  { command: '/help', description: 'Show this command catalog', requiresMembership: false, category: 'system' },
+  { command: '/clear', description: 'Clear log history', requiresMembership: true, category: 'system' },
   {
     command: '/reset',
     description: 'Clear cache and database snapshots',
     requiresMembership: true,
+    category: 'system',
+  },
+  {
+    command: '/perfprofile',
+    description: 'Inspect or apply performance presets',
+    requiresMembership: true,
+    category: 'system',
   },
   {
     command: '/del-avatar',
     description: 'Delete avatar conversation log and voice',
     requiresMembership: true,
+    category: 'voice',
   },
-  { command: '/sv-avatar', description: 'Save avatar archive', requiresMembership: true },
-  { command: '/ld-avatar', description: 'Load avatar archive', requiresMembership: true },
-  { command: '/stats', description: 'Session statistics overview', requiresMembership: true },
-  { command: '/database', description: 'View database metadata', requiresMembership: true },
-  { command: '/db', description: 'Alias for /database', requiresMembership: true },
-  { command: '/export', description: 'Export database metadata as JSON', requiresMembership: true },
-  { command: '/glyph', description: 'Generate glyph mappings', requiresMembership: true },
-  { command: '/ledger', description: 'Inspect glyph ledger', requiresMembership: true },
-  { command: '/encrypt', description: 'Encode text into glyphs', requiresMembership: true },
-  { command: '/decrypt', description: 'Decode glyph sequences', requiresMembership: true },
-  { command: '/exportledger', description: 'Export glyph ledger', requiresMembership: true },
-  { command: '/import', description: 'Import HLSF database file', requiresMembership: true },
+  { command: '/sv-avatar', description: 'Save avatar archive', requiresMembership: true, category: 'voice' },
+  { command: '/ld-avatar', description: 'Load avatar archive', requiresMembership: true, category: 'voice' },
+  { command: '/stats', description: 'Session statistics overview', requiresMembership: true, category: 'state' },
+  { command: '/database', description: 'View database metadata', requiresMembership: true, category: 'state' },
+  { command: '/db', description: 'Alias for /database', requiresMembership: true, category: 'state' },
+  { command: '/export', description: 'Export database metadata as JSON', requiresMembership: true, category: 'system' },
+  { command: '/glyph', description: 'Generate glyph mappings', requiresMembership: true, category: 'graph' },
+  { command: '/ledger', description: 'Inspect glyph ledger', requiresMembership: true, category: 'graph' },
+  { command: '/encrypt', description: 'Encode text into glyphs', requiresMembership: true, category: 'graph' },
+  { command: '/decrypt', description: 'Decode glyph sequences', requiresMembership: true, category: 'graph' },
+  { command: '/exportledger', description: 'Export glyph ledger', requiresMembership: true, category: 'graph' },
+  { command: '/import', description: 'Import HLSF database file', requiresMembership: true, category: 'graph' },
   {
     command: '/read',
     description: 'Ingest document for adjacency mapping',
     requiresMembership: true,
+    category: 'graph',
   },
-  { command: '/ingest', description: 'Alias for /read', requiresMembership: true },
-  { command: '/loaddb', description: 'Load remote database manifest', requiresMembership: true },
+  { command: '/ingest', description: 'Alias for /read', requiresMembership: true, category: 'graph' },
+  { command: '/loaddb', description: 'Load remote database manifest', requiresMembership: true, category: 'remote' },
   {
     command: '/load',
     description: 'Bootstrap remote database and sync directory',
     requiresMembership: false,
+    category: 'remote',
   },
   {
     command: '/remotedir',
     description: 'Connect remote DB save directory',
     requiresMembership: false,
+    category: 'remote',
   },
   {
     command: '/remotestats',
     description: 'View remote database statistics',
     requiresMembership: true,
+    category: 'remote',
   },
-  { command: '/remotedb', description: 'Alias for /remotestats', requiresMembership: true },
-  { command: '/hlsf', description: 'Render HLSF visualization', requiresMembership: true },
-  { command: '/visualize', description: 'Alias for /hlsf', requiresMembership: true },
-  { command: '/scheme', description: 'Toggle visual theme', requiresMembership: true },
-  { command: '/spin', description: 'Toggle emergent rotation', requiresMembership: true },
-  { command: '/omega', description: 'Adjust rotation omega', requiresMembership: true },
-  { command: '/alpha', description: 'Adjust alpha transparency', requiresMembership: true },
-  { command: '/symbols', description: 'Symbol tokenization controls', requiresMembership: true },
-  { command: '/self', description: 'Display engine self state', requiresMembership: true },
-  { command: '/state', description: 'Inspect runtime state snapshot', requiresMembership: true },
+  { command: '/remotedb', description: 'Alias for /remotestats', requiresMembership: true, category: 'remote' },
+  { command: '/hlsf', description: 'Render HLSF visualization', requiresMembership: true, category: 'graph' },
+  { command: '/visualize', description: 'Alias for /hlsf', requiresMembership: true, category: 'graph' },
+  { command: '/scheme', description: 'Toggle visual theme', requiresMembership: true, category: 'graph' },
+  { command: '/spin', description: 'Toggle emergent rotation', requiresMembership: true, category: 'graph' },
+  { command: '/omega', description: 'Adjust rotation omega', requiresMembership: true, category: 'graph' },
+  { command: '/alpha', description: 'Adjust alpha transparency', requiresMembership: true, category: 'graph' },
+  { command: '/symbols', description: 'Symbol tokenization controls', requiresMembership: true, category: 'graph' },
+  { command: '/self', description: 'Display engine self state', requiresMembership: true, category: 'state' },
+  { command: '/state', description: 'Inspect runtime state snapshot', requiresMembership: true, category: 'state' },
   {
     command: '/maphidden',
     description: 'Reveal hidden adjacency tokens',
     requiresMembership: true,
+    category: 'graph',
   },
-  { command: '/hidden', description: 'Alias for /maphidden', requiresMembership: true },
-  { command: '/signup', description: 'Create a SaaS profile', requiresMembership: true },
-  { command: '/switchuser', description: 'Switch active SaaS profile', requiresMembership: true },
-  { command: '/plan', description: 'View subscription and credits', requiresMembership: true },
-  { command: '/topup', description: 'Purchase additional credits', requiresMembership: true },
-  { command: '/userlist', description: 'List SaaS user profiles', requiresMembership: true },
-  { command: '/message', description: 'Send encrypted SaaS message', requiresMembership: true },
-  { command: '/inbox', description: 'Show encrypted inbox entries', requiresMembership: true },
-  { command: '/decryptmsg', description: 'Decrypt inbox message', requiresMembership: true },
+  { command: '/hidden', description: 'Alias for /maphidden', requiresMembership: true, category: 'graph' },
+  { command: '/signup', description: 'Create a SaaS profile', requiresMembership: true, category: 'saas' },
+  { command: '/switchuser', description: 'Switch active SaaS profile', requiresMembership: true, category: 'saas' },
+  { command: '/plan', description: 'View subscription and credits', requiresMembership: true, category: 'saas' },
+  { command: '/topup', description: 'Purchase additional credits', requiresMembership: true, category: 'saas' },
+  { command: '/userlist', description: 'List SaaS user profiles', requiresMembership: true, category: 'saas' },
+  { command: '/message', description: 'Send encrypted SaaS message', requiresMembership: true, category: 'saas' },
+  { command: '/inbox', description: 'Show encrypted inbox entries', requiresMembership: true, category: 'saas' },
+  { command: '/decryptmsg', description: 'Decrypt inbox message', requiresMembership: true, category: 'saas' },
 ];
 
 const DEMO_UNLOCKED_COMMANDS = new Set([
@@ -6611,6 +6673,10 @@ const promptReviewStore = state.pendingPromptReviews;
 syncSettings();
 
 let currentAbortController = null;
+let llmKeyWarningIssued = false;
+let gettingStartedBannerEntry: HTMLElement | null = null;
+let gettingStartedBannerDismissed = false;
+let hasRecordedUserInteraction = false;
 
 const THOUGHT_RETENTION_LIMIT = 50;
 
@@ -9760,6 +9826,36 @@ function appendLog(msg, type = 'info') {
   return addLog(sanitize(String(msg)), type);
 }
 
+function showGettingStartedBannerOnce() {
+  if (gettingStartedBannerEntry || gettingStartedBannerDismissed) return;
+  const steps = `
+    <ol class="getting-started-banner__steps">
+      <li>Type any sentence and press Enter.</li>
+      <li>Use /state to inspect engine status.</li>
+      <li>Use /help to explore commands.</li>
+    </ol>
+  `;
+  gettingStartedBannerEntry = addLog(
+    `<div class="getting-started-banner"><strong>Getting started</strong>${steps}</div>`,
+    'info',
+  );
+}
+
+function dismissGettingStartedBanner() {
+  if (gettingStartedBannerDismissed) return;
+  gettingStartedBannerDismissed = true;
+  if (gettingStartedBannerEntry?.parentElement) {
+    gettingStartedBannerEntry.remove();
+  }
+  gettingStartedBannerEntry = null;
+}
+
+function markFirstInteraction() {
+  if (hasRecordedUserInteraction) return;
+  hasRecordedUserInteraction = true;
+  dismissGettingStartedBanner();
+}
+
 function agentLog(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
   const prefix = '🤖';
   const safe = sanitize(`[agent] ${message}`);
@@ -12294,85 +12390,46 @@ function rebuildLiveGraph(options = {}) {
 // OPENAI API
 // ============================================
 async function callOpenAI(messages, options = {}) {
-  if (!state.apiKey) throw new Error('No API key configured');
-
-  const body = {
-    model: options.model || CONFIG.DEFAULT_MODEL,
-    messages,
-    max_tokens: options.max_tokens ?? CONFIG.MAX_TOKENS_PER_RESPONSE,
-    temperature: options.temperature || 0.7,
-  };
-
-  let attempt = 0;
-  while (attempt < CONFIG.MAX_RETRY_ATTEMPTS) {
-    if (currentAbortController?.signal.aborted) {
-      const error = new Error('Cancelled');
-      error.name = 'AbortError';
-      throw error;
+  if (!isValidApiKey(state.apiKey)) {
+    if (!llmKeyWarningIssued) {
+      logWarning(
+        'LLM features require a valid OpenAI API key. Click the 🔑 button near the input field to add one or continue offline.',
+      );
+      llmKeyWarningIssued = true;
     }
-
-    attempt++;
-    try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${state.apiKey}`,
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (response.status === 429 && attempt < CONFIG.MAX_RETRY_ATTEMPTS) {
-        await new Promise((r) =>
-          setTimeout(r, CONFIG.RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)),
-        );
-        continue;
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage = `API error (${response.status})`;
-
-        try {
-          const errorData = JSON.parse(errorText);
-          if (errorData.error?.message) errorMessage = errorData.error.message;
-        } catch (e) {
-          if (errorText) errorMessage = errorText;
-        }
-
-        if (response.status === 401) errorMessage = 'Invalid API key';
-        else if (response.status === 403) errorMessage = 'Access forbidden - check billing setup';
-        else if (response.status === 429) errorMessage = 'Rate limit exceeded';
-
-        throw new Error(errorMessage);
-      }
-
-      const data = await response.json();
-      state.sessionStats.totalApiCalls++;
-
-      const content = data.choices?.[0]?.message?.content?.trim() || '';
-      const usage = data.usage || {};
-      const promptTokens = usage.prompt_tokens ?? estimateTokensForMessages(messages);
-      const completionTokens = usage.completion_tokens ?? estimateTokensForText(content);
-      const callCost = estimateCostUsd(promptTokens, completionTokens, body.model);
-      state.sessionStats.totalCostUsd += callCost;
-      updateStats();
-
-      if (state.networkOffline) {
-        state.networkOffline = false;
-        state.networkErrorNotified = false;
-        state.lastNetworkErrorTime = 0;
-      }
-
-      return content;
-    } catch (err) {
-      if (err.name === 'AbortError') throw err;
-      if (err.message === 'Failed to fetch') {
-        throw new Error('Network error - check connection or download HTML to run locally');
-      }
-      if (attempt === CONFIG.MAX_RETRY_ATTEMPTS) throw err;
-    }
+    throw new Error('OpenAI API key missing');
   }
+
+  const result = await callOpenAIChat(messages, {
+    apiKey: state.apiKey,
+    model: options.model || CONFIG.DEFAULT_MODEL,
+    maxTokens: options.max_tokens ?? CONFIG.MAX_TOKENS_PER_RESPONSE,
+    temperature: options.temperature ?? 0.7,
+    signal: currentAbortController?.signal ?? null,
+    maxRetries: Math.max(0, CONFIG.MAX_RETRY_ATTEMPTS - 1),
+    retryDelayMs: CONFIG.RETRY_BASE_DELAY_MS,
+  });
+
+  state.sessionStats.totalApiCalls++;
+  const usage = result.usage || {};
+  const content = result.content;
+  const promptTokens = usage.prompt_tokens ?? estimateTokensForMessages(messages);
+  const completionTokens = usage.completion_tokens ?? estimateTokensForText(content);
+  const callCost = estimateCostUsd(
+    promptTokens,
+    completionTokens,
+    options.model || CONFIG.DEFAULT_MODEL,
+  );
+  state.sessionStats.totalCostUsd += callCost;
+  updateStats();
+
+  if (state.networkOffline) {
+    state.networkOffline = false;
+    state.networkErrorNotified = false;
+    state.lastNetworkErrorTime = 0;
+  }
+
+  return content;
 }
 
 window.CognitionEngine.api = {
@@ -20126,6 +20183,7 @@ commandRegistry.register('/state', cmd_state);
 commandRegistry.register('/import', cmd_import);
 commandRegistry.register('/read', () => cmdRead());
 commandRegistry.register('/ingest', () => cmdRead());
+commandRegistry.register('/perfprofile', (args) => cmdPerfProfile(args));
 commandRegistry.register('/load', cmd_load);
 commandRegistry.register('/loaddb', cmd_loaddb);
 commandRegistry.register('/remotedir', cmd_remotedir);
@@ -20250,6 +20308,54 @@ function cmdSymbols(args = []) {
   );
 }
 
+function resolveRuntimePerformanceProfile(): PerformanceProfile {
+  const id = (SETTINGS.performanceProfileId || '').toLowerCase();
+  if (id === 'featherweight') return 'low';
+  if (id === 'maximalist' || id === 'chaoslab') return 'high';
+  return 'medium';
+}
+
+function summarizeProfileLimits(cfg: Settings): string {
+  const similarity = Number(cfg.adjacencySimilarityThreshold ?? 0).toFixed(2);
+  const strong = Number(cfg.adjacencyStrongSimilarityThreshold ?? 0).toFixed(2);
+  return `maxNodes=${cfg.maxNodes ?? 0}, maxEdges=${cfg.maxEdges ?? 0}, similarity=${similarity}, strong=${strong}`;
+}
+
+function cmdPerfProfile(args: string[] = []) {
+  const requested = (args[0] || '').trim().toLowerCase();
+  if (!requested) {
+    const memory = typeof navigator !== 'undefined' ? Number((navigator as any).deviceMemory) || null : null;
+    const recommended = getPerformanceProfile(memory);
+    const current = resolveRuntimePerformanceProfile();
+    const summary = summarizeProfileLimits(SETTINGS);
+    addLog(
+      `<div class="adjacency-insight"><strong>⚙️ Performance profile</strong><br>` +
+        `Current: <em>${sanitize(current)}</em> (${sanitize(summary)})<br>` +
+        `Recommended: <em>${sanitize(recommended)}</em></div>`,
+    );
+    return;
+  }
+
+  if (!['low', 'medium', 'high'].includes(requested)) {
+    logError('Usage: /perfprofile [low|medium|high]');
+    return;
+  }
+
+  const overrides = getProfileSettings(requested as PerformanceProfile);
+  Object.assign(SETTINGS, overrides);
+  syncSettings();
+  try {
+    notifyHlsfAdjacencyChange('performance-profile-change', { immediate: true });
+  } catch (err) {
+    console.warn('Unable to refresh HLSF after perf profile change:', err);
+  }
+  addLog(
+    `<div class="adjacency-insight"><strong>⚙️ Performance profile set</strong><br>${sanitize(
+      summarizeProfileLimits(SETTINGS),
+    )}</div>`,
+  );
+}
+
 async function dispatchCommand(input) {
   const trimmed = (input || '').trim();
   if (!trimmed) return false;
@@ -20318,7 +20424,23 @@ function isCommand(input) {
   return input.startsWith('/');
 }
 
-function helpCommandHtml() {
+function normalizeHelpCategory(input?: string): CommandHelpCategoryId | null {
+  if (!input) return null;
+  const normalized = input.trim().toLowerCase();
+  if (!normalized) return null;
+  if (COMMAND_HELP_CATEGORY_DETAILS[normalized as CommandHelpCategoryId]) {
+    return normalized as CommandHelpCategoryId;
+  }
+  if (normalized.startsWith('graph')) return 'graph';
+  if (normalized.startsWith('state')) return 'state';
+  if (normalized.startsWith('remote')) return 'remote';
+  if (normalized.startsWith('saas')) return 'saas';
+  if (normalized.startsWith('voice')) return 'voice';
+  if (normalized.startsWith('system')) return 'system';
+  return null;
+}
+
+function helpCommandHtml(categoryArg?: string) {
   const level = getMembershipLevel();
   const restrictions = COMMAND_RESTRICTIONS[level] || new Set();
   const intro =
@@ -20326,28 +20448,62 @@ function helpCommandHtml() {
       ? 'Demo mode active: upgrade to unlock ingestion and advanced slash commands. The /hlsf visualization remains available.'
       : 'Full membership active: all commands available.';
 
-  const rows = COMMAND_HELP_ENTRIES.map((entry) => {
-    const locked = entry.requiresMembership && restrictions.has(entry.command.toLowerCase());
-    const classes = ['command-entry'];
-    if (locked) classes.push('command-entry--locked');
-    const upgrade = locked
-      ? `<a href="#" class="command-upgrade-link" data-upgrade="trial">Start trial</a>`
-      : '';
-    return `<div class="${classes.join(' ')}">
-      <span class="command-entry__cmd">${sanitize(entry.command)}</span>
-      <span class="command-entry__desc">${sanitize(entry.description)}</span>
-      <span class="command-entry__cta">${upgrade}</span>
+  const category = normalizeHelpCategory(categoryArg);
+  if (!category) {
+    const categoryBlocks = (Object.keys(COMMAND_HELP_CATEGORY_DETAILS) as CommandHelpCategoryId[])
+      .map((id) => {
+        const meta = COMMAND_HELP_CATEGORY_DETAILS[id];
+        const count = COMMAND_HELP_ENTRIES.filter((entry) => entry.category === id).length;
+        const examples = meta.examples.length
+          ? `<div class="command-category__example">e.g. ${meta.examples
+              .map((example) => `<code>${sanitize(example)}</code>`)
+              .join(', ')}</div>`
+          : '';
+        return `<div class="command-category">
+          <div class="command-category__title">${sanitize(meta.title)} (${count} commands)</div>
+          <div class="command-category__desc">${sanitize(meta.description)}</div>
+          ${examples}
+          <div class="command-category__cta">Type <strong>/help ${sanitize(id)}</strong> for details.</div>
+        </div>`;
+      })
+      .join('');
+    return `<div class="command-list">
+      <p class="command-list__intro">${sanitize(intro)}</p>
+      ${categoryBlocks}
     </div>`;
-  }).join('');
+  }
 
+  const meta = COMMAND_HELP_CATEGORY_DETAILS[category];
+  const entries = COMMAND_HELP_ENTRIES.filter((entry) => entry.category === category);
+  const rows = entries
+    .map((entry) => {
+      const locked = entry.requiresMembership && restrictions.has(entry.command.toLowerCase());
+      const classes = ['command-entry'];
+      if (locked) classes.push('command-entry--locked');
+      const upgrade = locked
+        ? `<a href="#" class="command-upgrade-link" data-upgrade="trial">Start trial</a>`
+        : '';
+      return `<div class="${classes.join(' ')}">
+        <span class="command-entry__cmd">${sanitize(entry.command)}</span>
+        <span class="command-entry__desc">${sanitize(entry.description)}</span>
+        <span class="command-entry__cta">${upgrade}</span>
+      </div>`;
+    })
+    .join('');
+  const examples = meta.examples.length
+    ? `<p class="command-list__intro">Examples: ${meta.examples
+        .map((example) => `<code>${sanitize(example)}</code>`)
+        .join(', ')}</p>`
+    : '';
   return `<div class="command-list">
-    <p class="command-list__intro">${sanitize(intro)}</p>
+    <p class="command-list__intro"><strong>${sanitize(meta.title)}</strong> — ${sanitize(meta.description)}</p>
+    ${examples}
     ${rows}
   </div>`;
 }
 
-function showHelpCommand() {
-  addLog(helpCommandHtml());
+function showHelpCommand(categoryArg?: string) {
+  addLog(helpCommandHtml(categoryArg));
 }
 
 async function handleCommand(cmd) {
@@ -20549,7 +20705,7 @@ async function handleCommand(cmd) {
       break;
     case 'help':
       trackCommandExecution(normalized, args, 'handler');
-      showHelpCommand();
+      showHelpCommand(args[0]);
       break;
     default:
       logError(`Unknown: ${command}`);
@@ -22867,6 +23023,8 @@ async function submitPromptThroughEngine(
     };
   }
 
+  markFirstInteraction();
+
   const annotate = Boolean(options?.annotateLog);
   const source = options?.source === 'voice' ? 'voice' : 'input-field';
   const isCmd = isCommand(trimmed);
@@ -23080,6 +23238,7 @@ async function initialize() {
     ${cachedCount > 0 ? `<br>✅ Loaded with ${cachedCount} cached tokens` : ''}
     <br><small>⚠️ Note: Download HTML and run locally for API calls to work.</small>
   `);
+  showGettingStartedBannerOnce();
 
   const hasHlsfData = dbAvailable || cachedCount > 0;
   if (hasHlsfData) {

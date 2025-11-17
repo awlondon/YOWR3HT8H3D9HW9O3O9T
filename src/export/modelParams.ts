@@ -369,7 +369,7 @@ export function resolveModelParamConfig(
     }
   }
 
-  let assumptions: string[] = [];
+  const assumptions: string[] = [];
   if (config.relation_param_mode === 'types' && (!config.num_relation_types || config.num_relation_types <= 0)) {
     const fallback = options.relationTypeCount;
     if (fallback && fallback > 0) {

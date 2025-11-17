@@ -1,4 +1,4 @@
-import type { AdjQuery, EdgeRow, KBAdapter, TokenId } from '../index';
+import type { EdgeRow, KBAdapter, TokenId } from '../index';
 
 /**
  * Placeholder SQLite-WASM adapter. The implementation can be filled once the

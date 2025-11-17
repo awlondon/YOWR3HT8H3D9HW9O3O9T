@@ -122,7 +122,7 @@ function computeTopDrift(top: PipelineTelemetryTopNode[]): PipelineTopDrift {
   }
 
   const exited: string[] = [];
-  for (const [token, info] of previousTopSnapshot.entries()) {
+  for (const token of previousTopSnapshot.keys()) {
     if (!current.has(token)) {
       exited.push(token);
     }

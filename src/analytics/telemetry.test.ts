@@ -6,6 +6,8 @@ import {
   getPipelineTelemetryHistory,
   resetPipelineTelemetryForTest,
 } from './telemetry.js';
+import { runPipeline } from '../engine/pipeline.js';
+import { SETTINGS } from '../settings.js';
 
 test('emitPipelineTelemetry normalizes top entries and updates global store', () => {
   const originalWindow = (globalThis as any).window;
@@ -173,4 +175,37 @@ test('telemetry history keeps only the most recent 50 entries and respects sink 
   assert.equal(history[history.length - 1].metrics.tokenCount, 999);
   assert.equal(received.includes(0), true);
   assert.equal(received.includes(999), false);
+});
+
+test('runPipeline emits telemetry stage hooks with durations', () => {
+  resetPipelineTelemetryForTest();
+  const observed: Array<{ stage: string; duration?: number }> = [];
+  const hooks = {
+    telemetry: {
+      onStage: (stage: string, phase: number, meta?: Record<string, unknown>) => {
+        if (phase === 1) {
+          const duration = typeof meta?.durationMs === 'number' ? meta.durationMs : undefined;
+          observed.push({ stage, duration });
+        }
+      },
+    },
+  };
+
+  runPipeline('telemetry sample input', { ...SETTINGS, tokenizeSymbols: true }, hooks);
+
+  const expectedStages = ['tokenize', 'adjacency', 'propagate', 'prune', 'rank', 'finalize'];
+  for (const stage of expectedStages) {
+    assert.equal(
+      observed.some((entry) => entry.stage === stage),
+      true,
+      `stage ${stage} should be observed`,
+    );
+  }
+  for (const entry of observed) {
+    assert.equal(
+      entry.duration === undefined || entry.duration >= 0,
+      true,
+      'stage durations should be non-negative when present',
+    );
+  }
 });

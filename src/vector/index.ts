@@ -20,7 +20,7 @@ export const DEFAULT_VECTOR_CONFIG: VectorConfig = {
 
 let cfg: VectorConfig | null = null;
 let worker: Worker | null = null;
-let store: VectorStore = createIdbVectorStore();
+const store: VectorStore = createIdbVectorStore();
 let seq = 0;
 const inflight = new Map<number, { resolve: (value: any) => void; reject: (error: any) => void }>();
 let inlineProvider: EmbeddingProvider | null = null;

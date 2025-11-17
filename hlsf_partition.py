@@ -160,7 +160,12 @@ def to_shard_obj(entry: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     tok_obj = {"relationships": relationships, "cached_at": cached_at}
     return tok, tok_obj
 
-def import_source_into_remote(source_json: Path, remote_root: Path, fallback_letter: str = "Z") -> None:
+def import_source_into_remote(
+    source_json: Path,
+    remote_root: Path,
+    fallback_letter: str = "Z",
+    log_interval: int = 0,
+) -> None:
     """Merge a canonical DB export into the on-disk shard layout."""
 
     ensure_layout(remote_root)
@@ -173,6 +178,7 @@ def import_source_into_remote(source_json: Path, remote_root: Path, fallback_let
     # build an in-memory accumulator of shards to reduce IO churn
     accum: Dict[str, Dict[str, Any]] = {bg: {"schema_version": 1, "updated_at": now_iso(), "tokens": {}} for bg in BIGRAMS}
 
+    log_every = max(0, int(log_interval))
     for entry in full:
         tok, tok_obj = to_shard_obj(entry)
         if not tok_obj:
@@ -181,6 +187,8 @@ def import_source_into_remote(source_json: Path, remote_root: Path, fallback_let
         shard_key = bigram  # AA..ZZ
         accum[shard_key]["tokens"][tok] = merge_token(accum[shard_key]["tokens"].get(tok, {}), tok_obj)
         count += 1
+        if log_every and count % log_every == 0:
+            print(f"[import] processed {count} tokens...")
 
     # merge accum into disk shards
     for a in ALPHABET:
@@ -243,6 +251,12 @@ def main():
     ap.add_argument("--fallback-letter", default="Z", choices=ALPHABET, help="Fallback letter for non-alpha characters in token bigram mapping.")
     ap.add_argument("--init-layout", action="store_true", help="Only create the 26x26 layout and exit.")
     ap.add_argument("--dry-run", action="store_true", help="Parse source, map bigrams, but don't write.")
+    ap.add_argument(
+        "--log-interval",
+        type=int,
+        default=0,
+        help="Print progress every N tokens during import (0 disables progress logs).",
+    )
     args = ap.parse_args()
 
     remote_root = Path(args.remote_db)
@@ -277,7 +291,12 @@ def main():
         print(f"[dry-run] tokens={total}, populated_shards={nonzero}/676")
         return
 
-    import_source_into_remote(source, remote_root, fallback_letter=args.fallback_letter)
+    import_source_into_remote(
+        source,
+        remote_root,
+        fallback_letter=args.fallback_letter,
+        log_interval=max(0, int(args.log_interval or 0)),
+    )
 
 if __name__ == "__main__":
     main()
