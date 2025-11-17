@@ -227,6 +227,7 @@ const DEFAULT_SETTINGS = {
   symbolWeightScale: 0.35,
   symbolEmitMode: 'paired' as SymbolEmitMode,
   includeSymbolInSummaries: false,
+  autoResetHlsfTransform: true,
   maxAdjacencyDepth: 4,
   maxAdjacencyDegree: DEFAULT_ADJACENCY_SETTINGS.maxAdjacencyDegree,
   maxAdjacencyEdgesMultiplier: 6,
