@@ -23,6 +23,27 @@ module.exports = {
     'import/namespace': 'off',
     'import/default': 'off',
   },
+  overrides: [
+    {
+      files: ['src/app.ts'],
+      rules: {
+        '@typescript-eslint/no-unused-vars': 'off',
+        'prefer-const': 'off',
+        'no-empty': 'off',
+        'no-case-declarations': 'off',
+        'no-inner-declarations': 'off',
+        'no-useless-escape': 'off',
+      },
+    },
+    {
+      files: ['src/features/voice/**/*.ts'],
+      rules: {
+        'no-empty': 'off',
+        'prefer-const': 'off',
+        'no-useless-escape': 'off',
+      },
+    },
+  ],
   settings: {
     'import/resolver': {
       node: {

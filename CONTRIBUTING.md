@@ -39,6 +39,14 @@ Thank you for considering contributing to the HLSF Cognition Engine! This docume
 - Update documentation (README, architecture notes) alongside code changes when behaviour or setup steps change.
 - Ensure the application builds and lint checks pass before submitting a pull request.
 
+## Before opening a PR
+
+- [ ] Run `npm run lint` to ensure TypeScript code follows the style guide.
+- [ ] Run `npm test` to execute the Node-based test suite.
+- [ ] If you touched `hlsf_partition.py` or the scripts directory, run `pytest` from the repo root.
+- [ ] Add or update tests that cover any new behaviour.
+- [ ] Ensure non-trivial functions include a short comment or docstring describing their purpose.
+
 ## Reporting issues
 
 If you encounter bugs or have feature ideas, open an issue detailing:

@@ -7,6 +7,14 @@ export type PerformanceProfileId =
   | 'maximalist'
   | 'chaoslab';
 
+export interface AdjacencySettings {
+  maxAdjacencyLayers: number;
+  maxAdjacencyDegreePerLayer: number[];
+  maxAdjacencyDegree: number;
+  adjacencySimilarityThreshold: number;
+  adjacencyStrongSimilarityThreshold: number;
+}
+
 export interface PerformanceProfileConfig {
   id: PerformanceProfileId;
   label: string;
@@ -155,18 +163,77 @@ export function pickPerformanceProfileForDevice(): PerformanceProfileConfig {
 
 const defaultPerformanceProfile = pickPerformanceProfileForDevice();
 
+const baseAdjacencyDefaults: AdjacencySettings = {
+  maxAdjacencyLayers: defaultPerformanceProfile.maxLayers,
+  maxAdjacencyDegreePerLayer: [...defaultPerformanceProfile.maxDegreePerLayer],
+  maxAdjacencyDegree: Math.max(1, defaultPerformanceProfile.maxDegreePerLayer[0] ?? 4),
+  adjacencySimilarityThreshold: defaultPerformanceProfile.similarityThreshold,
+  adjacencyStrongSimilarityThreshold: defaultPerformanceProfile.strongSimilarityThreshold,
+};
+
+const clamp01 = (value: unknown, fallback: number): number => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return Math.max(0, Math.min(1, fallback));
+  if (num < 0) return 0;
+  if (num > 1) return 1;
+  return num;
+};
+
+const toPositiveInt = (value: unknown, fallback: number): number => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return Math.max(1, Math.floor(fallback));
+  const normalized = Math.floor(num);
+  return normalized > 0 ? normalized : Math.max(1, Math.floor(fallback));
+};
+
+export function resolveAdjacencySettings(
+  overrides: Partial<AdjacencySettings> = {},
+): AdjacencySettings {
+  const layers = toPositiveInt(overrides.maxAdjacencyLayers, baseAdjacencyDefaults.maxAdjacencyLayers);
+  const degreeFallback = toPositiveInt(
+    overrides.maxAdjacencyDegree ?? baseAdjacencyDefaults.maxAdjacencyDegree,
+    baseAdjacencyDefaults.maxAdjacencyDegree,
+  );
+  const degreeSource = Array.isArray(overrides.maxAdjacencyDegreePerLayer)
+    ? overrides.maxAdjacencyDegreePerLayer
+    : baseAdjacencyDefaults.maxAdjacencyDegreePerLayer;
+  const perLayer = Array.from({ length: layers }, (_, index) => {
+    const raw = degreeSource[index] ?? degreeSource[degreeSource.length - 1] ?? degreeFallback;
+    return toPositiveInt(raw, degreeFallback);
+  });
+  const similarity = clamp01(
+    overrides.adjacencySimilarityThreshold,
+    baseAdjacencyDefaults.adjacencySimilarityThreshold,
+  );
+  const strongRaw = clamp01(
+    overrides.adjacencyStrongSimilarityThreshold,
+    baseAdjacencyDefaults.adjacencyStrongSimilarityThreshold,
+  );
+  const strong = Math.max(similarity, strongRaw);
+
+  return {
+    maxAdjacencyLayers: layers,
+    maxAdjacencyDegreePerLayer: perLayer,
+    maxAdjacencyDegree: degreeFallback,
+    adjacencySimilarityThreshold: similarity,
+    adjacencyStrongSimilarityThreshold: strong,
+  };
+}
+
+export const DEFAULT_ADJACENCY_SETTINGS = resolveAdjacencySettings();
+
 const DEFAULT_SETTINGS = {
   tokenizeSymbols: true,
   symbolWeightScale: 0.35,
   symbolEmitMode: 'paired' as SymbolEmitMode,
   includeSymbolInSummaries: false,
   maxAdjacencyDepth: 4,
-  maxAdjacencyDegree: 4,
+  maxAdjacencyDegree: DEFAULT_ADJACENCY_SETTINGS.maxAdjacencyDegree,
   maxAdjacencyEdgesMultiplier: 6,
-  maxAdjacencyLayers: defaultPerformanceProfile.maxLayers,
-  maxAdjacencyDegreePerLayer: defaultPerformanceProfile.maxDegreePerLayer,
-  adjacencySimilarityThreshold: defaultPerformanceProfile.similarityThreshold,
-  adjacencyStrongSimilarityThreshold: defaultPerformanceProfile.strongSimilarityThreshold,
+  maxAdjacencyLayers: DEFAULT_ADJACENCY_SETTINGS.maxAdjacencyLayers,
+  maxAdjacencyDegreePerLayer: [...DEFAULT_ADJACENCY_SETTINGS.maxAdjacencyDegreePerLayer],
+  adjacencySimilarityThreshold: DEFAULT_ADJACENCY_SETTINGS.adjacencySimilarityThreshold,
+  adjacencyStrongSimilarityThreshold: DEFAULT_ADJACENCY_SETTINGS.adjacencyStrongSimilarityThreshold,
   promptAdjacencyChunkSize: 8,
   secureBillingOnly: true,
   performanceProfileId: defaultPerformanceProfile.id,
@@ -178,7 +245,7 @@ const DEFAULT_SETTINGS = {
   pruneWeightThreshold: defaultPerformanceProfile.pruneWeightThreshold,
 };
 
-type SettingsShape = typeof DEFAULT_SETTINGS & Record<string, unknown>;
+export type SettingsShape = typeof DEFAULT_SETTINGS & Record<string, unknown>;
 
 function resolveGlobalSettings(): SettingsShape {
   if (typeof window === 'undefined') {
@@ -193,5 +260,45 @@ function resolveGlobalSettings(): SettingsShape {
   return merged;
 }
 
-export const SETTINGS = resolveGlobalSettings();
-export type Settings = typeof SETTINGS;
+export const SETTINGS: SettingsShape = resolveGlobalSettings();
+export type Settings = SettingsShape;
+
+export type PerformanceProfile = 'low' | 'medium' | 'high';
+
+export function getPerformanceProfile(deviceMemory: number | null): PerformanceProfile {
+  if (deviceMemory != null && Number.isFinite(deviceMemory)) {
+    if (deviceMemory <= 4) return 'low';
+    if (deviceMemory >= 16) return 'high';
+  }
+  return 'medium';
+}
+
+export function getProfileSettings(profile: PerformanceProfile): Partial<Settings> {
+  const map: Record<PerformanceProfile, PerformanceProfileConfig> = {
+    low: PERFORMANCE_PROFILES.featherweight,
+    medium: PERFORMANCE_PROFILES.balanced,
+    high: PERFORMANCE_PROFILES.maximalist,
+  };
+  const config = map[profile] ?? PERFORMANCE_PROFILES.balanced;
+  const adjacency = resolveAdjacencySettings({
+    maxAdjacencyLayers: config.maxLayers,
+    maxAdjacencyDegreePerLayer: config.maxDegreePerLayer,
+    maxAdjacencyDegree: config.maxDegreePerLayer[0] ?? DEFAULT_ADJACENCY_SETTINGS.maxAdjacencyDegree,
+    adjacencySimilarityThreshold: config.similarityThreshold,
+    adjacencyStrongSimilarityThreshold: config.strongSimilarityThreshold,
+  });
+  return {
+    performanceProfileId: config.id,
+    branchingFactor: config.branchingFactor,
+    maxNodes: config.maxNodes,
+    maxEdges: config.maxEdges,
+    maxRelationships: config.maxRelationships,
+    maxRelationTypes: config.maxRelationTypes,
+    pruneWeightThreshold: config.pruneWeightThreshold,
+    maxAdjacencyLayers: adjacency.maxAdjacencyLayers,
+    maxAdjacencyDegreePerLayer: adjacency.maxAdjacencyDegreePerLayer,
+    maxAdjacencyDegree: adjacency.maxAdjacencyDegree,
+    adjacencySimilarityThreshold: adjacency.adjacencySimilarityThreshold,
+    adjacencyStrongSimilarityThreshold: adjacency.adjacencyStrongSimilarityThreshold,
+  };
+}
