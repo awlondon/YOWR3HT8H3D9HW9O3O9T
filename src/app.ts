@@ -3391,13 +3391,7 @@ function drawComposite(graph, opts = {}) {
   const nodeScale = clampNodeSize(cfg.nodeSize);
   const showGlow = cfg.showNodeGlow === true;
 
-  if (!window.HLSF.__centerInit) {
-    window.HLSF.view.x = width / 2;
-    window.HLSF.view.y = height / 2;
-    syncViewToConfig();
-    window.HLSF.__centerInit = true;
-  }
-
+  ensureViewportCentered(width, height);
   syncViewToConfig();
   const view = window.HLSF.view;
   const zoom = Number.isFinite(view.scale) ? view.scale : 1;
@@ -5396,6 +5390,36 @@ function syncViewToConfig() {
   window.HLSF.config.scale = window.HLSF.view.scale;
   window.HLSF.config.tx = window.HLSF.view.x;
   window.HLSF.config.ty = window.HLSF.view.y;
+}
+window.HLSF.__lastViewport = window.HLSF.__lastViewport || { width: 0, height: 0 };
+
+function ensureViewportCentered(width, height) {
+  if (!window.HLSF?.view) return;
+  const safeWidth = Number.isFinite(width) ? width : 0;
+  const safeHeight = Number.isFinite(height) ? height : 0;
+  const view = window.HLSF.view;
+  const zeroViewport = safeWidth < 2 || safeHeight < 2;
+  if (zeroViewport) {
+    window.HLSF.__centerInit = false;
+    window.HLSF.__lastViewport = { width: safeWidth, height: safeHeight };
+    return;
+  }
+  const invalidView = !Number.isFinite(view.x) || !Number.isFinite(view.y);
+  const lastViewport = window.HLSF.__lastViewport || { width: 0, height: 0 };
+  const widthDelta = Math.abs((lastViewport.width || 0) - safeWidth);
+  const heightDelta = Math.abs((lastViewport.height || 0) - safeHeight);
+  const viewportChanged = widthDelta > 2 || heightDelta > 2;
+  const marginX = Math.min(safeWidth * 0.05, 40);
+  const marginY = Math.min(safeHeight * 0.05, 40);
+  const outsideFrame =
+    view.x < marginX || view.x > safeWidth - marginX || view.y < marginY || view.y > safeHeight - marginY;
+  if (!window.HLSF.__centerInit || invalidView || outsideFrame || viewportChanged) {
+    view.x = safeWidth / 2;
+    view.y = safeHeight / 2;
+    window.HLSF.__centerInit = true;
+    syncViewToConfig();
+  }
+  window.HLSF.__lastViewport = { width: safeWidth, height: safeHeight };
 }
 window.HLSF.canvas = window.HLSF.canvas || null;
 window.HLSF.ctx = window.HLSF.ctx || null;
@@ -15289,6 +15313,9 @@ function renderLegacyHLSF() {
     const ctx = window.HLSF.ctx;
     const width = window.HLSF.canvas.width;
     const height = window.HLSF.canvas.height;
+    const displayWidth = window.HLSF.canvas.clientWidth || width;
+    const displayHeight = window.HLSF.canvas.clientHeight || height;
+    ensureViewportCentered(displayWidth, displayHeight);
     const theme = window.HLSF.config.whiteBg
       ? { bg: '#ffffff', fg: '#000000', grid: 'rgba(0, 0, 0, 0.05)' }
       : { bg: '#0a0a0a', fg: '#ffffff', grid: 'rgba(0, 255, 136, 0.05)' };
