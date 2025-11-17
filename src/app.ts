@@ -3455,8 +3455,6 @@ function drawComposite(graph, opts = {}) {
 
   ensureViewportCentered(width, height);
   syncViewToConfig();
-  const view = window.HLSF.view;
-  const zoom = Number.isFinite(view.scale) ? view.scale : 1;
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -3465,21 +3463,6 @@ function drawComposite(graph, opts = {}) {
   ctx.fillStyle = theme.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
-
-  ctx.save();
-  ctx.scale(dpr, dpr);
-  ctx.translate(view.x, view.y);
-  ctx.scale(zoom, zoom);
-  ctx.strokeStyle = theme.fg;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const controlValue = edgeWidthControl ? parseFloat(edgeWidthControl.value) : NaN;
-  const edgeWidthValue = Number.isFinite(controlValue) ? controlValue : edgeWidth;
-  const safeZoom = Math.max(zoom, 1e-4);
-  const zoomAttenuation = Math.max(0.2, Math.min(5, 1 / Math.sqrt(safeZoom)));
-  ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
-  const fontScale = Math.max(0.35, Math.min(3, zoomAttenuation));
-  ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
 
   const layoutScale = 1;
   const layoutMode = normalizeLayout(window.HLSF.config.layout);
@@ -3513,6 +3496,26 @@ function drawComposite(graph, opts = {}) {
     const node = graph.nodes.get(token);
     rotatedPositions.set(token, rotatedPos(token, base, node));
   }
+
+  applyAutoFitIfNeeded(rotatedPositions, width, height);
+
+  const view = window.HLSF.view;
+  const zoom = Number.isFinite(view.scale) ? view.scale : 1;
+  const controlValue = edgeWidthControl ? parseFloat(edgeWidthControl.value) : NaN;
+  const edgeWidthValue = Number.isFinite(controlValue) ? controlValue : edgeWidth;
+  const safeZoom = Math.max(zoom, 1e-4);
+  const zoomAttenuation = Math.max(0.2, Math.min(5, 1 / Math.sqrt(safeZoom)));
+  const fontScale = Math.max(0.35, Math.min(3, zoomAttenuation));
+
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.translate(view.x, view.y);
+  ctx.scale(zoom, zoom);
+  ctx.strokeStyle = theme.fg;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
+  ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
 
   if (layoutMode === 'affinity') {
     drawClusterOverlays(ctx, graph, rotatedPositions);
@@ -4883,18 +4886,7 @@ function bindHlsfControls(wrapper) {
   const reset = wrapper.querySelector('#hlsf-reset-view');
   if (reset) {
     reset.addEventListener('click', () => {
-      const canvasEl = window.HLSF.canvas;
-      window.HLSF.view.scale = 1;
-      if (canvasEl) {
-        const width = canvasEl.clientWidth || canvasEl.width;
-        const height = canvasEl.clientHeight || canvasEl.height;
-        window.HLSF.view.x = width / 2;
-        window.HLSF.view.y = height / 2;
-      } else {
-        window.HLSF.view.x = 0;
-        window.HLSF.view.y = 0;
-      }
-      syncViewToConfig();
+      resetHlsfTransform();
       requestRender();
     });
   }
@@ -5377,6 +5369,10 @@ window.HLSF.config = Object.assign(
       : EDGE_LABEL_DENSITY_THRESHOLD,
     showNodeGlow: false,
     autoHlsfOnChange: existingConfig.autoHlsfOnChange === true,
+    autoResetOnPrompt:
+      typeof existingConfig.autoResetOnPrompt === 'boolean'
+        ? existingConfig.autoResetOnPrompt
+        : SETTINGS.autoResetHlsfTransform !== false,
     showAllAdjacencies: existingConfig.showAllAdjacencies !== false,
     affinity: { threshold: 0.35, iterations: 8 },
     relationshipBudget: DEFAULT_HLSF_RELATIONSHIP_LIMIT,
@@ -5483,6 +5479,104 @@ function ensureViewportCentered(width, height) {
   }
   window.HLSF.__lastViewport = { width: safeWidth, height: safeHeight };
 }
+
+function clearClusterZoomOverlays(): void {
+  if (typeof document === 'undefined') return;
+  const overlays = document.querySelectorAll<HTMLElement>('.hlsf-cluster-zoom-box');
+  overlays.forEach((overlay) => {
+    overlay.style.left = '0px';
+    overlay.style.top = '0px';
+    overlay.style.width = '0px';
+    overlay.style.height = '0px';
+    overlay.classList.remove('is-active');
+    overlay.setAttribute('aria-hidden', 'true');
+  });
+}
+
+const AUTO_FIT_MARGIN = 0.9;
+
+function computeGraphBounds(
+  positions: Map<string, { x: number; y: number }>,
+): { minX: number; maxX: number; minY: number; maxY: number } | null {
+  if (!positions || positions.size === 0) return null;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const pos of positions.values()) {
+    if (!pos) continue;
+    const { x, y } = pos;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
+    return null;
+  }
+  return { minX, maxX, minY, maxY };
+}
+
+function applyAutoFitIfNeeded(
+  positions: Map<string, { x: number; y: number }>,
+  viewportWidth: number,
+  viewportHeight: number,
+): void {
+  if (!window.HLSF?.view || window.HLSF.__pendingAutoFit !== true) return;
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return;
+  if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
+  const bounds = computeGraphBounds(positions);
+  if (!bounds) return;
+  const spanX = Math.max(1e-2, bounds.maxX - bounds.minX);
+  const spanY = Math.max(1e-2, bounds.maxY - bounds.minY);
+  const widthScale = viewportWidth / spanX;
+  const heightScale = viewportHeight / spanY;
+  const scaleCandidate = AUTO_FIT_MARGIN * Math.min(widthScale, heightScale);
+  const scale = Math.min(48, Math.max(0.1, scaleCandidate));
+  const offsetX = (viewportWidth - spanX * scale) / 2 - bounds.minX * scale;
+  const offsetY = (viewportHeight - spanY * scale) / 2 - bounds.minY * scale;
+  if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) return;
+  window.HLSF.view.scale = scale;
+  window.HLSF.view.x = offsetX;
+  window.HLSF.view.y = offsetY;
+  window.HLSF.__centerInit = true;
+  window.HLSF.__pendingAutoFit = false;
+  syncViewToConfig();
+}
+
+function resetHlsfTransform(): void {
+  if (typeof window === 'undefined') return;
+  window.HLSF = window.HLSF || {};
+  window.HLSF.view = window.HLSF.view || { x: 0, y: 0, scale: 1 };
+  const canvas = ensureHLSFCanvas();
+  const ctx = canvas ? window.HLSF.ctx || (window.HLSF.ctx = canvas.getContext('2d')) : null;
+  if (ctx && canvas) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
+  const width = canvas ? canvas.clientWidth || canvas.width || 0 : 0;
+  const height = canvas ? canvas.clientHeight || canvas.height || 0 : 0;
+  window.HLSF.view.scale = 1;
+  window.HLSF.view.x = width / 2;
+  window.HLSF.view.y = height / 2;
+  window.HLSF.__centerInit = width > 0 && height > 0;
+  window.HLSF.__pendingAutoFit = true;
+  if (!Array.isArray((window.HLSF as any).clusterZoomStack)) {
+    (window.HLSF as any).clusterZoomStack = [];
+  } else {
+    (window.HLSF as any).clusterZoomStack.length = 0;
+  }
+  if (window.HLSF.state && typeof window.HLSF.state === 'object') {
+    if (Array.isArray((window.HLSF.state as any).portalSelections)) {
+      (window.HLSF.state as any).portalSelections.length = 0;
+    }
+  }
+  clearClusterZoomOverlays();
+  syncViewToConfig();
+}
 window.HLSF.canvas = window.HLSF.canvas || null;
 window.HLSF.ctx = window.HLSF.ctx || null;
 window.HLSF.nodes = window.HLSF.nodes || [];
@@ -5490,6 +5584,7 @@ window.HLSF.animationFrame = window.HLSF.animationFrame || null;
 window.HLSF.geometry = window.HLSF.geometry || {};
 window.HLSF.rendering = window.HLSF.rendering || {};
 window.HLSF.__centerInit = window.HLSF.__centerInit || false;
+window.HLSF.__pendingAutoFit = window.HLSF.__pendingAutoFit !== false;
 window.HLSF.indexCache = window.HLSF.indexCache || null;
 window.HLSF.indexCacheSource = window.HLSF.indexCacheSource || null;
 
@@ -9344,6 +9439,9 @@ function notifyHlsfAdjacencyChange(reason = 'cache-update', options = {}) {
   markHlsfDataDirty();
   const normalizedReason = typeof reason === 'string' ? reason.toLowerCase() : '';
   const isPromptReason = normalizedReason.startsWith('prompt');
+  if (isPromptReason && window.HLSF?.config?.autoResetOnPrompt !== false) {
+    resetHlsfTransform();
+  }
   if (isPromptReason) {
     forcePromptLiveGraphPruning();
   }
@@ -15185,18 +15283,7 @@ function initHLSFCanvas() {
     const globalReset = document.getElementById('hlsf-reset-view');
     if (globalReset) {
       globalReset.addEventListener('click', () => {
-        window.HLSF.view.scale = 1;
-        const canvasEl = window.HLSF.canvas;
-        if (canvasEl) {
-          const width = canvasEl.clientWidth || canvasEl.width;
-          const height = canvasEl.clientHeight || canvasEl.height;
-          window.HLSF.view.x = width / 2;
-          window.HLSF.view.y = height / 2;
-        } else {
-          window.HLSF.view.x = 0;
-          window.HLSF.view.y = 0;
-        }
-        syncViewToConfig();
+        resetHlsfTransform();
         requestRender();
       });
     }
