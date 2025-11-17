@@ -38,10 +38,12 @@ import { sessionState as state } from './state/sessionState';
 import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
 import { ensureKBReady } from './state/kbStore';
 import {
+  HLSF_ROTATION_EVENT,
   runCognitionCycle,
   type CognitionConfig,
   type CognitionCycleResult,
   type CognitionRun,
+  type RotationPreviewEventDetail,
   type ThinkingStyle,
 } from './engine/cognitionCycle';
 // ============================================
@@ -5427,6 +5429,66 @@ function hideVisualizer() {
 function showVisualizer() {
   const el = document.getElementById('hlsf-canvas-container');
   if (el) el.classList.remove('hidden');
+}
+
+interface RotationPreviewUiState {
+  active: boolean;
+  restoreHidden: boolean;
+  previousGraph: unknown;
+  previousGlyphOnly: boolean;
+}
+
+const rotationPreviewUiState: RotationPreviewUiState = {
+  active: false,
+  restoreHidden: false,
+  previousGraph: null,
+  previousGlyphOnly: false,
+};
+
+function handleRotationPreviewBridge(detail?: RotationPreviewEventDetail): void {
+  if (!detail || typeof window === 'undefined') return;
+  const container = document.getElementById('hlsf-canvas-container');
+
+  if (detail.active && detail.graph) {
+    const canvas = ensureHLSFCanvas();
+    if (!canvas) return;
+    const wasHidden = container?.classList.contains('hidden') ?? false;
+    if (wasHidden) {
+      container?.classList.remove('hidden');
+    }
+    if (!rotationPreviewUiState.active) {
+      rotationPreviewUiState.previousGraph = wasHidden ? null : window.HLSF?.currentGraph || null;
+      rotationPreviewUiState.previousGlyphOnly = wasHidden ? false : window.HLSF?.currentGlyphOnly === true;
+      rotationPreviewUiState.restoreHidden = wasHidden && window.HLSF?.config?.deferredRender !== false;
+    }
+    rotationPreviewUiState.active = true;
+    animateHLSF(detail.graph, false);
+    return;
+  }
+
+  if (!rotationPreviewUiState.active) return;
+
+  const shouldHide = rotationPreviewUiState.restoreHidden && window.HLSF?.config?.deferredRender !== false;
+  const previousGraph = rotationPreviewUiState.previousGraph;
+  const previousGlyphOnly = rotationPreviewUiState.previousGlyphOnly;
+
+  rotationPreviewUiState.active = false;
+  rotationPreviewUiState.restoreHidden = false;
+  rotationPreviewUiState.previousGraph = null;
+  rotationPreviewUiState.previousGlyphOnly = false;
+
+  if (previousGraph) {
+    animateHLSF(previousGraph, previousGlyphOnly);
+  } else if (shouldHide) {
+    hideVisualizer();
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener(HLSF_ROTATION_EVENT, (event: Event) => {
+    const customEvent = event as CustomEvent<RotationPreviewEventDetail>;
+    handleRotationPreviewBridge(customEvent.detail);
+  });
 }
 const edgeAlphaFromWeight = (w) => {
   const preferred = Number.isFinite(w) ? clampAlpha(w) : NaN;

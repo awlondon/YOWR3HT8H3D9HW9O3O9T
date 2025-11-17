@@ -45,6 +45,14 @@ export interface HLSFGraph {
   intersections?: IntersectionEvent[];
 }
 
+export const HLSF_ROTATION_EVENT = 'hlsf:rotation-preview';
+
+export interface RotationPreviewEventDetail {
+  active: boolean;
+  iteration: number;
+  graph: HLSFGraph | null;
+}
+
 export interface IntersectionEvent {
   a: string;
   b: string;
@@ -635,6 +643,18 @@ function scheduleAnimationFrame(cb: () => void): void {
   setTimeout(cb, 16);
 }
 
+function emitRotationPreview(
+  active: boolean,
+  graph: HLSFGraph | null,
+  iterationIndex: number,
+): void {
+  if (typeof document === 'undefined') return;
+  const event = new CustomEvent<RotationPreviewEventDetail>(HLSF_ROTATION_EVENT, {
+    detail: { active, graph, iteration: iterationIndex },
+  });
+  document.dispatchEvent(event);
+}
+
 function startRotationAnimation(hiddenGraph: HLSFGraph, iterationIndex: number): void {
   if (typeof window === 'undefined') return;
   const root = (window as any).HLSF || ((window as any).HLSF = {});
@@ -645,6 +665,7 @@ function startRotationAnimation(hiddenGraph: HLSFGraph, iterationIndex: number):
     speed: activeRotationConfig?.rotationSpeed ?? 0.3,
   });
   updateThoughtLogStatus(`Rotation ${iterationIndex + 1}/${activeRotationConfig?.iterations ?? 1}`);
+  emitRotationPreview(true, hiddenGraph, iterationIndex);
 }
 
 function stopRotationAnimation(iterationIndex: number): void {
@@ -655,6 +676,7 @@ function stopRotationAnimation(iterationIndex: number): void {
   updateThoughtLogStatus(
     `Rotation ${iterationIndex + 1}/${activeRotationConfig?.iterations ?? 1} committed`,
   );
+  emitRotationPreview(false, null, iterationIndex);
 }
 
 function getIntersectionsAtAngle(hiddenGraph: HLSFGraph, angle: number): IntersectionEvent[] {
