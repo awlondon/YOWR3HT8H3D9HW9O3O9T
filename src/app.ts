@@ -22656,6 +22656,7 @@ async function processDocumentFile(file) {
 
       const levelChunks = chunks.slice(levelStart, levelStart + levelDimension);
       const levelIndex = Math.floor(levelStart / levelDimension) + 1;
+      let lastChunkIndexForLevel = -1;
       for (let offset = 0; offset < levelChunks.length; offset++) {
         if (currentAbortController?.signal.aborted) {
           logWarning('Document processing cancelled.');
@@ -22678,8 +22679,13 @@ async function processDocumentFile(file) {
           chunkResults.push(result);
           mergeAdjacencyMaps(aggregateMatrices, result.matrices);
           if (estimator) estimator.recordChunk(chunkIndex, result.metrics || {}, chunkMeta);
-          updateVisualizationAfterChunk(aggregateMatrices, focusTokens, chunkIndex, chunks.length);
+          lastChunkIndexForLevel = chunkIndex;
         }
+      }
+
+      if (lastChunkIndexForLevel >= 0) {
+        const safeIndex = Math.min(chunks.length - 1, lastChunkIndexForLevel);
+        updateVisualizationAfterChunk(aggregateMatrices, focusTokens, safeIndex, chunks.length);
       }
 
       if (cancelledMidway || currentAbortController?.signal.aborted) {
