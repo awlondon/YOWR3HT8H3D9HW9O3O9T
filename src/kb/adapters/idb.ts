@@ -1,9 +1,9 @@
 import { decodeEdgeBlock, encodeEdgeBlock } from '../encode';
 import type { AdjQuery, EdgeRow, KBAdapter, TokenId } from '../index';
-import { BLOCK_MAX, hashPrefix } from '../shard';
+import { BLOCK_MAX, hashPrefix } from '../shard.js';
 import { KB_SCHEMA_VERSION } from '../schema';
 import type { EdgeBlock } from '../schema';
-import { notifyGraphUpdated, notifyTokenObserved } from '../../vector/globals';
+import { notifyGraphUpdated, notifyTokenObserved } from '../../vector/globals.js';
 
 const DB_NAME = 'hlsf_kb';
 const DB_VERSION = 2;

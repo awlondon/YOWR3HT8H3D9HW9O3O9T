@@ -1,7 +1,7 @@
-import { BLOCK_MAX } from '../shard';
+import { BLOCK_MAX } from '../shard.js';
 import type { AdjQuery, EdgeRow, KBAdapter, TokenId } from '../index';
 import type { EdgeBlock } from '../schema';
-import { notifyGraphUpdated, notifyTokenObserved } from '../../vector/globals';
+import { notifyGraphUpdated, notifyTokenObserved } from '../../vector/globals.js';
 
 function matchType(value: number, expected?: number | number[]): boolean {
   if (expected == null) return true;
