@@ -46,11 +46,17 @@ export interface HLSFGraph {
 }
 
 export const HLSF_ROTATION_EVENT = 'hlsf:rotation-preview';
+export const HLSF_THOUGHT_COMMIT_EVENT = 'hlsf:thought-commit';
 
 export interface RotationPreviewEventDetail {
   active: boolean;
   iteration: number;
   graph: HLSFGraph | null;
+}
+
+export interface ThoughtCommitEventDetail {
+  iteration: number;
+  text: string;
 }
 
 export interface IntersectionEvent {
@@ -664,8 +670,13 @@ function runSingleRotationIteration(
       if (angle >= 360) {
         flushPendingTokens();
         stopRotationAnimation(hiddenGraph, iterationIndex);
-        const text = materializeThought(bufferTokens, config.thinkingStyle);
-        commitThoughtLineToUI(text);
+        const text = buildIterationNarrative(
+          hiddenGraph,
+          bufferTokens,
+          iterationIndex,
+          config.thinkingStyle,
+        );
+        commitThoughtLineToUI(text, iterationIndex);
         resolve({ tokens: bufferTokens.slice(), text });
         return;
       }
@@ -809,10 +820,13 @@ function streamTokensToThoughtLog(
   tokenStreamQueues.set(iterationIndex, task);
 }
 
-function commitThoughtLineToUI(text: string): void {
-  const entry = ensureThoughtLogIterationEntry(activeIterationIndex);
-  if (!entry) return;
-  entry.textEl.textContent = text || '…';
+export function commitThoughtLineToUI(text: string, iterationIndex = activeIterationIndex): void {
+  const entry = ensureThoughtLogIterationEntry(iterationIndex);
+  if (entry) {
+    entry.textEl.textContent = text || '…';
+    return;
+  }
+  dispatchThoughtCommitEvent(iterationIndex, text);
 }
 
 function prepareThoughtLogUI(iterations: number): void {
@@ -882,6 +896,72 @@ function materializeThought(tokens: string[], style: ThinkingStyle): string {
     default:
       return unique.join(' ');
   }
+}
+
+const AXIS_SEQUENCE = ['horizontal', 'longitudinal', 'sagittal'];
+const AXIS_DESCRIPTORS = ['shear', 'torsion', 'resonance'];
+
+function buildIterationNarrative(
+  graph: HLSFGraph,
+  collectedTokens: string[],
+  iterationIndex: number,
+  style: ThinkingStyle,
+): string {
+  const baselineTokens = collectedTokens.length
+    ? collectedTokens.slice()
+    : extractIntersectionTokens(graph, 6);
+  const axisTokens = selectAxisTokensForIteration(
+    graph,
+    iterationIndex,
+    Math.max(6, baselineTokens.length),
+  );
+  const combined = Array.from(new Set([...baselineTokens, ...axisTokens]));
+  const axisName = AXIS_SEQUENCE[iterationIndex % AXIS_SEQUENCE.length];
+  const descriptor = AXIS_DESCRIPTORS[iterationIndex % AXIS_DESCRIPTORS.length];
+  const narrative = materializeThought(combined, style);
+  if (!narrative) {
+    return `${capitalize(axisName)} axis ${descriptor} completed.`;
+  }
+  return `${capitalize(axisName)} axis ${descriptor}: ${narrative}`;
+}
+
+function selectAxisTokensForIteration(
+  graph: HLSFGraph,
+  iterationIndex: number,
+  limit: number,
+): string[] {
+  const prioritized = extractIntersectionTokens(graph, Math.max(limit * 2, 12));
+  if (!prioritized.length) return [];
+  const stride = Math.max(1, Math.floor(prioritized.length / AXIS_SEQUENCE.length));
+  const start = (iterationIndex * stride) % prioritized.length;
+  const tokens: string[] = [];
+  for (let i = 0; i < Math.min(limit, prioritized.length); i += 1) {
+    const token = prioritized[(start + i) % prioritized.length];
+    if (token) tokens.push(token);
+  }
+  return tokens;
+}
+
+function capitalize(text: string): string {
+  if (!text) return '';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function dispatchThoughtCommitEvent(iterationIndex: number, text: string): void {
+  if (typeof CustomEvent === 'undefined') return;
+  if (typeof document !== 'undefined') {
+    const event = new CustomEvent<ThoughtCommitEventDetail>(HLSF_THOUGHT_COMMIT_EVENT, {
+      detail: { iteration: iterationIndex, text },
+    });
+    document.dispatchEvent(event);
+    return;
+  }
+  const target = (globalThis as unknown as EventTarget | undefined) ?? undefined;
+  if (!target || typeof (target as any).dispatchEvent !== 'function') return;
+  const event = new CustomEvent<ThoughtCommitEventDetail>(HLSF_THOUGHT_COMMIT_EVENT, {
+    detail: { iteration: iterationIndex, text },
+  });
+  (target as EventTarget).dispatchEvent(event);
 }
 
 function formatHistoryContext(history: CognitionHistoryEntry[]): string {
@@ -954,13 +1034,12 @@ export async function callLLM(
       usage: data?.usage,
     };
   } catch (error) {
-    const fallback = thoughts.length ? thoughts.join(' ') : 'Unable to generate a response.';
     const message = error instanceof Error ? error.message : String(error);
-    updateThoughtLogStatus('LLM request failed; using internal thoughts.');
+    updateThoughtLogStatus('LLM request failed. Halting rotation.');
     return {
       model: 'local-llm',
       temperature: 0.7,
-      response: fallback,
+      response: '',
       error: message,
       isFallback: true,
     };

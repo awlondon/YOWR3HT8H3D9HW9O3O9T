@@ -46,6 +46,8 @@ import { commandRegistry, legacyCommands, type CommandHandler } from './commands
 import { ensureKBReady } from './state/kbStore';
 import {
   HLSF_ROTATION_EVENT,
+  HLSF_THOUGHT_COMMIT_EVENT,
+  commitThoughtLineToUI,
   runCognitionCycle,
   type CognitionConfig,
   type CognitionCycleResult,
@@ -53,7 +55,9 @@ import {
   type HLSFGraph,
   type RotationPreviewEventDetail,
   type ThinkingStyle,
+  type ThoughtCommitEventDetail,
 } from './engine/cognitionCycle';
+import { installLLMStub } from './server/installLLMStub';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -135,6 +139,8 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   echoCommands: true,
   autoExecute: true,
 };
+
+installLLMStub();
 
 function mergeAgentConfig(
   base: AgentConfig,
@@ -5659,6 +5665,10 @@ const rotationPreviewUiState: RotationPreviewUiState = {
   previousGlyphOnly: false,
 };
 
+function renderHlsfMatrix(graph: HLSFGraph, glyphOnly = false): void {
+  animateHLSF(graph, glyphOnly);
+}
+
 function handleRotationPreviewBridge(detail?: RotationPreviewEventDetail): void {
   if (!detail || typeof window === 'undefined') return;
   const container = document.getElementById('hlsf-canvas-container');
@@ -5676,7 +5686,7 @@ function handleRotationPreviewBridge(detail?: RotationPreviewEventDetail): void 
       rotationPreviewUiState.restoreHidden = wasHidden && window.HLSF?.config?.deferredRender !== false;
     }
     rotationPreviewUiState.active = true;
-    animateHLSF(detail.graph, false);
+    renderHlsfMatrix(detail.graph, false);
     return;
   }
 
@@ -5692,7 +5702,7 @@ function handleRotationPreviewBridge(detail?: RotationPreviewEventDetail): void 
   rotationPreviewUiState.previousGlyphOnly = false;
 
   if (previousGraph) {
-    animateHLSF(previousGraph, previousGlyphOnly);
+    renderHlsfMatrix(previousGraph as HLSFGraph, previousGlyphOnly);
   } else if (shouldHide) {
     hideVisualizer();
   }
@@ -5702,6 +5712,11 @@ if (typeof document !== 'undefined') {
   document.addEventListener(HLSF_ROTATION_EVENT, (event: Event) => {
     const customEvent = event as CustomEvent<RotationPreviewEventDetail>;
     handleRotationPreviewBridge(customEvent.detail);
+  });
+  document.addEventListener(HLSF_THOUGHT_COMMIT_EVENT, (event: Event) => {
+    const customEvent = event as CustomEvent<ThoughtCommitEventDetail>;
+    if (!customEvent?.detail) return;
+    commitThoughtLineToUI(customEvent.detail.text, customEvent.detail.iteration);
   });
 }
 const edgeAlphaFromWeight = (w) => {
