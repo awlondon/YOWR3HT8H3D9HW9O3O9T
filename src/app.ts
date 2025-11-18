@@ -50,6 +50,7 @@ import {
   type CognitionConfig,
   type CognitionCycleResult,
   type CognitionRun,
+  type HLSFGraph,
   type RotationPreviewEventDetail,
   type ThinkingStyle,
 } from './engine/cognitionCycle';
@@ -4154,6 +4155,38 @@ function stopHLSFAnimation() {
       console.warn('Legacy HLSF animation stop failed:', err);
     }
   }
+}
+
+let lastRotationPreviewGraph: HLSFGraph | null = null;
+
+function handleRotationPreviewEvent(event: CustomEvent<RotationPreviewEventDetail>): void {
+  const detail = event?.detail;
+  if (!detail) return;
+  if (detail.active && detail.graph) {
+    lastRotationPreviewGraph = detail.graph;
+    ensureHLSFCanvas();
+    animateHLSF(detail.graph, window.HLSF?.currentGlyphOnly === true);
+    return;
+  }
+
+  if (detail.graph) {
+    lastRotationPreviewGraph = detail.graph;
+  }
+
+  stopHLSFAnimation();
+  if (lastRotationPreviewGraph) {
+    ensureHLSFCanvas();
+    drawHLSFMatrix(lastRotationPreviewGraph, {
+      glyphOnly: window.HLSF?.currentGlyphOnly === true,
+    });
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    HLSF_ROTATION_EVENT,
+    (event) => handleRotationPreviewEvent(event as CustomEvent<RotationPreviewEventDetail>),
+  );
 }
 
 const MAX_REL_TYPES = 50;
