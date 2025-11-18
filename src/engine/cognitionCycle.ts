@@ -980,6 +980,20 @@ function formatHistoryContext(history: CognitionHistoryEntry[]): string {
     .join('\n---\n');
 }
 
+function buildEmergentThoughtDirective(): string {
+  return [
+    'Adopt the HLSF Emergent Thought Process for every response.',
+    '1. Prompt decomposition – extract the key nouns, verbs, and relations. List any ambiguous terms that need assumptions.',
+    '2. Conceptual clustering – group related concepts, name each cluster, and note why the grouping matters.',
+    '3. High-Level Semantic Field (HLSF) mapping – describe the nodes (clusters) and explicit links between them to form the reasoning skeleton.',
+    '4. Interconnection reflection – explain how shifts in one cluster influence others and highlight cascading effects.',
+    '5. Iterative refinement – revisit the HLSF to add/remove nodes or links for clarity; capture adjustments explicitly.',
+    '6. Emergent thought trace – document concise reflections for each step without exposing raw chain-of-thought.',
+    '7. Structured response – answer using the HLSF order, state assumptions, integrate critique/context, and close with actionable next steps.',
+    'Label the output sections (e.g., "Emergent Thought Trace", "Structured Response") so the user can follow the process.',
+  ].join('\n');
+}
+
 export async function callLLM(
   prompt: string,
   thoughts: string[],
@@ -988,6 +1002,7 @@ export async function callLLM(
   history: CognitionHistoryEntry[],
 ): Promise<LLMResult> {
   const systemStyle = thinkingStyleToSystemMessage(config.thinkingStyle);
+  const emergentDirective = buildEmergentThoughtDirective();
   const hiddenInstruction =
     mode === 'hidden'
       ? 'You are handling a /hidden reflection prompt. Describe your chain of thought by rotating through the horizontal, longitudinal, and sagittal axes of the HLSF. At each axis, report the intersection-based insights that emerge, but keep this reasoning private.'
@@ -1006,7 +1021,7 @@ export async function callLLM(
   ].filter((segment): segment is string => Boolean(segment));
 
   const messages = [
-    { role: 'system', content: systemStyle },
+    { role: 'system', content: [systemStyle, emergentDirective].filter(Boolean).join('\n\n') },
     ...(hiddenInstruction ? [{ role: 'system', content: hiddenInstruction }] : []),
     { role: 'user', content: userSegments.join('\n\n') },
     {

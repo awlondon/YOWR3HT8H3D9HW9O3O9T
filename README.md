@@ -41,6 +41,11 @@ flows over the core cognition experience.
 - Recursive adjacency building applies configurable depth/degree caps and weight aggregation (`src/features/graph/recursive_adjacency.ts`).
 - Metrics summarise token density, edge histograms, and salience rankings for downstream tooling (`src/analytics/metrics.ts`).
 
+### Emergent thought trace workflow
+
+- The cognition engine mandates a multi-step HLSF reasoning routine that covers decomposition, conceptual clustering, HLSF mapping, interconnection reflection, refinement, and structured response delivery (`docs/HLSF_EMERGENT_TRACE.md`).
+- `callLLM` (`src/engine/cognitionCycle.ts`) injects this directive into every `/api/llm` request so completions return clearly labeled **Emergent Thought Trace** and **Structured Response** sections aligned with the High-Level Semantic Field.
+
 ### Consciousness analytics
 
 - Workspace propagation models salience broadcast over multiple iterations (`src/engine/consciousness.ts`).
