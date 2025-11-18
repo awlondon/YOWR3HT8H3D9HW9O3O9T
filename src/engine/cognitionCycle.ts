@@ -69,6 +69,8 @@ export interface LLMResult {
     promptTokens: number;
     completionTokens: number;
   };
+  error?: string;
+  isFallback?: boolean;
 }
 
 export type CognitionMode = 'visible' | 'hidden';
@@ -142,6 +144,56 @@ let activeRotationConfig: CognitionConfig | null = null;
 let activeIterationIndex = 0;
 const iterationDom = new Map<number, ThoughtIterationDom>();
 const tokenStreamQueues = new Map<number, Promise<void>>();
+
+function getThoughtIterationRoot(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  return document.getElementById('thought-iteration-log');
+}
+
+function ensureThoughtLogPanelVisible(root: HTMLElement): void {
+  if (!root) return;
+  root.setAttribute('aria-hidden', 'false');
+  const panel = root.closest('.thought-log-panel');
+  if (panel instanceof HTMLElement && !panel.classList.contains('is-debug-visible')) {
+    panel.classList.add('is-debug-visible');
+  }
+}
+
+function createThoughtIterationDom(root: HTMLElement, iterationIndex: number): ThoughtIterationDom {
+  const block = document.createElement('div');
+  block.className = 'thought-iteration';
+  block.dataset.iteration = String(iterationIndex);
+
+  const header = document.createElement('div');
+  header.className = 'thought-iteration__header';
+  header.textContent = `Rotation ${iterationIndex + 1}`;
+
+  const tokensEl = document.createElement('div');
+  tokensEl.className = 'thought-iteration__tokens';
+
+  const textEl = document.createElement('div');
+  textEl.className = 'thought-iteration__text';
+  textEl.textContent = 'Awaiting synthesis…';
+
+  block.append(header, tokensEl, textEl);
+  root.appendChild(block);
+  const entry: ThoughtIterationDom = { root: block, tokensEl, textEl };
+  iterationDom.set(iterationIndex, entry);
+  return entry;
+}
+
+function ensureThoughtLogIterationEntry(iterationIndex: number): ThoughtIterationDom | null {
+  let entry = iterationDom.get(iterationIndex);
+  if (entry) return entry;
+  const root = getThoughtIterationRoot();
+  if (!root) return null;
+  ensureThoughtLogPanelVisible(root);
+  for (let nextIndex = iterationDom.size; nextIndex <= iterationIndex; nextIndex += 1) {
+    createThoughtIterationDom(root, nextIndex);
+  }
+  entry = iterationDom.get(iterationIndex) ?? null;
+  return entry;
+}
 
 async function executeCognitionPass(
   rawPrompt: string,
@@ -241,6 +293,13 @@ export async function runCognitionCycle(
         response: run.llm.response,
       };
       history.push(entry);
+
+      if (run.llm.error) {
+        termination = 'error';
+        errorMessage = run.llm.error;
+        updateThoughtLogStatus(`LLM request failed: ${run.llm.error}`);
+        break;
+      }
 
       if (shouldExitCycle(run.llm.response)) {
         termination = 'exit';
@@ -604,7 +663,7 @@ function runSingleRotationIteration(
 
       if (angle >= 360) {
         flushPendingTokens();
-        stopRotationAnimation(iterationIndex);
+        stopRotationAnimation(hiddenGraph, iterationIndex);
         const text = materializeThought(bufferTokens, config.thinkingStyle);
         commitThoughtLineToUI(text);
         resolve({ tokens: bufferTokens.slice(), text });
@@ -668,7 +727,7 @@ function startRotationAnimation(hiddenGraph: HLSFGraph, iterationIndex: number):
   emitRotationPreview(true, hiddenGraph, iterationIndex);
 }
 
-function stopRotationAnimation(iterationIndex: number): void {
+function stopRotationAnimation(hiddenGraph: HLSFGraph, iterationIndex: number): void {
   if (typeof window === 'undefined') return;
   const root = (window as any).HLSF;
   if (!root?.state?.emergent) return;
@@ -676,7 +735,7 @@ function stopRotationAnimation(iterationIndex: number): void {
   updateThoughtLogStatus(
     `Rotation ${iterationIndex + 1}/${activeRotationConfig?.iterations ?? 1} committed`,
   );
-  emitRotationPreview(false, null, iterationIndex);
+  emitRotationPreview(false, hiddenGraph, iterationIndex);
 }
 
 function getIntersectionsAtAngle(hiddenGraph: HLSFGraph, angle: number): IntersectionEvent[] {
@@ -729,7 +788,7 @@ function streamTokensToThoughtLog(
   iterationIndex: number,
 ): void {
   if (!tokens.length || typeof document === 'undefined') return;
-  const entry = iterationDom.get(iterationIndex);
+  const entry = ensureThoughtLogIterationEntry(iterationIndex);
   if (!entry) return;
   const line = tokens.join(' ');
   const queued = tokenStreamQueues.get(iterationIndex) ?? Promise.resolve();
@@ -751,7 +810,7 @@ function streamTokensToThoughtLog(
 }
 
 function commitThoughtLineToUI(text: string): void {
-  const entry = iterationDom.get(activeIterationIndex);
+  const entry = ensureThoughtLogIterationEntry(activeIterationIndex);
   if (!entry) return;
   entry.textEl.textContent = text || '…';
 }
@@ -762,41 +821,26 @@ function prepareThoughtLogUI(iterations: number): void {
     tokenStreamQueues.clear();
     return;
   }
-  const root = document.getElementById('thought-iteration-log');
+  const root = getThoughtIterationRoot();
   if (!root) {
     iterationDom.clear();
     tokenStreamQueues.clear();
     return;
   }
+  ensureThoughtLogPanelVisible(root);
   root.innerHTML = '';
   iterationDom.clear();
   tokenStreamQueues.clear();
   const count = Math.max(1, iterations);
   for (let i = 0; i < count; i += 1) {
-    const block = document.createElement('div');
-    block.className = 'thought-iteration';
-    block.dataset.iteration = String(i);
-
-    const header = document.createElement('div');
-    header.className = 'thought-iteration__header';
-    header.textContent = `Rotation ${i + 1}`;
-
-    const tokensEl = document.createElement('div');
-    tokensEl.className = 'thought-iteration__tokens';
-
-    const textEl = document.createElement('div');
-    textEl.className = 'thought-iteration__text';
-    textEl.textContent = 'Awaiting synthesis…';
-
-    block.append(header, tokensEl, textEl);
-    root.appendChild(block);
-    iterationDom.set(i, { root: block, tokensEl, textEl });
+    createThoughtIterationDom(root, i);
   }
 }
 
 function setActiveThoughtIteration(index: number): void {
   activeIterationIndex = index;
   if (typeof document === 'undefined') return;
+  ensureThoughtLogIterationEntry(index);
   for (const [idx, entry] of iterationDom.entries()) {
     if (!entry?.root) continue;
     entry.root.classList.toggle('is-active', idx === index);
@@ -911,10 +955,14 @@ export async function callLLM(
     };
   } catch (error) {
     const fallback = thoughts.length ? thoughts.join(' ') : 'Unable to generate a response.';
+    const message = error instanceof Error ? error.message : String(error);
+    updateThoughtLogStatus('LLM request failed; using internal thoughts.');
     return {
       model: 'local-llm',
       temperature: 0.7,
       response: fallback,
+      error: message,
+      isFallback: true,
     };
   }
 }
