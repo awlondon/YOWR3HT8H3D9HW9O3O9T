@@ -13,6 +13,7 @@ declare module 'node:assert/strict' {
   interface Assert {
     equal(actual: unknown, expected: unknown, message?: string): void;
     deepEqual(actual: unknown, expected: unknown, message?: string): void;
+    strictEqual(actual: unknown, expected: unknown, message?: string): void;
     throws(block: () => unknown, error?: unknown, message?: string): void;
   }
   const assert: Assert;
