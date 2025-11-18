@@ -312,12 +312,22 @@ export async function runCognitionCycle(
         break;
       }
 
+      const responseText = run.llm.response?.trim() ?? '';
+
       if (run.mode === 'visible') {
+        if (!responseText) {
+          termination = 'error';
+          errorMessage = 'LLM produced an empty visible response; hidden reflection skipped.';
+          updateThoughtLogStatus(
+            'Unable to continue: visible response was empty, so hidden reflection was skipped.',
+          );
+          break;
+        }
         const hiddenPrompt = composeHiddenPrompt(history);
         entry.hiddenPrompt = hiddenPrompt;
         currentPrompt = hiddenPrompt;
       } else {
-        currentPrompt = truncateToWords(run.llm.response ?? '', sanitizedConfig.maxPromptWords);
+        currentPrompt = truncateToWords(responseText, sanitizedConfig.maxPromptWords);
       }
 
       if (shouldExitCycle(currentPrompt)) {
@@ -379,7 +389,7 @@ export function composeHiddenPrompt(history: CognitionHistoryEntry[]): string {
     'Describe the intersections discovered at each axis crossing and summarize the emergent insights.',
   ];
   if (reference) {
-    promptLines.push('Reference answer:', reference);
+    promptLines.push(`Reference answer: ${reference}`);
   }
   return promptLines.join('\n');
 }
@@ -915,7 +925,16 @@ function buildIterationNarrative(
     iterationIndex,
     Math.max(6, baselineTokens.length),
   );
-  const combined = Array.from(new Set([...baselineTokens, ...axisTokens]));
+  const combined = Array.from(new Set([...baselineTokens, ...axisTokens]))
+    .filter(token => {
+      if (!token) return false;
+      const normalized = token.trim();
+      return (
+        normalized.length > 0 &&
+        !/^latent[-\s]?/i.test(normalized) &&
+        !/^latent\s+field/i.test(normalized)
+      );
+    });
   const axisName = AXIS_SEQUENCE[iterationIndex % AXIS_SEQUENCE.length];
   const descriptor = AXIS_DESCRIPTORS[iterationIndex % AXIS_DESCRIPTORS.length];
   const narrative = materializeThought(combined, style);
