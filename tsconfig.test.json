@@ -4,7 +4,8 @@
     "outDir": "./build/test",
     "noEmit": false,
     "declaration": false,
-    "emitDeclarationOnly": false
+    "emitDeclarationOnly": false,
+    "types": []
   },
   "include": [
     "src/export/modelParams.ts",
@@ -31,6 +32,8 @@
     "src/settings.test.ts",
     "src/onboarding/loginFlow.ts",
     "src/onboarding/loginFlow.test.ts",
+    "src/server/installLLMStub.ts",
+    "src/server/installLLMStub.test.ts",
     "types/node-test.d.ts"
   ]
 }
