@@ -13,7 +13,8 @@
     "test": "tsc --project tsconfig.test.json && node --test build/test",
     "test:watch": "node ./scripts/test-watch.mjs",
     "check": "npm run lint && npm run typecheck && npm run test",
-    "postinstall": "node ./scripts/patch-typescript-eslint.mjs"
+    "postinstall": "node ./scripts/patch-typescript-eslint.mjs",
+    "server": "node server/index.js"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^7.1.1",
