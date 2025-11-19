@@ -77,6 +77,11 @@ export interface LLMResult {
   };
   error?: string;
   isFallback?: boolean;
+  endpoint?: string;
+  status?: number;
+  rawError?: string;
+  fallbackText?: string;
+  fallbackReason?: string;
 }
 
 export type CognitionMode = 'visible' | 'hidden';
@@ -302,8 +307,8 @@ export async function runCognitionCycle(
 
       if (run.llm.error) {
         termination = 'error';
-        errorMessage = run.llm.error;
-        updateThoughtLogStatus(`LLM request failed: ${run.llm.error}`);
+        errorMessage = formatLlmError(run.llm);
+        updateThoughtLogStatus(`LLM request failed: ${errorMessage}`);
         break;
       }
 
@@ -1013,6 +1018,75 @@ function buildEmergentThoughtDirective(): string {
   ].join('\n');
 }
 
+const runtimeEnv = (import.meta as any)?.env ?? {};
+const DEFAULT_LLM_ENDPOINT = '/api/llm';
+
+function resolveLlmEndpoint(): string {
+  const fromEnv = typeof runtimeEnv.VITE_LLM_ENDPOINT === 'string'
+    ? runtimeEnv.VITE_LLM_ENDPOINT.trim()
+    : '';
+  if (fromEnv) return fromEnv;
+
+  if (typeof window !== 'undefined') {
+    const fromWindow = (window as any).__HLSF_LLM_ENDPOINT__;
+    if (typeof fromWindow === 'string' && fromWindow.trim()) {
+      return fromWindow.trim();
+    }
+  }
+
+  return DEFAULT_LLM_ENDPOINT;
+}
+
+function normalizeLlmUrl(endpoint: string): string {
+  if (/^https?:\/\//i.test(endpoint)) return endpoint;
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return new URL(endpoint, window.location.origin).toString();
+  }
+  return new URL(endpoint, 'http://localhost').toString();
+}
+
+function isStaticFileProtocol(): boolean {
+  return typeof window !== 'undefined' && window.location?.protocol === 'file:';
+}
+
+function tidyFallbackText(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  const capitalized = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
+function getLocalHlsfFallback(): string | null {
+  if (typeof window === 'undefined') return null;
+  const voice = (window as any).CognitionEngine?.voice;
+  const latest = typeof voice?.getLatestLocalOutputs === 'function'
+    ? voice.getLatestLocalOutputs()
+    : voice?.latestLocalOutputs;
+  const candidates = [latest?.localResponse, latest?.localThought, latest?.prompt]
+    .map(value => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean);
+  return candidates[0] || null;
+}
+
+function buildFallbackResponse(thoughts: string[]): { text: string; reason: string } | null {
+  const local = getLocalHlsfFallback();
+  if (local) {
+    const text = tidyFallbackText(local);
+    return text ? { text, reason: 'local-output-suite' } : null;
+  }
+
+  const merged = thoughts.filter(Boolean).join(' ');
+  const mergedText = tidyFallbackText(merged);
+  return mergedText ? { text: mergedText, reason: 'rotation-thoughts' } : null;
+}
+
+function formatLlmError(llm: LLMResult): string {
+  const parts = [llm.error || 'LLM request failed'];
+  if (llm.status) parts.push(`HTTP ${llm.status}`);
+  if (llm.endpoint) parts.push(`Endpoint: ${llm.endpoint}`);
+  return parts.filter(Boolean).join(' · ');
+}
+
 export async function callLLM(
   prompt: string,
   thoughts: string[],
@@ -1050,14 +1124,41 @@ export async function callLLM(
     },
   ];
 
+  const endpoint = resolveLlmEndpoint();
+  const requestUrl = normalizeLlmUrl(endpoint);
+  const fallback = buildFallbackResponse(thoughts);
+
+  if (isStaticFileProtocol() && endpoint.startsWith('/')) {
+    const message =
+      'LLM backend is not configured for file:// loads. Configure VITE_LLM_ENDPOINT or run the dev server so /api/llm is available.';
+    updateThoughtLogStatus(message);
+    return {
+      model: 'local-llm',
+      temperature: 0.7,
+      response: fallback?.text ?? '',
+      error: message,
+      isFallback: true,
+      endpoint: requestUrl,
+      status: 0,
+      fallbackText: fallback?.text,
+      fallbackReason: fallback?.reason,
+    };
+  }
+
   try {
-    const response = await fetch('/api/llm', {
+    const response = await fetch(requestUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages }),
     });
     if (!response.ok) {
-      throw new Error(`LLM request failed (${response.status})`);
+      const errorText = await response.text().catch(() => '');
+      const errorMessage = `LLM request failed (${response.status})`;
+      const detailedMessage = errorText ? `${errorMessage}: ${errorText}` : errorMessage;
+      const err = new Error(detailedMessage);
+      (err as any).status = response.status;
+      (err as any).body = errorText;
+      throw err;
     }
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content ?? '';
@@ -1066,16 +1167,35 @@ export async function callLLM(
       temperature: data?.temperature ?? 0.7,
       response: content,
       usage: data?.usage,
+      endpoint: requestUrl,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    updateThoughtLogStatus('LLM request failed. Halting rotation.');
+    const status = (error as any)?.status as number | undefined;
+    const rawError = (error as any)?.body as string | undefined;
+    console.error('LLM request failed', {
+      endpoint: requestUrl,
+      status,
+      rawError,
+      error,
+    });
+    updateThoughtLogStatus(
+      status
+        ? `LLM request failed (${status}). Check LLM endpoint or network.`
+        : 'LLM request failed. Halting rotation.',
+    );
+    const fallbackResponse = fallback ?? buildFallbackResponse(thoughts);
     return {
       model: 'local-llm',
       temperature: 0.7,
-      response: '',
+      response: fallbackResponse?.text ?? '',
       error: message,
       isFallback: true,
+      endpoint: requestUrl,
+      status,
+      rawError,
+      fallbackText: fallbackResponse?.text,
+      fallbackReason: fallbackResponse?.reason,
     };
   }
 }

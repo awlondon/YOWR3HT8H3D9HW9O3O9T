@@ -189,9 +189,15 @@ the File System Access API require Chromium-based browsers.
 
 When prompted, enter an OpenAI API key (`sk-...`) to enable live completions. Check **Remember this key** to store it locally after encrypting with the browser's AES-GCM implementation. Reuse is always explicit via the **Use saved key** button, and **Forget saved key** wipes the encrypted payload immediately. Select **Continue offline** to limit the engine to cached workflows.
 
+### LLM endpoint configuration
+
+Set `VITE_LLM_ENDPOINT` to point the front-end at your LLM proxy (defaults to `/api/llm`). The value can be an absolute URL or a relative path resolved against the current origin. When loading the bundle directly from `file://`, provide an absolute endpoint (for example `https://your-llm-host.example.com/api/llm`) so the cognition cycle can reach a backend instead of returning a 404.
+
 ### LLM stub toggle
 
 The browser fetch stub that intercepts `/api/llm` requests is now opt-in. Set `VITE_ENABLE_LLM_STUB=off` (or `on`) in your Vite environment to force a particular mode. The default `auto` value only installs the stub during `npm run dev`, allowing production builds to reach a real backend.
+
+If the LLM endpoint is unreachable, the cognition status will surface the HTTP error (for example `LLM backend failed (HTTP 404)`) and the articulated response panel will display a clear message plus a fallback composed from the HLSF Output Suite when available.
 
 ## Quality gates
 
