@@ -5,10 +5,10 @@ import type {
   AgentKernelHooks,
   AgentPlan,
   AgentStatus,
+  AgentTelemetryEvent,
 } from './types';
 import { graphPlan } from './strategies/graphPlan';
 import { selfQueryLLM } from './strategies/selfQueryLLM';
-import type { AgentTelemetryEvent } from './types';
 
 function clampInterval(cfg: AgentConfig, backoffMultiplier: number): number {
   const base = Math.max(1000, Number(cfg.intervalMs) || 15000);
