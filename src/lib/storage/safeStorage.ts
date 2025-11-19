@@ -1,4 +1,4 @@
-const memoryStorageFallback = new Map<string, string>();
+export const memoryStorageFallback = new Map<string, string>();
 let storageQuotaWarningIssued = false;
 let storageQuotaHardLimitActive = false;
 
