@@ -8,10 +8,11 @@
     "build": "node ./node_modules/vite/bin/vite.js build",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
     "lint": "node ./node_modules/eslint/bin/eslint.js src --ext .ts,.tsx",
+    "typecheck": "tsc --project tsconfig.typecheck.json",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,css,md}\"",
     "test": "tsc --project tsconfig.test.json && node --test build/test",
     "test:watch": "node ./scripts/test-watch.mjs",
-    "check": "npm run lint && npm run test",
+    "check": "npm run lint && npm run typecheck && npm run test",
     "postinstall": "node ./scripts/patch-typescript-eslint.mjs"
   },
   "devDependencies": {

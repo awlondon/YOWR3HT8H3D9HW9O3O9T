@@ -20,6 +20,15 @@ declare module 'node:assert/strict' {
   export default assert;
 }
 
+declare module 'node:crypto' {
+  export const webcrypto: Crypto;
+}
+
+declare class Buffer {
+  static from(data: string, encoding?: string): Buffer;
+  toString(encoding?: string): string;
+}
+
 declare module 'estree' {
   interface Node {
     type: string;

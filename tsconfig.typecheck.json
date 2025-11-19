@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true
+  },
+  "include": [
+    "src/lib/storage/**/*.ts",
+    "src/security/**/*.ts",
+    "src/vector/**/*.ts",
+    "src/workers/**/*.ts",
+    "src/server/installLLMStub.ts"
+  ],
+  "exclude": ["**/*.test.ts"]
+}

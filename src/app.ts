@@ -18,6 +18,19 @@ import {
   resolveModelParamConfig,
 } from './export/modelParams';
 import {
+  configureSafeStorageHooks,
+  safeStorageGet,
+  safeStorageKeys,
+  safeStorageRemove,
+  safeStorageSet,
+  DB_INDEX_KEY,
+  DB_RAW_KEY,
+  EXPORT_KEY_STORAGE_KEY,
+  EXPORT_PAYLOAD_FORMAT,
+  EXPORT_PAYLOAD_VERSION,
+  TOKEN_CACHE_PREFIX,
+} from './lib/storage/safeStorage';
+import {
   initializeVoiceClonePanel,
   resetVoiceCloneStore,
   signalVoiceCloneTokensChanged,
@@ -44,6 +57,12 @@ import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
 import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
 import { ensureKBReady } from './state/kbStore';
+import {
+  clearEncryptedApiKey,
+  hasEncryptedApiKey,
+  loadEncryptedApiKey,
+  persistEncryptedApiKey,
+} from './security/apiKeyVault.js';
 import {
   HLSF_ROTATION_EVENT,
   HLSF_THOUGHT_COMMIT_EVENT,
@@ -140,7 +159,16 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   autoExecute: true,
 };
 
-installLLMStub();
+const runtimeEnv = (import.meta as any)?.env ?? {};
+const llmStubMode = String(runtimeEnv.VITE_ENABLE_LLM_STUB ?? 'auto').toLowerCase();
+const shouldInstallLlmStub =
+  llmStubMode === 'on'
+  || llmStubMode === 'true'
+  || (llmStubMode === 'auto' && Boolean(runtimeEnv.DEV));
+
+if (shouldInstallLlmStub) {
+  installLLMStub();
+}
 
 function mergeAgentConfig(
   base: AgentConfig,
@@ -6086,75 +6114,6 @@ function saveLedger(ledger) {
   }
 }
 
-// ---- HLSF constants
-const TOKEN_CACHE_PREFIX = 'hlsf_token_';
-const DB_RAW_KEY = 'HLSF_DB_RAW'; // stores JSON export text
-const API_KEY_STORAGE_KEY = 'HLSF_API_KEY';
-const DB_INDEX_KEY = 'HLSF_DB_INDEX'; // array of token strings
-const EXPORT_KEY_STORAGE_KEY = 'HLSF_EXPORT_KEY';
-const EXPORT_PAYLOAD_FORMAT = 'HLSF_DB_EXPORT_V2';
-const EXPORT_PAYLOAD_VERSION = 2;
-
-const memoryStorageFallback = new Map();
-let storageQuotaWarningIssued = false;
-let storageQuotaHardLimitActive = false;
-
-function isQuotaExceededError(err) {
-  if (!err) return false;
-  return (
-    err.name === 'QuotaExceededError' ||
-    err.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
-    err.code === 22 ||
-    err.code === 1014
-  );
-}
-
-function purgeTokenCache() {
-  let removed = 0;
-  try {
-    const keys = Object.keys(localStorage).filter((k) => k.startsWith(TOKEN_CACHE_PREFIX));
-    for (const key of keys) {
-      localStorage.removeItem(key);
-      removed++;
-    }
-  } catch (err) {
-    console.warn('Failed to purge token cache from persistent storage:', err);
-  }
-  for (const key of Array.from(memoryStorageFallback.keys())) {
-    if (key.startsWith(TOKEN_CACHE_PREFIX)) {
-      memoryStorageFallback.delete(key);
-      removed++;
-    }
-  }
-
-  if (removed > 0 && typeof state !== 'undefined' && state && typeof state === 'object') {
-    setDocumentCacheBaseline(0, { manual: true });
-  }
-  if (removed > 0) {
-    storageQuotaHardLimitActive = false;
-  }
-  return removed;
-}
-
-function purgeSpecificKey(key) {
-  let removed = false;
-  try {
-    if (localStorage.getItem(key) != null) {
-      localStorage.removeItem(key);
-      removed = true;
-    }
-  } catch (err) {
-    console.warn(`Failed to purge ${key} from persistent storage:`, err);
-  }
-  if (memoryStorageFallback.delete(key)) {
-    removed = true;
-  }
-  if (removed) {
-    storageQuotaHardLimitActive = false;
-  }
-  return removed;
-}
-
 function parseMaybeNdjson(text) {
   try {
     return JSON.parse(text);
@@ -6859,6 +6818,9 @@ const elements = {
   apiKeyInput: document.getElementById('api-key-input'),
   apiConfirmBtn: document.getElementById('api-confirm'),
   apiCancelBtn: document.getElementById('api-cancel'),
+  apiRememberCheckbox: document.getElementById('api-remember'),
+  apiForgetBtn: document.getElementById('api-forget'),
+  apiUseStoredBtn: document.getElementById('api-use-stored'),
   cacheHitRate: document.getElementById('cache-hit-rate'),
   cachedTokens: document.getElementById('cached-tokens'),
   sessionCost: document.getElementById('session-cost'),
@@ -6895,6 +6857,7 @@ setThoughtLogDebugVisible(thoughtLogState.showDebug);
 renderTokenFilters();
 renderThoughtLog();
 updateThoughtLogNewIndicator();
+syncApiKeyControls();
 
 // ============================================
 // UTILITIES
@@ -10028,6 +9991,15 @@ function logWarning(msg) {
 function logFinal(msg) {
   return appendLog(`✅ ${sanitize(msg)}`, 'success');
 }
+
+configureSafeStorageHooks({
+  onTokenCachePurged: () => setDocumentCacheBaseline(0, { manual: true }),
+  onQuotaWarning: (message) => {
+    if (message) {
+      logWarning(message);
+    }
+  },
+});
 
 const nowMs = () =>
   typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -23092,8 +23064,32 @@ async function processDocumentFile(file) {
 // ============================================
 // EVENTS
 // ============================================
+function syncApiKeyControls() {
+  const hasStored = hasEncryptedApiKey();
+  const rememberCheckbox = elements.apiRememberCheckbox instanceof HTMLInputElement
+    ? elements.apiRememberCheckbox
+    : null;
+  if (rememberCheckbox && !rememberCheckbox.dataset.userSelected) {
+    rememberCheckbox.checked = hasStored;
+  }
+  const useStoredBtn = elements.apiUseStoredBtn instanceof HTMLButtonElement
+    ? elements.apiUseStoredBtn
+    : null;
+  if (useStoredBtn) {
+    useStoredBtn.disabled = !hasStored;
+    useStoredBtn.classList.toggle('hidden', !hasStored);
+  }
+  const forgetBtn = elements.apiForgetBtn instanceof HTMLButtonElement
+    ? elements.apiForgetBtn
+    : null;
+  if (forgetBtn) {
+    forgetBtn.disabled = !hasStored;
+  }
+}
+
 function showApiModal() {
   if (!elements.apiModal) return;
+  syncApiKeyControls();
   elements.apiModal.classList.remove('hidden');
   setTimeout(() => {
     if (elements.apiKeyInput instanceof HTMLElement) {
@@ -23102,34 +23098,118 @@ function showApiModal() {
   }, 80);
 }
 
-function applyApiKeyFromModal() {
-  const key = elements.apiKeyInput.value.trim();
+async function applyApiKeyFromModal(options: { rememberOverride?: boolean } = {}) {
+  const keyInput = elements.apiKeyInput as HTMLInputElement | null;
+  const key = keyInput?.value?.trim() ?? '';
   if (!isValidApiKey(key)) {
     logError('Invalid API key format');
     return;
   }
   state.apiKey = key.trim();
-  const persisted = safeStorageSet(API_KEY_STORAGE_KEY, state.apiKey);
-  elements.apiModal.classList.add('hidden');
-  if (!persisted) {
-    logWarning('API key configured but not saved to storage');
+  const remember =
+    typeof options.rememberOverride === 'boolean'
+      ? options.rememberOverride
+      : elements.apiRememberCheckbox instanceof HTMLInputElement
+        ? elements.apiRememberCheckbox.checked
+        : false;
+  let persisted = true;
+  if (remember) {
+    persisted = await persistEncryptedApiKey(state.apiKey);
+  } else {
+    clearEncryptedApiKey();
   }
-  logOK('API key configured');
+  if (elements.apiModal) {
+    elements.apiModal.classList.add('hidden');
+  }
+  if (remember) {
+    if (persisted) {
+      logOK('API key configured and encrypted for this device');
+    } else {
+      logWarning('API key configured but encrypted storage failed; using memory only');
+    }
+  } else {
+    logOK('API key configured for this session');
+  }
+  syncApiKeyControls();
 }
 
-elements.apiConfirmBtn.addEventListener('click', applyApiKeyFromModal);
-
-elements.apiKeyInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    applyApiKeyFromModal();
+async function applyStoredApiKey() {
+  const useStoredBtn = elements.apiUseStoredBtn as HTMLButtonElement | null;
+  if (useStoredBtn) {
+    useStoredBtn.disabled = true;
   }
-});
+  try {
+    const key = await loadEncryptedApiKey();
+    if (!key) {
+      logWarning('No encrypted API key found on this device.');
+      syncApiKeyControls();
+      return;
+    }
+    if (!isValidApiKey(key)) {
+      logWarning('Stored API key is invalid or unreadable. Please re-enter it.');
+      clearEncryptedApiKey();
+      syncApiKeyControls();
+      return;
+    }
+    state.apiKey = key.trim();
+    if (elements.apiKeyInput instanceof HTMLInputElement) {
+      elements.apiKeyInput.value = state.apiKey;
+    }
+    if (elements.apiModal) {
+      elements.apiModal.classList.add('hidden');
+    }
+    logOK('Stored API key unlocked for this session');
+  } finally {
+    if (useStoredBtn) {
+      useStoredBtn.disabled = false;
+    }
+  }
+}
 
-elements.apiCancelBtn.addEventListener('click', () => {
-  elements.apiModal.classList.add('hidden');
-  logWarning('Offline mode - limited functionality');
-});
+if (elements.apiConfirmBtn instanceof HTMLButtonElement) {
+  elements.apiConfirmBtn.addEventListener('click', () => {
+    void applyApiKeyFromModal();
+  });
+}
+
+if (elements.apiKeyInput instanceof HTMLInputElement) {
+  elements.apiKeyInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void applyApiKeyFromModal();
+    }
+  });
+}
+
+if (elements.apiCancelBtn instanceof HTMLButtonElement) {
+  elements.apiCancelBtn.addEventListener('click', () => {
+    elements.apiModal.classList.add('hidden');
+    logWarning('Offline mode - limited functionality');
+  });
+}
+
+if (elements.apiUseStoredBtn instanceof HTMLButtonElement) {
+  elements.apiUseStoredBtn.addEventListener('click', () => {
+    void applyStoredApiKey();
+  });
+}
+
+if (elements.apiForgetBtn instanceof HTMLButtonElement) {
+  elements.apiForgetBtn.addEventListener('click', () => {
+    clearEncryptedApiKey();
+    if (elements.apiKeyInput instanceof HTMLInputElement) {
+      elements.apiKeyInput.value = '';
+    }
+    syncApiKeyControls();
+    logOK('Encrypted API key removed from this device');
+  });
+}
+
+if (elements.apiRememberCheckbox instanceof HTMLInputElement) {
+  elements.apiRememberCheckbox.addEventListener('change', () => {
+    elements.apiRememberCheckbox.dataset.userSelected = 'true';
+  });
+}
 
 document.addEventListener('click', (event) => {
   const target =
@@ -23336,16 +23416,6 @@ async function initialize() {
       }
     },
   });
-
-  const storedKey = safeStorageGet(API_KEY_STORAGE_KEY, '');
-  if (isValidApiKey(storedKey)) {
-    state.apiKey = storedKey.trim();
-    elements.apiKeyInput.value = state.apiKey;
-    elements.apiModal.classList.add('hidden');
-    logOK('Loaded stored API key');
-  } else if (storedKey) {
-    safeStorageRemove(API_KEY_STORAGE_KEY);
-  }
 
   const bootstrapped = await cmd_load(['-remotedir'], { interactive: false });
   const dbAvailable = bootstrapped || !!getDb();

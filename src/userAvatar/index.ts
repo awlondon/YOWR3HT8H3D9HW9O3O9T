@@ -30,7 +30,7 @@ export interface UserAvatarState {
 
 export interface UserAvatarStore {
   getState(): UserAvatarState;
-  recordInteraction(entry: Partial<Omit<AvatarInteraction, 'id' | 'timestamp'>> & { prompt: string; tokens?: string[]; }): AvatarInteraction;
+  recordInteraction(entry: Partial<Omit<AvatarInteraction, 'id'>> & { prompt: string; tokens?: string[]; }): AvatarInteraction;
   updateInteraction(id: string, updates: Partial<Omit<AvatarInteraction, 'id' | 'timestamp'>>): AvatarInteraction | null;
   updateProfile(profile: Partial<AvatarProfile>, options?: { notify?: boolean }): AvatarProfile;
   replace(state: Partial<UserAvatarState>, options?: { notify?: boolean }): UserAvatarState;
@@ -78,7 +78,7 @@ function normalizeEntries(entries: unknown): AvatarInteraction[] {
       const timestamp = Number.isFinite((entry as any).timestamp) ? Number((entry as any).timestamp) : Date.now();
       const responseSummary = typeof (entry as any).responseSummary === 'string' ? (entry as any).responseSummary : undefined;
       const newTokenCount = Number.isFinite((entry as any).newTokenCount) ? Number((entry as any).newTokenCount) : undefined;
-      return {
+      const normalized: AvatarInteraction = {
         id: typeof (entry as any).id === 'string' && (entry as any).id ? (entry as any).id : cryptoSafeUuid(),
         prompt,
         tokens,
@@ -86,7 +86,8 @@ function normalizeEntries(entries: unknown): AvatarInteraction[] {
         timestamp,
         responseSummary,
         newTokenCount,
-      } satisfies AvatarInteraction;
+      };
+      return normalized;
     })
     .filter((entry): entry is AvatarInteraction => Boolean(entry));
 }
@@ -214,7 +215,7 @@ export function initializeUserAvatarStore(): UserAvatarStore {
   }
 
   function recordInteraction(
-    entry: Partial<Omit<AvatarInteraction, 'id' | 'timestamp'>> & { prompt: string; tokens?: string[] },
+    entry: Partial<Omit<AvatarInteraction, 'id'>> & { prompt: string; tokens?: string[] },
   ): AvatarInteraction {
     const now = Date.now();
     const normalizedTokens = Array.isArray(entry.tokens)
