@@ -29,6 +29,7 @@ import {
   EXPORT_PAYLOAD_FORMAT,
   EXPORT_PAYLOAD_VERSION,
   TOKEN_CACHE_PREFIX,
+  memoryStorageFallback,
 } from './lib/storage/safeStorage';
 import {
   initializeVoiceClonePanel,
