@@ -69,6 +69,7 @@ import {
   HLSF_THOUGHT_COMMIT_EVENT,
   commitThoughtLineToUI,
   runCognitionCycle,
+  type LLMResult,
   type CognitionConfig,
   type CognitionCycleResult,
   type CognitionRun,
@@ -6886,6 +6887,41 @@ function clearCognitionOutputs() {
   }
 }
 
+function formatLlmResponseForDisplay(llm: LLMResult | null | undefined): string {
+  if (!llm) return 'No response available yet.';
+
+  const response = (llm.response || '').trim();
+  const fallback = (llm.fallbackText || '').trim();
+  const statusLabel = llm.status ? ` (HTTP ${llm.status})` : '';
+
+  if (llm.error) {
+    const lines = [
+      `LLM backend failed${statusLabel}: ${llm.error}`,
+      llm.endpoint ? `Endpoint: ${llm.endpoint}` : null,
+    ].filter(Boolean) as string[];
+
+    if (fallback) {
+      lines.push('LLM backend failed; showing HLSF fallback text instead.');
+      lines.push(fallback);
+    } else {
+      lines.push('No articulated response is available.');
+    }
+
+    return lines.join('\n\n');
+  }
+
+  if (response) return response;
+
+  if (fallback) {
+    const prefix = llm.isFallback
+      ? 'LLM backend unavailable; showing HLSF fallback text instead.'
+      : 'Showing HLSF fallback text from the local rotation.';
+    return `${prefix}\n\n${fallback}`;
+  }
+
+  return 'No response available yet.';
+}
+
 function renderThoughtDetail(run: CognitionRun | null) {
   const setPlaceholder = () => {
     if (elements.cognitionSummary) {
@@ -6977,7 +7013,7 @@ function renderThoughtDetail(run: CognitionRun | null) {
     }
   }
   if (elements.llmResponse) {
-    elements.llmResponse.textContent = run.llm.response || 'No response available yet.';
+    elements.llmResponse.textContent = formatLlmResponseForDisplay(run.llm);
   }
 }
 
