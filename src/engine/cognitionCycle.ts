@@ -1068,16 +1068,43 @@ function getLocalHlsfFallback(): string | null {
   return candidates[0] || null;
 }
 
-function buildFallbackResponse(thoughts: string[]): { text: string; reason: string } | null {
+function buildThoughtFallback(thoughts: string[]): string | null {
+  const normalized = thoughts.map(thought => thought?.trim()).filter(Boolean) as string[];
+  if (!normalized.length) return null;
+
+  const completed = normalized.find(entry => /[.!?]$/.test(entry));
+  if (completed) {
+    const text = tidyFallbackText(completed);
+    if (text) return text;
+  }
+
+  const tokens = normalized
+    .flatMap(entry => entry.split(/\s+/))
+    .map(token => token.trim())
+    .filter(Boolean);
+  if (!tokens.length) return null;
+
+  const uniqueTokens = Array.from(new Set(tokens));
+  return tidyFallbackText(uniqueTokens.join(' '));
+}
+
+function buildFallbackResponse(
+  thoughts: string[],
+  userPrompt?: string,
+): { text: string; reason: string } | null {
   const local = getLocalHlsfFallback();
   if (local) {
     const text = tidyFallbackText(local);
     return text ? { text, reason: 'local-output-suite' } : null;
   }
 
-  const merged = thoughts.filter(Boolean).join(' ');
-  const mergedText = tidyFallbackText(merged);
-  return mergedText ? { text: mergedText, reason: 'rotation-thoughts' } : null;
+  const promptText = userPrompt ? tidyFallbackText(userPrompt) : '';
+  if (promptText) {
+    return { text: promptText, reason: 'user-prompt' };
+  }
+
+  const thoughtText = buildThoughtFallback(thoughts);
+  return thoughtText ? { text: thoughtText, reason: 'rotation-thoughts' } : null;
 }
 
 function formatLlmError(llm: LLMResult): string {
@@ -1126,7 +1153,7 @@ export async function callLLM(
 
   const endpoint = resolveLlmEndpoint();
   const requestUrl = normalizeLlmUrl(endpoint);
-  const fallback = buildFallbackResponse(thoughts);
+  const fallback = buildFallbackResponse(thoughts, prompt);
 
   if (isStaticFileProtocol() && endpoint.startsWith('/')) {
     const message =
@@ -1184,7 +1211,7 @@ export async function callLLM(
         ? `LLM request failed (${status}). Check LLM endpoint or network.`
         : 'LLM request failed. Halting rotation.',
     );
-    const fallbackResponse = fallback ?? buildFallbackResponse(thoughts);
+    const fallbackResponse = fallback ?? buildFallbackResponse(thoughts, prompt);
     return {
       model: 'local-llm',
       temperature: 0.7,
