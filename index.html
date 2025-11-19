@@ -215,9 +215,17 @@
       <h2>Enter OpenAI API Key</h2>
       <p>Provide your OpenAI API key (sk-...) to begin using the HLSF Cognition Engine.</p>
       <input id="api-key-input" type="password" placeholder="sk-..." />
+      <label class="modal-checkbox">
+        <input id="api-remember" type="checkbox" />
+        <span>Remember this key on this device (encrypted with AES-GCM)</span>
+      </label>
       <div class="modal-actions">
         <button id="api-cancel" class="pill-button secondary">Continue offline</button>
         <button id="api-confirm" class="pill-button primary">Save key</button>
+      </div>
+      <div class="modal-actions" style="justify-content: space-between; gap: 0.5rem;">
+        <button id="api-use-stored" class="pill-button secondary hidden" type="button">Use saved key</button>
+        <button id="api-forget" class="pill-button secondary" type="button">Forget saved key</button>
       </div>
       <small style="opacity:0.65">⚠️ Note: Download this HTML file and run locally for API calls to work.</small>
     </div>

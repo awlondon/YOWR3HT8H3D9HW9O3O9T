@@ -186,8 +186,11 @@ the File System Access API require Chromium-based browsers.
 
 ### OpenAI API keys
 
-When prompted, enter an OpenAI API key (`sk-...`) to enable live completions. Keys are kept in memory only; select **Continue
-offline** to limit the engine to cached workflows.
+When prompted, enter an OpenAI API key (`sk-...`) to enable live completions. Check **Remember this key** to store it locally after encrypting with the browser's AES-GCM implementation. Reuse is always explicit via the **Use saved key** button, and **Forget saved key** wipes the encrypted payload immediately. Select **Continue offline** to limit the engine to cached workflows.
+
+### LLM stub toggle
+
+The browser fetch stub that intercepts `/api/llm` requests is now opt-in. Set `VITE_ENABLE_LLM_STUB=off` (or `on`) in your Vite environment to force a particular mode. The default `auto` value only installs the stub during `npm run dev`, allowing production builds to reach a real backend.
 
 ## Quality gates
 
@@ -206,6 +209,14 @@ npm run format
 ```
 
 Applies Prettier rules to TypeScript, CSS, JSON, and Markdown files.
+
+### Type checking
+
+```bash
+npm run typecheck
+```
+
+Runs strict TypeScript checks across storage, security, vector, worker, and server stub modules.
 
 ### Tests
 

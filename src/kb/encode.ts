@@ -1,5 +1,12 @@
 import type { EdgeBlock } from './schema';
 
+function viewToArrayBuffer(view: ArrayBufferView): ArrayBuffer {
+  const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  const copy = new Uint8Array(bytes.length);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 function buildHeader(block: EdgeBlock) {
   const cols = ['neighbor', 'type', 'weight', 'lastSeen'];
   if (block.flags) cols.push('flags');
@@ -17,15 +24,15 @@ export async function encodeEdgeBlock(block: EdgeBlock, compress = true): Promis
   const headerBytes = buildHeader(block);
   const buffers: ArrayBuffer[] = [
     new Uint32Array([headerBytes.byteLength]).buffer,
-    headerBytes.buffer.slice(headerBytes.byteOffset, headerBytes.byteOffset + headerBytes.byteLength),
-    block.neighbor.buffer,
-    block.type.buffer,
-    block.weight.buffer,
-    block.lastSeen.buffer,
+    viewToArrayBuffer(headerBytes),
+    viewToArrayBuffer(block.neighbor),
+    viewToArrayBuffer(block.type),
+    viewToArrayBuffer(block.weight),
+    viewToArrayBuffer(block.lastSeen),
   ];
 
   if (block.flags) {
-    buffers.push(block.flags.buffer);
+    buffers.push(viewToArrayBuffer(block.flags));
   } else {
     buffers.push(new Uint8Array(0).buffer);
   }

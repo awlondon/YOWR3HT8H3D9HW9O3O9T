@@ -17,6 +17,13 @@ const DB_NAME = 'hlsf_kb';
 const STORE_NAME = 'embeddings';
 const DB_VERSION = 2;
 
+function cloneBuffer(buffer: ArrayBufferLike): ArrayBuffer {
+  const view = new Uint8Array(buffer);
+  const copy = new Uint8Array(view.byteLength);
+  copy.set(view);
+  return copy.buffer;
+}
+
 function normalizeVector(input: Float32Array): Float32Array {
   let sumSquares = 0;
   for (let i = 0; i < input.length; i += 1) {
@@ -189,7 +196,7 @@ export function createIdbVectorStore(): VectorStore {
           provider: config.provider,
           dim: config.dim,
           updatedAt: Date.now(),
-          buffer: q.buffer.slice(0),
+          buffer: cloneBuffer(q.buffer),
           quantized: true,
           scale,
           zero,
@@ -201,7 +208,7 @@ export function createIdbVectorStore(): VectorStore {
           provider: config?.provider ?? 'unknown',
           dim: config?.dim ?? vector.length,
           updatedAt: Date.now(),
-          buffer: vector.buffer.slice(0),
+          buffer: cloneBuffer(vector.buffer),
         };
       }
       await new Promise<void>((resolve, reject) => {
