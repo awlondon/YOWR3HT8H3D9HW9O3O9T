@@ -34,6 +34,10 @@
     "src/onboarding/loginFlow.test.ts",
     "src/server/installLLMStub.ts",
     "src/server/installLLMStub.test.ts",
+    "src/lib/crypto/encryption.ts",
+    "src/lib/storage/safeStorage.ts",
+    "src/security/apiKeyVault.ts",
+    "src/security/apiKeyVault.test.ts",
     "types/node-test.d.ts"
   ]
 }

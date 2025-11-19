@@ -119,7 +119,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const telemetry = createTelemetry(requestId, perf);
 
   try {
-    const { result } = await Promise.resolve().then(() =>
+    const result = await Promise.resolve().then(() =>
       runPipeline(payload.text, payload.options ?? SETTINGS, {
         telemetry,
         shouldAbort: () => abortRef.aborted,

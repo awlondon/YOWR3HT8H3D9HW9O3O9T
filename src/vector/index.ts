@@ -59,16 +59,17 @@ function ensureInitialized(): void {
   }
 }
 
-async function callWorker<T>(op: 'init' | 'embed' | 'train', payload: any): Promise<T> {
-  if (!worker) {
-    throw new Error('Vector worker unavailable');
+  async function callWorker<T>(op: 'init' | 'embed' | 'train', payload: any): Promise<T> {
+    const activeWorker = worker;
+    if (!activeWorker) {
+      throw new Error('Vector worker unavailable');
+    }
+    return await new Promise<T>((resolve, reject) => {
+      const id = ++seq;
+      inflight.set(id, { resolve, reject });
+      activeWorker.postMessage({ id, op, payload });
+    });
   }
-  return await new Promise<T>((resolve, reject) => {
-    const id = ++seq;
-    inflight.set(id, { resolve, reject });
-    worker.postMessage({ id, op, payload });
-  });
-}
 
 async function embedTokens(tokens: string[]): Promise<Float32Array[]> {
   ensureInitialized();
