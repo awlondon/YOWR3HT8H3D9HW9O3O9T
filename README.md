@@ -14,6 +14,7 @@ supports remote database hydration so researchers can explore conceptual network
 - [Quality gates](#quality-gates)
 - [Data workflows](#data-workflows)
 - [SaaS console reference](#saas-console-reference)
+- [Backend hardening guide](#backend-hardening-guide)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -226,6 +227,16 @@ npm test
 
 Compiles the test bundle (`tsconfig.test.json`) and executes Node-based unit tests for analytics, graph logic, and SaaS helpers.
 
+### Full gate / CI parity
+
+```bash
+npm run check
+```
+
+Runs linting, formatting checks, type-checking, and the Node test runner in one command. GitHub Actions invokes this
+script via [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on every push and pull request so server hardening
+and front-end changes are validated consistently.
+
 ## Data workflows
 
 ### Partition adjacency exports
@@ -258,6 +269,19 @@ Detailed command examples for the Python utilities live in
 - Sync progress, backoff, and success metrics are emitted through logger callbacks in `createRemoteDbFileWriter`
   (`src/engine/remoteDbWriter.ts`).
 - Token index payloads are normalised and deduplicated before writing shard files.
+
+## Backend hardening guide
+
+The legacy proof-of-concept API that originally lived in `app.ts` is being replaced with a layered Node/Express service.
+The [Backend Hardening Playbook](docs/BACKEND_HARDENING.md) captures the roadmap and prescriptive checklists for:
+
+- Structuring the project into config, middleware, controllers, services, and data access layers.
+- Validating environment variables and Mongo connections with retries and graceful shutdown hooks.
+- Installing shared security middleware (restricted CORS, Helmet, rate limiting, sanitisation) and typed
+  validation.
+- Instrumenting logging/metrics plus CI hooks so server changes inherit the same rigor as the Vite client.
+
+Use the playbook before extending SaaS commands that require server orchestration or before deploying the hosted offering.
 
 ## SaaS console reference
 
