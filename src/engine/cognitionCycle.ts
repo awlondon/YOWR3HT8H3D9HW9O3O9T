@@ -124,6 +124,8 @@ export interface CognitionRun {
   thoughts: {
     perIterationTokens: string[][];
     perIterationText: string[];
+    interpretationText?: string;
+    adjacencyTokens?: string[];
   };
   llm: LLMResult;
   summary: ThoughtSummary;
@@ -138,6 +140,12 @@ export interface CognitionCycleResult {
   finalRun: CognitionRun | null;
   terminatedBy: CognitionTerminationReason;
   error?: string;
+}
+
+interface ThoughtNode {
+  interpretationText?: string;
+  rawText?: string;
+  adjacencyTokens?: string[];
 }
 
 interface RotationResult {
@@ -228,6 +236,8 @@ async function executeCognitionPass(
     hiddenGraph,
     config,
   );
+  const interpretationText = perIterationText[perIterationText.length - 1];
+  const adjacencyTokens = perIterationTokens.flat().filter(token => Boolean(token));
 
   const llmResult = await callLLM(
     truncatedPrompt,
@@ -236,8 +246,9 @@ async function executeCognitionPass(
     mode,
     history,
     {
-      interpretationText: perIterationText[perIterationText.length - 1],
+      interpretationText,
       rawPrompt,
+      adjacencyTokens,
     },
   );
 
@@ -263,7 +274,7 @@ async function executeCognitionPass(
       visibleGraphSummary: visibleSummary,
       hiddenGraphSummary: hiddenSummary,
     },
-    thoughts: { perIterationTokens, perIterationText },
+    thoughts: { perIterationTokens, perIterationText, interpretationText, adjacencyTokens },
     llm: llmResult,
     summary,
   };
@@ -1070,14 +1081,35 @@ function tidyInterpretationText(text: string | undefined | null): string {
   return tidyFallbackText(trimmed);
 }
 
-function trimTrailingFragment(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return '';
-  const lastPeriod = trimmed.lastIndexOf('.');
-  if (lastPeriod > 0 && lastPeriod >= trimmed.length - 80) {
-    return trimmed.slice(0, lastPeriod + 1).trim();
+function computeFallbackArticulation(thought: ThoughtNode): {
+  text: string;
+  reason: string;
+} {
+  const interpretation = tidyInterpretationText(thought.interpretationText);
+  if (interpretation) {
+    return { text: interpretation, reason: 'interpretation-text' };
   }
-  return trimmed;
+
+  const rawText = tidyFallbackText(thought.rawText ?? '');
+  if (rawText) {
+    return { text: rawText, reason: 'raw-text' };
+  }
+
+  const adjacencyTokens = Array.isArray(thought.adjacencyTokens)
+    ? thought.adjacencyTokens.filter(Boolean)
+    : [];
+  if (adjacencyTokens.length) {
+    const uniqueTokens = Array.from(new Set(adjacencyTokens));
+    const sentence = uniqueTokens.join(' ');
+    const s = sentence.charAt(0).toUpperCase() + sentence.slice(1);
+    const finalized = s.endsWith('.') ? s : `${s}.`;
+    return { text: finalized, reason: 'adjacency-tokens' };
+  }
+
+  return {
+    text: 'HLSF cognition completed, but no articulated text is available.',
+    reason: 'empty-fallback',
+  };
 }
 
 function getLocalHlsfFallback(): string | null {
@@ -1090,68 +1122,6 @@ function getLocalHlsfFallback(): string | null {
     .map(value => (typeof value === 'string' ? value.trim() : ''))
     .filter(Boolean);
   return candidates[0] || null;
-}
-
-function buildThoughtFallback(thoughts: string[]): string | null {
-  const normalized = thoughts.map(thought => thought?.trim()).filter(Boolean) as string[];
-  if (!normalized.length) return null;
-
-  const cleaned = normalized
-    .map(trimTrailingFragment)
-    .map(entry => entry.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
-
-  const completed = cleaned.find(entry => /[.!?]$/.test(entry));
-  if (completed) {
-    const text = tidyFallbackText(completed);
-    if (text) return text;
-  }
-
-  const longest = cleaned.reduce((winner, current) =>
-    current.length > winner.length ? current : winner,
-  '');
-  if (longest) {
-    const text = tidyFallbackText(longest);
-    if (text) return text;
-  }
-
-  const tokens = cleaned
-    .flatMap(entry => entry.split(/\s+/))
-    .map(token => token.trim())
-    .filter(Boolean);
-  if (!tokens.length) return null;
-
-  const uniqueTokens = Array.from(new Set(tokens));
-  return tidyFallbackText(uniqueTokens.join(' '));
-}
-
-function buildFallbackResponse(
-  thoughts: string[],
-  userPrompt?: string,
-  interpretationText?: string,
-): { text: string; reason: string } | null {
-  const local = getLocalHlsfFallback();
-  if (local) {
-    const text = tidyFallbackText(local);
-    return text ? { text, reason: 'local-output-suite' } : null;
-  }
-
-  const interpretation = tidyInterpretationText(interpretationText);
-  if (interpretation) {
-    return { text: interpretation, reason: 'interpretation-text' };
-  }
-
-  const promptText = userPrompt ? tidyFallbackText(userPrompt) : '';
-  if (promptText) {
-    return { text: promptText, reason: 'user-prompt' };
-  }
-
-  const thoughtText = buildThoughtFallback(thoughts);
-  if (thoughtText) {
-    return { text: thoughtText, reason: 'rotation-thoughts' };
-  }
-
-  return null;
 }
 
 function formatLlmError(llm: LLMResult): string {
@@ -1167,7 +1137,7 @@ export async function callLLM(
   config: CognitionConfig,
   mode: CognitionMode,
   history: CognitionHistoryEntry[],
-  options: { interpretationText?: string; rawPrompt?: string } = {},
+  options: { interpretationText?: string; rawPrompt?: string; adjacencyTokens?: string[] } = {},
 ): Promise<LLMResult> {
   const systemStyle = thinkingStyleToSystemMessage(config.thinkingStyle);
   const emergentDirective = buildEmergentThoughtDirective();
@@ -1201,8 +1171,21 @@ export async function callLLM(
 
   const endpoint = resolveLlmEndpoint();
   const requestUrl = normalizeLlmUrl(endpoint);
-  const { interpretationText, rawPrompt } = options;
-  const fallback = buildFallbackResponse(thoughts, prompt, interpretationText || rawPrompt);
+  const { interpretationText, rawPrompt, adjacencyTokens } = options;
+  const fallback = (() => {
+    const local = getLocalHlsfFallback();
+    if (local) {
+      const text = tidyFallbackText(local);
+      return text ? { text, reason: 'local-output-suite' as const } : null;
+    }
+    const thought: ThoughtNode = {
+      interpretationText,
+      rawText: rawPrompt ?? prompt,
+      adjacencyTokens,
+    };
+    const computed = computeFallbackArticulation(thought);
+    return { text: computed.text, reason: computed.reason };
+  })();
 
   if (isStaticFileProtocol() && endpoint.startsWith('/')) {
     const message =
@@ -1270,7 +1253,7 @@ export async function callLLM(
         ? `LLM request failed (${status}). Check LLM endpoint or network.`
         : 'LLM request failed. Halting rotation.',
     );
-    const fallbackResponse = fallback ?? buildFallbackResponse(thoughts, prompt, interpretationText || rawPrompt);
+    const fallbackResponse = fallback;
     return {
       model: 'local-llm',
       temperature: 0.7,
