@@ -53,6 +53,7 @@ function sendJson(res, statusCode, payload) {
 async function handleLlmRequest(req, res) {
   try {
     if (!apiKey) {
+      console.error('OPENAI_API_KEY is missing');
       sendJson(res, 500, {
         error: 'LLM backend failed',
         details: 'OPENAI_API_KEY is not configured on the backend server.',
@@ -61,6 +62,17 @@ async function handleLlmRequest(req, res) {
     }
 
     const payload = await readJsonBody(req);
+    try {
+      const preview = (payload?.prompt || payload?.hlsfSummary || '')
+        .toString()
+        .slice(0, 200);
+      console.log('LLM payload keys:', Object.keys(payload || {}));
+      if (preview) {
+        console.log('LLM prompt preview:', preview);
+      }
+    } catch (loggingError) {
+      console.warn('Failed to log LLM payload preview:', loggingError);
+    }
     const prompt = payload.prompt || payload.hlsfSummary || '';
     const messages = Array.isArray(payload.messages) && payload.messages.length
       ? payload.messages
@@ -83,7 +95,17 @@ async function handleLlmRequest(req, res) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
+      let errorText = '';
+      try {
+        const errorJson = await response.json();
+        errorText = errorJson?.error || errorJson?.message || JSON.stringify(errorJson);
+      } catch {
+        errorText = await response.text().catch(() => '');
+      }
+      console.error('LLM provider returned error', {
+        status: response.status,
+        details: errorText,
+      });
       sendJson(res, response.status, {
         error: 'LLM backend failed',
         details: errorText || `HTTP ${response.status}`,
@@ -99,8 +121,9 @@ async function handleLlmRequest(req, res) {
       usage: data?.usage,
     });
   } catch (error) {
-    console.error('LLM backend error:', error);
-    sendJson(res, 500, { error: 'LLM backend failed', details: error?.message || 'Unknown error' });
+    const details = error?.response?.data || error?.message || String(error);
+    console.error('LLM backend error:', details);
+    sendJson(res, 500, { error: 'LLM backend failed', details });
   }
 }
 
