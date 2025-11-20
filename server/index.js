@@ -63,17 +63,25 @@ async function handleLlmRequest(req, res) {
 
     const payload = await readJsonBody(req);
     try {
-      const preview = (payload?.prompt || payload?.hlsfSummary || '')
-        .toString()
-        .slice(0, 200);
+      const preview =
+        (payload?.interpretationText && payload.interpretationText.toString()) ||
+        (payload?.rawText && payload.rawText.toString()) ||
+        (payload?.prompt && payload.prompt.toString()) ||
+        (payload?.hlsfSummary && payload.hlsfSummary.toString()) ||
+        '';
       console.log('LLM payload keys:', Object.keys(payload || {}));
       if (preview) {
-        console.log('LLM prompt preview:', preview);
+        console.log('LLM prompt preview:', preview.slice(0, 200));
       }
     } catch (loggingError) {
       console.warn('Failed to log LLM payload preview:', loggingError);
     }
-    const prompt = payload.prompt || payload.hlsfSummary || '';
+    const prompt =
+      (payload?.interpretationText && payload.interpretationText.toString().trim()) ||
+      (payload?.rawText && payload.rawText.toString().trim()) ||
+      (payload?.prompt && payload.prompt.toString().trim()) ||
+      (payload?.hlsfSummary && payload.hlsfSummary.toString().trim()) ||
+      'Summarize this cognition trace in clear English.';
     const messages = Array.isArray(payload.messages) && payload.messages.length
       ? payload.messages
       : [
@@ -105,6 +113,8 @@ async function handleLlmRequest(req, res) {
       console.error('LLM provider returned error', {
         status: response.status,
         details: errorText,
+        endpoint: 'https://api.openai.com/v1/chat/completions',
+        payloadKeys: Object.keys(payload || {}),
       });
       sendJson(res, response.status, {
         error: 'LLM backend failed',
