@@ -235,6 +235,10 @@ async function executeCognitionPass(
     config,
     mode,
     history,
+    {
+      interpretationText: perIterationText[perIterationText.length - 1],
+      rawPrompt,
+    },
   );
 
   const runId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -1056,6 +1060,16 @@ function tidyFallbackText(text: string): string {
   return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
 }
 
+function tidyInterpretationText(text: string | undefined | null): string {
+  const trimmed = (text ?? '').toString().trim();
+  if (!trimmed) return '';
+  const lastPeriod = trimmed.lastIndexOf('.');
+  if (lastPeriod > 0) {
+    return tidyFallbackText(trimmed.slice(0, lastPeriod + 1));
+  }
+  return tidyFallbackText(trimmed);
+}
+
 function trimTrailingFragment(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return '';
@@ -1114,6 +1128,7 @@ function buildThoughtFallback(thoughts: string[]): string | null {
 function buildFallbackResponse(
   thoughts: string[],
   userPrompt?: string,
+  interpretationText?: string,
 ): { text: string; reason: string } | null {
   const local = getLocalHlsfFallback();
   if (local) {
@@ -1121,14 +1136,19 @@ function buildFallbackResponse(
     return text ? { text, reason: 'local-output-suite' } : null;
   }
 
-  const thoughtText = buildThoughtFallback(thoughts);
-  if (thoughtText) {
-    return { text: thoughtText, reason: 'rotation-thoughts' };
+  const interpretation = tidyInterpretationText(interpretationText);
+  if (interpretation) {
+    return { text: interpretation, reason: 'interpretation-text' };
   }
 
   const promptText = userPrompt ? tidyFallbackText(userPrompt) : '';
   if (promptText) {
     return { text: promptText, reason: 'user-prompt' };
+  }
+
+  const thoughtText = buildThoughtFallback(thoughts);
+  if (thoughtText) {
+    return { text: thoughtText, reason: 'rotation-thoughts' };
   }
 
   return null;
@@ -1147,6 +1167,7 @@ export async function callLLM(
   config: CognitionConfig,
   mode: CognitionMode,
   history: CognitionHistoryEntry[],
+  options: { interpretationText?: string; rawPrompt?: string } = {},
 ): Promise<LLMResult> {
   const systemStyle = thinkingStyleToSystemMessage(config.thinkingStyle);
   const emergentDirective = buildEmergentThoughtDirective();
@@ -1180,7 +1201,8 @@ export async function callLLM(
 
   const endpoint = resolveLlmEndpoint();
   const requestUrl = normalizeLlmUrl(endpoint);
-  const fallback = buildFallbackResponse(thoughts, prompt);
+  const { interpretationText, rawPrompt } = options;
+  const fallback = buildFallbackResponse(thoughts, prompt, interpretationText || rawPrompt);
 
   if (isStaticFileProtocol() && endpoint.startsWith('/')) {
     const message =
@@ -1203,7 +1225,11 @@ export async function callLLM(
     const response = await fetch(requestUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({
+        messages,
+        interpretationText: interpretationText || fallback?.text,
+        rawText: rawPrompt ?? prompt,
+      }),
     });
     if (!response.ok) {
       let errorText = '';
@@ -1244,7 +1270,7 @@ export async function callLLM(
         ? `LLM request failed (${status}). Check LLM endpoint or network.`
         : 'LLM request failed. Halting rotation.',
     );
-    const fallbackResponse = fallback ?? buildFallbackResponse(thoughts, prompt);
+    const fallbackResponse = fallback ?? buildFallbackResponse(thoughts, prompt, interpretationText || rawPrompt);
     return {
       model: 'local-llm',
       temperature: 0.7,
