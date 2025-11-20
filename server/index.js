@@ -52,42 +52,30 @@ function sendJson(res, statusCode, payload) {
 
 async function handleLlmRequest(req, res) {
   try {
+    const payload = (await readJsonBody(req)) || {};
+    const prompt =
+      (payload?.interpretationText && payload.interpretationText.toString().trim())
+      || (payload?.rawText && payload.rawText.toString().trim())
+      || 'Summarize this cognition trace in clear English.';
+
+    console.log('LLM /api/llm prompt preview:', prompt.slice(0, 200));
+
     if (!apiKey) {
       console.error('OPENAI_API_KEY is missing');
-      sendJson(res, 500, {
-        error: 'LLM backend failed',
-        details: 'OPENAI_API_KEY is not configured on the backend server.',
-      });
+      sendJson(res, 500, { error: 'Missing OPENAI_API_KEY' });
       return;
     }
 
-    const payload = await readJsonBody(req);
-    try {
-      const preview =
-        (payload?.interpretationText && payload.interpretationText.toString()) ||
-        (payload?.rawText && payload.rawText.toString()) ||
-        (payload?.prompt && payload.prompt.toString()) ||
-        (payload?.hlsfSummary && payload.hlsfSummary.toString()) ||
-        '';
-      console.log('LLM payload keys:', Object.keys(payload || {}));
-      if (preview) {
-        console.log('LLM prompt preview:', preview.slice(0, 200));
-      }
-    } catch (loggingError) {
-      console.warn('Failed to log LLM payload preview:', loggingError);
-    }
-    const prompt =
-      (payload?.interpretationText && payload.interpretationText.toString().trim()) ||
-      (payload?.rawText && payload.rawText.toString().trim()) ||
-      (payload?.prompt && payload.prompt.toString().trim()) ||
-      (payload?.hlsfSummary && payload.hlsfSummary.toString().trim()) ||
-      'Summarize this cognition trace in clear English.';
-    const messages = Array.isArray(payload.messages) && payload.messages.length
-      ? payload.messages
-      : [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt || 'Summarize this graph.' },
-      ];
+    const messages = [
+      {
+        role: 'system',
+        content: systemPrompt,
+      },
+      {
+        role: 'user',
+        content: prompt,
+      },
+    ];
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -116,7 +104,7 @@ async function handleLlmRequest(req, res) {
         endpoint: 'https://api.openai.com/v1/chat/completions',
         payloadKeys: Object.keys(payload || {}),
       });
-      sendJson(res, response.status, {
+      sendJson(res, 500, {
         error: 'LLM backend failed',
         details: errorText || `HTTP ${response.status}`,
       });
@@ -131,9 +119,11 @@ async function handleLlmRequest(req, res) {
       usage: data?.usage,
     });
   } catch (error) {
-    const details = error?.response?.data || error?.message || String(error);
-    console.error('LLM backend error:', details);
-    sendJson(res, 500, { error: 'LLM backend failed', details });
+    console.error('LLM backend error:', error?.response?.data || error?.message || error);
+    sendJson(res, 500, {
+      error: 'LLM backend failed',
+      details: error?.response?.data || error?.message || String(error),
+    });
   }
 }
 
