@@ -1056,6 +1056,16 @@ function tidyFallbackText(text: string): string {
   return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
 }
 
+function trimTrailingFragment(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  const lastPeriod = trimmed.lastIndexOf('.');
+  if (lastPeriod > 0 && lastPeriod >= trimmed.length - 80) {
+    return trimmed.slice(0, lastPeriod + 1).trim();
+  }
+  return trimmed;
+}
+
 function getLocalHlsfFallback(): string | null {
   if (typeof window === 'undefined') return null;
   const voice = (window as any).CognitionEngine?.voice;
@@ -1072,13 +1082,26 @@ function buildThoughtFallback(thoughts: string[]): string | null {
   const normalized = thoughts.map(thought => thought?.trim()).filter(Boolean) as string[];
   if (!normalized.length) return null;
 
-  const completed = normalized.find(entry => /[.!?]$/.test(entry));
+  const cleaned = normalized
+    .map(trimTrailingFragment)
+    .map(entry => entry.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const completed = cleaned.find(entry => /[.!?]$/.test(entry));
   if (completed) {
     const text = tidyFallbackText(completed);
     if (text) return text;
   }
 
-  const tokens = normalized
+  const longest = cleaned.reduce((winner, current) =>
+    current.length > winner.length ? current : winner,
+  '');
+  if (longest) {
+    const text = tidyFallbackText(longest);
+    if (text) return text;
+  }
+
+  const tokens = cleaned
     .flatMap(entry => entry.split(/\s+/))
     .map(token => token.trim())
     .filter(Boolean);
@@ -1098,13 +1121,17 @@ function buildFallbackResponse(
     return text ? { text, reason: 'local-output-suite' } : null;
   }
 
+  const thoughtText = buildThoughtFallback(thoughts);
+  if (thoughtText) {
+    return { text: thoughtText, reason: 'rotation-thoughts' };
+  }
+
   const promptText = userPrompt ? tidyFallbackText(userPrompt) : '';
   if (promptText) {
     return { text: promptText, reason: 'user-prompt' };
   }
 
-  const thoughtText = buildThoughtFallback(thoughts);
-  return thoughtText ? { text: thoughtText, reason: 'rotation-thoughts' } : null;
+  return null;
 }
 
 function formatLlmError(llm: LLMResult): string {
@@ -1179,7 +1206,13 @@ export async function callLLM(
       body: JSON.stringify({ messages }),
     });
     if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
+      let errorText = '';
+      try {
+        const json = await response.json();
+        errorText = json?.details || json?.error || JSON.stringify(json);
+      } catch {
+        errorText = await response.text().catch(() => '');
+      }
       const errorMessage = `LLM request failed (${response.status})`;
       const detailedMessage = errorText ? `${errorMessage}: ${errorText}` : errorMessage;
       const err = new Error(detailedMessage);
