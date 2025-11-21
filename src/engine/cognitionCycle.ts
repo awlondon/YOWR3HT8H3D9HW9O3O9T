@@ -239,7 +239,10 @@ export async function runCognitionCycle(
     cycleId,
     runs,
     history,
-    finalRun: runs[runs.length - 1] ?? null,
+    finalRun:
+      [...runs]
+        .reverse()
+        .find((run) => run.mode === 'visible') ?? runs[runs.length - 1] ?? null,
     terminatedBy: termination,
     error: errorMessage,
   };
