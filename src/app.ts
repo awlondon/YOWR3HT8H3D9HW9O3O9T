@@ -5812,6 +5812,7 @@ async function callOpenAI(messages, options = {}) {
           'Authorization': `Bearer ${state.apiKey}`,
         },
         body: JSON.stringify(body),
+        signal: currentAbortController?.signal,
       });
 
       if (response.status === 429 && attempt < CONFIG.MAX_RETRY_ATTEMPTS) {
