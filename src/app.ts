@@ -6900,6 +6900,13 @@ function formatLlmResponseForDisplay(llm: LLMResult | null | undefined): string 
       llm.endpoint ? `Endpoint: ${llm.endpoint}` : null,
     ].filter(Boolean) as string[];
 
+    lines.push(
+      [
+        'Check your LLM endpoint or start the local server (npm run server) so /api/llm is reachable.',
+        'For offline demos, set VITE_ENABLE_LLM_STUB=on to use the built-in stub responses.',
+      ].join(' '),
+    );
+
     if (fallback) {
       lines.push('LLM backend failed; showing HLSF fallback text instead.');
       lines.push(fallback);
