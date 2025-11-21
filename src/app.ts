@@ -2972,10 +2972,7 @@ function enforceLocalRelationshipBudget(options = {}) {
     if (!token) continue;
     const cacheKey = getCacheKey(token);
     const payload = JSON.stringify(record);
-    const persistedRecord = safeStorageSet(cacheKey, payload);
-    if (!persistedRecord && !memoryStorageFallback.has(cacheKey)) {
-      memoryStorageFallback.set(cacheKey, payload);
-    }
+    safeStorageSetWithReadback(cacheKey, payload);
   }
 
   if (persist !== false) {
@@ -6262,10 +6259,7 @@ function persistChangedTokenCaches(records, changedTokens) {
     if (!rec) continue;
     const cacheKey = getCacheKey(rec.token);
     const payload = JSON.stringify(rec);
-    const persisted = safeStorageSet(cacheKey, payload);
-    if (!persisted && !memoryStorageFallback.has(cacheKey)) {
-      memoryStorageFallback.set(cacheKey, payload);
-    }
+    safeStorageSetWithReadback(cacheKey, payload);
     CacheBatch.record(rec.token);
   }
 }
@@ -6408,8 +6402,7 @@ async function loadDbObject(dbLike, options = {}) {
         const wasCached = isTokenCached(normalized.token);
         const stub = Object.assign({}, normalized, { relationships: {} });
         const payload = JSON.stringify(stub);
-        const persisted = safeStorageSet(cacheKey, payload);
-        if (!persisted) memoryStorageFallback.set(cacheKey, payload);
+        safeStorageSetWithReadback(cacheKey, payload);
         if (!wasCached) {
           CacheBatch.record(normalized.token);
         }
@@ -6577,9 +6570,9 @@ function getDb() {
     } catch (err) {
       console.warn('Failed to read legacy DB snapshot from storage:', err);
     }
-    if (!legacy && memoryStorageFallback.has('hlsf_db_raw')) {
-      legacy = memoryStorageFallback.get('hlsf_db_raw');
-    }
+  if (!legacy) {
+    legacy = safeStorageGet('hlsf_db_raw', null);
+  }
     if (legacy) {
       safeStorageSet(DB_RAW_KEY, legacy);
       safeStorageRemove('hlsf_db_raw');
@@ -7667,126 +7660,6 @@ function validatePrompt(prompt) {
     throw new Error('Prompt too long: max 10000 characters');
   }
   return prompt.trim();
-}
-
-function safeStorageGet(key, defaultValue = null) {
-  let item = null;
-  try {
-    item = localStorage.getItem(key);
-  } catch (err) {
-    console.warn(`Storage read failed for ${key}:`, err);
-  }
-
-  if (item == null && memoryStorageFallback.has(key)) {
-    item = memoryStorageFallback.get(key);
-  }
-
-  if (item == null) return defaultValue;
-
-  try {
-    return JSON.parse(item);
-  } catch {
-    return item;
-  }
-}
-
-function safeStorageSet(key, value) {
-  const fallbackToMemory = (err = null) => {
-    memoryStorageFallback.set(key, value);
-    if (!storageQuotaWarningIssued) {
-      logWarning(
-        'Browser storage quota exceeded. Falling back to in-memory storage for this session.',
-      );
-      storageQuotaWarningIssued = true;
-    }
-    if (err) {
-      console.warn(`Storage write failed for ${key}: using in-memory fallback`, err);
-    }
-    return false;
-  };
-
-  const attemptWrite = () => {
-    localStorage.setItem(key, value);
-    memoryStorageFallback.delete(key);
-    storageQuotaHardLimitActive = false;
-    return true;
-  };
-
-  if (storageQuotaHardLimitActive) {
-    return fallbackToMemory();
-  }
-
-  try {
-    return attemptWrite();
-  } catch (err) {
-    if (!isQuotaExceededError(err)) {
-      console.warn(`Storage write failed for ${key}:`, err);
-      return false;
-    }
-
-    const cleanupSteps = [];
-    cleanupSteps.push(() => purgeTokenCache());
-    if (key !== DB_INDEX_KEY) cleanupSteps.push(() => purgeSpecificKey(DB_INDEX_KEY));
-    if (key !== DB_RAW_KEY) cleanupSteps.push(() => purgeSpecificKey(DB_RAW_KEY));
-    cleanupSteps.push(() => purgeSpecificKey(key));
-
-    for (const step of cleanupSteps) {
-      try {
-        const removed = step();
-        if (!removed) continue;
-      } catch (cleanupErr) {
-        console.warn('Storage cleanup step failed:', cleanupErr);
-      }
-
-      try {
-        return attemptWrite();
-      } catch (retryErr) {
-        if (!isQuotaExceededError(retryErr)) {
-          console.warn(`Storage write failed for ${key} after cleanup:`, retryErr);
-          return false;
-        }
-      }
-    }
-
-    storageQuotaHardLimitActive = true;
-    return fallbackToMemory(err);
-  }
-}
-
-function safeStorageRemove(key) {
-  let removed = false;
-  try {
-    localStorage.removeItem(key);
-    removed = true;
-  } catch (err) {
-    console.warn(`Storage remove failed for ${key}:`, err);
-  }
-  if (memoryStorageFallback.delete(key)) {
-    removed = true;
-  }
-  if (removed) {
-    storageQuotaHardLimitActive = false;
-  }
-  return removed;
-}
-
-function safeStorageKeys(prefix = '') {
-  let keys = [];
-  try {
-    keys = Object.keys(localStorage);
-  } catch (err) {
-    console.warn('Storage keys enumeration failed:', err);
-  }
-
-  const combined = new Set();
-  keys.forEach((key) => {
-    if (key.startsWith(prefix)) combined.add(key);
-  });
-  memoryStorageFallback.forEach((_, key) => {
-    if (key.startsWith(prefix)) combined.add(key);
-  });
-
-  return Array.from(combined);
 }
 
 function getStoredExportKey() {
@@ -11131,14 +11004,14 @@ function getCacheKey(token) {
   return `${TOKEN_CACHE_PREFIX}${normalized.toLowerCase()}`;
 }
 
+function safeStorageSetWithReadback(key, payload) {
+  const persisted = safeStorageSet(key, payload);
+  return persisted || safeStorageGet(key, null) != null;
+}
+
 function isTokenCached(token) {
   const key = getCacheKey(token);
-  try {
-    if (localStorage.getItem(key) != null) return true;
-  } catch {
-    // ignore storage access errors and fall back to in-memory cache
-  }
-  return memoryStorageFallback.has(key);
+  return safeStorageGet(key, null) != null;
 }
 
 function updateTokenIndex(token) {
@@ -11233,9 +11106,8 @@ function saveToCache(token, data, options = {}) {
     const finalToken = enrichedRecord.token;
     const cacheKey = getCacheKey(finalToken);
     const payload = JSON.stringify(enrichedRecord);
-    const persisted = safeStorageSet(cacheKey, payload);
-    const fallbackStored = !persisted && memoryStorageFallback.has(cacheKey);
-    if (!persisted && !fallbackStored) return;
+    const stored = safeStorageSetWithReadback(cacheKey, payload);
+    if (!stored) return;
     updateTokenIndex(finalToken);
     const adjacencyExpanded = relationshipsExpanded(
       previousRecord?.relationships,
@@ -11716,8 +11588,7 @@ const RemoteDbStore = (() => {
         try {
           const payload = JSON.stringify(record);
           const cacheKey = getCacheKey(record.token || token);
-          const persistedOk = safeStorageSet(cacheKey, payload);
-          if (!persistedOk) memoryStorageFallback.set(cacheKey, payload);
+          safeStorageSetWithReadback(cacheKey, payload);
         } catch (err) {
           console.warn('Failed to persist pruned remote DB record:', err);
         }
@@ -11875,8 +11746,7 @@ const RemoteDbStore = (() => {
 
     if (!alreadyCached) {
       const payload = JSON.stringify(record);
-      const persisted = safeStorageSet(cacheKey, payload);
-      if (!persisted) memoryStorageFallback.set(cacheKey, payload);
+      safeStorageSetWithReadback(cacheKey, payload);
       CacheBatch.record(record.token);
       updateTokenIndex(record.token);
       changed = true;
@@ -11886,8 +11756,7 @@ const RemoteDbStore = (() => {
         existing && existing.relationships && Object.keys(existing.relationships).length > 0;
       if (!hasAdjacency) {
         const payload = JSON.stringify(record);
-        const persisted = safeStorageSet(cacheKey, payload);
-        if (!persisted) memoryStorageFallback.set(cacheKey, payload);
+        safeStorageSetWithReadback(cacheKey, payload);
         updateTokenIndex(record.token);
         changed = true;
       }
@@ -17058,9 +16927,9 @@ function stageDbRecordForCache(record) {
   if (!record || !record.token) return false;
   try {
     const cacheKey = getCacheKey(record.token);
-    if (isTokenCached(record.token) || memoryStorageFallback.has(cacheKey)) return true;
+    if (isTokenCached(record.token)) return true;
     const payload = JSON.stringify(Object.assign({ token: record.token }, record));
-    memoryStorageFallback.set(cacheKey, payload);
+    if (!safeStorageSetWithReadback(cacheKey, payload)) return false;
     CacheBatch.record(record.token);
     return true;
   } catch (err) {
@@ -20654,7 +20523,6 @@ async function handleCommand(cmd) {
         safeStorageRemove(DB_RAW_KEY);
         markHlsfDataDirty();
         CacheBatch.cancel();
-        memoryStorageFallback.clear();
         if (pendingHlsfReloadTimer) {
           clearTimeout(pendingHlsfReloadTimer);
           pendingHlsfReloadTimer = null;
