@@ -4832,6 +4832,8 @@ function bindHlsfControls(wrapper) {
         window.HLSF.view.x = 0;
         window.HLSF.view.y = 0;
       }
+      window.HLSF.__centerInit = false;
+      window.HLSF.__userPanned = false;
       syncViewToConfig();
       requestRender();
     });
@@ -4969,6 +4971,7 @@ function bindHlsfControls(wrapper) {
       if (!movedDuringDrag && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
         movedDuringDrag = true;
       }
+      window.HLSF.__userPanned = true;
       window.HLSF.view.x += dx;
       window.HLSF.view.y += dy;
       syncViewToConfig();
@@ -5413,10 +5416,15 @@ function ensureViewportCentered(width, height) {
   const marginY = Math.min(safeHeight * 0.05, 40);
   const outsideFrame =
     view.x < marginX || view.x > safeWidth - marginX || view.y < marginY || view.y > safeHeight - marginY;
-  if (!window.HLSF.__centerInit || invalidView || outsideFrame || viewportChanged) {
+  const userHasPanned = window.HLSF.__userPanned === true;
+  const needsRecovery = invalidView;
+  const shouldAutoCenter = !userHasPanned && (!window.HLSF.__centerInit || outsideFrame || viewportChanged);
+
+  if (needsRecovery || shouldAutoCenter) {
     view.x = safeWidth / 2;
     view.y = safeHeight / 2;
     window.HLSF.__centerInit = true;
+    window.HLSF.__userPanned = false;
     syncViewToConfig();
   }
   window.HLSF.__lastViewport = { width: safeWidth, height: safeHeight };
@@ -5428,6 +5436,7 @@ window.HLSF.animationFrame = window.HLSF.animationFrame || null;
 window.HLSF.geometry = window.HLSF.geometry || {};
 window.HLSF.rendering = window.HLSF.rendering || {};
 window.HLSF.__centerInit = window.HLSF.__centerInit || false;
+window.HLSF.__userPanned = window.HLSF.__userPanned || false;
 window.HLSF.indexCache = window.HLSF.indexCache || null;
 window.HLSF.indexCacheSource = window.HLSF.indexCacheSource || null;
 
