@@ -12,6 +12,10 @@ export interface TokenizeOptions {
   keepOffsets?: boolean;
 }
 
+const wordChar = /[\p{L}\p{N}_]/u;
+
+const isWordChar = (ch: string) => wordChar.test(ch);
+
 export function tokenizeWithSymbols(source: string, options: TokenizeOptions = {}): Token[] {
   const text = typeof source === 'string' ? source : '';
   if (!text) return [];
@@ -28,10 +32,9 @@ export function tokenizeWithSymbols(source: string, options: TokenizeOptions = {
       continue;
     }
 
-    const isWord = /[A-Za-z0-9_]/.test(ch);
-    if (isWord) {
+    if (isWordChar(ch)) {
       const start = i;
-      while (i < text.length && /[A-Za-z0-9_]/.test(text[i])) {
+      while (i < text.length && isWordChar(text[i])) {
         i += 1;
       }
       const slice = text.slice(start, i);
@@ -54,9 +57,9 @@ export function tokenizeWords(source: string): Token[] {
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
-    if (/[A-Za-z0-9_]/.test(ch)) {
+    if (isWordChar(ch)) {
       const start = i;
-      while (i < text.length && /[A-Za-z0-9_]/.test(text[i])) i += 1;
+      while (i < text.length && isWordChar(text[i])) i += 1;
       const slice = text.slice(start, i);
       out.push({ t: slice, kind: 'word', i: start, n: slice.length });
       continue;
