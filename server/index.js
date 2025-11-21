@@ -93,11 +93,10 @@ async function handleLlmRequest(req, res) {
 
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content || '';
-    sendJson(res, 200, {
-      articulatedResponse: content,
-      model: data?.model,
-      usage: data?.usage,
-    });
+    // Preserve the OpenAI response shape so downstream callers can read from
+    // choices[0].message.content while still providing the articulated content
+    // directly for convenience.
+    sendJson(res, 200, { ...data, articulatedResponse: content });
   } catch (error) {
     console.error('LLM backend error:', error);
     sendJson(res, 500, { error: 'LLM backend failed', details: error?.message || 'Unknown error' });
