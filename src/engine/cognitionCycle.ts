@@ -912,20 +912,7 @@ function materializeThought(tokens: string[], style: ThinkingStyle): string {
   }
   const unique = Array.from(new Set((phrases.length ? phrases : tokens).filter(Boolean)));
   if (!unique.length) return '';
-  switch (style) {
-    case 'concise':
-      return unique.join('; ');
-    case 'analytic':
-      return unique
-        .map((token, index) => `${index + 1}. ${token}`)
-        .join(' ');
-    case 'dreamlike':
-      return unique.join(' ~ ');
-    case 'dense':
-      return unique.join(' · ');
-    default:
-      return unique.join(' ');
-  }
+  return unique.join(' ');
 }
 
 const AXIS_SEQUENCE = ['horizontal', 'longitudinal', 'sagittal'];
@@ -958,10 +945,8 @@ function buildIterationNarrative(
   const axisName = AXIS_SEQUENCE[iterationIndex % AXIS_SEQUENCE.length];
   const descriptor = AXIS_DESCRIPTORS[iterationIndex % AXIS_DESCRIPTORS.length];
   const narrative = materializeThought(combined, style);
-  if (!narrative) {
-    return `${capitalize(axisName)} axis ${descriptor} completed.`;
-  }
-  return `${capitalize(axisName)} axis ${descriptor}: ${narrative}`;
+  const prefix = `${capitalize(axisName)} axis ${descriptor}`;
+  return [prefix, narrative].filter(Boolean).join(' ').trim();
 }
 
 function selectAxisTokensForIteration(
