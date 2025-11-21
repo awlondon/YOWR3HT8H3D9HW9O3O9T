@@ -27,7 +27,7 @@ test('resolveAdjacencySettings applies defaults when fields missing', () => {
   assert.deepEqual(resolved, DEFAULT_ADJACENCY_SETTINGS);
 });
 
-test('resolveAdjacencySettings clamps invalid values', () => {
+test('resolveAdjacencySettings clamps invalid values while preserving zero overrides', () => {
   const resolved = resolveAdjacencySettings({
     maxAdjacencyLayers: -2,
     maxAdjacencyDegreePerLayer: [4, -5, 0],
@@ -36,10 +36,22 @@ test('resolveAdjacencySettings clamps invalid values', () => {
     adjacencyStrongSimilarityThreshold: -1,
   });
   assert.equal(resolved.maxAdjacencyLayers >= 1, true);
-  assert.equal(resolved.maxAdjacencyDegreePerLayer.every((value) => value >= 1), true);
+  assert.deepEqual(resolved.maxAdjacencyDegreePerLayer.every((value) => value >= 0), true);
+  assert.equal(resolved.maxAdjacencyDegree, 0);
   assert.equal(resolved.adjacencySimilarityThreshold >= 0 && resolved.adjacencySimilarityThreshold <= 1, true);
   assert.equal(
     resolved.adjacencyStrongSimilarityThreshold >= resolved.adjacencySimilarityThreshold,
     true,
   );
+});
+
+test('resolveAdjacencySettings allows disabling adjacency expansion with zero values', () => {
+  const resolved = resolveAdjacencySettings({
+    maxAdjacencyLayers: 2,
+    maxAdjacencyDegree: 0,
+    maxAdjacencyDegreePerLayer: [0, 0],
+  });
+
+  assert.deepEqual(resolved.maxAdjacencyDegreePerLayer, [0, 0]);
+  assert.equal(resolved.maxAdjacencyDegree, 0);
 });

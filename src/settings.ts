@@ -186,11 +186,18 @@ const toPositiveInt = (value: unknown, fallback: number): number => {
   return normalized > 0 ? normalized : Math.max(1, Math.floor(fallback));
 };
 
+const toNonNegativeInt = (value: unknown, fallback: number): number => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return Math.max(0, Math.floor(fallback));
+  const normalized = Math.floor(num);
+  return normalized >= 0 ? normalized : Math.max(0, Math.floor(fallback));
+};
+
 export function resolveAdjacencySettings(
   overrides: Partial<AdjacencySettings> = {},
 ): AdjacencySettings {
   const layers = toPositiveInt(overrides.maxAdjacencyLayers, baseAdjacencyDefaults.maxAdjacencyLayers);
-  const degreeFallback = toPositiveInt(
+  const degreeFallback = toNonNegativeInt(
     overrides.maxAdjacencyDegree ?? baseAdjacencyDefaults.maxAdjacencyDegree,
     baseAdjacencyDefaults.maxAdjacencyDegree,
   );
@@ -199,7 +206,7 @@ export function resolveAdjacencySettings(
     : baseAdjacencyDefaults.maxAdjacencyDegreePerLayer;
   const perLayer = Array.from({ length: layers }, (_, index) => {
     const raw = degreeSource[index] ?? degreeSource[degreeSource.length - 1] ?? degreeFallback;
-    return toPositiveInt(raw, degreeFallback);
+    return toNonNegativeInt(raw, degreeFallback);
   });
   const similarity = clamp01(
     overrides.adjacencySimilarityThreshold,
