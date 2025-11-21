@@ -1085,25 +1085,33 @@ function computeFallbackArticulation(thought: ThoughtNode): {
   text: string;
   reason: string;
 } {
+  const rawText = tidyFallbackText(thought.rawText ?? '');
   const interpretation = tidyInterpretationText(thought.interpretationText);
-  if (interpretation) {
-    return { text: interpretation, reason: 'interpretation-text' };
+  const interpretationWordCount = interpretation ? interpretation.split(/\s+/).length : 0;
+
+  if (rawText) {
+    if (interpretation && interpretationWordCount >= 8) {
+      return { text: interpretation, reason: 'interpretation-text' };
+    }
+    return { text: rawText, reason: 'raw-text' };
   }
 
-  const rawText = tidyFallbackText(thought.rawText ?? '');
-  if (rawText) {
-    return { text: rawText, reason: 'raw-text' };
+  if (interpretation) {
+    return { text: interpretation, reason: 'interpretation-text' };
   }
 
   const adjacencyTokens = Array.isArray(thought.adjacencyTokens)
     ? thought.adjacencyTokens.filter(Boolean)
     : [];
   if (adjacencyTokens.length) {
-    const uniqueTokens = Array.from(new Set(adjacencyTokens));
-    const sentence = uniqueTokens.join(' ');
+    const uniqueTokens = Array.from(new Set(adjacencyTokens)).slice(0, 24);
+    const sentence = uniqueTokens.join(', ');
     const s = sentence.charAt(0).toUpperCase() + sentence.slice(1);
     const finalized = s.endsWith('.') ? s : `${s}.`;
-    return { text: finalized, reason: 'adjacency-tokens' };
+    return {
+      text: `Key prompt tokens (LLM offline): ${finalized}`,
+      reason: 'adjacency-tokens',
+    };
   }
 
   return {
