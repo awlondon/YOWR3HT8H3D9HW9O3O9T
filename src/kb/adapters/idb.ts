@@ -1,7 +1,7 @@
 import { decodeEdgeBlock, encodeEdgeBlock } from '../encode';
 import type { AdjQuery, EdgeRow, KBAdapter, TokenId } from '../index';
 import { BLOCK_MAX, hashPrefix } from '../shard.js';
-import { KB_SCHEMA_VERSION } from '../schema';
+import { KB_SCHEMA_VERSION } from '../schema.js';
 import type { EdgeBlock } from '../schema';
 import { notifyGraphUpdated, notifyTokenObserved } from '../../vector/globals.js';
 
