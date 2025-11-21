@@ -66,16 +66,19 @@ async function handleLlmRequest(req, res) {
       return;
     }
 
-    const messages = [
-      {
-        role: 'system',
-        content: systemPrompt,
-      },
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ];
+    const callerMessages = Array.isArray(payload?.messages) ? payload.messages : null;
+    const messages = callerMessages?.length
+      ? callerMessages
+      : [
+          {
+            role: 'system',
+            content: systemPrompt,
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ];
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
