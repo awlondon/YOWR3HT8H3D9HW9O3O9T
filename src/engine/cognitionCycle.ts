@@ -1040,6 +1040,9 @@ function resolveLlmEndpoint(): string {
 function normalizeLlmUrl(endpoint: string): string {
   if (/^https?:\/\//i.test(endpoint)) return endpoint;
   if (typeof window !== 'undefined' && window.location?.origin) {
+    if (window.location.protocol === 'file:') {
+      return new URL(endpoint, 'http://localhost').toString();
+    }
     return new URL(endpoint, window.location.origin).toString();
   }
   return new URL(endpoint, 'http://localhost').toString();
