@@ -1002,7 +1002,7 @@ export async function callLLM(
   history: CognitionHistoryEntry[],
 ): Promise<LLMResult> {
   const systemStyle = thinkingStyleToSystemMessage(config.thinkingStyle);
-  const emergentDirective = buildEmergentThoughtDirective();
+  const emergentDirective = mode === 'hidden' ? null : buildEmergentThoughtDirective();
   const hiddenInstruction =
     mode === 'hidden'
       ? 'You are handling a /hidden reflection prompt. Describe your chain of thought by rotating through the horizontal, longitudinal, and sagittal axes of the HLSF. At each axis, report the intersection-based insights that emerge, but keep this reasoning private.'
