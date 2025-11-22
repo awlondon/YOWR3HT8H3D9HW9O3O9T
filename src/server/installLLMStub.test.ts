@@ -15,6 +15,17 @@ test('synthesizeStubContent highlights rotation narratives when provided', () =>
   assert.strictEqual(/Sagittal axis intersections: describe → intersections; crossing → summarize\./.test(result), true);
 });
 
+test('synthesizeStubContent handles prefixed axis markers and dedupes overlaps', () => {
+  const content = [
+    'Rotation 1 Horizontal axis shear reflect → on previews → prompt',
+    'Rotation 2 Horizontal axis shear reflect → on previews → prompt',
+    'Rotation 3 Sagittal axis resonance intersections discovered → summarized',
+  ].join('\n');
+  const result = synthesizeStubContent([{ role: 'user', content }]);
+  assert.strictEqual(/Horizontal axis intersections: shear reflect → on previews → prompt\./.test(result), true);
+  assert.strictEqual(/Sagittal axis intersections: (?:resonance\s+)?intersections discovered → summarized\./.test(result), true);
+});
+
 test('extractPrompt prefers explicit user intent over reference answers', () => {
   const content = [
     'Reflect on the previous visible answer using HLSF rotations. Rotate sequentially through all axes.',

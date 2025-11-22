@@ -114,15 +114,18 @@ export function synthesizeStubContent(messages: ChatMessage[]): string {
     ? thoughts.lines.map(line => line.replace(/^[-•]\s*/, '').trim()).filter(Boolean).slice(0, 4)
     : [];
   const axisInsights = buildAxisSentences(userMessage?.content ?? '');
-  const detailSections = [];
-  if (summary.length) {
-    detailSections.push(`Key rotation notes: ${summary.join('; ')}.`);
+  const summarySentences = summary.map(ensureSentence).filter(Boolean);
+  const detailSections = [] as string[];
+  if (summarySentences.length) {
+    detailSections.push(`Key rotation notes: ${summarySentences.join(' ')}`);
   }
-  if (axisInsights.length) {
-    detailSections.push(axisInsights.join(' '));
-  }
-  const body = detailSections.length
-    ? detailSections.join(' ')
+  const axisSentences = summarySentences.some(line => /axis intersections:/i.test(line))
+    ? []
+    : axisInsights.map(ensureSentence);
+  const combinedSections = [...detailSections, ...axisSentences].filter(Boolean);
+  const uniqueSections = Array.from(new Set(combinedSections));
+  const body = uniqueSections.length
+    ? uniqueSections.join(' ')
     : 'No internal rotation notes were provided, so this stub synthesizes a concise response.';
   return [
     '[offline stub] integrating rotation previews.',
@@ -185,10 +188,10 @@ function deriveAxisSummaries(content: string): AxisSummary[] {
     const line = rawLine.trim();
     if (!line) continue;
     const normalized = line.toLowerCase();
-    const axisMatch = AXIS_LABELS.find(label => normalized.startsWith(label));
+    const axisMatch = matchAxisLabel(normalized);
     if (axisMatch) {
       currentAxis = axisMatch;
-      const detail = extractAxisDetail(line);
+      const detail = extractAxisDetail(stripAxisPrefix(line, axisMatch));
       if (detail) {
         buckets[currentAxis].push(detail);
       }
@@ -218,17 +221,22 @@ function extractAxisDetail(line: string): string {
 
 function summarizeAxisDetails(lines: string[]): string | null {
   const segments: string[] = [];
+  const seen = new Set<string>();
   for (const line of lines) {
-    const normalized = line.replace(/\s+/g, ' ').replace(/→/g, ' → ').trim();
+    const normalized = line.replace(/\s+/g, ' ').replace(/\s*→\s*/g, ' → ').trim();
     if (!normalized) continue;
     const numbered = extractNumberedSegments(normalized);
     if (numbered.length) {
       for (const segment of numbered) {
+        if (seen.has(segment)) continue;
         segments.push(segment);
+        seen.add(segment);
         if (segments.length === 3) break;
       }
     } else {
+      if (seen.has(normalized)) continue;
       segments.push(normalized);
+      seen.add(normalized);
     }
     if (segments.length === 3) break;
   }
@@ -253,6 +261,29 @@ function extractNumberedSegments(detail: string): string[] {
 
 function buildAxisSentences(content: string): string[] {
   return deriveAxisSummaries(content).map(entry => `${capitalize(entry.axis)} axis intersections: ${entry.summary}.`);
+}
+
+function ensureSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function matchAxisLabel(normalizedLine: string): AxisLabel | null {
+  const directMatch = AXIS_LABELS.find(label => normalizedLine.startsWith(label));
+  if (directMatch) {
+    return directMatch;
+  }
+  const inlineMatch = normalizedLine.match(/\b(horizontal|longitudinal|sagittal)\s+axis\b/);
+  if (inlineMatch) {
+    return inlineMatch[1] as AxisLabel;
+  }
+  return null;
+}
+
+function stripAxisPrefix(line: string, axis: AxisLabel): string {
+  const pattern = new RegExp(`^.*?${axis}\\s+axis\\s*`, 'i');
+  return line.replace(pattern, '').trim();
 }
 
 function capitalize(value: string): string {
