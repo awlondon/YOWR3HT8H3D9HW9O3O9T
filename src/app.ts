@@ -4081,6 +4081,7 @@ function stopHLSFAnimation() {
     window.HLSF.currentGraph = null;
     window.HLSF.currentGlyphOnly = false;
     window.HLSF.__centerInit = false;
+    window.HLSF.__userPanned = false;
   }
   if (typeof stopLegacyHLSFAnimation === 'function') {
     try {
