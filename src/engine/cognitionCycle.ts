@@ -1,5 +1,6 @@
 import { tokenizeWords } from '../tokens/tokenize.js';
 import { computeCosineSimilarity } from '../vector/similarity.js';
+import { installLLMStub } from '../server/installLLMStub';
 
 export type ThinkingStyle = 'concise' | 'analytic' | 'dreamlike' | 'dense';
 
@@ -1019,6 +1020,8 @@ function buildEmergentThoughtDirective(): string {
 }
 
 const runtimeEnv = (import.meta as any)?.env ?? {};
+const llmStubMode = String(runtimeEnv.VITE_ENABLE_LLM_STUB ?? 'auto').toLowerCase();
+const isDevEnv = Boolean(runtimeEnv.DEV);
 const DEFAULT_LLM_ENDPOINT = '/api/llm';
 
 function resolveLlmEndpoint(): string {
@@ -1064,6 +1067,32 @@ function tidyInterpretationText(text: string | undefined | null): string {
     return tidyFallbackText(trimmed.slice(0, lastPeriod + 1));
   }
   return tidyFallbackText(trimmed);
+}
+
+function canStubRequest(requestUrl: string): boolean {
+  try {
+    const url = new URL(requestUrl);
+    return url.pathname === '/api/llm';
+  } catch {
+    return false;
+  }
+}
+
+function tryEnableLlmStub(requestUrl: string): boolean {
+  if (typeof window === 'undefined') return false;
+  if (!canStubRequest(requestUrl)) return false;
+  if (window.__HLSF_LLM_STUB_INSTALLED__) return false;
+
+  if (llmStubMode === 'off' || llmStubMode === 'false') {
+    return false;
+  }
+
+  if (llmStubMode === 'auto' && isDevEnv) {
+    return false;
+  }
+
+  installLLMStub();
+  return true;
 }
 
 function computeFallbackArticulation(thought: ThoughtNode): {
@@ -1197,7 +1226,7 @@ export async function callLLM(
     };
   }
 
-  try {
+  const sendRequest = async () => {
     const response = await fetch(requestUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1231,15 +1260,29 @@ export async function callLLM(
       usage: data?.usage,
       endpoint: requestUrl,
     };
+  };
+
+  let lastError: unknown = null;
+  try {
+    return await sendRequest();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const status = (error as any)?.status as number | undefined;
-    const rawError = (error as any)?.body as string | undefined;
+    lastError = error;
+    if (tryEnableLlmStub(requestUrl)) {
+      try {
+        return await sendRequest();
+      } catch (retryError) {
+        lastError = retryError;
+      }
+    }
+
+    const message = lastError instanceof Error ? lastError.message : String(lastError);
+    const status = (lastError as any)?.status as number | undefined;
+    const rawError = (lastError as any)?.body as string | undefined;
     console.error('LLM request failed', {
       endpoint: requestUrl,
       status,
       rawError,
-      error,
+      error: lastError,
     });
     updateThoughtLogStatus(
       status
