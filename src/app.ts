@@ -2368,6 +2368,7 @@ function prepareBuffers(graph, layout, options = {}) {
   window.HLSF.currentGraph = graph;
   window.HLSF.currentGlyphOnly = glyphOnly;
   window.HLSF.currentLayoutSnapshot = layout;
+  requestAutoFit();
   if (window.HLSF?.state) {
     window.HLSF.state.patches = new Map();
     window.HLSF.state.emergentRot = 0;
@@ -5618,6 +5619,12 @@ function applyAutoFitIfNeeded(
   window.HLSF.__centerInit = true;
   window.HLSF.__pendingAutoFit = false;
   syncViewToConfig();
+}
+
+function requestAutoFit(): void {
+  if (typeof window === 'undefined') return;
+  window.HLSF = window.HLSF || {};
+  window.HLSF.__pendingAutoFit = true;
 }
 
 function resetHlsfTransform(): void {
@@ -12562,6 +12569,7 @@ function rebuildLiveGraph(options = {}) {
       window.HLSF.config.layout = 'layered';
     }
     window.HLSF.currentGraph = graph;
+    requestAutoFit();
     showVisualizer();
     animateHLSF(graph, false);
   } else if (!getDb()) {
