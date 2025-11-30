@@ -1,6 +1,6 @@
 import { tokenizeWords } from '../tokens/tokenize.js';
 import { computeCosineSimilarity } from '../vector/similarity.js';
-import { installLLMStub } from '../server/installLLMStub';
+import { installLLMStub } from '../server/installLLMStub.js';
 
 export type ThinkingStyle = 'concise' | 'analytic' | 'dreamlike' | 'dense';
 
@@ -1160,23 +1160,29 @@ function formatLlmError(llm: LLMResult): string {
   return parts.filter(Boolean).join(' · ');
 }
 
-function isConnectionRefused(error: unknown): boolean {
-  const code = (error as any)?.code || (error as any)?.cause?.code;
-  const name = (error as Error)?.name;
+export function isConnectionRefused(error: unknown): boolean {
+  const codes = new Set<string>([
+    (error as any)?.code,
+    (error as any)?.cause?.code,
+    ...(Array.isArray((error as any)?.errors)
+      ? (error as any).errors.flatMap((err: any) => [err?.code, err?.cause?.code])
+      : []),
+  ].filter(Boolean));
+
   const combinedMessage = [
     (error as Error)?.message,
     (error as any)?.cause?.message,
     Array.isArray((error as any)?.errors)
-      ? (error as any).errors.map((err: any) => err?.message || '').join(' ')
+      ? (error as any).errors.map((err: any) => err?.message || String(err ?? '')).join(' ')
       : (error as any)?.errors,
   ]
     .filter(Boolean)
     .join(' ');
 
   return (
-    code === 'ECONNREFUSED' ||
+    codes.has('ECONNREFUSED') ||
     /ECONNREFUSED/i.test(combinedMessage) ||
-    (name === 'AggregateError' && /ECONNREFUSED/i.test(combinedMessage))
+    ((error as Error)?.name === 'AggregateError' && /ECONNREFUSED/i.test(combinedMessage))
   );
 }
 
