@@ -10,7 +10,10 @@
     "esModuleInterop": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable", "WebWorker"],
     "skipLibCheck": true,
-    "typeRoots": ["./types", "./node_modules/@types"]
+    "typeRoots": ["./types", "./node_modules/@types"],
+    "paths": {
+      "node:fs/promises": ["./types/node-fs-promises"]
+    }
   },
   "include": ["src/**/*"],
   "references": [

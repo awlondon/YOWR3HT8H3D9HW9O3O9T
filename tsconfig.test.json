@@ -32,6 +32,7 @@
     "src/settings.test.ts",
     "src/onboarding/loginFlow.ts",
     "src/onboarding/loginFlow.test.ts",
+    "src/engine/cognitionCycle.test.ts",
     "src/server/installLLMStub.ts",
     "src/server/installLLMStub.test.ts",
     "src/lib/crypto/encryption.ts",
