@@ -3463,6 +3463,10 @@ function drawComposite(graph, opts = {}) {
     window.HLSF.state.emergentRot = 0;
   }
 
+  const activeGraph = graph || window.HLSF.currentGraph || window.HLSF.lastRenderedGraph;
+  if (!activeGraph) return;
+  graph = activeGraph;
+
   const cfg = window.HLSF.config;
   const canvas =
     window.HLSF.canvas || (window.HLSF.canvas = document.getElementById('hlsf-canvas'));
@@ -3736,6 +3740,7 @@ function drawComposite(graph, opts = {}) {
   const state = renderState || (window.HLSF.rendering = window.HLSF.rendering || {});
   state.nodeHitAreas = hitAreas;
   state.nodePositions = rotatedPositions;
+  window.HLSF.lastRenderedGraph = graph;
 
   ctx.restore();
 }
