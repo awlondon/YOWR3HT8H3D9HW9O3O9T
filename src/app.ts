@@ -4181,14 +4181,16 @@ function animateHLSF(graph, glyphOnly = false) {
   });
 }
 
-function stopHLSFAnimation() {
+function stopHLSFAnimation(options: { preserveGraph?: boolean } = {}) {
   if (_anim) {
     cancelAnimationFrame(_anim);
     _anim = null;
   }
   if (window.HLSF) {
-    window.HLSF.currentGraph = null;
-    window.HLSF.currentGlyphOnly = false;
+    if (!options.preserveGraph) {
+      window.HLSF.currentGraph = null;
+      window.HLSF.currentGlyphOnly = false;
+    }
     window.HLSF.__centerInit = false;
   }
   if (typeof stopLegacyHLSFAnimation === 'function') {
@@ -4201,27 +4203,27 @@ function stopHLSFAnimation() {
 }
 
 let lastRotationPreviewGraph: HLSFGraph | null = null;
+let pendingRotationPreviewGraph: HLSFGraph | null = null;
 
 function handleRotationPreviewEvent(event: CustomEvent<RotationPreviewEventDetail>): void {
   const detail = event?.detail;
   if (!detail) return;
-  if (detail.active && detail.graph) {
-    lastRotationPreviewGraph = detail.graph;
-    ensureHLSFCanvas();
-    animateHLSF(detail.graph, window.HLSF?.currentGlyphOnly === true);
+  if (detail.active) {
+    pendingRotationPreviewGraph = detail.graph ?? pendingRotationPreviewGraph;
+    if (!lastRotationPreviewGraph && detail.graph) {
+      lastRotationPreviewGraph = detail.graph;
+    }
     return;
   }
 
-  if (detail.graph) {
-    lastRotationPreviewGraph = detail.graph;
-  }
+  const graphToRender = detail.graph ?? pendingRotationPreviewGraph ?? lastRotationPreviewGraph;
+  pendingRotationPreviewGraph = null;
 
-  stopHLSFAnimation();
-  if (lastRotationPreviewGraph) {
+  if (graphToRender) {
+    lastRotationPreviewGraph = graphToRender;
     ensureHLSFCanvas();
-    drawHLSFMatrix(lastRotationPreviewGraph, {
-      glyphOnly: window.HLSF?.currentGlyphOnly === true,
-    });
+    stopHLSFAnimation({ preserveGraph: true });
+    animateHLSF(graphToRender, window.HLSF?.currentGlyphOnly === true);
   }
 }
 
@@ -5699,6 +5701,8 @@ interface RotationPreviewUiState {
   restoreHidden: boolean;
   previousGraph: unknown;
   previousGlyphOnly: boolean;
+  pendingGraph: HLSFGraph | null;
+  pendingGlyphOnly: boolean;
 }
 
 const rotationPreviewUiState: RotationPreviewUiState = {
@@ -5706,6 +5710,8 @@ const rotationPreviewUiState: RotationPreviewUiState = {
   restoreHidden: false,
   previousGraph: null,
   previousGlyphOnly: false,
+  pendingGraph: null,
+  pendingGlyphOnly: false,
 };
 
 function renderHlsfMatrix(graph: HLSFGraph, glyphOnly = false): void {
@@ -5716,7 +5722,7 @@ function handleRotationPreviewBridge(detail?: RotationPreviewEventDetail): void 
   if (!detail || typeof window === 'undefined') return;
   const container = document.getElementById('hlsf-canvas-container');
 
-  if (detail.active && detail.graph) {
+  if (detail.active) {
     const canvas = ensureHLSFCanvas();
     if (!canvas) return;
     const wasHidden = container?.classList.contains('hidden') ?? false;
@@ -5729,23 +5735,28 @@ function handleRotationPreviewBridge(detail?: RotationPreviewEventDetail): void 
       rotationPreviewUiState.restoreHidden = wasHidden && window.HLSF?.config?.deferredRender !== false;
     }
     rotationPreviewUiState.active = true;
-    renderHlsfMatrix(detail.graph, false);
+    rotationPreviewUiState.pendingGraph = detail.graph ?? rotationPreviewUiState.pendingGraph;
+    rotationPreviewUiState.pendingGlyphOnly = window.HLSF?.currentGlyphOnly === true;
     return;
   }
 
-  if (!rotationPreviewUiState.active) return;
+  if (!rotationPreviewUiState.active && !rotationPreviewUiState.pendingGraph && !detail.graph) return;
 
   const shouldHide = rotationPreviewUiState.restoreHidden && window.HLSF?.config?.deferredRender !== false;
   const previousGraph = rotationPreviewUiState.previousGraph;
   const previousGlyphOnly = rotationPreviewUiState.previousGlyphOnly;
+  const graphToRender = detail.graph ?? rotationPreviewUiState.pendingGraph ?? previousGraph;
+  const glyphOnly = rotationPreviewUiState.pendingGlyphOnly || previousGlyphOnly;
 
   rotationPreviewUiState.active = false;
   rotationPreviewUiState.restoreHidden = false;
   rotationPreviewUiState.previousGraph = null;
   rotationPreviewUiState.previousGlyphOnly = false;
+  rotationPreviewUiState.pendingGraph = null;
+  rotationPreviewUiState.pendingGlyphOnly = false;
 
-  if (previousGraph) {
-    renderHlsfMatrix(previousGraph as HLSFGraph, previousGlyphOnly);
+  if (graphToRender) {
+    renderHlsfMatrix(graphToRender as HLSFGraph, glyphOnly);
   } else if (shouldHide) {
     hideVisualizer();
   }
