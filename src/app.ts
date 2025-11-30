@@ -20728,6 +20728,42 @@ function showHelpCommand(categoryArg?: string) {
   addLog(helpCommandHtml(categoryArg));
 }
 
+type PromptOrCommandAction =
+  | { type: 'prompt'; text: string }
+  | { type: 'command'; raw: string };
+
+function parsePromptActions(raw: string): PromptOrCommandAction[] {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return [];
+
+  if (trimmed.startsWith('/')) {
+    return [{ type: 'command', raw: trimmed }];
+  }
+
+  const tokens = trimmed.split(/\s+/);
+  const actions: PromptOrCommandAction[] = [];
+  const promptTokens: string[] = [];
+
+  const flushPrompt = () => {
+    if (!promptTokens.length) return;
+    actions.push({ type: 'prompt', text: promptTokens.join(' ') });
+    promptTokens.length = 0;
+  };
+
+  for (const token of tokens) {
+    if (/^[/\\]/.test(token)) {
+      flushPrompt();
+      const normalized = token.replace(/^\\/, '/');
+      actions.push({ type: 'command', raw: normalized });
+      continue;
+    }
+    promptTokens.push(token);
+  }
+
+  flushPrompt();
+  return actions;
+}
+
 async function handleCommand(cmd) {
   const trimmed = cmd.trim();
   const handled = await safeAsync(
@@ -23343,8 +23379,8 @@ async function submitPromptThroughEngine(
   options: { annotateLog?: boolean; source?: 'input-field' | 'voice' } = {},
 ) {
   const raw = typeof input === 'string' ? input : String(input ?? '');
-  const trimmed = raw.trim();
-  if (!trimmed) {
+  const actions = parsePromptActions(raw);
+  if (!actions.length) {
     return {
       success: false,
       tokens: [],
@@ -23357,31 +23393,50 @@ async function submitPromptThroughEngine(
 
   const annotate = Boolean(options?.annotateLog);
   const source = options?.source === 'voice' ? 'voice' : 'input-field';
-  const isCmd = isCommand(trimmed);
+  const hasPromptAction = actions.some((action) => action.type === 'prompt');
+  const promptTextForTokens = actions
+    .filter(
+      (action): action is Extract<PromptOrCommandAction, { type: 'prompt' }> => action.type === 'prompt',
+    )
+    .map((action) => action.text)
+    .join(' ')
+    .trim();
+
   let committedTokens = [];
-  if (!isCmd) {
-    committedTokens = commitInputTokensFromText(raw, { source, render: false });
+  if (hasPromptAction && promptTextForTokens) {
+    committedTokens = commitInputTokensFromText(promptTextForTokens, { source, render: false });
   }
 
   setInputPreviewTokens([], { render: false });
   rebuildLiveGraph();
+
+  const trimmed = raw.trim();
   addLog(`${annotate ? '🎤' : '&gt;'} ${sanitize(trimmed)}`);
 
-  if (isCmd) {
-    await handleCommand(trimmed);
-    return { success: true, tokens: committedTokens, kind: 'command' as const };
+  for (const action of actions) {
+    if (action.type === 'command') {
+      await handleCommand(action.raw);
+      continue;
+    }
+
+    try {
+      onUserPromptSubmitted(action.text);
+      await processPrompt(action.text);
+    } catch (error) {
+      if (source === 'voice') {
+        return { success: false, tokens: committedTokens, kind: 'prompt' as const, error };
+      }
+      throw error;
+    }
   }
 
-  try {
-    onUserPromptSubmitted(trimmed);
-    await processPrompt(trimmed);
-    return { success: true, tokens: committedTokens, kind: 'prompt' as const };
-  } catch (error) {
-    if (source === 'voice') {
-      return { success: false, tokens: committedTokens, kind: 'prompt' as const, error };
-    }
-    throw error;
-  }
+  const kind: 'command' | 'prompt' | 'mixed' = actions.every((action) => action.type === 'command')
+    ? 'command'
+    : actions.some((action) => action.type === 'command')
+      ? 'mixed'
+      : 'prompt';
+
+  return { success: true, tokens: committedTokens, kind };
 }
 
 async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } = {}) {
@@ -23394,7 +23449,7 @@ elements.sendBtn.addEventListener('click', () => {
 
   void submitPromptThroughEngine(rawValue, { source: 'input-field' })
     .then((result) => {
-      if (result.kind === 'command') {
+      if (result.kind === 'command' || result.kind === 'mixed') {
         elements.input.value = '';
       }
     })
