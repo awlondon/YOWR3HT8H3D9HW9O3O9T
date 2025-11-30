@@ -6570,13 +6570,14 @@ function getDb() {
     } catch (err) {
       console.warn('Failed to read legacy DB snapshot from storage:', err);
     }
-  if (!legacy) {
-    legacy = safeStorageGet('hlsf_db_raw', null);
-  }
+    if (!legacy) {
+      legacy = safeStorageGet('hlsf_db_raw', null);
+    }
     if (legacy) {
-      safeStorageSet(DB_RAW_KEY, legacy);
+      const legacyRaw = typeof legacy === 'string' ? legacy : JSON.stringify(legacy);
+      safeStorageSet(DB_RAW_KEY, legacyRaw);
       safeStorageRemove('hlsf_db_raw');
-      raw = legacy;
+      raw = legacyRaw;
     }
   }
   if (!raw) return null;
