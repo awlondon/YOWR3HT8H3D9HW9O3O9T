@@ -15189,6 +15189,12 @@ function initHLSFCanvas() {
 
     console.log(`Creating canvas UI for ${hlsfNodes.length} nodes`);
 
+    window.HLSF.config = window.HLSF.config || {};
+    const configuredRefreshInterval = Number.isFinite(window.HLSF.config.refreshIntervalMs)
+      ? Math.max(1, window.HLSF.config.refreshIntervalMs)
+      : LEGACY_REFRESH_INTERVAL_MS;
+    window.HLSF.config.refreshIntervalMs = configuredRefreshInterval;
+
     const container = document.createElement('div');
     container.className = 'hlsf-canvas-container';
     container.innerHTML = `
@@ -15480,6 +15486,9 @@ function initHLSFCanvas() {
     // Initial render
     renderLegacyHLSF();
 
+    // Continuous refresh to avoid visual stalls
+    startLegacyAutoRefresh(window.HLSF.config.refreshIntervalMs);
+
     // Start animation
     animateLegacyHLSF();
 
@@ -15667,6 +15676,8 @@ function renderLegacyHLSF() {
   }
 }
 
+const LEGACY_REFRESH_INTERVAL_MS = 10;
+
 const debouncedLegacyRender = debounce(() => {
   if (window.HLSF?.currentGraph) {
     drawComposite(window.HLSF.currentGraph, { glyphOnly: window.HLSF.currentGlyphOnly === true });
@@ -15677,6 +15688,28 @@ const debouncedLegacyRender = debounce(() => {
 
 function requestRender() {
   debouncedLegacyRender();
+}
+
+function startLegacyAutoRefresh(intervalMs = LEGACY_REFRESH_INTERVAL_MS) {
+  if (!window?.HLSF) return;
+
+  const refreshInterval = Number.isFinite(intervalMs) ? Math.max(1, intervalMs) : LEGACY_REFRESH_INTERVAL_MS;
+
+  try {
+    if (window.HLSF.refreshTimer) {
+      clearInterval(window.HLSF.refreshTimer);
+    }
+  } catch (err) {
+    console.warn('Failed to clear existing HLSF refresh timer:', err);
+  }
+
+  window.HLSF.refreshTimer = window.setInterval(() => {
+    try {
+      requestRender();
+    } catch (err) {
+      console.warn('HLSF auto-refresh error:', err);
+    }
+  }, refreshInterval);
 }
 
 function setDocumentFocusTokens(tokens) {
@@ -15735,6 +15768,10 @@ function stopLegacyHLSFAnimation() {
     if (window.HLSF && window.HLSF.animationFrame) {
       cancelAnimationFrame(window.HLSF.animationFrame);
       window.HLSF.animationFrame = null;
+    }
+    if (window.HLSF?.refreshTimer) {
+      clearInterval(window.HLSF.refreshTimer);
+      window.HLSF.refreshTimer = null;
     }
     if (window.HLSF && window.HLSF.config) {
       window.HLSF.config.emergentActive = false;
