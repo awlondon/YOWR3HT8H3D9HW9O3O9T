@@ -10270,6 +10270,25 @@ function debounce(fn, delay) {
   };
 }
 
+function throttle(fn, interval) {
+  let lastRun = 0;
+  let trailing;
+  return function throttled(...args) {
+    const now = performance.now();
+    if (now - lastRun >= interval) {
+      lastRun = now;
+      fn.apply(this, args);
+      return;
+    }
+
+    clearTimeout(trailing);
+    trailing = setTimeout(() => {
+      lastRun = performance.now();
+      fn.apply(this, args);
+    }, interval - (now - lastRun));
+  };
+}
+
 async function safeAsync(fn, errorMsg, options = null) {
   const config = options && typeof options === 'object' ? options : {};
   try {
@@ -15684,7 +15703,7 @@ function renderLegacyHLSF() {
 
 const LEGACY_REFRESH_INTERVAL_MS = 10;
 
-const debouncedLegacyRender = debounce(() => {
+const debouncedLegacyRender = throttle(() => {
   if (window.HLSF?.currentGraph) {
     drawComposite(window.HLSF.currentGraph, { glyphOnly: window.HLSF.currentGlyphOnly === true });
   } else {
