@@ -386,16 +386,23 @@ export function truncateToWords(text: string, maxWords: number): string {
   return words.slice(0, Math.max(1, maxWords)).join(' ');
 }
 
+const HIDDEN_PROMPT_PREFIXES = ['/hidden', '/expand'];
+const escapeForRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const HIDDEN_PROMPT_PATTERN = new RegExp(
+  `^\\s*(?:${HIDDEN_PROMPT_PREFIXES.map(prefix => escapeForRegex(prefix)).join('|')})\\s*`,
+  'i',
+);
+
 function detectCognitionMode(prompt: string): CognitionMode {
   const normalized = prompt?.trim().toLowerCase() ?? '';
-  return normalized.startsWith('/hidden') ? 'hidden' : 'visible';
+  return HIDDEN_PROMPT_PREFIXES.some(prefix => normalized.startsWith(prefix)) ? 'hidden' : 'visible';
 }
 
 function normalizePromptForMode(prompt: string, mode: CognitionMode): string {
   if (mode !== 'hidden') {
     return prompt;
   }
-  return prompt.replace(/^\s*\/hidden\s*/i, '').trim();
+  return prompt.replace(HIDDEN_PROMPT_PATTERN, '').trim();
 }
 
 export function composeHiddenPrompt(history: CognitionHistoryEntry[]): string {
@@ -1165,7 +1172,7 @@ export async function callLLM(
   const emergentDirective = buildEmergentThoughtDirective();
   const hiddenInstruction =
     mode === 'hidden'
-      ? 'You are handling a /hidden reflection prompt. Describe your chain of thought by rotating through the horizontal, longitudinal, and sagittal axes of the HLSF. At each axis, report the intersection-based insights that emerge, but keep this reasoning private.'
+      ? 'You are handling a hidden reflection prompt triggered by /hidden or /expand. Describe your chain of thought by rotating through the horizontal, longitudinal, and sagittal axes of the HLSF. At each axis, report the intersection-based insights that emerge, but keep this reasoning private.'
       : null;
   const historyContext = formatHistoryContext(history);
   const thoughtsBlock = thoughts.map(thought => `- ${thought}`).join('\n');
@@ -1187,7 +1194,7 @@ export async function callLLM(
     {
       role: 'system',
       content:
-        'Produce a single coherent answer for the user that integrates the internal thoughts without echoing the bullet list verbatim. Do not mention /hidden prompts, the hidden process, or expose the internal trace.',
+        'Produce a single coherent answer for the user that integrates the internal thoughts without echoing the bullet list verbatim. Do not mention /hidden or /expand prompts, the hidden process, or expose the internal trace.',
     },
   ];
 
