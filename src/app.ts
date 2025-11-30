@@ -15676,6 +15676,7 @@ function renderLegacyHLSF() {
   }
 }
 
+const LEGACY_RENDER_DEBOUNCE_MS = 16;
 const LEGACY_REFRESH_INTERVAL_MS = 10;
 
 const debouncedLegacyRender = debounce(() => {
@@ -15684,7 +15685,7 @@ const debouncedLegacyRender = debounce(() => {
   } else {
     renderLegacyHLSF();
   }
-}, 16);
+}, LEGACY_RENDER_DEBOUNCE_MS);
 
 function requestRender() {
   debouncedLegacyRender();
@@ -15694,6 +15695,7 @@ function startLegacyAutoRefresh(intervalMs = LEGACY_REFRESH_INTERVAL_MS) {
   if (!window?.HLSF) return;
 
   const refreshInterval = Number.isFinite(intervalMs) ? Math.max(1, intervalMs) : LEGACY_REFRESH_INTERVAL_MS;
+  const effectiveInterval = Math.max(refreshInterval, LEGACY_RENDER_DEBOUNCE_MS + 1);
 
   try {
     if (window.HLSF.refreshTimer) {
@@ -15709,7 +15711,7 @@ function startLegacyAutoRefresh(intervalMs = LEGACY_REFRESH_INTERVAL_MS) {
     } catch (err) {
       console.warn('HLSF auto-refresh error:', err);
     }
-  }, refreshInterval);
+  }, effectiveInterval);
 }
 
 function setDocumentFocusTokens(tokens) {
