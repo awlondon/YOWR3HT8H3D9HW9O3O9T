@@ -767,6 +767,7 @@ const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
     category: 'graph',
   },
   { command: '/hidden', description: 'Alias for /maphidden', requiresMembership: true, category: 'graph' },
+  { command: '/expand', description: 'Alias for /maphidden', requiresMembership: true, category: 'graph' },
   { command: '/signup', description: 'Create a SaaS profile', requiresMembership: true, category: 'saas' },
   { command: '/switchuser', description: 'Switch active SaaS profile', requiresMembership: true, category: 'saas' },
   { command: '/plan', description: 'View subscription and credits', requiresMembership: true, category: 'saas' },
@@ -20342,6 +20343,7 @@ commandRegistry.register('/remotestats', () => cmd_remotestats());
 commandRegistry.register('/remotedb', () => cmd_remotestats());
 commandRegistry.register('/maphidden', cmd_hidden);
 commandRegistry.register('/hidden', cmd_hidden);
+commandRegistry.register('/expand', cmd_hidden);
 commandRegistry.register('/sv-avatar', (args) => cmdSaveAvatar(args));
 commandRegistry.register('/ld-avatar', () => cmdLoadAvatar());
 commandRegistry.register('/del-avatar', () => cmdDeleteAvatar());
