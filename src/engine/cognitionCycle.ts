@@ -147,6 +147,7 @@ interface ThoughtNode {
   interpretationText?: string;
   rawText?: string;
   adjacencyTokens?: string[];
+  rotationSummary?: string;
 }
 
 interface RotationResult {
@@ -384,6 +385,17 @@ export function truncateToWords(text: string, maxWords: number): string {
     return text.trim();
   }
   return words.slice(0, Math.max(1, maxWords)).join(' ');
+}
+
+export function collapseRotationNarrative(thoughts: string[], maxWords = 100): string | null {
+  if (!Array.isArray(thoughts)) return null;
+  const segments = thoughts
+    .map(entry => (typeof entry === 'string' ? entry.replace(/\s+/g, ' ').trim() : ''))
+    .filter(Boolean);
+  if (!segments.length) return null;
+  const combined = segments.join(' ');
+  const truncated = truncateToWords(combined, maxWords).replace(/\s+/g, ' ').trim();
+  return truncated || null;
 }
 
 const HIDDEN_PROMPT_PREFIXES = ['/hidden', '/expand'];
@@ -1109,11 +1121,21 @@ function computeFallbackArticulation(thought: ThoughtNode): {
   const rawText = tidyFallbackText(thought.rawText ?? '');
   const interpretation = tidyInterpretationText(thought.interpretationText);
   const interpretationWordCount = interpretation ? interpretation.split(/\s+/).length : 0;
+  const rotationNarrative = collapseRotationNarrative(
+    thought.rotationSummary ? [thought.rotationSummary] : [],
+    100,
+  );
+  const rotationSummary = rotationNarrative ? tidyFallbackText(rotationNarrative) : '';
+
+  if (interpretation && interpretationWordCount >= 8) {
+    return { text: interpretation, reason: 'interpretation-text' };
+  }
+
+  if (rotationSummary) {
+    return { text: rotationSummary, reason: 'rotation-narrative' };
+  }
 
   if (rawText) {
-    if (interpretation && interpretationWordCount >= 8) {
-      return { text: interpretation, reason: 'interpretation-text' };
-    }
     return { text: rawText, reason: 'raw-text' };
   }
 
@@ -1196,6 +1218,7 @@ export async function callLLM(
 ): Promise<LLMResult> {
   const systemStyle = thinkingStyleToSystemMessage(config.thinkingStyle);
   const emergentDirective = buildEmergentThoughtDirective();
+  const rotationSummary = collapseRotationNarrative(thoughts, 100);
   const hiddenInstruction =
     mode === 'hidden'
       ? 'You are handling a hidden reflection prompt triggered by /hidden or /expand. Describe your chain of thought by rotating through the horizontal, longitudinal, and sagittal axes of the HLSF. At each axis, report the intersection-based insights that emerge, but keep this reasoning private.'
@@ -1237,6 +1260,7 @@ export async function callLLM(
       interpretationText,
       rawText: rawPrompt ?? prompt,
       adjacencyTokens,
+      rotationSummary,
     };
     const computed = computeFallbackArticulation(thought);
     return { text: computed.text, reason: computed.reason };
