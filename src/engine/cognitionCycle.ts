@@ -1160,6 +1160,26 @@ function formatLlmError(llm: LLMResult): string {
   return parts.filter(Boolean).join(' · ');
 }
 
+function isConnectionRefused(error: unknown): boolean {
+  const code = (error as any)?.code || (error as any)?.cause?.code;
+  const name = (error as Error)?.name;
+  const combinedMessage = [
+    (error as Error)?.message,
+    (error as any)?.cause?.message,
+    Array.isArray((error as any)?.errors)
+      ? (error as any).errors.map((err: any) => err?.message || '').join(' ')
+      : (error as any)?.errors,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    code === 'ECONNREFUSED' ||
+    /ECONNREFUSED/i.test(combinedMessage) ||
+    (name === 'AggregateError' && /ECONNREFUSED/i.test(combinedMessage))
+  );
+}
+
 export async function callLLM(
   prompt: string,
   thoughts: string[],
@@ -1282,19 +1302,27 @@ export async function callLLM(
       }
     }
 
-    const message = lastError instanceof Error ? lastError.message : String(lastError);
+    const connectionRefused = isConnectionRefused(lastError);
+    const message = connectionRefused
+      ? `Cannot reach LLM backend at ${requestUrl}. Connection refused.`
+      : lastError instanceof Error
+        ? lastError.message
+        : String(lastError);
     const status = (lastError as any)?.status as number | undefined;
+    const normalizedStatus = connectionRefused ? status ?? 503 : status;
     const rawError = (lastError as any)?.body as string | undefined;
     console.error('LLM request failed', {
       endpoint: requestUrl,
-      status,
+      status: normalizedStatus,
       rawError,
       error: lastError,
     });
     updateThoughtLogStatus(
-      status
-        ? `LLM request failed (${status}). Check LLM endpoint or network.`
-        : 'LLM request failed. Halting rotation.',
+      connectionRefused
+        ? 'LLM backend unreachable. Start npm run server or update VITE_LLM_ENDPOINT.'
+        : normalizedStatus
+          ? `LLM request failed (${normalizedStatus}). Check LLM endpoint or network.`
+          : 'LLM request failed. Halting rotation.',
     );
     const fallbackResponse = fallback;
     return {
@@ -1304,7 +1332,7 @@ export async function callLLM(
       error: message,
       isFallback: true,
       endpoint: requestUrl,
-      status,
+      status: normalizedStatus,
       rawError,
       fallbackText: fallbackResponse?.text,
       fallbackReason: fallbackResponse?.reason,
