@@ -424,9 +424,11 @@ export function composeHiddenPrompt(history: CognitionHistoryEntry[]): string {
   const fallback = history.length ? history[history.length - 1]?.response?.trim() : '';
   const reference = lastVisible?.response?.trim() || fallback;
   const promptLines = [
-    '/hidden Reflect on the previous visible answer using HLSF rotations.',
-    'Rotate sequentially through the horizontal, longitudinal, and sagittal axes.',
-    'Describe the intersections discovered at each axis crossing and summarize the emergent insights.',
+    '/hidden Provide a concise rotation reflection on the previous visible answer.',
+    'Rotate through three axes in order: horizontal, longitudinal, then sagittal.',
+    'At each axis crossing, briefly note key intersections or overlaps.',
+    'Summarize the main insight from those intersections before moving to the next axis.',
+    'Close with a short overall takeaway combining all three rotations. Keep it tight—avoid verbose loops.',
   ];
   if (reference) {
     promptLines.push(`Reference answer: ${reference}`);
