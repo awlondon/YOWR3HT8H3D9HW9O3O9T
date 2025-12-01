@@ -724,7 +724,6 @@ function runSingleRotationIteration(
           hiddenGraph,
           bufferTokens,
           iterationIndex,
-          config.thinkingStyle,
         );
         commitThoughtLineToUI(text, iterationIndex);
         resolve({ tokens: bufferTokens.slice(), text });
@@ -918,7 +917,7 @@ function updateThoughtLogStatus(message: string): void {
   el.textContent = message;
 }
 
-function materializeThought(tokens: string[], style: ThinkingStyle): string {
+function materializeThought(tokens: string[]): string {
   if (!tokens.length) return '';
   const phrases: string[] = [];
   for (let i = 0; i < tokens.length; i += 2) {
@@ -942,7 +941,6 @@ function buildIterationNarrative(
   graph: HLSFGraph,
   collectedTokens: string[],
   iterationIndex: number,
-  style: ThinkingStyle,
 ): string {
   const baselineTokens = collectedTokens.length
     ? collectedTokens.slice()
@@ -964,7 +962,7 @@ function buildIterationNarrative(
     });
   const axisName = AXIS_SEQUENCE[iterationIndex % AXIS_SEQUENCE.length];
   const descriptor = AXIS_DESCRIPTORS[iterationIndex % AXIS_DESCRIPTORS.length];
-  const narrative = materializeThought(combined, style);
+  const narrative = materializeThought(combined);
   const prefix = `${capitalize(axisName)} axis ${descriptor}`;
   return [prefix, narrative].filter(Boolean).join(' ').trim();
 }
