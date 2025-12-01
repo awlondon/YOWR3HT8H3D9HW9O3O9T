@@ -691,12 +691,11 @@ function runSingleRotationIteration(
   const maxTokensPerThought = Math.max(8, config.maxTokensPerThought ?? 50);
 
   return new Promise(resolve => {
-    let angle = 0;
     const bufferTokens: string[] = [];
     const pendingTokenSet = new Set<string>();
     let lastFlushAngle = 0;
 
-    const flushPendingTokens = () => {
+    const flushPendingTokens = (currentAngle: number) => {
       if (!pendingTokenSet.size) return;
       streamTokensToThoughtLog(
         Array.from(pendingTokenSet),
@@ -704,6 +703,7 @@ function runSingleRotationIteration(
         iterationIndex,
       );
       pendingTokenSet.clear();
+      lastFlushAngle = currentAngle;
     };
 
     const collectTokens = (tokens: string[]) => {
@@ -716,43 +716,83 @@ function runSingleRotationIteration(
       }
     };
 
-    const step = () => {
-      angle += degreesPerFrame;
+    const schedule = hiddenGraph.intersections ?? buildIntersectionSchedule(hiddenGraph);
+    const sortedEvents = schedule.slice().sort((a, b) => a.angle - b.angle);
 
-      if (angle >= 360) {
-        flushPendingTokens();
-        stopRotationAnimation(hiddenGraph, iterationIndex);
-        const text = buildIterationNarrative(
-          hiddenGraph,
-          bufferTokens,
-          iterationIndex,
-        );
-        commitThoughtLineToUI(text, iterationIndex);
-        resolve({ tokens: bufferTokens.slice(), text });
-        return;
+    const processEvent = (eventAngle: number, tokens: string[]) => {
+      const flushNeeded =
+        pendingTokenSet.size &&
+        (eventAngle - lastFlushAngle >= tokenFlushInterval ||
+          bufferTokens.length >= maxTokensPerThought);
+      if (flushNeeded) {
+        flushPendingTokens(eventAngle);
       }
+      collectTokens(tokens);
+    };
 
-      const intersections = getIntersectionsAtAngle(hiddenGraph, angle);
-      for (const inter of intersections) {
-        if (inter.affinity >= config.affinityThreshold) {
-          collectTokens(inter.tokens);
+    const fastTrackRotation = () => {
+      for (const event of sortedEvents) {
+        if (event.affinity >= config.affinityThreshold) {
+          processEvent(event.angle, event.tokens);
+        } else if (
+          pendingTokenSet.size &&
+          event.angle - lastFlushAngle >= tokenFlushInterval
+        ) {
+          flushPendingTokens(event.angle);
         }
       }
 
-      if (
-        pendingTokenSet.size &&
-        (angle - lastFlushAngle >= tokenFlushInterval || bufferTokens.length >= maxTokensPerThought)
-      ) {
-        flushPendingTokens();
-        lastFlushAngle = angle;
+      flushPendingTokens(360);
+      stopRotationAnimation(hiddenGraph, iterationIndex);
+      const text = buildIterationNarrative(hiddenGraph, bufferTokens, iterationIndex);
+      commitThoughtLineToUI(text, iterationIndex);
+      resolve({ tokens: bufferTokens.slice(), text });
+    };
+
+    const step = () => {
+      // Preserve animation pacing when a browser is present, but fall back to
+      // the faster deterministic path when requestAnimationFrame is missing.
+      if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        fastTrackRotation();
+        return;
       }
 
-      scheduleAnimationFrame(step);
+      let angle = 0;
+      const iterate = () => {
+        angle += degreesPerFrame;
+
+        if (angle >= 360) {
+          flushPendingTokens(360);
+          stopRotationAnimation(hiddenGraph, iterationIndex);
+          const text = buildIterationNarrative(hiddenGraph, bufferTokens, iterationIndex);
+          commitThoughtLineToUI(text, iterationIndex);
+          resolve({ tokens: bufferTokens.slice(), text });
+          return;
+        }
+
+        const intersections = getIntersectionsAtAngle(hiddenGraph, angle);
+        for (const inter of intersections) {
+          if (inter.affinity >= config.affinityThreshold) {
+            collectTokens(inter.tokens);
+          }
+        }
+
+        if (
+          pendingTokenSet.size &&
+          (angle - lastFlushAngle >= tokenFlushInterval || bufferTokens.length >= maxTokensPerThought)
+        ) {
+          flushPendingTokens(angle);
+        }
+
+        scheduleAnimationFrame(iterate);
+      };
+
+      scheduleAnimationFrame(iterate);
     };
 
     setActiveThoughtIteration(iterationIndex);
     startRotationAnimation(hiddenGraph, iterationIndex);
-    scheduleAnimationFrame(step);
+    step();
   });
 }
 
