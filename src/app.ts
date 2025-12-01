@@ -3558,7 +3558,9 @@ function drawComposite(graph, opts = {}) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
-  ctx.font = `${Math.max(9, Math.round(12 * fontScale))}px 'Fira Code', monospace`;
+  const baseFontSize = Math.max(9, Math.round(12 * fontScale));
+  const baseFont = `${baseFontSize}px 'Fira Code', monospace`;
+  ctx.font = baseFont;
 
   if (layoutMode === 'affinity') {
     drawClusterOverlays(ctx, graph, rotatedPositions);
@@ -3686,12 +3688,13 @@ function drawComposite(graph, opts = {}) {
   for (const [token, data] of graph.nodes.entries()) {
     const position = rotatedPositions.get(token);
     if (!position) continue;
-    const freq = typeof data.f === 'number' ? data.f : 1;
+    const spokes = Number.isFinite(data?.degree) ? Math.max(0, data.degree) : 0;
+    const spokeScale = 1 + Math.log2(1 + spokes) * 0.3;
     const nodeKey = (token || '').toLowerCase();
     const inFocus = focusSet && focusSet.has(nodeKey);
     const radius = Math.max(
       2,
-      (4 + 2 * Math.log2(1 + Math.max(0, freq))) * nodeScale * (inFocus ? 1.6 : 1),
+      (4 + 2 * spokeScale) * nodeScale * (inFocus ? 1.6 : 1),
     );
     const nodeColor = inFocus
       ? '#00ff88'
@@ -3716,6 +3719,8 @@ function drawComposite(graph, opts = {}) {
     ctx.restore();
     ctx.globalAlpha = 1.0;
     if (cfg.showLabels !== false) {
+      const nodeFontSize = Math.max(9, Math.round(baseFontSize * spokeScale));
+      ctx.font = `${nodeFontSize}px 'Fira Code', monospace`;
       const labelText = nodeLabel(token, glyphOnly);
       const labelY = position.y - (radius + 12);
       renderNodeLabelOverlay(
@@ -3733,6 +3738,7 @@ function drawComposite(graph, opts = {}) {
       ctx.fillStyle = inFocus ? '#00ffcc' : theme.fg;
       ctx.fillText(labelText, position.x, labelY);
       ctx.globalAlpha = 1.0;
+      ctx.font = baseFont;
     }
 
     hitAreas.set(token, { x: position.x, y: position.y, radius });
