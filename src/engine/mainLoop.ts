@@ -10,6 +10,7 @@ import {
   type ResponseAccumulator,
   type Cluster,
   type AdjacencyDelta,
+  type ThoughtEvent,
 } from './cognitionTypes.js';
 import { ThoughtDetector, type ClusterFeaturesInput } from './thoughtDetector.js';
 import { ResponseAccumulatorEngine } from './responseAccumulator.js';
@@ -19,6 +20,10 @@ import { averageEmbedding, cosine } from './vectorUtils.js';
 type EngineNodeMap = Map<string, Node>;
 
 type EngineSpectralMap = Map<string, SpectralFeatures>;
+
+type ThoughtEventHandler = (thoughtEvent: ThoughtEvent) => void;
+type AdjacencyDeltaHandler = (delta: AdjacencyDelta) => void;
+type ArticulationHandler = (responseText: string) => void;
 
 interface EngineState {
   nodes: EngineNodeMap;
@@ -44,6 +49,33 @@ const engineState: EngineState = {
   currentUserQuestion: null,
   currentUserEmbedding: null,
 };
+
+export function registerThoughtEventHandler(handler: ThoughtEventHandler): void {
+  thoughtEventHandler = handler;
+}
+
+export function registerAdjacencyDeltaHandler(handler: AdjacencyDeltaHandler): void {
+  adjacencyDeltaHandler = handler;
+}
+
+export function registerArticulationHandler(handler: ArticulationHandler): void {
+  articulationHandler = handler;
+}
+
+export function updateEngineGraph(
+  graphNodes: Node[],
+  graphEdges: Edge[],
+  spectral: Map<string, SpectralFeatures>,
+): void {
+  engineState.nodes = new Map(graphNodes.map(node => [node.id, node]));
+  engineState.edges = graphEdges.slice();
+  engineState.spectralFeatures = spectral;
+}
+
+const clusterPersistence = new Map<string, number>();
+let thoughtEventHandler: ThoughtEventHandler | null = null;
+let adjacencyDeltaHandler: AdjacencyDeltaHandler | null = null;
+let articulationHandler: ArticulationHandler | null = null;
 
 /**
  * Call when a new user question comes in.
@@ -97,12 +129,18 @@ export async function engineTick(now: number) {
 
     const thoughtEv = engineState.thoughtDetector.evaluateCluster(input, now);
     if (thoughtEv) {
+      if (thoughtEventHandler) {
+        thoughtEventHandler(thoughtEv);
+      }
       // INTERNAL THINKING: expand adjacency via LLM
       engineState.responseAccumulator.thoughtEvents.push(thoughtEv);
 
       // Fire-and-forget adjacency expansion (do not block rendering)
       void engineState.llm.expandAdjacency(thoughtEv).then((delta) => {
         applyAdjacencyDelta(delta, engineState.nodes, engineState.edges);
+        if (adjacencyDeltaHandler) {
+          adjacencyDeltaHandler(delta);
+        }
       });
     }
   }
@@ -122,9 +160,12 @@ export async function engineTick(now: number) {
     engineState.currentUserEmbedding = null;
 
     void engineState.llm.articulateResponse(articulation, question).then((responseText) => {
-      // TODO: route responseText to UI (chat panel / log / etc.)
-      // eslint-disable-next-line no-console
-      console.log('Articulate response:', responseText);
+      if (articulationHandler) {
+        articulationHandler(responseText);
+      } else {
+        // eslint-disable-next-line no-console
+        console.log('Articulate response:', responseText);
+      }
     });
   }
 }
@@ -137,20 +178,94 @@ export async function engineTick(now: number) {
 // from your existing graph / FFT / clustering logic.
 
 function computeClustersFromLayoutAndAdjacency(
-  _nodes: EngineNodeMap,
-  _edges: Edge[],
-  _spectral: EngineSpectralMap,
+  nodes: EngineNodeMap,
+  edges: Edge[],
+  spectral: EngineSpectralMap,
 ): Cluster[] {
-  void _nodes;
-  void _edges;
-  void _spectral;
-  // TODO: integrate your existing clustering (Louvain, DBSCAN on layout, etc.)
-  return [];
+  const list = [...nodes.values()];
+  const visited = new Set<string>();
+  const clusters: Cluster[] = [];
+  const adjacency = new Map<string, number>();
+
+  for (const edge of edges) {
+    const key = `${edge.src}->${edge.dst}`;
+    adjacency.set(key, Math.max(edge.weight, adjacency.get(key) ?? 0));
+  }
+
+  const neighborThreshold = 0.55;
+  const distanceThreshold = 0.45;
+
+  const getNeighbors = (node: Node): string[] => {
+    const neighbors: string[] = [];
+    for (const other of list) {
+      if (other.id === node.id) continue;
+      const dx = node.position[0] - other.position[0];
+      const dy = node.position[1] - other.position[1];
+      const dist = Math.hypot(dx, dy);
+      const wAB = adjacency.get(`${node.id}->${other.id}`) ?? 0;
+      const wBA = adjacency.get(`${other.id}->${node.id}`) ?? 0;
+      const maxW = Math.max(wAB, wBA);
+      if (dist <= distanceThreshold || maxW >= neighborThreshold) {
+        neighbors.push(other.id);
+      }
+    }
+    return neighbors;
+  };
+
+  for (const node of list) {
+    if (visited.has(node.id)) continue;
+    const seeds = getNeighbors(node);
+    if (seeds.length < 1) {
+      visited.add(node.id);
+      continue;
+    }
+    const clusterNodeIds = new Set<string>([node.id, ...seeds]);
+    const queue = [...seeds];
+    visited.add(node.id);
+
+    while (queue.length) {
+      const nid = queue.pop();
+      if (!nid) continue;
+      if (visited.has(nid)) continue;
+      visited.add(nid);
+      const nNode = nodes.get(nid);
+      if (!nNode) continue;
+      const neigh = getNeighbors(nNode);
+      if (neigh.length >= 1) {
+        for (const nn of neigh) {
+          if (!clusterNodeIds.has(nn)) {
+            clusterNodeIds.add(nn);
+            queue.push(nn);
+          }
+        }
+      }
+    }
+
+    const nodeIds = [...clusterNodeIds];
+    const persistenceKey = nodeIds.slice().sort().join('|');
+    const frames = (clusterPersistence.get(persistenceKey) ?? 0) + 1;
+    clusterPersistence.set(persistenceKey, frames);
+
+    const density = computeClusterDensity(nodeIds, edges);
+    const spectralAggregate = aggregateSpectral(nodeIds, spectral);
+    const semanticCoherence = computeClusterSemantic(nodeIds, nodes);
+
+    clusters.push({
+      id: persistenceKey,
+      nodeIds,
+      density,
+      persistenceFrames: frames,
+      spectral: spectralAggregate,
+      semanticCoherence,
+      novelty: Math.max(0, 1 - density * 0.5),
+    });
+  }
+
+  return clusters;
 }
 
 function computeStructuralScore(cluster: Cluster, _edges: Edge[]): number {
   void _edges;
-  // TODO: use cluster.density and persistenceFrames, possibly normalized
   const d = cluster.density;
   const p = Math.min(1, cluster.persistenceFrames / 10);
   return 0.5 * d + 0.5 * p;
@@ -161,7 +276,6 @@ function computeSpectralScore(
   _spectral: EngineSpectralMap,
 ): number {
   void _spectral;
-  // TODO: use cluster.spectral.energy / symmetry across roleBandpower
   const e = Math.min(1, cluster.spectral.energy);
   const bands = cluster.spectral.roleBandpower;
   const mean = bands.reduce((a, b) => a + b, 0) / (bands.length || 1);
@@ -226,4 +340,73 @@ function applyAdjacencyDelta(
   }
 
   // OPTIONAL: trigger layout recomputation / adjacency matrix update etc.
+}
+
+function computeClusterDensity(nodeIds: string[], edges: Edge[]): number {
+  if (nodeIds.length < 2) return 0;
+  let internal = 0;
+  const possible = (nodeIds.length * (nodeIds.length - 1)) / 2;
+  const set = new Set(nodeIds);
+  for (const edge of edges) {
+    if (set.has(edge.src) && set.has(edge.dst)) {
+      internal += Math.max(0, Math.min(1, edge.weight));
+    }
+  }
+  return Math.min(1, internal / Math.max(1, possible));
+}
+
+function aggregateSpectral(
+  nodeIds: string[],
+  spectral: EngineSpectralMap,
+): SpectralFeatures {
+  const roleBands = [0, 0, 0, 0, 0];
+  let energy = 0;
+  let centroid = 0;
+  let flatness = 0;
+  let count = 0;
+
+  for (const nid of nodeIds) {
+    const spec = spectral.get(nid);
+    if (!spec) continue;
+    energy += spec.energy;
+    centroid += spec.centroid;
+    flatness += spec.flatness;
+    spec.roleBandpower.forEach((v, i) => {
+      roleBands[i] += v;
+    });
+    count += 1;
+  }
+
+  if (count === 0) {
+    return {
+      energy: 0,
+      centroid: 0,
+      flatness: 1,
+      roleBandpower: roleBands,
+    };
+  }
+
+  return {
+    energy: energy / count,
+    centroid: centroid / count,
+    flatness: flatness / count,
+    roleBandpower: roleBands.map(v => v / count),
+  };
+}
+
+function computeClusterSemantic(nodeIds: string[], nodes: EngineNodeMap): number {
+  const embs: number[][] = [];
+  for (const nid of nodeIds) {
+    const node = nodes.get(nid);
+    if (node) embs.push(node.embedding);
+  }
+  if (embs.length === 0) return 0;
+  const centroid = averageEmbedding(embs);
+  let total = 0;
+  let count = 0;
+  for (const emb of embs) {
+    total += cosine(emb, centroid);
+    count += 1;
+  }
+  return count ? total / count : 0;
 }

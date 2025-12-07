@@ -1,6 +1,22 @@
 import { tokenizeWords } from '../tokens/tokenize.js';
 import { computeCosineSimilarity } from '../vector/similarity.js';
 import { installLLMStub } from '../server/installLLMStub.js';
+import {
+  engineTick,
+  onNewUserQuestion,
+  registerAdjacencyDeltaHandler,
+  registerArticulationHandler,
+  registerThoughtEventHandler,
+  updateEngineGraph,
+} from './mainLoop.js';
+import {
+  type EdgeRole,
+  type SpectralFeatures,
+  type Node as EngineNode,
+  type Edge as EngineEdge,
+  type AdjacencyDelta,
+  type ThoughtEvent,
+} from './cognitionTypes.js';
 
 export type ThinkingStyle = 'concise' | 'analytic' | 'dreamlike' | 'dense';
 
@@ -44,6 +60,7 @@ export interface HLSFGraph {
   edges: HlsfEdge[];
   metadata?: Record<string, unknown>;
   intersections?: IntersectionEvent[];
+  spectralFeatures?: Record<string, SpectralFeatures>;
 }
 
 export const HLSF_ROTATION_EVENT = 'hlsf:rotation-preview';
@@ -165,6 +182,14 @@ let activeRotationConfig: CognitionConfig | null = null;
 let activeIterationIndex = 0;
 const iterationDom = new Map<number, ThoughtIterationDom>();
 const tokenStreamQueues = new Map<number, Promise<void>>();
+const EDGE_ROLES: EdgeRole[] = ['cause', 'contrast', 'analogy', 'instance', 'meta'];
+const FFT_WINDOW = 32;
+let activeHiddenGraph: HLSFGraph | null = null;
+let latestSpectralFeatures: Map<string, SpectralFeatures> = new Map();
+
+registerThoughtEventHandler(handleThoughtEventTokens);
+registerAdjacencyDeltaHandler(applyAdjacencyDeltaToHiddenGraph);
+registerArticulationHandler(handleArticulationResponse);
 
 function getThoughtIterationRoot(): HTMLElement | null {
   if (typeof document === 'undefined') return null;
@@ -237,6 +262,7 @@ async function executeCognitionPass(
   const { perIterationTokens, perIterationText } = await runEmergentRotation(
     hiddenGraph,
     config,
+    truncatedPrompt,
   );
   const interpretationText = perIterationText[perIterationText.length - 1];
   const adjacencyTokens = perIterationTokens.flat().filter(token => Boolean(token));
@@ -661,15 +687,32 @@ function extractIntersectionTokens(graph: HLSFGraph, limit = 10): string[] {
 async function runEmergentRotation(
   hiddenGraph: HLSFGraph,
   config: CognitionConfig,
+  userPrompt: string,
 ): Promise<RotationResult> {
   const perIterationTokens: string[][] = [];
   const perIterationText: string[] = [];
 
+  activeHiddenGraph = hiddenGraph;
+  latestSpectralFeatures = new Map();
+
+  const promptEmbedding = embedTextToVector(userPrompt, 24);
+  onNewUserQuestion(userPrompt, promptEmbedding, Date.now());
+
+  syncEngineGraphFromHiddenGraph(hiddenGraph, latestSpectralFeatures, 0);
+  updateWindowGraphSpectra(hiddenGraph, latestSpectralFeatures);
   updateThoughtLogStatus('Starting emergent rotation…');
 
   for (let i = 0; i < config.iterations; i += 1) {
     activeIterationIndex = i;
-    const { tokens, text } = await runSingleRotationIteration(hiddenGraph, config, i);
+    const { tokens, text, spectralFeatures } = await runSingleRotationIteration(
+      hiddenGraph,
+      config,
+      i,
+    );
+    latestSpectralFeatures = spectralFeatures;
+    syncEngineGraphFromHiddenGraph(hiddenGraph, spectralFeatures, i);
+    updateWindowGraphSpectra(hiddenGraph, spectralFeatures);
+    await engineTick(Date.now());
     perIterationTokens.push(tokens);
     perIterationText.push(text);
   }
@@ -683,12 +726,13 @@ function runSingleRotationIteration(
   hiddenGraph: HLSFGraph,
   config: CognitionConfig,
   iterationIndex: number,
-): Promise<{ tokens: string[]; text: string }> {
+): Promise<{ tokens: string[]; text: string; spectralFeatures: Map<string, SpectralFeatures> }> {
   const speed = Math.abs(config.rotationSpeed) < 1e-3 ? 0.3 : config.rotationSpeed;
   const degreesPerSecond = Math.abs(speed) * (180 / Math.PI);
   const degreesPerFrame = Math.max(0.5, degreesPerSecond / 60);
   const tokenFlushInterval = Math.min(90, Math.max(1, config.tokenBatchAngle ?? 12));
   const maxTokensPerThought = Math.max(8, config.maxTokensPerThought ?? 50);
+  const spectralHistory = ensureSpectralHistory(hiddenGraph);
 
   return new Promise(resolve => {
     const bufferTokens: string[] = [];
@@ -706,8 +750,18 @@ function runSingleRotationIteration(
       lastFlushAngle = currentAngle;
     };
 
-    const collectTokens = (tokens: string[]) => {
+    const recordSpectralSample = (nodeId: string, affinity: number) => {
+      if (!nodeId) return;
+      const history = spectralHistory.get(nodeId) ?? [];
+      const next = [...history.slice(-(FFT_WINDOW - 1)), Math.max(0, affinity)];
+      spectralHistory.set(nodeId, next);
+    };
+
+    const collectTokens = (tokens: string[], affinity?: number, nodeIds?: string[]) => {
       if (!tokens.length || bufferTokens.length >= maxTokensPerThought) return;
+      if (nodeIds?.length) {
+        nodeIds.forEach(id => recordSpectralSample(id, affinity ?? 0));
+      }
       for (const token of tokens) {
         if (!token) continue;
         if (bufferTokens.length >= maxTokensPerThought) break;
@@ -719,21 +773,21 @@ function runSingleRotationIteration(
     const schedule = hiddenGraph.intersections ?? buildIntersectionSchedule(hiddenGraph);
     const sortedEvents = schedule.slice().sort((a, b) => a.angle - b.angle);
 
-    const processEvent = (eventAngle: number, tokens: string[]) => {
+    const processEvent = (event: IntersectionEvent) => {
       const flushNeeded =
         pendingTokenSet.size &&
-        (eventAngle - lastFlushAngle >= tokenFlushInterval ||
+        (event.angle - lastFlushAngle >= tokenFlushInterval ||
           bufferTokens.length >= maxTokensPerThought);
       if (flushNeeded) {
-        flushPendingTokens(eventAngle);
+        flushPendingTokens(event.angle);
       }
-      collectTokens(tokens);
+      collectTokens(event.tokens, event.affinity, [event.a, event.b]);
     };
 
     const fastTrackRotation = () => {
       for (const event of sortedEvents) {
         if (event.affinity >= config.affinityThreshold) {
-          processEvent(event.angle, event.tokens);
+          processEvent(event);
         } else if (
           pendingTokenSet.size &&
           event.angle - lastFlushAngle >= tokenFlushInterval
@@ -746,7 +800,8 @@ function runSingleRotationIteration(
       stopRotationAnimation(hiddenGraph, iterationIndex);
       const text = buildIterationNarrative(hiddenGraph, bufferTokens, iterationIndex);
       commitThoughtLineToUI(text, iterationIndex);
-      resolve({ tokens: bufferTokens.slice(), text });
+      const spectralFeatures = computeGraphSpectralFeatures(hiddenGraph, spectralHistory);
+      resolve({ tokens: bufferTokens.slice(), text, spectralFeatures });
     };
 
     const step = () => {
@@ -766,14 +821,15 @@ function runSingleRotationIteration(
           stopRotationAnimation(hiddenGraph, iterationIndex);
           const text = buildIterationNarrative(hiddenGraph, bufferTokens, iterationIndex);
           commitThoughtLineToUI(text, iterationIndex);
-          resolve({ tokens: bufferTokens.slice(), text });
+          const spectralFeatures = computeGraphSpectralFeatures(hiddenGraph, spectralHistory);
+          resolve({ tokens: bufferTokens.slice(), text, spectralFeatures });
           return;
         }
 
         const intersections = getIntersectionsAtAngle(hiddenGraph, angle);
         for (const inter of intersections) {
           if (inter.affinity >= config.affinityThreshold) {
-            collectTokens(inter.tokens);
+            processEvent(inter);
           }
         }
 
@@ -794,6 +850,207 @@ function runSingleRotationIteration(
     startRotationAnimation(hiddenGraph, iterationIndex);
     step();
   });
+}
+
+function ensureSpectralHistory(graph: HLSFGraph): Map<string, number[]> {
+  const metadata = (graph.metadata = graph.metadata || {});
+  const store = (metadata as any).spectralHistory as Map<string, number[]> | undefined;
+  if (store instanceof Map) {
+    return store;
+  }
+  const created = new Map<string, number[]>();
+  (metadata as any).spectralHistory = created;
+  return created;
+}
+
+function computeGraphSpectralFeatures(
+  graph: HLSFGraph,
+  history: Map<string, number[]>,
+): Map<string, SpectralFeatures> {
+  const spectral = new Map<string, SpectralFeatures>();
+  for (const node of graph.nodes) {
+    const series = history.get(node.id) ?? [];
+    spectral.set(node.id, computeSpectralFeaturesFromSeries(series));
+  }
+  graph.metadata = Object.assign({}, graph.metadata, {
+    spectralFeatures: Object.fromEntries(spectral),
+  });
+  return spectral;
+}
+
+function computeSpectralFeaturesFromSeries(series: number[]): SpectralFeatures {
+  const data = series.slice(-FFT_WINDOW);
+  while (data.length < FFT_WINDOW) data.unshift(0);
+
+  const magnitudes: number[] = [];
+  for (let k = 0; k < FFT_WINDOW; k += 1) {
+    let real = 0;
+    let imag = 0;
+    for (let n = 0; n < FFT_WINDOW; n += 1) {
+      const angle = (-2 * Math.PI * k * n) / FFT_WINDOW;
+      real += data[n] * Math.cos(angle);
+      imag += data[n] * Math.sin(angle);
+    }
+    magnitudes.push(Math.sqrt(real * real + imag * imag));
+  }
+
+  const totalMag = magnitudes.reduce((sum, m) => sum + m, 0) || 1e-6;
+  const energy = magnitudes.reduce((sum, m) => sum + m * m, 0) / FFT_WINDOW;
+  const centroid = magnitudes.reduce((sum, m, idx) => sum + idx * m, 0) /
+    (totalMag * FFT_WINDOW);
+  const arith = totalMag / magnitudes.length;
+  const geo = Math.exp(
+    magnitudes.reduce((sum, m) => sum + Math.log(m + 1e-6), 0) / magnitudes.length,
+  );
+  const flatness = Math.min(1, geo / (arith + 1e-6));
+
+  const bandSize = Math.max(1, Math.floor(FFT_WINDOW / EDGE_ROLES.length));
+  const roleBandpower: number[] = [];
+  for (let i = 0; i < EDGE_ROLES.length; i += 1) {
+    const start = i * bandSize;
+    const end = i === EDGE_ROLES.length - 1 ? FFT_WINDOW : (i + 1) * bandSize;
+    let sum = 0;
+    for (let k = start; k < end; k += 1) {
+      sum += (magnitudes[k] ?? 0) ** 2;
+    }
+    const normalized = sum / Math.max(1, end - start);
+    roleBandpower.push(Number(normalized.toFixed(4)));
+  }
+
+  return {
+    energy: Number(energy.toFixed(4)),
+    centroid: Number(centroid.toFixed(4)),
+    flatness: Number(flatness.toFixed(4)),
+    roleBandpower,
+  };
+}
+
+function updateWindowGraphSpectra(
+  graph: HLSFGraph,
+  spectral: Map<string, SpectralFeatures>,
+): void {
+  graph.metadata = Object.assign({}, graph.metadata, {
+    spectralFeatures: Object.fromEntries(spectral),
+  });
+  if (typeof window === 'undefined') return;
+  const root = (window as any).HLSF || ((window as any).HLSF = {});
+  const current = root.currentGraph && root.currentGraph === graph
+    ? root.currentGraph
+    : graph;
+  current.spectralFeatures = Object.fromEntries(spectral);
+  root.currentGraph = current;
+}
+
+function syncEngineGraphFromHiddenGraph(
+  graph: HLSFGraph,
+  spectral: Map<string, SpectralFeatures>,
+  iterationIndex: number,
+): void {
+  const embeddings = getEmbeddingStore(graph);
+  const engineNodes: EngineNode[] = graph.nodes.map(node => {
+    const embedding = embeddings.get(node.id) ?? embedTextToVector(node.label, 24);
+    embeddings.set(node.id, embedding);
+    return {
+      id: node.id,
+      label: node.label,
+      embedding,
+      position: deriveNodePosition(node.id, iterationIndex),
+      velocity: [0, 0],
+    };
+  });
+
+  const engineEdges: EngineEdge[] = graph.edges.map(edge => ({
+    src: edge.source,
+    dst: edge.target,
+    weight: clamp01(edge.weight),
+    role: deriveEdgeRole(edge),
+    lastUpdated: Date.now(),
+  }));
+
+  updateEngineGraph(engineNodes, engineEdges, spectral);
+}
+
+function deriveEdgeRole(edge: HlsfEdge): EdgeRole {
+  const idx = hash(edge.id || `${edge.source}-${edge.target}`) % EDGE_ROLES.length;
+  return EDGE_ROLES[Math.abs(idx)] ?? 'meta';
+}
+
+function deriveNodePosition(nodeId: string, iterationIndex: number): [number, number] {
+  const baseAngle = (hash(nodeId) % 360) * (Math.PI / 180);
+  const angle = baseAngle + iterationIndex * 0.35;
+  const radius = 0.6 + (hash(`${nodeId}-r`) % 40) / 100;
+  return [Math.cos(angle) * radius, Math.sin(angle) * radius];
+}
+
+function embedTextToVector(text: string, dims = 16): number[] {
+  const vec = new Array(dims).fill(0);
+  const normalized = text || '';
+  for (let i = 0; i < normalized.length; i += 1) {
+    const code = normalized.charCodeAt(i);
+    vec[i % dims] += Math.sin(code) + Math.cos(code / 2);
+  }
+  const magnitude = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0)) || 1;
+  return vec.map(v => v / magnitude);
+}
+
+function getEmbeddingStore(graph: HLSFGraph): Map<string, number[]> {
+  const metadata = (graph.metadata = graph.metadata || {});
+  const store = (metadata as any).embeddings as Map<string, number[]> | undefined;
+  if (store instanceof Map) return store;
+  const created = new Map<string, number[]>();
+  (metadata as any).embeddings = created;
+  return created;
+}
+
+function applyAdjacencyDeltaToHiddenGraph(delta: AdjacencyDelta): void {
+  if (!activeHiddenGraph) return;
+  const graph = activeHiddenGraph;
+  const embeddings = getEmbeddingStore(graph);
+  if (delta?.nodes) {
+    delta.nodes.forEach((node, index) => {
+      if (graph.nodes.find(n => n.id === node.id)) return;
+      graph.nodes.push({
+        id: node.id,
+        label: node.label || `Δ${index}`,
+        weight: 1,
+        layer: (graph.nodes.length + index) % 4,
+        cluster: graph.nodes.length % 5,
+      });
+      embeddings.set(node.id, node.hintEmbedding ?? embedTextToVector(node.label ?? node.id, 24));
+      if (!latestSpectralFeatures.has(node.id)) {
+        latestSpectralFeatures.set(node.id, computeSpectralFeaturesFromSeries([]));
+      }
+    });
+  }
+
+  if (delta?.edges) {
+    delta.edges.forEach((edge, idx) => {
+      const id = `${edge.src}-${edge.dst}-${Date.now()}-${idx}`;
+      graph.edges.push({
+        id,
+        source: edge.src,
+        target: edge.dst,
+        weight: edge.weight ?? 0.4,
+      });
+    });
+  }
+
+  graph.intersections = buildIntersectionSchedule(graph);
+  syncEngineGraphFromHiddenGraph(graph, latestSpectralFeatures, activeIterationIndex);
+  updateWindowGraphSpectra(graph, latestSpectralFeatures);
+}
+
+function handleThoughtEventTokens(thought: ThoughtEvent): void {
+  const tokens = thought?.cluster?.nodeIds
+    ?.map(id => activeHiddenGraph?.nodes.find(node => node.id === id)?.label || id)
+    .filter(Boolean)
+    .slice(0, activeRotationConfig?.maxTokensPerThought ?? 12);
+  if (!tokens?.length) return;
+  streamTokensToThoughtLog(tokens, activeRotationConfig?.thinkingStyle ?? 'analytic', activeIterationIndex);
+}
+
+function handleArticulationResponse(responseText: string): void {
+  commitThoughtLineToUI(responseText, activeIterationIndex);
 }
 
 function scheduleAnimationFrame(cb: () => void): void {
