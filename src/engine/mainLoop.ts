@@ -61,7 +61,11 @@ export function onNewUserQuestion(question: string, queryEmbedding: number[], no
  * - Then call this to run thought detection and articulation logic.
  */
 export async function engineTick(now: number) {
-  if (!engineState.currentUserEmbedding || !engineState.responseAccumulator) {
+  if (
+    !engineState.currentUserEmbedding ||
+    !engineState.currentUserQuestion ||
+    !engineState.responseAccumulator
+  ) {
     return;
   }
 
@@ -110,8 +114,13 @@ export async function engineTick(now: number) {
     now,
   );
 
-  if (articulation && engineState.currentUserQuestion) {
+  if (articulation) {
     const question = engineState.currentUserQuestion;
+    // Clear current state to await the next prompt and halt the thought loop
+    engineState.responseAccumulator = null;
+    engineState.currentUserQuestion = null;
+    engineState.currentUserEmbedding = null;
+
     void engineState.llm.articulateResponse(articulation, question).then((responseText) => {
       // TODO: route responseText to UI (chat panel / log / etc.)
       // eslint-disable-next-line no-console
