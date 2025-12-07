@@ -20,6 +20,20 @@ export interface ThoughtDetectorConfig {
   minNovelty: number; // 0..1 (vs recent thought centroids)
   cooldownMs: number; // per-node cooldown
   recentThoughtCentroidLimit: number; // for novelty memory
+
+  /**
+   * Optional fields enabling an early “spark” heuristic. When enabled,
+   * a cluster can bypass the usual persistence and thought score checks
+   * if enough of its individual metrics exceed these spark thresholds.
+   * Each threshold defaults conservatively but can be overridden via
+   * the ThoughtDetector’s constructor. Use in fast cognition mode to
+   * surface high‑energy clusters immediately.
+   */
+  enableSpark?: boolean;
+  sparkStructuralThreshold?: number;
+  sparkSpectralThreshold?: number;
+  sparkSemanticThreshold?: number;
+  sparkMinCount?: number;
 }
 
 export interface ThoughtDetectorState {
@@ -52,6 +66,12 @@ export class ThoughtDetector {
       minNovelty: 0.6,
       cooldownMs: 5000,
       recentThoughtCentroidLimit: 32,
+      // spark defaults (disabled in deep mode)
+      enableSpark: false,
+      sparkStructuralThreshold: 0.7,
+      sparkSpectralThreshold: 0.75,
+      sparkSemanticThreshold: 0.7,
+      sparkMinCount: 2,
       ...config,
     };
     this.state = {
@@ -103,8 +123,12 @@ export class ThoughtDetector {
     const { cluster, structuralScore, spectralScore, semanticScore, nodeEmbeddings } = input;
 
     if (cluster.nodeIds.length < this.config.minClusterSize) return null;
-    if (cluster.persistenceFrames < this.config.minPersistenceFrames) return null;
+    // Check cooldown first (clusters cannot fire if their nodes are on cooldown)
     if (!this.canFire(cluster, now)) return null;
+
+    // Evaluate persistence only for non‑spark events
+    const qualifiesPersistence =
+      cluster.persistenceFrames >= this.config.minPersistenceFrames;
 
     if (structuralScore < this.config.structuralThreshold) return null;
     if (spectralScore < this.config.spectralThreshold) return null;
@@ -115,7 +139,35 @@ export class ThoughtDetector {
       0.33 * spectralScore +
       0.34 * semanticScore;
 
-    if (thoughtScore < this.config.thoughtScoreThreshold) return null;
+    // Early “spark”: allow high‑energy clusters to emit a thought immediately
+    let spark = false;
+    if (this.config.enableSpark) {
+      let highCount = 0;
+      if (
+        structuralScore >=
+        (this.config.sparkStructuralThreshold ?? this.config.structuralThreshold)
+      )
+        highCount += 1;
+      if (
+        spectralScore >=
+        (this.config.sparkSpectralThreshold ?? this.config.spectralThreshold)
+      )
+        highCount += 1;
+      if (
+        semanticScore >=
+        (this.config.sparkSemanticThreshold ?? this.config.semanticThreshold)
+      )
+        highCount += 1;
+      if (highCount >= (this.config.sparkMinCount ?? 2)) {
+        spark = true;
+      }
+    }
+
+    // If not a spark, enforce thought score and persistence
+    if (!spark) {
+      if (!qualifiesPersistence) return null;
+      if (thoughtScore < this.config.thoughtScoreThreshold) return null;
+    }
 
     const embeddings: number[][] = [];
     for (const nid of cluster.nodeIds) {
