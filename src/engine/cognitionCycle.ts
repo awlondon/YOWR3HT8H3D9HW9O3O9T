@@ -17,6 +17,7 @@ import {
   type AdjacencyDelta,
   type ThoughtEvent,
 } from './cognitionTypes.js';
+import { computeSpectralFeaturesFromSeries } from './spectralUtils.js';
 
 export type ThinkingStyle = 'concise' | 'analytic' | 'dreamlike' | 'dense';
 
@@ -876,53 +877,6 @@ function computeGraphSpectralFeatures(
     spectralFeatures: Object.fromEntries(spectral),
   });
   return spectral;
-}
-
-function computeSpectralFeaturesFromSeries(series: number[]): SpectralFeatures {
-  const data = series.slice(-FFT_WINDOW);
-  while (data.length < FFT_WINDOW) data.unshift(0);
-
-  const magnitudes: number[] = [];
-  for (let k = 0; k < FFT_WINDOW; k += 1) {
-    let real = 0;
-    let imag = 0;
-    for (let n = 0; n < FFT_WINDOW; n += 1) {
-      const angle = (-2 * Math.PI * k * n) / FFT_WINDOW;
-      real += data[n] * Math.cos(angle);
-      imag += data[n] * Math.sin(angle);
-    }
-    magnitudes.push(Math.sqrt(real * real + imag * imag));
-  }
-
-  const totalMag = magnitudes.reduce((sum, m) => sum + m, 0) || 1e-6;
-  const energy = magnitudes.reduce((sum, m) => sum + m * m, 0) / FFT_WINDOW;
-  const centroid = magnitudes.reduce((sum, m, idx) => sum + idx * m, 0) /
-    (totalMag * FFT_WINDOW);
-  const arith = totalMag / magnitudes.length;
-  const geo = Math.exp(
-    magnitudes.reduce((sum, m) => sum + Math.log(m + 1e-6), 0) / magnitudes.length,
-  );
-  const flatness = Math.min(1, geo / (arith + 1e-6));
-
-  const bandSize = Math.max(1, Math.floor(FFT_WINDOW / EDGE_ROLES.length));
-  const roleBandpower: number[] = [];
-  for (let i = 0; i < EDGE_ROLES.length; i += 1) {
-    const start = i * bandSize;
-    const end = i === EDGE_ROLES.length - 1 ? FFT_WINDOW : (i + 1) * bandSize;
-    let sum = 0;
-    for (let k = start; k < end; k += 1) {
-      sum += (magnitudes[k] ?? 0) ** 2;
-    }
-    const normalized = sum / Math.max(1, end - start);
-    roleBandpower.push(Number(normalized.toFixed(4)));
-  }
-
-  return {
-    energy: Number(energy.toFixed(4)),
-    centroid: Number(centroid.toFixed(4)),
-    flatness: Number(flatness.toFixed(4)),
-    roleBandpower,
-  };
 }
 
 function updateWindowGraphSpectra(

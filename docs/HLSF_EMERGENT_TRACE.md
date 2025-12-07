@@ -14,6 +14,8 @@ This workflow formalises how the cognition engine decomposes prompts and guides 
 
 ## Runtime integration
 
-- `src/engine/cognitionCycle.ts` now injects these directives into the system prompt it sends to `/api/llm`, ensuring every completion follows the emergent trace rubric.
-- The console UI still streams rotation thoughts, but the downstream LLM response is now required to surface labeled sections such as “Emergent Thought Trace” and “Structured Response.”
+- `src/engine/emergentThoughtEngine.ts` sequences all seven steps with named helpers (`decomposePrompt`, `clusterConcepts`, `buildHLSF`, `reflectInterconnections`, `refineHLSF`, `traceThoughts`, `composeStructuredResponse`).
+- Rotation previews and spectrum summaries live in `src/engine/graphRotation.ts` and `src/engine/spectralUtils.ts`, keeping visual metaphors decoupled from cognition.
+- Thought evaluation and articulation are managed in `src/engine/thoughtDetector.ts` and `src/engine/articulationManager.ts`, returning plain data for the UI to render.
+- The UI should read the `EmergentResult` from `runEmergentThoughtProcess` and render separate panels for “Emergent Thought Trace” and “Structured Response.”
 - Additional tools can reuse this document as a checklist when auditing cognition runs or designing new prompt templates.
