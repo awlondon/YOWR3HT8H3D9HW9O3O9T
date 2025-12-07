@@ -53,6 +53,7 @@ import type { AgentConfig, AgentContext } from './agent/types';
 import { registerAgentCommands } from './app/commands/agent';
 import { registerVectorCommand } from './app/commands/vector';
 import { callOpenAIChat } from './engine/openaiClient';
+import { getEngineStatusSnapshot, registerArticulationHandler } from './engine/mainLoop';
 import { recordAgentTelemetryEvent } from './analytics/agentTelemetry';
 import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
@@ -4714,6 +4715,8 @@ function ensureHLSFCanvas() {
 
   bindHlsfControls(wrapper);
   syncHlsfControls(wrapper);
+  syncCognitionConfigFromControls();
+  renderCognitionTelemetry();
 
   return canvas;
 }
@@ -4739,6 +4742,7 @@ function bindHlsfControls(wrapper) {
       overlayToggle.classList.toggle('is-active', next);
       if (overlay) overlay.classList.toggle('open', next);
       wrapper.classList.toggle('hlsf-overlay-open', next);
+      renderCognitionTelemetry();
     });
   }
 
@@ -4901,6 +4905,8 @@ function bindHlsfControls(wrapper) {
       const currentIters = window.HLSF.config.affinity?.iterations;
       updateAffinityAnnotations(wrapper, value, Number.isFinite(currentIters) ? currentIters : 8);
       recomputeAndRender();
+      syncCognitionConfigFromControls();
+      renderCognitionTelemetry();
     });
   }
 
@@ -4922,6 +4928,8 @@ function bindHlsfControls(wrapper) {
         value,
       );
       recomputeAndRender();
+      syncCognitionConfigFromControls();
+      renderCognitionTelemetry();
     });
   }
 
@@ -6838,6 +6846,23 @@ const thoughtLogState: ThoughtLogState = {
   showingOlder: false,
 };
 
+type ThoughtLoopStatus = 'Idle' | 'Thinking…' | 'Answer ready';
+
+const cognitionUiState: {
+  config: Pick<CognitionConfig, 'thinkingStyle' | 'iterations' | 'rotationSpeed' | 'affinityThreshold'>;
+  thoughtLoopStatus: ThoughtLoopStatus;
+  answerReady: boolean;
+} = {
+  config: {
+    thinkingStyle: 'analytic',
+    iterations: 8,
+    rotationSpeed: 0.3,
+    affinityThreshold: 0.35,
+  },
+  thoughtLoopStatus: 'Idle',
+  answerReady: false,
+};
+
 // ============================================
 // DOM ELEMENTS
 // ============================================
@@ -6868,6 +6893,10 @@ const elements = {
   llmResponse: document.getElementById('llm-response'),
   cognitionSummary: document.getElementById('cognition-summary'),
   cognitionStatus: document.getElementById('cognition-status'),
+  cognitionThoughtStatus: document.getElementById('cognition-thought-status'),
+  cognitionIterationSpeed: document.getElementById('cognition-iteration-speed'),
+  cognitionSpectralOverlay: document.getElementById('cognition-spectral-overlay'),
+  cognitionStyle: document.getElementById('cognition-style'),
   thinkingStyle: document.getElementById('cognition-thinking-style'),
   thoughtDetailTitle: document.getElementById('thought-detail-title'),
   thoughtDetailMetrics: document.getElementById('thought-detail-metrics'),
@@ -6891,6 +6920,21 @@ renderThoughtLog();
 updateThoughtLogNewIndicator();
 syncApiKeyControls();
 
+const thinkingStyleSelect = elements.thinkingStyle as HTMLSelectElement | null;
+if (thinkingStyleSelect) {
+  thinkingStyleSelect.addEventListener('change', () => {
+    const thinkingStyle = normalizeThinkingStyle(thinkingStyleSelect.value);
+    cognitionUiState.config = { ...cognitionUiState.config, thinkingStyle };
+    cognitionUiState.answerReady = false;
+    renderCognitionTelemetry();
+  });
+}
+
+registerArticulationHandler(() => {
+  setThoughtLoopStatus('Answer ready');
+  renderCognitionTelemetry();
+});
+
 // ============================================
 // UTILITIES
 // ============================================
@@ -6898,6 +6942,91 @@ function sanitize(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function normalizeThinkingStyle(rawStyle: string | null | undefined): ThinkingStyle {
+  const normalized = String(rawStyle || 'analytic').toLowerCase();
+  const styles: ThinkingStyle[] = ['concise', 'analytic', 'dreamlike', 'dense'];
+  return styles.includes(normalized as ThinkingStyle) ? (normalized as ThinkingStyle) : 'analytic';
+}
+
+function setThoughtLoopStatus(status: ThoughtLoopStatus): void {
+  cognitionUiState.thoughtLoopStatus = status;
+  if (status === 'Answer ready') cognitionUiState.answerReady = true;
+  if (status === 'Thinking…') cognitionUiState.answerReady = false;
+  if (status === 'Idle') cognitionUiState.answerReady = false;
+  if (elements.cognitionThoughtStatus) {
+    elements.cognitionThoughtStatus.textContent = status;
+  }
+}
+
+function computeSpectralOverlayState(): boolean {
+  if (typeof window === 'undefined') return false;
+  const root = (window as any).HLSF || {};
+  const spectral = root?.currentGraph?.spectralFeatures || {};
+  const hasSpectral = spectral && typeof spectral === 'object' && Object.keys(spectral).length > 0;
+  const overlayToggle = document.getElementById('hlsf-overlay-toggle');
+  const overlayExpanded = overlayToggle?.getAttribute('aria-expanded') === 'true';
+  return Boolean(hasSpectral && overlayExpanded);
+}
+
+function renderCognitionTelemetry(): void {
+  const { iterations, rotationSpeed, affinityThreshold, thinkingStyle } = cognitionUiState.config;
+  const overlayActive = computeSpectralOverlayState();
+
+  if (elements.cognitionIterationSpeed) {
+    elements.cognitionIterationSpeed.textContent = `${iterations} × ω${rotationSpeed.toFixed(2)} | aff ≥ ${affinityThreshold.toFixed(2)}`;
+  }
+
+  if (elements.cognitionSpectralOverlay) {
+    elements.cognitionSpectralOverlay.textContent = overlayActive ? 'FFT overlays on' : 'FFT overlays off';
+  }
+
+  if (elements.cognitionStyle) {
+    const formatted = thinkingStyle.charAt(0).toUpperCase() + thinkingStyle.slice(1);
+    elements.cognitionStyle.textContent = formatted;
+  }
+
+  if (elements.cognitionThoughtStatus) {
+    elements.cognitionThoughtStatus.textContent = cognitionUiState.thoughtLoopStatus;
+  }
+}
+
+function syncCognitionConfigFromControls(): void {
+  const readNumber = (id: string, fallback: number): number => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input) return fallback;
+    const value = Number(input.value);
+    return Number.isFinite(value) ? value : fallback;
+  };
+
+  const iterations = Math.max(1, Math.round(readNumber('hlsf-aff-iters', cognitionUiState.config.iterations)));
+  const rotationSpeed = readNumber('hlsf-rotation-speed', cognitionUiState.config.rotationSpeed);
+  const affinityThreshold = Math.min(
+    1,
+    Math.max(0, readNumber('hlsf-aff-thresh', cognitionUiState.config.affinityThreshold)),
+  );
+  cognitionUiState.config = {
+    ...cognitionUiState.config,
+    iterations,
+    rotationSpeed,
+    affinityThreshold,
+  };
+}
+
+function syncThoughtLoopStatusFromEngine(): void {
+  const snapshot = getEngineStatusSnapshot();
+  if (cognitionUiState.answerReady) {
+    setThoughtLoopStatus('Answer ready');
+    renderCognitionTelemetry();
+    return;
+  }
+  if (snapshot.hasUserQuestion && snapshot.hasAccumulator) {
+    setThoughtLoopStatus('Thinking…');
+  } else {
+    setThoughtLoopStatus('Idle');
+  }
+  renderCognitionTelemetry();
 }
 
 function setCognitionStatus(message = '') {
@@ -7376,23 +7505,9 @@ function handleNewThoughtIndicatorClick(): void {
 }
 
 function resolveCognitionConfigFromUI(): CognitionConfig {
-  const readNumber = (id: string, fallback: number): number => {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    if (!input) return fallback;
-    const value = Number(input.value);
-    return Number.isFinite(value) ? value : fallback;
-  };
+  syncCognitionConfigFromControls();
 
-  const iterations = Math.max(1, Math.round(readNumber('hlsf-aff-iters', 4)));
-  const rotationSpeed = readNumber('hlsf-rotation-speed', 0.3);
-  const affinityThreshold = Math.min(1, Math.max(0, readNumber('hlsf-aff-thresh', 0.35)));
-
-  const select = elements.thinkingStyle instanceof HTMLSelectElement ? elements.thinkingStyle : null;
-  const rawStyle = String(select?.value || 'analytic').toLowerCase();
-  const styles: ThinkingStyle[] = ['concise', 'analytic', 'dreamlike', 'dense'];
-  const thinkingStyle: ThinkingStyle = styles.includes(rawStyle as ThinkingStyle)
-    ? (rawStyle as ThinkingStyle)
-    : 'analytic';
+  const { thinkingStyle, iterations, rotationSpeed, affinityThreshold } = cognitionUiState.config;
 
   return {
     thinkingStyle,
@@ -7406,6 +7521,9 @@ function resolveCognitionConfigFromUI(): CognitionConfig {
 
 function triggerCognitionCycle(prompt: string): void {
   clearCognitionOutputs();
+  cognitionUiState.answerReady = false;
+  setThoughtLoopStatus('Thinking…');
+  renderCognitionTelemetry();
   setCognitionStatus('Running cognition pipeline…');
   if (elements.llmResponse) {
     elements.llmResponse.textContent = 'Awaiting emergent thought synthesis…';
@@ -7432,10 +7550,13 @@ function triggerCognitionCycle(prompt: string): void {
           lastConfig: config,
         });
       }
+      syncThoughtLoopStatusFromEngine();
     })
     .catch((error) => {
       console.warn('Cognition pipeline failed:', error);
       setCognitionStatus(`Cognition pipeline failed: ${error?.message || error}`);
+      setThoughtLoopStatus('Idle');
+      renderCognitionTelemetry();
     });
 }
 
@@ -7443,6 +7564,8 @@ setCognitionStatus('Awaiting prompt…');
 if (elements.llmResponse && !elements.llmResponse.textContent) {
   elements.llmResponse.textContent = 'No cognition run yet.';
 }
+renderCognitionTelemetry();
+syncThoughtLoopStatusFromEngine();
 
 function slugifyName(value) {
   return String(value || '')
@@ -15347,13 +15470,15 @@ function initHLSFCanvas() {
           speedSlider.value = clamped.toFixed(2);
         }
         speedVal.textContent = clamped.toFixed(2);
-        if (window.HLSF.state.emergent.on) {
-          requestRender();
-        } else {
-          debouncedLegacyRender();
-        }
-      });
-    }
+      if (window.HLSF.state.emergent.on) {
+        requestRender();
+      } else {
+        debouncedLegacyRender();
+      }
+      syncCognitionConfigFromControls();
+      renderCognitionTelemetry();
+    });
+  }
 
     const alphaSlider = document.getElementById('hlsf-alpha');
     const alphaVal = document.getElementById('hlsf-alpha-val');
