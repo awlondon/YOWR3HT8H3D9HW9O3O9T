@@ -45,7 +45,9 @@ flows over the core cognition experience.
 ### Emergent thought trace workflow
 
 - The cognition engine mandates a multi-step HLSF reasoning routine that covers decomposition, conceptual clustering, HLSF mapping, interconnection reflection, refinement, and structured response delivery (`docs/HLSF_EMERGENT_TRACE.md`).
-- `callLLM` (`src/engine/cognitionCycle.ts`) injects this directive into every `/api/llm` request so completions return clearly labeled **Emergent Thought Trace** and **Structured Response** sections aligned with the High-Level Semantic Field.
+- `runEmergentThoughtProcess` (`src/engine/emergentThoughtEngine.ts`) composes the seven steps and returns both a concise emergent trace and a structured response payload for the UI.
+- Rotation previews and spectral math are encapsulated in `src/engine/graphRotation.ts` and `src/engine/spectralUtils.ts` to keep visualization concerns separate from cognition state.
+- `callLLM` (`src/engine/cognitionCycle.ts`) injects the directive into `/api/llm` requests so completions return clearly labeled **Emergent Thought Trace** and **Structured Response** sections aligned with the High-Level Semantic Field.
 
 ### Consciousness analytics
 

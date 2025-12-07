@@ -17,6 +17,8 @@ import { ResponseAccumulatorEngine, type ArticulationConfig } from './responseAc
 import { StubLLMClient } from './llmClient.js';
 import { averageEmbedding, cosine } from './vectorUtils.js';
 
+declare const process: any;
+
 type EngineNodeMap = Map<string, Node>;
 
 type EngineSpectralMap = Map<string, SpectralFeatures>;
