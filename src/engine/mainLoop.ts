@@ -12,8 +12,8 @@ import {
   type AdjacencyDelta,
   type ThoughtEvent,
 } from './cognitionTypes.js';
-import { ThoughtDetector, type ClusterFeaturesInput } from './thoughtDetector.js';
-import { ResponseAccumulatorEngine } from './responseAccumulator.js';
+import { ThoughtDetector, type ClusterFeaturesInput, type ThoughtDetectorConfig } from './thoughtDetector.js';
+import { ResponseAccumulatorEngine, type ArticulationConfig } from './responseAccumulator.js';
 import { StubLLMClient } from './llmClient.js';
 import { averageEmbedding, cosine } from './vectorUtils.js';
 
@@ -37,13 +37,71 @@ interface EngineState {
   currentUserEmbedding: number[] | null;
 }
 
+/**
+ * Cognition modes allow tuning the system for either “deep” or “fast” thinking.
+ * The fast mode lowers thresholds, shortens persistence requirements, and
+ * speeds up articulation. Deep mode uses the original, conservative defaults.
+ */
+type CogMode = 'deep' | 'fast';
+
+interface ModeConfig {
+  thought: Partial<ThoughtDetectorConfig>;
+  articulation: Partial<ArticulationConfig>;
+  cognitionIntervalMs: number;
+  maxClustersPerStep: number;
+}
+
+const cognitionModes: Record<CogMode, ModeConfig> = {
+  deep: {
+    thought: {},
+    articulation: {},
+    cognitionIntervalMs: 200,
+    maxClustersPerStep: 20,
+  },
+  fast: {
+    thought: {
+      structuralThreshold: 0.5,
+      spectralThreshold: 0.55,
+      semanticThreshold: 0.55,
+      thoughtScoreThreshold: 0.65,
+      minClusterSize: 2,
+      minPersistenceFrames: 1,
+      minNovelty: 0.3,
+      enableSpark: true,
+    },
+    articulation: {
+      relevanceThreshold: 0.55,
+      minRelevantThoughts: 2,
+      targetThoughts: 4,
+      minTimeSinceLastResponseMs: 800,
+      articulationScoreThreshold: 0.65,
+      strongThoughtScoreThreshold: 0.85,
+      strongRelevanceThreshold: 0.7,
+      minStrongArticulationIntervalMs: 300,
+    },
+    cognitionIntervalMs: 100,
+    maxClustersPerStep: 10,
+  },
+};
+
+// Select mode based on environment variable or default to fast.
+const defaultMode: CogMode =
+  (typeof process !== 'undefined' && (process as any).env?.COG_MODE in cognitionModes
+    ? ((process as any).env?.COG_MODE as CogMode)
+    : 'fast');
+const selectedConfig = cognitionModes[defaultMode];
+
+// Cognition gating variables
+const COGNITION_INTERVAL_MS = selectedConfig.cognitionIntervalMs;
+let lastCognitionAt = 0;
+
 // Initialize engine state somewhere in setup code
 const engineState: EngineState = {
   nodes: new Map(),
   edges: [],
   spectralFeatures: new Map(),
-  thoughtDetector: new ThoughtDetector(),
-  respEngine: new ResponseAccumulatorEngine(),
+  thoughtDetector: new ThoughtDetector(selectedConfig.thought),
+  respEngine: new ResponseAccumulatorEngine(selectedConfig.articulation),
   llm: new StubLLMClient(),
   responseAccumulator: null,
   currentUserQuestion: null,
@@ -108,6 +166,13 @@ export async function engineTick(now: number) {
     return;
   }
 
+  // Throttle cognition: only run the expensive detection logic at most every
+  // COGNITION_INTERVAL_MS milliseconds. Rendering can still happen every frame.
+  if (now - lastCognitionAt < COGNITION_INTERVAL_MS) {
+    return;
+  }
+  lastCognitionAt = now;
+
   const nodes = engineState.nodes;
   const spectralFeatures = engineState.spectralFeatures;
   const nodeEmbeddings = new Map<string, number[]>();
@@ -121,7 +186,14 @@ export async function engineTick(now: number) {
   );
 
   // 2) For each cluster, compute structural / spectral / semantic scores
-  for (const cluster of clusters) {
+  // Optionally limit the number of clusters evaluated per step. Sort by
+  // descending spectral energy to prioritize salient regions.
+  const sortedClusters = clusters
+    .slice()
+    .sort((a, b) => b.spectral.energy - a.spectral.energy)
+    .slice(0, selectedConfig.maxClustersPerStep);
+
+  for (const cluster of sortedClusters) {
     const structuralScore = computeStructuralScore(cluster, engineState.edges);
     const spectralScore = computeSpectralScore(cluster, spectralFeatures);
     const semanticScore = computeSemanticScore(cluster, nodeEmbeddings);

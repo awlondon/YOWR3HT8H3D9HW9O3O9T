@@ -16,6 +16,16 @@ export interface ArticulationConfig {
   targetThoughts: number; // N_target for scaling
   minTimeSinceLastResponseMs: number; // T_min_ms
   articulationScoreThreshold: number; // Θ_speak
+
+  /**
+   * Optional parameters enabling an “early articulation” escape hatch.
+   * When a single thought has sufficiently high internal score and
+   * relevance, the engine may speak immediately even if the usual
+   * thresholds aren’t met. Use in fast cognition mode.
+   */
+  strongThoughtScoreThreshold?: number;
+  strongRelevanceThreshold?: number;
+  minStrongArticulationIntervalMs?: number;
 }
 
 export class ResponseAccumulatorEngine {
@@ -28,6 +38,9 @@ export class ResponseAccumulatorEngine {
       targetThoughts: 6,
       minTimeSinceLastResponseMs: 2000,
       articulationScoreThreshold: 0.75,
+      strongThoughtScoreThreshold: 0.9,
+      strongRelevanceThreshold: 0.75,
+      minStrongArticulationIntervalMs: 500,
       ...config,
     };
   }
@@ -167,6 +180,32 @@ export class ResponseAccumulatorEngine {
       if (rel >= this.config.relevanceThreshold) {
         relevantThoughts.push(ev);
         relevances.set(ev.id, rel);
+      }
+    }
+
+    // Early articulation: speak immediately if a single thought is both high-scoring and highly relevant,
+    // and enough time has passed since the last response.
+    if (
+      this.config.strongThoughtScoreThreshold !== undefined &&
+      this.config.strongRelevanceThreshold !== undefined &&
+      now - acc.lastResponseAt >= (this.config.minStrongArticulationIntervalMs ?? 0)
+    ) {
+      for (const ev of acc.thoughtEvents) {
+        const rel = this.computeSemanticRelevance(ev, nodeEmbeddings, acc.queryEmbedding);
+        if (
+          rel >= this.config.strongRelevanceThreshold! &&
+          ev.thoughtScore >= this.config.strongThoughtScoreThreshold!
+        ) {
+          const art: ArticulationEvent = {
+            id: `articulation_${Date.now()}`,
+            timestamp: now,
+            articulationScore: 0.99,
+            selectedThoughts: [ev],
+          };
+          acc.lastResponseAt = now;
+          acc.thoughtEvents = [];
+          return art;
+        }
       }
     }
 
