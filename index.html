@@ -271,9 +271,24 @@
             <option value="dreamlike">Dreamlike</option>
             <option value="dense">Dense</option>
           </select>
-          <p class="cognition-panel__hint">
-            Iterations, rotation speed, and affinity threshold mirror the sliders in the HLSF controls.
-          </p>
+          <div class="cognition-panel__status-grid" aria-live="polite">
+            <div class="cognition-panel__status-row">
+              <span class="cognition-panel__status-label">Thought loop status</span>
+              <span id="cognition-thought-status" class="cognition-panel__status-value">Idle</span>
+            </div>
+            <div class="cognition-panel__status-row">
+              <span class="cognition-panel__status-label">Iterations &amp; speed</span>
+              <span id="cognition-iteration-speed" class="cognition-panel__status-value">—</span>
+            </div>
+            <div class="cognition-panel__status-row">
+              <span class="cognition-panel__status-label">Spectral overlays</span>
+              <span id="cognition-spectral-overlay" class="cognition-panel__status-value">—</span>
+            </div>
+            <div class="cognition-panel__status-row">
+              <span class="cognition-panel__status-label">Style</span>
+              <span id="cognition-style" class="cognition-panel__status-value">Analytic</span>
+            </div>
+          </div>
         </div>
       </header>
       <div id="cognition-status" class="cognition-status" role="status" aria-live="polite"></div>

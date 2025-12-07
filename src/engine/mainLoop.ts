@@ -62,6 +62,13 @@ export function registerArticulationHandler(handler: ArticulationHandler): void 
   articulationHandler = handler;
 }
 
+export function getEngineStatusSnapshot(): { hasUserQuestion: boolean; hasAccumulator: boolean } {
+  return {
+    hasUserQuestion: Boolean(engineState.currentUserQuestion),
+    hasAccumulator: Boolean(engineState.responseAccumulator),
+  };
+}
+
 export function updateEngineGraph(
   graphNodes: Node[],
   graphEdges: Edge[],
