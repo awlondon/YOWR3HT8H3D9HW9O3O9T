@@ -145,6 +145,7 @@ export interface CognitionRun {
     perIterationText: string[];
     interpretationText?: string;
     adjacencyTokens?: string[];
+    emergentTrace?: Record<string, string[]>;
   };
   llm: LLMResult;
   summary: ThoughtSummary;
@@ -171,6 +172,7 @@ interface ThoughtNode {
 interface RotationResult {
   perIterationTokens: string[][];
   perIterationText: string[];
+  emergentTrace: Record<string, string[]>;
 }
 
 interface ThoughtIterationDom {
@@ -199,11 +201,9 @@ function getThoughtIterationRoot(): HTMLElement | null {
 
 function ensureThoughtLogPanelVisible(root: HTMLElement): void {
   if (!root) return;
-  root.setAttribute('aria-hidden', 'false');
   const panel = root.closest('.thought-log-panel');
-  if (panel instanceof HTMLElement && !panel.classList.contains('is-debug-visible')) {
-    panel.classList.add('is-debug-visible');
-  }
+  const debugVisible = panel instanceof HTMLElement && panel.classList.contains('is-debug-visible');
+  root.setAttribute('aria-hidden', debugVisible ? 'false' : 'true');
 }
 
 function createThoughtIterationDom(root: HTMLElement, iterationIndex: number): ThoughtIterationDom {
@@ -260,7 +260,7 @@ async function executeCognitionPass(
 
   activeRotationConfig = config;
   prepareThoughtLogUI(config.iterations);
-  const { perIterationTokens, perIterationText } = await runEmergentRotation(
+  const { perIterationTokens, perIterationText, emergentTrace } = await runEmergentRotation(
     hiddenGraph,
     config,
     truncatedPrompt,
@@ -303,7 +303,7 @@ async function executeCognitionPass(
       visibleGraphSummary: visibleSummary,
       hiddenGraphSummary: hiddenSummary,
     },
-    thoughts: { perIterationTokens, perIterationText, interpretationText, adjacencyTokens },
+    thoughts: { perIterationTokens, perIterationText, interpretationText, adjacencyTokens, emergentTrace },
     llm: llmResult,
     summary,
   };
@@ -668,7 +668,8 @@ function extractIntersectionTokens(graph: HLSFGraph, limit = 10): string[] {
     .filter(entry => entry.degree >= minDegree || entry.score >= threshold)
     .sort((a, b) => b.score - a.score)
     .map(entry => entry.token)
-    .filter(token => Boolean(token));
+    .filter(token => Boolean(token))
+    .filter(token => !isStructuralToken(token));
 
   const unique = Array.from(new Set(prioritized));
   if (unique.length >= limit) {
@@ -695,6 +696,7 @@ async function runEmergentRotation(
 
   activeHiddenGraph = hiddenGraph;
   latestSpectralFeatures = new Map();
+  axisNarrativeHistory.clear();
 
   const promptEmbedding = embedTextToVector(userPrompt, 24);
   onNewUserQuestion(userPrompt, promptEmbedding, Date.now());
@@ -720,7 +722,25 @@ async function runEmergentRotation(
 
   updateThoughtLogStatus('Rotation complete.');
 
-  return { perIterationTokens, perIterationText };
+  const emergentTrace = buildEmergentTrace(hiddenGraph, perIterationTokens);
+
+  return { perIterationTokens, perIterationText, emergentTrace };
+}
+
+function buildEmergentTrace(
+  graph: HLSFGraph,
+  perIterationTokens: string[][],
+): Record<string, string[]> {
+  const axisTokens = new Map<string, string[]>();
+  perIterationTokens.forEach((tokens, index) => {
+    const axis = AXIS_SEQUENCE[index % AXIS_SEQUENCE.length];
+    const ranked = rankTokensByGraph(graph, tokens, 6);
+    const merged = Array.from(new Set([...(axisTokens.get(axis) ?? []), ...ranked]))
+      .filter(token => !isStructuralToken(token))
+      .slice(0, 6);
+    axisTokens.set(axis, merged);
+  });
+  return Object.fromEntries(axisTokens);
 }
 
 function runSingleRotationIteration(
@@ -734,6 +754,7 @@ function runSingleRotationIteration(
   const tokenFlushInterval = Math.min(90, Math.max(1, config.tokenBatchAngle ?? 12));
   const maxTokensPerThought = Math.max(8, config.maxTokensPerThought ?? 50);
   const spectralHistory = ensureSpectralHistory(hiddenGraph);
+  const nodeLabelLookup = new Map(hiddenGraph.nodes.map(node => [node.id, node.label ?? node.id]));
 
   return new Promise(resolve => {
     const bufferTokens: string[] = [];
@@ -765,6 +786,15 @@ function runSingleRotationIteration(
       }
       for (const token of tokens) {
         if (!token) continue;
+        const normalizedToken = token.trim();
+        const isStructuralNode = nodeIds?.some(id => isStructuralToken(nodeLabelLookup.get(id) ?? ''));
+        if (
+          !normalizedToken ||
+          isStructuralNode ||
+          isStructuralToken(normalizedToken)
+        ) {
+          continue;
+        }
         if (bufferTokens.length >= maxTokensPerThought) break;
         bufferTokens.push(token);
         pendingTokenSet.add(token);
@@ -1170,54 +1200,119 @@ function updateThoughtLogStatus(message: string): void {
   el.textContent = message;
 }
 
-function materializeThought(tokens: string[]): string {
-  if (!tokens.length) return '';
-  const phrases: string[] = [];
-  for (let i = 0; i < tokens.length; i += 2) {
-    const current = tokens[i]?.trim();
-    const next = tokens[i + 1]?.trim();
-    if (current && next) {
-      phrases.push(`${current} → ${next}`);
-    } else if (current) {
-      phrases.push(current);
-    }
-  }
-  const unique = Array.from(new Set((phrases.length ? phrases : tokens).filter(Boolean)));
-  if (!unique.length) return '';
-  return unique.join(' ');
-}
-
 const AXIS_SEQUENCE = ['horizontal', 'longitudinal', 'sagittal'];
 const AXIS_DESCRIPTORS = ['shear', 'torsion', 'resonance'];
+const axisNarrativeHistory = new Map<string, { signature: string; startIteration: number; summary: string }>();
+
+function normalizeTokenLabel(token: string): string {
+  return token?.trim().toLowerCase() ?? '';
+}
+
+function isStructuralToken(token: string): boolean {
+  const normalized = normalizeTokenLabel(token);
+  if (!normalized) return true;
+  if (normalized.startsWith('latent')) return true;
+  const structuralPatterns = [
+    'axis',
+    'axes',
+    'rotation',
+    'rotations',
+    'rotate',
+    'shear',
+    'torsion',
+    'resonance',
+    'keep in order',
+  ];
+  return structuralPatterns.some(pattern => normalized.includes(pattern));
+}
+
+function filterMeaningfulTokens(tokens: string[]): string[] {
+  return tokens
+    .map(token => token?.trim())
+    .filter((token): token is string => Boolean(token))
+    .filter(token => !isStructuralToken(token));
+}
+
+function rankTokensByGraph(graph: HLSFGraph, tokens: string[], limit: number): string[] {
+  const degree = new Map<string, number>();
+  for (const edge of graph.edges) {
+    degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
+  }
+
+  const maxDegree = Math.max(1, ...degree.values(), 0);
+  const maxWeight = Math.max(1, ...graph.nodes.map(node => node.weight ?? 0), 0);
+  const nodeByLabel = new Map<string, HlsfNode>(
+    graph.nodes.map(node => [normalizeTokenLabel(node.label || node.id), node]),
+  );
+
+  const uniqueTokens = Array.from(new Set(filterMeaningfulTokens(tokens)));
+
+  const scored = uniqueTokens.map(token => {
+    const normalized = normalizeTokenLabel(token);
+    const node = nodeByLabel.get(normalized);
+    const degreeScore = node ? (degree.get(node.id) ?? 0) / maxDegree : 0;
+    const weightScore = node ? (node.weight ?? 0) / maxWeight : 0;
+    const score = degreeScore * 0.6 + weightScore * 0.4;
+    return { token, score, degree: degree.get(node?.id ?? '') ?? 0, weight: node?.weight ?? 0 };
+  });
+
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, limit))
+    .map(entry => entry.token);
+}
+
+function formatTokenList(tokens: string[]): string {
+  if (!tokens.length) return '';
+  if (tokens.length === 1) return tokens[0];
+  if (tokens.length === 2) return `${tokens[0]} and ${tokens[1]}`;
+  return `${tokens.slice(0, -1).join(', ')}, and ${tokens[tokens.length - 1]}`;
+}
 
 function buildIterationNarrative(
   graph: HLSFGraph,
   collectedTokens: string[],
   iterationIndex: number,
 ): string {
-  const baselineTokens = collectedTokens.length
-    ? collectedTokens.slice()
-    : extractIntersectionTokens(graph, 6);
-  const axisTokens = selectAxisTokensForIteration(
-    graph,
-    iterationIndex,
-    Math.max(6, baselineTokens.length),
-  );
-  const combined = Array.from(new Set([...baselineTokens, ...axisTokens]))
-    .filter(token => {
-      if (!token) return false;
-      const normalized = token.trim();
-      return (
-        normalized.length > 0 &&
-        !/^latent[-\s]?/i.test(normalized) &&
-        !/^latent\s+field/i.test(normalized)
-      );
-    });
   const axisName = AXIS_SEQUENCE[iterationIndex % AXIS_SEQUENCE.length];
   const descriptor = AXIS_DESCRIPTORS[iterationIndex % AXIS_DESCRIPTORS.length];
-  const narrative = materializeThought(combined);
-  const prefix = `${capitalize(axisName)} axis ${descriptor}`;
-  return [prefix, narrative].filter(Boolean).join(' ').trim();
+  const baselineTokens = collectedTokens.length
+    ? filterMeaningfulTokens(collectedTokens)
+    : extractIntersectionTokens(graph, 8);
+  const supplemental = selectAxisTokensForIteration(
+    graph,
+    iterationIndex,
+    Math.max(10, baselineTokens.length * 2),
+  );
+  const rankedTokens = rankTokensByGraph(
+    graph,
+    [...baselineTokens, ...supplemental],
+    Math.max(6, baselineTokens.length || 6),
+  );
+  const salient = rankedTokens.slice(0, Math.max(3, Math.min(6, rankedTokens.length)));
+  const signature = salient
+    .map(token => normalizeTokenLabel(token))
+    .sort()
+    .join('|');
+  const previous = axisNarrativeHistory.get(axisName);
+
+  const baseSummary = salient.length
+    ? `${capitalize(axisName)} axis ${descriptor}: intersections emphasize ${formatTokenList(salient)}; keep the response grounded in that thread.`
+    : `${capitalize(axisName)} axis ${descriptor}: no salient intersections detected for this pass.`;
+
+  if (previous && previous.signature === signature) {
+    const start = previous.startIteration + 1;
+    const range = start === iterationIndex + 1 ? `${start}` : `${start}–${iterationIndex + 1}`;
+    const merged = `${capitalize(axisName)} axis ${descriptor}: Rotations ${range} produced identical intersections; ${
+      salient.length ? `continuing emphasis on ${formatTokenList(salient)}.` : 'no new signals detected.'
+    }`;
+    axisNarrativeHistory.set(axisName, { signature, startIteration: previous.startIteration, summary: merged });
+    return merged;
+  }
+
+  axisNarrativeHistory.set(axisName, { signature, startIteration: iterationIndex, summary: baseSummary });
+  return baseSummary;
 }
 
 function selectAxisTokensForIteration(
