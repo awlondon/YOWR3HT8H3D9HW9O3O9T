@@ -14495,39 +14495,6 @@ window.CognitionEngine.voiceModel = Object.assign(window.CognitionEngine.voiceMo
   },
 });
 
-function recordLatestLocalVoiceOutputs(payload) {
-  if (typeof window === 'undefined') return;
-  const root = (window.CognitionEngine = window.CognitionEngine || {});
-  const voice = (root.voice = root.voice || {});
-
-  const prompt = typeof payload?.prompt === 'string' ? payload.prompt : '';
-  const localThought = typeof payload?.localThought === 'string' ? payload.localThought : '';
-  const localResponse = typeof payload?.localResponse === 'string' ? payload.localResponse : '';
-  if (!localThought && !localResponse) {
-    return;
-  }
-
-  const data = {
-    prompt,
-    localThought,
-    localResponse,
-    source: typeof payload?.source === 'string' ? payload.source : 'prompt',
-    updatedAt: Date.now(),
-  };
-
-  voice.latestLocalOutputs = data;
-  voice.lastLocalOutputAt = data.updatedAt;
-  voice.getLatestLocalOutputs = () => voice.latestLocalOutputs || null;
-
-  if (typeof voice.onLocalOutputsUpdated === 'function') {
-    try {
-      voice.onLocalOutputsUpdated(data);
-    } catch (error) {
-      console.warn('Voice local output listener failed:', error);
-    }
-  }
-}
-
 function calculateAttention(matrices) {
   for (const entry of matrices.values()) {
     let weightSum = 0,
@@ -22075,13 +22042,6 @@ async function processPrompt(prompt) {
         ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
         : '';
 
-    recordLatestLocalVoiceOutputs({
-      prompt: normalizedPrompt,
-      localThought,
-      localResponse: localOutput,
-      source: 'prompt',
-    });
-
     const safeThought = sanitize(localThought);
     const safeResponse = sanitize(localOutput);
 
@@ -22104,7 +22064,7 @@ async function processPrompt(prompt) {
 
     addLog(`<div class="section-divider"></div>
       <div class="final-output">
-        <h3>🧩 HLSF Output Suite</h3>
+        <h3>🧩 HLSF Local Output Summary</h3>
         <details open>
           <summary>Local HLSF AGI thought stream (${localThoughtWordCount} words)</summary>
           <pre>${safeThought}</pre>
@@ -22120,7 +22080,7 @@ async function processPrompt(prompt) {
       </div>
     `);
 
-    logOK(`Output suite ready (${time}s)`);
+    logOK(`Local output summary ready (${time}s)`);
 
     if (batchTokens.size) {
       registerPromptReview(promptReviewId, batchTokens, allMatrices);
@@ -22764,7 +22724,7 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
   const safeResponse = sanitize(localOutput);
 
   addLog(`<div class="section-divider"></div>
-    <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Suite</div>
+    <div class="section-title">🧩 ${sanitize(chunkLabel)} Output Summary</div>
     <div class="thought-stream"><strong>Thought stream:</strong> ${safeThought}</div>
     <div class="local-response"><strong>Actual output:</strong> ${safeResponse}</div>
     <div class="adjacency-insight">${mentalSummary}</div>

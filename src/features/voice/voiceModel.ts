@@ -158,46 +158,34 @@ function speakText(text: string): void {
 
 const PLAYBACK_TOKEN_LIMIT = 20;
 
-type LocalVoiceOutputs = {
-  prompt?: string;
-  localThought?: string;
-  localResponse?: string;
-  updatedAt?: number;
-  source?: string;
-};
+type CognitionArtifacts = { response?: string; thoughtLog?: string };
 
-function getLatestLocalVoiceOutputs(): LocalVoiceOutputs | null {
-  if (typeof window === 'undefined') return null;
-  const root = (window as any).CognitionEngine;
-  if (!root || typeof root !== 'object') return null;
-  const voice = root.voice;
-  if (!voice || typeof voice !== 'object') return null;
-
+function getLatestCognitionArtifacts(): CognitionArtifacts {
+  if (typeof window === 'undefined' || !window.localStorage) return {};
   try {
-    if (typeof voice.getLatestLocalOutputs === 'function') {
-      const value = voice.getLatestLocalOutputs();
-      if (value && typeof value === 'object') {
-        return value as LocalVoiceOutputs;
-      }
-    }
-  } catch (error) {
-    console.warn('Voice output retrieval failed:', error);
-  }
+    const raw = window.localStorage.getItem('hlsf_runs');
+    const runs = raw ? JSON.parse(raw) : [];
+    const latest = Array.isArray(runs) ? runs[runs.length - 1] : null;
+    if (!latest || typeof latest !== 'object') return {};
 
-  if (voice.latestLocalOutputs && typeof voice.latestLocalOutputs === 'object') {
-    return voice.latestLocalOutputs as LocalVoiceOutputs;
-  }
+    const thoughtEntries = Array.isArray(latest?.thoughts?.perIterationText)
+      ? latest.thoughts.perIterationText
+      : [];
 
-  return null;
+    const thoughtLog = thoughtEntries.filter((value: unknown) => typeof value === 'string').join(' ');
+    const response = typeof latest?.llm?.response === 'string' ? latest.llm.response : '';
+
+    return { response: response.trim(), thoughtLog: thoughtLog.trim() };
+  } catch {
+    return {};
+  }
 }
 
 function resolveLocalPlaybackText(): string {
-  const data = getLatestLocalVoiceOutputs();
-  if (!data) return '';
-  const localResponse = typeof data.localResponse === 'string' ? data.localResponse.trim() : '';
-  if (localResponse) return localResponse;
-  const localThought = typeof data.localThought === 'string' ? data.localThought.trim() : '';
-  return localThought;
+  const { response, thoughtLog } = getLatestCognitionArtifacts();
+  if (response) return response;
+  if (thoughtLog) return thoughtLog;
+  return '';
 }
 
 function limitPlaybackTokens(text: string, limit = PLAYBACK_TOKEN_LIMIT): string {

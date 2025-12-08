@@ -199,7 +199,7 @@ Set `VITE_LLM_ENDPOINT` to point the front-end at your LLM proxy (defaults to `/
 
 The browser fetch stub that intercepts `/api/llm` requests is now opt-in. Set `VITE_ENABLE_LLM_STUB=off` (or `on`) in your Vite environment to force a particular mode. The default `auto` value only installs the stub during `npm run dev`, allowing production builds to reach a real backend.
 
-If the LLM endpoint is unreachable, the cognition status will surface the HTTP error (for example `LLM backend failed (HTTP 404)`) and the articulated response panel will display a clear message plus a fallback composed from the HLSF Output Suite when available.
+If the LLM endpoint is unreachable, the cognition status will surface the HTTP error (for example `LLM backend failed (HTTP 404)`) and the articulated response panel will display a clear message plus a fallback that summarizes the most recent thought logs and rotation narrative.
 
 ## Quality gates
 
