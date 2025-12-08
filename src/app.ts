@@ -7193,6 +7193,10 @@ function setThoughtLogDebugVisible(flag: boolean): void {
   if (elements.thoughtLogPanel instanceof HTMLElement) {
     elements.thoughtLogPanel.classList.toggle('is-debug-visible', flag);
   }
+  const thoughtRoot = document.getElementById('thought-iteration-log');
+  if (thoughtRoot instanceof HTMLElement) {
+    thoughtRoot.setAttribute('aria-hidden', flag ? 'false' : 'true');
+  }
   const toggle = elements.thoughtLogDebugToggle as HTMLButtonElement | null;
   if (toggle) {
     toggle.textContent = flag ? 'Hide debug' : 'Show debug';
