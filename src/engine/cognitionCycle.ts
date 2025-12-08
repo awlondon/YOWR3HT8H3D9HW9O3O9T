@@ -1509,18 +1509,6 @@ function computeFallbackArticulation(thought: ThoughtNode): {
   };
 }
 
-function getLocalHlsfFallback(): string | null {
-  if (typeof window === 'undefined') return null;
-  const voice = (window as any).CognitionEngine?.voice;
-  const latest = typeof voice?.getLatestLocalOutputs === 'function'
-    ? voice.getLatestLocalOutputs()
-    : voice?.latestLocalOutputs;
-  const candidates = [latest?.localResponse, latest?.localThought, latest?.prompt]
-    .map(value => (typeof value === 'string' ? value.trim() : ''))
-    .filter(Boolean);
-  return candidates[0] || null;
-}
-
 function formatLlmError(llm: LLMResult): string {
   const parts = [llm.error || 'LLM request failed'];
   if (llm.status) parts.push(`HTTP ${llm.status}`);
@@ -1597,11 +1585,6 @@ export async function callLLM(
   const requestUrl = normalizeLlmUrl(endpoint);
   const { interpretationText, rawPrompt, adjacencyTokens } = options;
   const fallback = (() => {
-    const local = getLocalHlsfFallback();
-    if (local) {
-      const text = tidyFallbackText(local);
-      return text ? { text, reason: 'local-output-suite' as const } : null;
-    }
     const thought: ThoughtNode = {
       interpretationText,
       rawText: rawPrompt ?? prompt,
