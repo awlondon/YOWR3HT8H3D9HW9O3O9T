@@ -16,6 +16,7 @@ import {
   type Edge as EngineEdge,
   type AdjacencyDelta,
   type ThoughtEvent,
+  type ArticulationEvent,
 } from './cognitionTypes.js';
 import { computeSpectralFeaturesFromSeries } from './spectralUtils.js';
 
@@ -189,6 +190,8 @@ const EDGE_ROLES: EdgeRole[] = ['cause', 'contrast', 'analogy', 'instance', 'met
 const FFT_WINDOW = 32;
 let activeHiddenGraph: HLSFGraph | null = null;
 let latestSpectralFeatures: Map<string, SpectralFeatures> = new Map();
+let pendingArticulation: ArticulationEvent | null = null;
+let articulationTriggered = false;
 
 registerThoughtEventHandler(handleThoughtEventTokens);
 registerAdjacencyDeltaHandler(applyAdjacencyDeltaToHiddenGraph);
@@ -266,11 +269,21 @@ async function executeCognitionPass(
     truncatedPrompt,
   );
   const interpretationText = perIterationText[perIterationText.length - 1];
-  const adjacencyTokens = perIterationTokens.flat().filter(token => Boolean(token));
+  const baseAdjacencyTokens = perIterationTokens.flat().filter(token => Boolean(token));
+  const articulationContext = pendingArticulation
+    ? summarizeArticulationThoughts(pendingArticulation, hiddenGraph)
+    : null;
+  const llmThoughts = articulationContext?.thoughts?.length
+    ? articulationContext.thoughts
+    : perIterationText;
+  const adjacencyTokens = articulationContext?.adjacencyTokens?.length
+    ? articulationContext.adjacencyTokens
+    : baseAdjacencyTokens;
+  pendingArticulation = null;
 
   const llmResult = await callLLM(
     truncatedPrompt,
-    perIterationText,
+    llmThoughts,
     config,
     mode,
     history,
@@ -363,7 +376,15 @@ export async function runCognitionCycle(
 
       const responseText = run.llm.response?.trim() ?? '';
 
-      if (run.mode === 'visible') {
+      if (articulationTriggered) {
+        termination = 'exit';
+        articulationTriggered = false;
+        break;
+      }
+
+      const hasMaterialResponse = responseText.split(/\s+/).filter(Boolean).length >= 8;
+
+      if (run.mode === 'visible' && hasMaterialResponse) {
         if (!responseText) {
           termination = 'error';
           errorMessage = 'LLM produced an empty visible response; hidden reflection skipped.';
@@ -377,6 +398,10 @@ export async function runCognitionCycle(
         currentPrompt = hiddenPrompt;
       } else {
         currentPrompt = truncateToWords(responseText, sanitizedConfig.maxPromptWords);
+        if (!hasMaterialResponse) {
+          termination = 'exit';
+          break;
+        }
       }
 
       if (shouldExitCycle(currentPrompt)) {
@@ -423,6 +448,33 @@ export function collapseRotationNarrative(thoughts: string[], maxWords = 100): s
   const combined = segments.join(' ');
   const truncated = truncateToWords(combined, maxWords).replace(/\s+/g, ' ').trim();
   return truncated || null;
+}
+
+function summarizeArticulationThoughts(
+  articulation: ArticulationEvent,
+  graph: HLSFGraph,
+): { thoughts: string[]; adjacencyTokens: string[] } {
+  const labelLookup = new Map(graph.nodes.map(node => [node.id, node.label || node.id]));
+  const thoughts = articulation.selectedThoughts.map((thought, idx) => {
+    const labels = thought.cluster.nodeIds
+      .map(id => labelLookup.get(id) || id)
+      .filter(Boolean)
+      .slice(0, 8);
+    const score = Number.isFinite(thought.thoughtScore) ? thought.thoughtScore.toFixed(2) : '0.00';
+    return `Thought ${idx + 1} (score ${score}): ${labels.join(', ')}`.trim();
+  });
+
+  const adjacencyTokens = Array.from(
+    new Set(
+      articulation.selectedThoughts.flatMap(thought =>
+        thought.cluster.nodeIds.map(id => labelLookup.get(id) || id),
+      ),
+    ),
+  )
+    .filter(Boolean)
+    .slice(0, 24);
+
+  return { thoughts, adjacencyTokens };
 }
 
 const HIDDEN_PROMPT_PREFIXES = ['/hidden', '/expand'];
@@ -691,6 +743,8 @@ async function runEmergentRotation(
   config: CognitionConfig,
   userPrompt: string,
 ): Promise<RotationResult> {
+  pendingArticulation = null;
+  articulationTriggered = false;
   const perIterationTokens: string[][] = [];
   const perIterationText: string[] = [];
 
@@ -718,6 +772,10 @@ async function runEmergentRotation(
     await engineTick(Date.now());
     perIterationTokens.push(tokens);
     perIterationText.push(text);
+
+    if (pendingArticulation) {
+      break;
+    }
   }
 
   updateThoughtLogStatus('Rotation complete.');
@@ -761,6 +819,15 @@ function runSingleRotationIteration(
     const pendingTokenSet = new Set<string>();
     let lastFlushAngle = 0;
 
+    const triggerThoughtDetection = () => {
+      const spectralFeatures = computeGraphSpectralFeatures(hiddenGraph, spectralHistory);
+      latestSpectralFeatures = spectralFeatures;
+      syncEngineGraphFromHiddenGraph(hiddenGraph, spectralFeatures, iterationIndex);
+      updateWindowGraphSpectra(hiddenGraph, spectralFeatures);
+      void engineTick(Date.now());
+      return spectralFeatures;
+    };
+
     const flushPendingTokens = (currentAngle: number) => {
       if (!pendingTokenSet.size) return;
       streamTokensToThoughtLog(
@@ -770,6 +837,7 @@ function runSingleRotationIteration(
       );
       pendingTokenSet.clear();
       lastFlushAngle = currentAngle;
+      triggerThoughtDetection();
     };
 
     const recordSpectralSample = (nodeId: string, affinity: number) => {
@@ -831,7 +899,7 @@ function runSingleRotationIteration(
       stopRotationAnimation(hiddenGraph, iterationIndex);
       const text = buildIterationNarrative(hiddenGraph, bufferTokens, iterationIndex);
       commitThoughtLineToUI(text, iterationIndex);
-      const spectralFeatures = computeGraphSpectralFeatures(hiddenGraph, spectralHistory);
+      const spectralFeatures = triggerThoughtDetection();
       resolve({ tokens: bufferTokens.slice(), text, spectralFeatures });
     };
 
@@ -845,6 +913,16 @@ function runSingleRotationIteration(
 
       let angle = 0;
       const iterate = () => {
+        if (pendingArticulation) {
+          flushPendingTokens(angle);
+          stopRotationAnimation(hiddenGraph, iterationIndex);
+          const text = buildIterationNarrative(hiddenGraph, bufferTokens, iterationIndex);
+          commitThoughtLineToUI(text, iterationIndex);
+          const spectralFeatures = triggerThoughtDetection();
+          resolve({ tokens: bufferTokens.slice(), text, spectralFeatures });
+          return;
+        }
+
         angle += degreesPerFrame;
 
         if (angle >= 360) {
@@ -852,7 +930,7 @@ function runSingleRotationIteration(
           stopRotationAnimation(hiddenGraph, iterationIndex);
           const text = buildIterationNarrative(hiddenGraph, bufferTokens, iterationIndex);
           commitThoughtLineToUI(text, iterationIndex);
-          const spectralFeatures = computeGraphSpectralFeatures(hiddenGraph, spectralHistory);
+          const spectralFeatures = triggerThoughtDetection();
           resolve({ tokens: bufferTokens.slice(), text, spectralFeatures });
           return;
         }
@@ -1033,8 +1111,10 @@ function handleThoughtEventTokens(thought: ThoughtEvent): void {
   streamTokensToThoughtLog(tokens, activeRotationConfig?.thinkingStyle ?? 'analytic', activeIterationIndex);
 }
 
-function handleArticulationResponse(responseText: string): void {
-  commitThoughtLineToUI(responseText, activeIterationIndex);
+function handleArticulationResponse(event: ArticulationEvent): void {
+  pendingArticulation = event;
+  articulationTriggered = true;
+  updateThoughtLogStatus('High-relevance thoughts captured. Preparing articulation…');
 }
 
 function scheduleAnimationFrame(cb: () => void): void {

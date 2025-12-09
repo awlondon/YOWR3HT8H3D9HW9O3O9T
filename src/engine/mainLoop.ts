@@ -11,6 +11,7 @@ import {
   type Cluster,
   type AdjacencyDelta,
   type ThoughtEvent,
+  type ArticulationEvent,
 } from './cognitionTypes.js';
 import { ThoughtDetector, type ClusterFeaturesInput, type ThoughtDetectorConfig } from './thoughtDetector.js';
 import { ResponseAccumulatorEngine, type ArticulationConfig } from './responseAccumulator.js';
@@ -25,7 +26,7 @@ type EngineSpectralMap = Map<string, SpectralFeatures>;
 
 type ThoughtEventHandler = (thoughtEvent: ThoughtEvent) => void;
 type AdjacencyDeltaHandler = (delta: AdjacencyDelta) => void;
-type ArticulationHandler = (responseText: string) => void;
+type ArticulationHandler = (articulation: ArticulationEvent) => void;
 
 interface EngineState {
   nodes: EngineNodeMap;
@@ -234,20 +235,14 @@ export async function engineTick(now: number) {
   );
 
   if (articulation) {
-    const question = engineState.currentUserQuestion;
     // Clear current state to await the next prompt and halt the thought loop
     engineState.responseAccumulator = null;
     engineState.currentUserQuestion = null;
     engineState.currentUserEmbedding = null;
 
-    void engineState.llm.articulateResponse(articulation, question).then((responseText) => {
-      if (articulationHandler) {
-        articulationHandler(responseText);
-      } else {
-        // eslint-disable-next-line no-console
-        console.log('Articulate response:', responseText);
-      }
-    });
+    if (articulationHandler) {
+      articulationHandler(articulation);
+    }
   }
 }
 
