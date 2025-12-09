@@ -18,6 +18,15 @@ export interface ArticulationConfig {
   articulationScoreThreshold: number; // Θ_speak
 
   /**
+   * Tokens that appear frequently across clusters should be treated as
+   * salient. The threshold is expressed as a fraction of the highest
+   * observed frequency. Use maxSalienceTokens to cap the breadth of the
+   * salient set when crafting the final articulation prompt.
+   */
+  highSalienceThreshold?: number;
+  maxSalienceTokens?: number;
+
+  /**
    * Optional parameters enabling an “early articulation” escape hatch.
    * When a single thought has sufficiently high internal score and
    * relevance, the engine may speak immediately even if the usual
@@ -41,6 +50,8 @@ export class ResponseAccumulatorEngine {
       strongThoughtScoreThreshold: 0.9,
       strongRelevanceThreshold: 0.75,
       minStrongArticulationIntervalMs: 500,
+      highSalienceThreshold: 0.75,
+      maxSalienceTokens: 5,
       ...config,
     };
   }
@@ -50,11 +61,23 @@ export class ResponseAccumulatorEngine {
       lastResponseAt: now,
       queryEmbedding,
       thoughtEvents: [],
+      tokenFrequency: new Map(),
     };
   }
 
-  public addThought(acc: ResponseAccumulator, ev: ThoughtEvent): void {
+  public addThought(
+    acc: ResponseAccumulator,
+    ev: ThoughtEvent,
+    labelResolver?: (nodeId: string) => string | undefined,
+  ): void {
     acc.thoughtEvents.push(ev);
+    if (!acc.tokenFrequency) acc.tokenFrequency = new Map<string, number>();
+    const weight = 1 / Math.max(1, ev.cluster.nodeIds.length);
+    for (const nid of ev.cluster.nodeIds) {
+      const token = labelResolver?.(nid) ?? nid;
+      const prev = acc.tokenFrequency.get(token) ?? 0;
+      acc.tokenFrequency.set(token, prev + weight);
+    }
   }
 
   private computeSemanticRelevance(
@@ -238,5 +261,18 @@ export class ResponseAccumulatorEngine {
     acc.thoughtEvents = [];
 
     return ev;
+  }
+
+  public getHighSalienceTokens(acc: ResponseAccumulator): string[] {
+    if (!acc.tokenFrequency || acc.tokenFrequency.size === 0) return [];
+    const entries = [...acc.tokenFrequency.entries()];
+    const max = entries.reduce((m, [, v]) => Math.max(m, v), 0);
+    const cutoff = max * (this.config.highSalienceThreshold ?? 0.75);
+    const salient = entries
+      .filter(([, v]) => v >= cutoff)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, this.config.maxSalienceTokens ?? entries.length)
+      .map(([token]) => token);
+    return salient;
   }
 }

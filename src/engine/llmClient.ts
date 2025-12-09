@@ -10,12 +10,16 @@
 import { type ThoughtEvent, type AdjacencyDelta, type ArticulationEvent } from './cognitionTypes.js';
 
 export interface LLMClient {
-  expandAdjacency(ev: ThoughtEvent): Promise<AdjacencyDelta>;
-  articulateResponse(articulation: ArticulationEvent, userQuestion: string): Promise<string>;
+  expandAdjacency(ev: ThoughtEvent, depth?: number, maxDepth?: number): Promise<AdjacencyDelta>;
+  articulateResponse(
+    articulation: ArticulationEvent,
+    userQuestion: string,
+    salientContext?: { tokens: string[]; summary: string },
+  ): Promise<string>;
 }
 
 export class StubLLMClient implements LLMClient {
-  async expandAdjacency(_ev: ThoughtEvent): Promise<AdjacencyDelta> {
+  async expandAdjacency(_ev: ThoughtEvent, depth = 0, maxDepth = 1): Promise<AdjacencyDelta> {
     void _ev;
     // TODO: Wire into actual LLM call with prompt:
     //
@@ -23,15 +27,16 @@ export class StubLLMClient implements LLMClient {
     //  You are an adjacency generator for a cognitive graph...
     //
     // USER:
-    //  {ThoughtEvent JSON}
+    //  {ThoughtEvent JSON, depth: ${depth}, maxDepth: ${maxDepth}}
     //
     // Return JSON conforming to AdjacencyDelta.
-    return { nodes: [], edges: [], notes: 'stubbed' };
+    return { nodes: [], edges: [], notes: `stubbed_depth_${depth}` };
   }
 
   async articulateResponse(
     _articulation: ArticulationEvent,
     userQuestion: string,
+    salientContext?: { tokens: string[]; summary: string },
   ): Promise<string> {
     // TODO: Wire into actual LLM call with prompt:
     //
@@ -45,6 +50,9 @@ export class StubLLMClient implements LLMClient {
     //  }
     //
     // Return natural language answer.
-    return `Stubbed response to: ${userQuestion}`;
+    const contextSuffix = salientContext
+      ? ` Salient tokens: ${salientContext.tokens.join(', ')}. Summary: ${salientContext.summary}`
+      : '';
+    return `Stubbed response to: ${userQuestion}.${contextSuffix}`;
   }
 }
