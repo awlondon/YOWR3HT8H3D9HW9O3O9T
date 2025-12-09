@@ -17,6 +17,7 @@ import { ThoughtDetector, type ClusterFeaturesInput, type ThoughtDetectorConfig 
 import { ResponseAccumulatorEngine, type ArticulationConfig } from './responseAccumulator.js';
 import { StubLLMClient } from './llmClient.js';
 import { averageEmbedding, cosine } from './vectorUtils.js';
+import { computeSpectralFeaturesFromSeries } from './spectralUtils.js';
 
 declare const process: any;
 
@@ -63,21 +64,25 @@ const cognitionModes: Record<CogMode, ModeConfig> = {
   },
   fast: {
     thought: {
-      structuralThreshold: 0.5,
-      spectralThreshold: 0.55,
-      semanticThreshold: 0.55,
-      thoughtScoreThreshold: 0.65,
-      minClusterSize: 2,
+      structuralThreshold: 0.35,
+      spectralThreshold: 0.35,
+      semanticThreshold: 0.4,
+      thoughtScoreThreshold: 0.5,
+      minClusterSize: 1,
       minPersistenceFrames: 1,
-      minNovelty: 0.3,
+      minNovelty: 0.25,
       enableSpark: true,
+      sparkStructuralThreshold: 0.55,
+      sparkSpectralThreshold: 0.55,
+      sparkSemanticThreshold: 0.55,
+      sparkMinCount: 2,
     },
     articulation: {
       relevanceThreshold: 0.55,
-      minRelevantThoughts: 2,
+      minRelevantThoughts: 1,
       targetThoughts: 4,
       minTimeSinceLastResponseMs: 800,
-      articulationScoreThreshold: 0.65,
+      articulationScoreThreshold: 0.55,
       strongThoughtScoreThreshold: 0.85,
       strongRelevanceThreshold: 0.7,
       minStrongArticulationIntervalMs: 300,
@@ -137,7 +142,13 @@ export function updateEngineGraph(
 ): void {
   engineState.nodes = new Map(graphNodes.map(node => [node.id, node]));
   engineState.edges = graphEdges.slice();
-  engineState.spectralFeatures = spectral;
+
+  const hydratedSpectral = new Map<string, SpectralFeatures>();
+  for (const node of graphNodes) {
+    const spec = spectral.get(node.id) ?? computeSpectralFeaturesFromSeries([]);
+    hydratedSpectral.set(node.id, spec);
+  }
+  engineState.spectralFeatures = hydratedSpectral;
 }
 
 const clusterPersistence = new Map<string, number>();
@@ -268,8 +279,8 @@ function computeClustersFromLayoutAndAdjacency(
     adjacency.set(key, Math.max(edge.weight, adjacency.get(key) ?? 0));
   }
 
-  const neighborThreshold = 0.55;
-  const distanceThreshold = 0.45;
+  const neighborThreshold = 0.3;
+  const distanceThreshold = 0.65;
 
   const getNeighbors = (node: Node): string[] => {
     const neighbors: string[] = [];
@@ -291,10 +302,6 @@ function computeClustersFromLayoutAndAdjacency(
   for (const node of list) {
     if (visited.has(node.id)) continue;
     const seeds = getNeighbors(node);
-    if (seeds.length < 1) {
-      visited.add(node.id);
-      continue;
-    }
     const clusterNodeIds = new Set<string>([node.id, ...seeds]);
     const queue = [...seeds];
     visited.add(node.id);
@@ -307,12 +314,10 @@ function computeClustersFromLayoutAndAdjacency(
       const nNode = nodes.get(nid);
       if (!nNode) continue;
       const neigh = getNeighbors(nNode);
-      if (neigh.length >= 1) {
-        for (const nn of neigh) {
-          if (!clusterNodeIds.has(nn)) {
-            clusterNodeIds.add(nn);
-            queue.push(nn);
-          }
+      for (const nn of neigh) {
+        if (!clusterNodeIds.has(nn)) {
+          clusterNodeIds.add(nn);
+          queue.push(nn);
         }
       }
     }
@@ -340,26 +345,51 @@ function computeClustersFromLayoutAndAdjacency(
   return clusters;
 }
 
-function computeStructuralScore(cluster: Cluster, _edges: Edge[]): number {
-  void _edges;
-  const d = cluster.density;
-  const p = Math.min(1, cluster.persistenceFrames / 10);
-  return 0.5 * d + 0.5 * p;
+function computeStructuralScore(cluster: Cluster, edges: Edge[]): number {
+  // Normalise density by the maximum possible internal edges for this cluster size
+  const density = computeClusterDensity(cluster.nodeIds, edges);
+  const persistenceBoost = Math.min(1, cluster.persistenceFrames / 3);
+  return Math.min(1, 0.75 * density + 0.25 * persistenceBoost);
 }
 
 function computeSpectralScore(
   cluster: Cluster,
-  _spectral: EngineSpectralMap,
+  spectral: EngineSpectralMap,
 ): number {
-  void _spectral;
-  const e = Math.min(1, cluster.spectral.energy);
-  const bands = cluster.spectral.roleBandpower;
-  const mean = bands.reduce((a, b) => a + b, 0) / (bands.length || 1);
-  let varSum = 0;
-  for (const b of bands) varSum += (b - mean) ** 2;
-  const variance = bands.length ? varSum / bands.length : 0;
-  const symmetry = 1 - Math.min(1, variance);
-  return 0.6 * e + 0.4 * symmetry;
+  const energies: number[] = [];
+  const bandCollections: number[][] = [];
+
+  for (const nid of cluster.nodeIds) {
+    const spec = spectral.get(nid) ?? cluster.spectral;
+    energies.push(Math.max(0, spec.energy));
+    bandCollections.push(spec.roleBandpower);
+  }
+
+  const avgEnergy = energies.length
+    ? energies.reduce((a, b) => a + b, 0) / energies.length
+    : cluster.spectral.energy;
+  const energyScore = Math.min(1, Math.tanh(avgEnergy));
+
+  const bandMeans: number[] = [];
+  if (bandCollections.length) {
+    const bands = bandCollections[0].length;
+    for (let i = 0; i < bands; i += 1) {
+      const total = bandCollections.reduce((sum, arr) => sum + (arr[i] ?? 0), 0);
+      bandMeans.push(total / bandCollections.length);
+    }
+  }
+  const mean = bandMeans.reduce((a, b) => a + b, 0) / (bandMeans.length || 1);
+  const symmetry = bandMeans.length
+    ? 1 -
+      Math.min(
+        1,
+        bandMeans.reduce((sum, b) => sum + (b - mean) ** 2, 0) /
+          Math.max(1, bandMeans.length),
+      )
+    : 0;
+  const flatnessPenalty = 1 - Math.min(1, cluster.spectral.flatness);
+
+  return Math.min(1, 0.6 * energyScore + 0.25 * symmetry + 0.15 * flatnessPenalty);
 }
 
 function computeSemanticScore(
@@ -371,17 +401,18 @@ function computeSemanticScore(
     const emb = nodeEmbeddings.get(nid);
     if (emb) embs.push(emb);
   }
-  if (embs.length === 0) return 0;
-  const centroid = averageEmbedding(embs);
+  if (embs.length < 2) return embs.length ? 0.5 : 0;
+
   let totalSim = 0;
   let count = 0;
-  for (const e of embs) {
-    totalSim += cosine(e, centroid);
-    count += 1;
+  for (let i = 0; i < embs.length; i += 1) {
+    for (let j = i + 1; j < embs.length; j += 1) {
+      totalSim += cosine(embs[i], embs[j]);
+      count += 1;
+    }
   }
-  if (count === 0) return 0;
-  const coherence = totalSim / count; // 0..1
-  return coherence;
+  const coherence = count ? totalSim / count : 0;
+  return Math.max(0, Math.min(1, coherence));
 }
 
 function applyAdjacencyDelta(
