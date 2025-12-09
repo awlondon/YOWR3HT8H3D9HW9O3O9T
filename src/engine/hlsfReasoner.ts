@@ -7,6 +7,7 @@ import {
   type ReasoningStep,
   type ThoughtEvent,
   type ArticulationEvent,
+  type AdjacencyDelta,
 } from './cognitionTypes.js';
 import { ThoughtDetector } from './thoughtDetector.js';
 import { ResponseAccumulatorEngine } from './responseAccumulator.js';
@@ -21,11 +22,13 @@ interface Token {
 interface TraverseContext {
   graph: HlsfGraph;
   nodeEmbeddings: Map<string, number[]>;
+  nodeLookup: Map<string, HlsfNode>;
   clusters: Cluster[];
   thoughtDetector: ThoughtDetector;
   accumulator: ReturnType<ResponseAccumulatorEngine['initAccumulator']>;
   respEngine: ResponseAccumulatorEngine;
   llm: StubLLMClient;
+  maxAdjacencyDepth: number;
   onThought?: (ev: ThoughtEvent) => void;
   onArticulation?: (ev: ArticulationEvent) => void;
   prompt: string;
@@ -178,9 +181,125 @@ function buildClusterFeatures(cluster: Cluster, nodeEmbeddings: Map<string, numb
   return { structuralScore, spectralScore, semanticScore };
 }
 
+function applyAdjacencyDeltaToHlsf(
+  context: TraverseContext,
+  delta: AdjacencyDelta,
+): Set<string> {
+  const addedNodeIds = new Set<string>();
+  if (delta.nodes?.length) {
+    delta.nodes.forEach(n => {
+      const newNode: HlsfNode = {
+        id: n.id,
+        label: n.label,
+        tokenType: 'noun',
+        tokens: [n.label],
+        embedding: n.hintEmbedding ?? embedToken(n.label),
+      };
+      context.graph.nodes.push(newNode);
+      context.nodeEmbeddings.set(n.id, newNode.embedding);
+      context.nodeLookup.set(n.id, newNode);
+      addedNodeIds.add(n.id);
+    });
+  }
+
+  if (delta.edges?.length) {
+    delta.edges.forEach(e => {
+      context.graph.edges.push({
+        id: `${e.src}->${e.dst}`,
+        source: e.src,
+        target: e.dst,
+        weight: e.weight,
+        relation: e.role,
+      });
+    });
+  }
+  return addedNodeIds;
+}
+
+function synthesizeHiddenCluster(
+  thought: ThoughtEvent,
+  delta: AdjacencyDelta,
+  depth: number,
+  addedNodeIds: Set<string>,
+): Cluster | null {
+  const nodeIds = new Set<string>([...addedNodeIds]);
+  delta.edges?.forEach(e => {
+    nodeIds.add(e.src);
+    nodeIds.add(e.dst);
+  });
+
+  if (nodeIds.size === 0) return null;
+  const memberIds = [...nodeIds];
+  const possibleEdges = (memberIds.length * (memberIds.length - 1)) / 2;
+  const density = Math.min(1, (delta.edges?.length ?? 0) / Math.max(1, possibleEdges));
+  const semanticCoherence = Math.min(1, 0.5 + 0.1 * memberIds.length);
+
+  return {
+    id: `${thought.id}-hidden-${depth}`,
+    nodeIds: memberIds,
+    density: Math.max(density, thought.cluster.density * 0.5),
+    persistenceFrames: Math.max(1, thought.cluster.persistenceFrames - depth),
+    spectral: thought.cluster.spectral,
+    semanticCoherence,
+    novelty: Math.max(0.2, thought.cluster.novelty - 0.05 * depth),
+  };
+}
+
 async function traverseGraph(context: TraverseContext): Promise<ArticulationEvent | null> {
   const visited = new Set<string>();
   const { clusters, thoughtDetector, nodeEmbeddings, respEngine, accumulator, llm, trace } = context;
+
+  const expandAndRecurse = async (
+    thought: ThoughtEvent,
+    depth: number,
+  ): Promise<ArticulationEvent | null> => {
+    const delta = await llm.expandAdjacency(thought, depth, context.maxAdjacencyDepth);
+    const addedNodes = applyAdjacencyDeltaToHlsf(context, delta);
+    if ((delta.nodes?.length ?? 0) + (delta.edges?.length ?? 0) > 0) {
+      const nodeCount = delta.nodes?.length ?? 0;
+      const edgeCount = delta.edges?.length ?? 0;
+      trace.push(
+        `Expanded adjacency for ${thought.id} (depth ${depth}) with ${nodeCount} nodes and ${edgeCount} edges.`,
+      );
+    }
+
+    if (depth >= context.maxAdjacencyDepth) return null;
+
+    const hiddenCluster = synthesizeHiddenCluster(thought, delta, depth + 1, addedNodes);
+    if (!hiddenCluster) return null;
+
+    const { structuralScore, spectralScore, semanticScore } = buildClusterFeatures(hiddenCluster, nodeEmbeddings);
+    const nestedThought = thoughtDetector.evaluateCluster(
+      {
+        cluster: hiddenCluster,
+        structuralScore,
+        spectralScore,
+        semanticScore,
+        nodeEmbeddings,
+      },
+      Date.now(),
+    );
+
+    if (!nestedThought) return null;
+    return handleThought(nestedThought, depth + 1);
+  };
+
+  const handleThought = async (
+    thought: ThoughtEvent,
+    depth: number,
+  ): Promise<ArticulationEvent | null> => {
+    respEngine.addThought(accumulator, thought, nid => context.nodeLookup.get(nid)?.label);
+    context.onThought?.(thought);
+    trace.push(`Thought emitted on ${thought.cluster.id} with score ${thought.thoughtScore.toFixed(2)} at depth ${depth}.`);
+
+    const articulation = respEngine.maybeArticulate(accumulator, nodeEmbeddings, Date.now());
+    if (articulation) {
+      context.onArticulation?.(articulation);
+      return articulation;
+    }
+
+    return expandAndRecurse(thought, depth);
+  };
 
   const dfs = async (index: number): Promise<ArticulationEvent | null> => {
     if (index < 0 || index >= clusters.length) return null;
@@ -201,41 +320,8 @@ async function traverseGraph(context: TraverseContext): Promise<ArticulationEven
     );
 
     if (thought) {
-      respEngine.addThought(accumulator, thought);
-      context.onThought?.(thought);
-      trace.push(`Thought emitted on ${cluster.id} with score ${thought.thoughtScore.toFixed(2)}.`);
-
-      const articulation = respEngine.maybeArticulate(accumulator, nodeEmbeddings, Date.now());
-      if (articulation) {
-        context.onArticulation?.(articulation);
-        return articulation;
-      }
-
-      const delta = await llm.expandAdjacency(thought);
-      if (delta.nodes?.length) {
-        delta.nodes.forEach(n => {
-          const newNode: HlsfNode = {
-            id: n.id,
-            label: n.label,
-            tokenType: 'noun',
-            tokens: [n.label],
-            embedding: n.hintEmbedding ?? embedToken(n.label),
-          };
-          context.graph.nodes.push(newNode);
-          nodeEmbeddings.set(n.id, newNode.embedding);
-        });
-      }
-      if (delta.edges?.length) {
-        delta.edges.forEach(e => {
-          context.graph.edges.push({
-            id: `${e.src}->${e.dst}`,
-            source: e.src,
-            target: e.dst,
-            weight: e.weight,
-            relation: e.role,
-          });
-        });
-      }
+      const articulation = await handleThought(thought, 0);
+      if (articulation) return articulation;
     }
 
     const next = index + 1;
@@ -249,6 +335,68 @@ async function traverseGraph(context: TraverseContext): Promise<ArticulationEven
     if (articulation) return articulation;
   }
   return null;
+}
+
+function collapseGraphToSalient(
+  graph: HlsfGraph,
+  clusters: Cluster[],
+  salientTokens: string[],
+): { graph: HlsfGraph; clusters: Cluster[]; keptNodeIds: Set<string> } {
+  if (salientTokens.length === 0) {
+    return { graph, clusters, keptNodeIds: new Set(graph.nodes.map(n => n.id)) };
+  }
+
+  const nodeLabels = new Map(graph.nodes.map(n => [n.id, n.label]));
+  const containsSalient = (cluster: Cluster) =>
+    cluster.nodeIds.some(id => salientTokens.includes(nodeLabels.get(id) ?? id));
+
+  const adjacency = new Map<string, Set<string>>();
+  graph.edges.forEach(e => {
+    const srcSet = adjacency.get(e.source) ?? new Set<string>();
+    const dstSet = adjacency.get(e.target) ?? new Set<string>();
+    srcSet.add(e.target);
+    dstSet.add(e.source);
+    adjacency.set(e.source, srcSet);
+    adjacency.set(e.target, dstSet);
+  });
+
+  const keep = new Set<string>();
+  clusters.forEach(c => {
+    if (containsSalient(c)) {
+      keep.add(c.id);
+      adjacency.get(c.id)?.forEach(n => keep.add(n));
+    }
+  });
+
+  if (keep.size === 0) {
+    return { graph, clusters, keptNodeIds: new Set(graph.nodes.map(n => n.id)) };
+  }
+
+  const keptClusters = clusters.filter(c => keep.has(c.id));
+  const keptNodeIds = new Set<string>();
+  keptClusters.forEach(c => c.nodeIds.forEach(id => keptNodeIds.add(id)));
+
+  const filteredNodes = graph.nodes.filter(n => keptNodeIds.has(n.id));
+  const filteredEdges = graph.edges.filter(e => keep.has(e.source) && keep.has(e.target));
+
+  return { graph: { ...graph, nodes: filteredNodes, edges: filteredEdges }, clusters: keptClusters, keptNodeIds };
+}
+
+function summarizeSalientContext(
+  salientTokens: string[],
+  graph: HlsfGraph,
+  clusters: Cluster[],
+): string {
+  if (salientTokens.length === 0) return 'No salient tokens identified; using global context.';
+  const nodeLabels = new Map(graph.nodes.map(n => [n.id, n.label]));
+  const clusterMentions = clusters
+    .slice(0, 5)
+    .map(c => {
+      const labels = c.nodeIds.map(id => nodeLabels.get(id) ?? id).join(', ');
+      return `${c.id}: ${labels}`;
+    })
+    .join(' | ');
+  return `Focus on ${salientTokens.join(', ')}. Neighbor clusters: ${clusterMentions}`;
 }
 
 function craftResponse(prompt: string, trace: string[], articulation: ArticulationEvent | null): string {
@@ -269,6 +417,7 @@ export async function runHlsfReasoning(
   },
 ): Promise<ReasonerResult> {
   const trace: string[] = [];
+  const maxAdjacencyDepth = 2;
   const llm = new StubLLMClient();
   const thoughtDetector = new ThoughtDetector({
     structuralThreshold: 0.4,
@@ -303,22 +452,34 @@ export async function runHlsfReasoning(
 
   const nodeEmbeddings = new Map<string, number[]>();
   graph.nodes.forEach(n => nodeEmbeddings.set(n.id, n.embedding));
+  const nodeLookup = new Map<string, HlsfNode>();
+  graph.nodes.forEach(n => nodeLookup.set(n.id, n));
   const queryEmbedding = averageEmbedding([...nodeEmbeddings.values()]);
   const accumulator = respEngine.initAccumulator(queryEmbedding, Date.now());
 
   const articulation = await traverseGraph({
     graph,
     nodeEmbeddings,
+    nodeLookup,
     clusters: refined,
     thoughtDetector,
     accumulator,
     respEngine,
     llm,
+    maxAdjacencyDepth,
     onThought: options?.onThought,
     onArticulation: options?.onArticulation,
     prompt,
     trace,
   });
+
+  const salientTokens = respEngine.getHighSalienceTokens(accumulator);
+  const collapsed = collapseGraphToSalient(graph, refined, salientTokens);
+  if (salientTokens.length) {
+    trace.push(
+      `Collapsed HLSF to ${collapsed.clusters.length} clusters anchored on salient tokens: ${salientTokens.join(', ')}.`,
+    );
+  }
 
   const finalArticulation: ArticulationEvent =
     articulation ?? {
@@ -328,7 +489,19 @@ export async function runHlsfReasoning(
       selectedThoughts: accumulator.thoughtEvents.slice(0, 3),
     };
 
-  const llmResponse = await llm.articulateResponse(finalArticulation, prompt);
+  const filteredSelected = (finalArticulation.selectedThoughts ?? []).filter(ev =>
+    ev.cluster.nodeIds.some(id => collapsed.keptNodeIds.has(id)),
+  );
+  if (filteredSelected.length) {
+    finalArticulation.selectedThoughts = filteredSelected;
+  }
+
+  const salientSummary = summarizeSalientContext(salientTokens, collapsed.graph, collapsed.clusters);
+
+  const llmResponse = await llm.articulateResponse(finalArticulation, prompt, {
+    tokens: salientTokens,
+    summary: salientSummary,
+  });
   const response = craftResponse(prompt, trace, finalArticulation) + `\nLLM: ${llmResponse}`;
   trace.push('Generated emergent thought trace and articulated response.');
 

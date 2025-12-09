@@ -114,4 +114,5 @@ export interface ResponseAccumulator {
   lastResponseAt: number;
   queryEmbedding: number[];
   thoughtEvents: ThoughtEvent[];
+  tokenFrequency: Map<string, number>;
 }

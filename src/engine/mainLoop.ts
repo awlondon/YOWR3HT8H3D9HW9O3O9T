@@ -53,6 +53,7 @@ interface ModeConfig {
   articulation: Partial<ArticulationConfig>;
   cognitionIntervalMs: number;
   maxClustersPerStep: number;
+  maxAdjacencyDepth: number;
 }
 
 const cognitionModes: Record<CogMode, ModeConfig> = {
@@ -61,6 +62,7 @@ const cognitionModes: Record<CogMode, ModeConfig> = {
     articulation: {},
     cognitionIntervalMs: 200,
     maxClustersPerStep: 20,
+    maxAdjacencyDepth: 3,
   },
   fast: {
     thought: {
@@ -89,6 +91,7 @@ const cognitionModes: Record<CogMode, ModeConfig> = {
     },
     cognitionIntervalMs: 100,
     maxClustersPerStep: 10,
+    maxAdjacencyDepth: 2,
   },
 };
 
@@ -226,10 +229,14 @@ export async function engineTick(now: number) {
         thoughtEventHandler(thoughtEv);
       }
       // INTERNAL THINKING: expand adjacency via LLM
-      engineState.responseAccumulator.thoughtEvents.push(thoughtEv);
+      engineState.respEngine.addThought(
+        engineState.responseAccumulator,
+        thoughtEv,
+        nid => engineState.nodes.get(nid)?.label,
+      );
 
       // Fire-and-forget adjacency expansion (do not block rendering)
-      void engineState.llm.expandAdjacency(thoughtEv).then((delta) => {
+      void engineState.llm.expandAdjacency(thoughtEv, 0, selectedConfig.maxAdjacencyDepth).then((delta) => {
         applyAdjacencyDelta(delta, engineState.nodes, engineState.edges);
         if (adjacencyDeltaHandler) {
           adjacencyDeltaHandler(delta);
