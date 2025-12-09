@@ -6855,7 +6855,7 @@ const cognitionUiState: {
 } = {
   config: {
     thinkingStyle: 'analytic',
-    iterations: 8,
+    iterations: 4,
     rotationSpeed: 0.3,
     affinityThreshold: 0.35,
   },
@@ -21892,8 +21892,6 @@ async function processPrompt(prompt) {
       }
     }
 
-    let shouldReloadHlsf = hasNewAdjacencyData(inputMatrices);
-
     calculateAttention(inputMatrices);
 
     const allMatrices = inputMatrices instanceof Map ? new Map(inputMatrices) : new Map();
@@ -21937,150 +21935,7 @@ async function processPrompt(prompt) {
     const affinityIterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
     const mentalState = describeAffinityMentalState(affinityThreshold, affinityIterations) || {};
 
-    const localOutputData = generateLocalHlsfOutput(allMatrices, {
-      wordLimit: CONFIG.LOCAL_OUTPUT_WORD_LIMIT,
-      responseWordLimit: CONFIG.LOCAL_RESPONSE_WORD_LIMIT,
-      threshold: affinityThreshold,
-      iterations: affinityIterations,
-      mentalState,
-      topTokens,
-      keyRelationships: keyRels,
-      inputWordCount: limitedPrompt.wordCount || tokens.length,
-    });
-
-    let localThought = localOutputData.thoughtText || localOutputData.text || '';
-    if (!localThought) {
-      localThought = 'Adjacency walk could not assemble a local output with the available data.';
-    }
-    if (localOutputData.thoughtTrimmed || localOutputData.trimmed) {
-      logWarning(`Local thought stream truncated to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
-    }
-    const thoughtLimited = limitWords(localThought, CONFIG.LOCAL_OUTPUT_WORD_LIMIT);
-    if (thoughtLimited.trimmed && !(localOutputData.thoughtTrimmed || localOutputData.trimmed)) {
-      logWarning(`Local thought stream trimmed to ${CONFIG.LOCAL_OUTPUT_WORD_LIMIT} words.`);
-    }
-    localThought = thoughtLimited.text;
-    const localThoughtWordCount =
-      localOutputData.thoughtWordCount || thoughtLimited.wordCount || countWords(localThought);
-
-    let localOutput = localOutputData.responseText || localThought;
-    if (localOutputData.responseTrimmed) {
-      logWarning(`Local output truncated to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
-    }
-    localOutput = DbLexicon.rewriteText(localOutput);
-    const localLimited = limitWords(localOutput, CONFIG.LOCAL_RESPONSE_WORD_LIMIT);
-    if (localLimited.trimmed && !localOutputData.responseTrimmed) {
-      logWarning(`Local output trimmed to ${CONFIG.LOCAL_RESPONSE_WORD_LIMIT} words.`);
-    }
-    localOutput = localLimited.text;
-    const localWordCount =
-      localOutputData.responseWordCount || localLimited.wordCount || countWords(localOutput);
-
-    const localResponseTokens =
-      Array.isArray(localOutputData.responseTokens) && localOutputData.responseTokens.length
-        ? localOutputData.responseTokens
-        : tokenize(localOutput);
-
-    if (localResponseTokens.length) {
-      addConversationTokens(localResponseTokens);
-      addOutputTokens(localResponseTokens, { render: false });
-    }
-
-    let localAdjacency = null;
-    if (localResponseTokens.length) {
-      const localAdjTargets = await collectSymbolAwareTokens(
-        localOutput,
-        localResponseTokens,
-        'prompt-local-output',
-      );
-      if (localAdjTargets.length) {
-        const localAdjStatus = logStatus('⏳ Caching local HLSF AGI adjacencies');
-        try {
-          localAdjacency = await batchFetchAdjacencies(
-            localAdjTargets,
-            localOutput,
-            'local response adjacencies',
-          );
-          localAdjStatus.innerHTML = `✅ ${sanitize('Local HLSF AGI adjacencies cached')}`;
-        } catch (err) {
-          localAdjStatus.innerHTML = `❌ ${sanitize(`Local HLSF AGI adjacency cache failed: ${err?.message || err}`)}`;
-          logError(`Failed to cache local HLSF AGI adjacencies: ${err?.message || err}`);
-          localAdjacency = null;
-        }
-      }
-    }
-
-    if (localAdjacency instanceof Map && localAdjacency.size) {
-      calculateAttention(localAdjacency);
-      mergeAdjacencyMaps(allMatrices, localAdjacency);
-      calculateAttention(allMatrices);
-      if (shouldReloadHlsf !== true && hasNewAdjacencyData(localAdjacency)) {
-        shouldReloadHlsf = true;
-      }
-    }
-
-    const walkDetails =
-      Array.isArray(localOutputData.walk) && localOutputData.walk.length
-        ? localOutputData.walk
-            .map(
-              (step) =>
-                `${sanitize(step.from || '')} → ${sanitize(relDisplay(step.relation || '∼'))} → ${sanitize(step.to || '')} (${Number.isFinite(step.weight) ? step.weight.toFixed(2) : '0.00'})`,
-            )
-            .join('<br>')
-        : '';
-
-    const mentalSummary = [
-      mentalState.name ? `<strong>${sanitize(mentalState.name)}</strong>` : '',
-      mentalState.desc ? sanitize(mentalState.desc) : '',
-      `Threshold ${affinityThreshold.toFixed(2)} · Iterations ${affinityIterations}`,
-    ]
-      .filter(Boolean)
-      .join('<br>');
-
-    const visitedSummary =
-      Array.isArray(localOutputData.visitedTokens) && localOutputData.visitedTokens.length
-        ? `<div class="adjacency-insight"><strong>🧠 Traversal tokens:</strong> ${sanitize(localOutputData.visitedTokens.slice(0, 10).join(', '))}</div>`
-        : '';
-
-    const safeThought = sanitize(localThought);
-    const safeResponse = sanitize(localOutput);
-
-    addLog(`<div class="section-divider"></div>
-      <div class="section-title">🤖 Local HLSF AGI Output</div>
-      <div class="thought-stream"><strong>Thought stream:</strong> ${safeThought}</div>
-      <div class="local-response"><strong>Actual output:</strong> ${safeResponse}</div>
-      <div class="adjacency-insight">${mentalSummary}</div>
-      ${visitedSummary}
-      ${walkDetails ? `<details><summary>Adjacency walk (${localOutputData.walk.length} steps)</summary><div class="adjacency-insight">${walkDetails}</div></details>` : ''}
-    `);
-
-    if (shouldReloadHlsf) {
-      notifyHlsfAdjacencyChange('prompt-adjacencies', { immediate: true });
-    }
-
-    rebuildLiveGraph();
-
-    const time = ((performance.now() - startTime) / 1000).toFixed(1);
-
-    addLog(`<div class="section-divider"></div>
-      <div class="final-output">
-        <h3>🧩 HLSF Local Output Summary</h3>
-        <details open>
-          <summary>Local HLSF AGI thought stream (${localThoughtWordCount} words)</summary>
-          <pre>${safeThought}</pre>
-        </details>
-        <details open>
-          <summary>Local HLSF AGI chosen response (${localWordCount} words)</summary>
-          <pre>${safeResponse}</pre>
-        </details>
-        <details>
-          <summary>Adjacency data sample (${allMatrices.size} tokens)</summary>
-          <pre>${JSON.stringify(Array.from(allMatrices.entries()).slice(0, 5), null, 2)}</pre>
-        </details>
-      </div>
-    `);
-
-    logOK(`Local output summary ready (${time}s)`);
+    addLog('<div class="adjacency-insight"><strong>🧠 Local output summary disabled:</strong> Rotation pipeline will continue to the articulated response instead.</div>');
 
     if (batchTokens.size) {
       registerPromptReview(promptReviewId, batchTokens, allMatrices);
@@ -22576,6 +22431,17 @@ async function analyzeDocumentChunk(chunkTokens, index, totalChunks, chunkMeta =
   const affinityThreshold = Number.isFinite(affinityCfg.threshold) ? affinityCfg.threshold : 0.35;
   const affinityIterations = Number.isFinite(affinityCfg.iterations) ? affinityCfg.iterations : 8;
   const mentalState = describeAffinityMentalState(affinityThreshold, affinityIterations) || {};
+
+  addLog(
+    `<div class="adjacency-insight"><strong>🧠 ${sanitize(chunkLabel)} local output disabled:</strong> continuing with articulated response only.</div>`,
+  );
+
+  return {
+    text: '',
+    thoughtLog: '',
+    iterations: affinityIterations,
+    tokens: promptTokens,
+  };
 
   const localOutputData = generateLocalHlsfOutput(allMatrices, {
     wordLimit: CONFIG.LOCAL_OUTPUT_WORD_LIMIT,
