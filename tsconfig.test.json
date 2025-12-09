@@ -39,6 +39,8 @@
     "src/lib/storage/safeStorage.ts",
     "src/security/apiKeyVault.ts",
     "src/security/apiKeyVault.test.ts",
+    "src/engine/hlsfReasoner.ts",
+    "src/engine/__tests__/hlsfReasoner.test.ts",
     "types/node-test.d.ts"
   ]
 }

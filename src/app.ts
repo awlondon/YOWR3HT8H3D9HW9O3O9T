@@ -53,7 +53,6 @@ import type { AgentConfig, AgentContext } from './agent/types';
 import { registerAgentCommands } from './app/commands/agent';
 import { registerVectorCommand } from './app/commands/vector';
 import { callOpenAIChat } from './engine/openaiClient';
-import { getEngineStatusSnapshot, registerArticulationHandler } from './engine/mainLoop';
 import { recordAgentTelemetryEvent } from './analytics/agentTelemetry';
 import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
@@ -69,16 +68,16 @@ import {
   HLSF_ROTATION_EVENT,
   HLSF_THOUGHT_COMMIT_EVENT,
   commitThoughtLineToUI,
-  runCognitionCycle,
   type LLMResult,
   type CognitionConfig,
-  type CognitionCycleResult,
   type CognitionRun,
   type HLSFGraph,
   type RotationPreviewEventDetail,
   type ThinkingStyle,
   type ThoughtCommitEventDetail,
 } from './engine/cognitionCycle';
+import { runHlsfReasoning } from './engine/hlsfReasoner';
+import type { ThoughtEvent } from './engine/cognitionTypes';
 import { installLLMStub } from './server/installLLMStub';
 // ============================================
 // CONFIGURATION
@@ -6058,7 +6057,7 @@ window.CognitionEngine = window.CognitionEngine || {
   processing: {},
 };
 window.CognitionEngine.cognition = window.CognitionEngine.cognition || {};
-window.CognitionEngine.cognition.runCycle = runCognitionCycle;
+window.CognitionEngine.cognition.runCycle = runHlsfReasoning;
 window.CognitionEngine.userAvatar = userAvatarStore;
 window.CognitionEngine.export = window.CognitionEngine.export || {};
 window.CognitionEngine.export.session = (options) => {
@@ -6846,6 +6845,8 @@ const thoughtLogState: ThoughtLogState = {
   showingOlder: false,
 };
 
+let hlsfReasonerActive = false;
+
 type ThoughtLoopStatus = 'Idle' | 'Thinking…' | 'Answer ready';
 
 const cognitionUiState: {
@@ -6930,11 +6931,6 @@ if (thinkingStyleSelect) {
   });
 }
 
-registerArticulationHandler(() => {
-  setThoughtLoopStatus('Answer ready');
-  renderCognitionTelemetry();
-});
-
 // ============================================
 // UTILITIES
 // ============================================
@@ -7015,14 +7011,10 @@ function syncCognitionConfigFromControls(): void {
 }
 
 function syncThoughtLoopStatusFromEngine(): void {
-  const snapshot = getEngineStatusSnapshot();
-  if (cognitionUiState.answerReady) {
-    setThoughtLoopStatus('Answer ready');
-    renderCognitionTelemetry();
-    return;
-  }
-  if (snapshot.hasUserQuestion && snapshot.hasAccumulator) {
+  if (hlsfReasonerActive) {
     setThoughtLoopStatus('Thinking…');
+  } else if (cognitionUiState.answerReady) {
+    setThoughtLoopStatus('Answer ready');
   } else {
     setThoughtLoopStatus('Idle');
   }
@@ -7457,6 +7449,59 @@ function togglePinnedToken(token: string): void {
   renderThoughtLog();
 }
 
+function buildThoughtRunFromEvent(ev: ThoughtEvent, prompt: string, trace?: string[]): CognitionRun {
+  const intersectionTokens = ev.cluster.nodeIds.slice();
+  const timestamp = new Date(ev.timestamp || Date.now()).toISOString();
+  const metrics = {
+    tokenCount: intersectionTokens.length,
+    edgeCount: Math.max(0, intersectionTokens.length - 1),
+    integrationScore: Number.isFinite(ev.thoughtScore) ? ev.thoughtScore : 0,
+  };
+
+  const summary = {
+    id: ev.id,
+    input: prompt,
+    intersectionTokens,
+    metrics,
+  };
+
+  return {
+    id: ev.id,
+    cycleIndex: 0,
+    timestamp,
+    mode: 'visible',
+    config: {
+      thinkingStyle: cognitionUiState.config.thinkingStyle,
+      iterations: 1,
+      rotationSpeed: cognitionUiState.config.rotationSpeed,
+      affinityThreshold: cognitionUiState.config.affinityThreshold,
+      maxPromptWords: CONFIG.INPUT_WORD_LIMIT,
+      maxIterations: 1,
+    },
+    input: { userPrompt: prompt },
+    historyContext: [],
+    graphs: {
+      visibleGraphSummary: {
+        nodeCount: intersectionTokens.length,
+        edgeCount: metrics.edgeCount,
+        coherenceScore: ev.cluster.semanticCoherence,
+      },
+      hiddenGraphSummary: {
+        nodeCount: intersectionTokens.length,
+        edgeCount: metrics.edgeCount,
+        coherenceScore: ev.cluster.semanticCoherence,
+      },
+    },
+    thoughts: {
+      perIterationTokens: [intersectionTokens],
+      perIterationText: trace ? [trace.join(' ')] : [],
+      emergentTrace: trace ? { stream: trace } : undefined,
+    },
+    llm: { model: 'stub-hlsf', temperature: 0.2, response: '' },
+    summary,
+  } as CognitionRun;
+}
+
 function ingestThoughtRuns(runs: CognitionRun[]): void {
   if (!Array.isArray(runs) || !runs.length) return;
   let inserted = false;
@@ -7533,33 +7578,41 @@ function triggerCognitionCycle(prompt: string): void {
     elements.llmResponse.textContent = 'Awaiting emergent thought synthesis…';
   }
   const config = resolveCognitionConfigFromUI();
-  runCognitionCycle(prompt, config)
-    .then((result: CognitionCycleResult) => {
-      ingestThoughtRuns(result.runs);
-      if (!result.finalRun) {
-        renderThoughtDetail(null);
+  hlsfReasonerActive = true;
+  const thoughts: ThoughtEvent[] = [];
+  runHlsfReasoning(prompt, {
+    onThought: ev => {
+      thoughts.push(ev);
+      ingestThoughtRuns([buildThoughtRunFromEvent(ev, prompt)]);
+    },
+  })
+    .then((result) => {
+      const finalRun = thoughts.length ? buildThoughtRunFromEvent(thoughts[thoughts.length - 1], prompt, result.trace) : null;
+      if (finalRun) {
+        ingestThoughtRuns([finalRun]);
       }
-      const statusMessage =
-        result.terminatedBy === 'exit'
-          ? 'Cognition cycle exited via /exit signal.'
-          : result.terminatedBy === 'error'
-            ? `Cognition cycle stopped due to error${result.error ? `: ${result.error}` : '.'}`
-            : 'Cognition cycle complete.';
-      setCognitionStatus(statusMessage);
+      if (elements.llmResponse) {
+        elements.llmResponse.textContent = result.response;
+      }
+      setCognitionStatus('HLSF reasoning complete.');
+      cognitionUiState.answerReady = true;
+      setThoughtLoopStatus('Answer ready');
       if (typeof window !== 'undefined') {
         const root = ((window as any).CognitionEngine = (window as any).CognitionEngine || {});
         root.cognition = Object.assign(root.cognition || {}, {
-          lastRun: result.finalRun,
-          lastCycle: result,
+          lastRun: finalRun,
+          lastCycle: { runs: thoughts.map(ev => buildThoughtRunFromEvent(ev, prompt)), finalRun },
           lastConfig: config,
         });
       }
-      syncThoughtLoopStatusFromEngine();
     })
     .catch((error) => {
       console.warn('Cognition pipeline failed:', error);
       setCognitionStatus(`Cognition pipeline failed: ${error?.message || error}`);
       setThoughtLoopStatus('Idle');
+    })
+    .finally(() => {
+      hlsfReasonerActive = false;
       renderCognitionTelemetry();
     });
 }
