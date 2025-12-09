@@ -34,10 +34,10 @@ export class ResponseAccumulatorEngine {
   constructor(config?: Partial<ArticulationConfig>) {
     this.config = {
       relevanceThreshold: 0.6,
-      minRelevantThoughts: 3,
+      minRelevantThoughts: 2,
       targetThoughts: 6,
       minTimeSinceLastResponseMs: 2000,
-      articulationScoreThreshold: 0.75,
+      articulationScoreThreshold: 0.65,
       strongThoughtScoreThreshold: 0.9,
       strongRelevanceThreshold: 0.75,
       minStrongArticulationIntervalMs: 500,

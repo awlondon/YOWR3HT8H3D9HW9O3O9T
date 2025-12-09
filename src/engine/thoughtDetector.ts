@@ -57,13 +57,13 @@ export class ThoughtDetector {
 
   constructor(config?: Partial<ThoughtDetectorConfig>) {
     this.config = {
-      structuralThreshold: 0.65,
-      spectralThreshold: 0.7,
-      semanticThreshold: 0.7,
-      thoughtScoreThreshold: 0.8,
-      minClusterSize: 3,
-      minPersistenceFrames: 5,
-      minNovelty: 0.6,
+      structuralThreshold: 0.45,
+      spectralThreshold: 0.45,
+      semanticThreshold: 0.5,
+      thoughtScoreThreshold: 0.6,
+      minClusterSize: 2,
+      minPersistenceFrames: 2,
+      minNovelty: 0.4,
       cooldownMs: 5000,
       recentThoughtCentroidLimit: 32,
       // spark defaults (disabled in deep mode)
