@@ -23,6 +23,33 @@ export interface Edge {
   lastUpdated: number; // timestamp (ms)
 }
 
+export interface HlsfNode {
+  id: string;
+  label: string;
+  tokenType?: string;
+  tokens?: string[];
+  embedding: number[];
+}
+
+export interface HlsfEdge {
+  id: string;
+  source: string;
+  target: string;
+  weight: number;
+  relation?: string;
+}
+
+export interface HlsfGraph {
+  nodes: HlsfNode[];
+  edges: HlsfEdge[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface ReasoningStep {
+  stage: string;
+  note: string;
+}
+
 export interface SpectralFeatures {
   energy: number; // total bandpower
   centroid: number; // frequency centroid
