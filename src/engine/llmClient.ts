@@ -7,10 +7,16 @@
  * For now, provide method signatures and comments for integration.
  */
 
-import { type ThoughtEvent, type AdjacencyDelta, type ArticulationEvent } from './cognitionTypes.js';
+import {
+  type ThoughtEvent,
+  type AdjacencyDelta,
+  type ArticulationEvent,
+} from './cognitionTypes.js';
 
 export interface LLMClient {
   expandAdjacency(ev: ThoughtEvent, depth?: number, maxDepth?: number): Promise<AdjacencyDelta>;
+  seedAdjacency(token: string): Promise<AdjacencyDelta>;
+  expandAdjacencyToken(token: string): Promise<AdjacencyDelta>;
   articulateResponse(
     articulation: ArticulationEvent,
     userQuestion: string,
@@ -31,6 +37,40 @@ export class StubLLMClient implements LLMClient {
     //
     // Return JSON conforming to AdjacencyDelta.
     return { nodes: [], edges: [], notes: `stubbed_depth_${depth}` };
+  }
+
+  async seedAdjacency(token: string): Promise<AdjacencyDelta> {
+    const norm = token.trim() || 'seed';
+    const baseId = norm.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'seed';
+    return {
+      nodes: [
+        { id: `${baseId}-meaning`, label: `${norm} meaning`, hintEmbedding: [] },
+        { id: `${baseId}-related`, label: `${norm} related`, hintEmbedding: [] },
+        { id: `${baseId}-context`, label: `${norm} context`, hintEmbedding: [] },
+      ],
+      edges: [
+        { src: baseId, dst: `${baseId}-meaning`, weight: 0.9, role: 'instance' },
+        { src: baseId, dst: `${baseId}-related`, weight: 0.7, role: 'analogy' },
+        { src: baseId, dst: `${baseId}-context`, weight: 0.6, role: 'cause' },
+      ],
+      notes: `Stub adjacency for ${norm}`,
+    };
+  }
+
+  async expandAdjacencyToken(token: string): Promise<AdjacencyDelta> {
+    const norm = token.trim() || 'token';
+    const baseId = norm.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'token';
+    return {
+      nodes: [
+        { id: `${baseId}-a`, label: `${norm} a`, hintEmbedding: [] },
+        { id: `${baseId}-b`, label: `${norm} b`, hintEmbedding: [] },
+      ],
+      edges: [
+        { src: baseId, dst: `${baseId}-a`, weight: 0.6, role: 'contrast' },
+        { src: baseId, dst: `${baseId}-b`, weight: 0.55, role: 'meta' },
+      ],
+      notes: `Stub expand adjacency for ${norm}`,
+    };
   }
 
   async articulateResponse(
