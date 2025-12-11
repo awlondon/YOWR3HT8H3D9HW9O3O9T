@@ -78,6 +78,11 @@ import {
 } from './engine/cognitionCycle';
 import { runHlsfReasoning } from './engine/hlsfReasoner';
 import type { ThoughtEvent } from './engine/cognitionTypes';
+import { buildSeedSphere } from './engine/seedSphereBuilder.js';
+import { StubLLMClient } from './engine/llmClient.js';
+import { ThoughtDetector } from './engine/thoughtDetector.js';
+import { ResponseAccumulatorEngine } from './engine/responseAccumulator.js';
+import type { SeedSphereConfig, ExpansionMode } from './engine/expansionModes.js';
 import { installLLMStub } from './server/installLLMStub';
 // ============================================
 // CONFIGURATION
@@ -6847,12 +6852,27 @@ const thoughtLogState: ThoughtLogState = {
 
 let hlsfReasonerActive = false;
 
+const defaultSeedSphereConfig: SeedSphereConfig = {
+  seedToken: '',
+  dimension: 3,
+  level: 2,
+  affinityThreshold: 0.35,
+  maxNodes: 320,
+  maxEdges: 960,
+  hiddenDepth: 1,
+  concurrency: 2,
+  salienceTopK: 4,
+  collapseRadius: 2,
+};
+
 type ThoughtLoopStatus = 'Idle' | 'Thinking…' | 'Answer ready';
 
 const cognitionUiState: {
   config: Pick<CognitionConfig, 'thinkingStyle' | 'iterations' | 'rotationSpeed' | 'affinityThreshold'>;
   thoughtLoopStatus: ThoughtLoopStatus;
   answerReady: boolean;
+  mode: ExpansionMode;
+  seedSphere: SeedSphereConfig;
 } = {
   config: {
     thinkingStyle: 'analytic',
@@ -6862,6 +6882,8 @@ const cognitionUiState: {
   },
   thoughtLoopStatus: 'Idle',
   answerReady: false,
+  mode: 'prompt',
+  seedSphere: { ...defaultSeedSphereConfig },
 };
 
 // ============================================
@@ -6899,6 +6921,12 @@ const elements = {
   cognitionSpectralOverlay: document.getElementById('cognition-spectral-overlay'),
   cognitionStyle: document.getElementById('cognition-style'),
   thinkingStyle: document.getElementById('cognition-thinking-style'),
+  cognitionModePrompt: document.getElementById('cognition-mode-prompt'),
+  cognitionModeSeed: document.getElementById('cognition-mode-seed'),
+  seedTokenInput: document.getElementById('seed-token-input'),
+  seedDimension: document.getElementById('seed-dimension'),
+  seedLevel: document.getElementById('seed-level'),
+  seedHiddenDepth: document.getElementById('seed-hidden-depth'),
   thoughtDetailTitle: document.getElementById('thought-detail-title'),
   thoughtDetailMetrics: document.getElementById('thought-detail-metrics'),
   thoughtDetailTokens: document.getElementById('thought-detail-tokens'),
@@ -6930,6 +6958,26 @@ if (thinkingStyleSelect) {
     renderCognitionTelemetry();
   });
 }
+
+const modePromptToggle = elements.cognitionModePrompt as HTMLInputElement | null;
+const modeSeedToggle = elements.cognitionModeSeed as HTMLInputElement | null;
+modePromptToggle?.addEventListener('change', () => {
+  if (modePromptToggle.checked) cognitionUiState.mode = 'prompt';
+});
+modeSeedToggle?.addEventListener('change', () => {
+  if (modeSeedToggle.checked) cognitionUiState.mode = 'seedToken';
+});
+
+const seedInputs: Array<[HTMLElement | null, keyof SeedSphereConfig]> = [
+  [elements.seedDimension, 'dimension'],
+  [elements.seedLevel, 'level'],
+  [elements.seedHiddenDepth, 'hiddenDepth'],
+];
+seedInputs.forEach(([el]) => {
+  if (el instanceof HTMLInputElement) {
+    el.addEventListener('change', () => syncSeedSphereConfigFromControls());
+  }
+});
 
 // ============================================
 // UTILITIES
@@ -7007,6 +7055,20 @@ function syncCognitionConfigFromControls(): void {
     iterations,
     rotationSpeed,
     affinityThreshold,
+  };
+}
+
+function syncSeedSphereConfigFromControls(): void {
+  const readNumber = (el: HTMLElement | null, fallback: number): number => {
+    if (!(el instanceof HTMLInputElement)) return fallback;
+    const value = Number(el.value);
+    return Number.isFinite(value) ? value : fallback;
+  };
+  cognitionUiState.seedSphere = {
+    ...cognitionUiState.seedSphere,
+    dimension: Math.max(1, Math.round(readNumber(elements.seedDimension, cognitionUiState.seedSphere.dimension))),
+    level: Math.max(1, Math.round(readNumber(elements.seedLevel, cognitionUiState.seedSphere.level))),
+    hiddenDepth: Math.max(0, Math.round(readNumber(elements.seedHiddenDepth, cognitionUiState.seedSphere.hiddenDepth))),
   };
 }
 
@@ -7568,7 +7630,110 @@ function resolveCognitionConfigFromUI(): CognitionConfig {
   };
 }
 
+function resolveSeedSphereConfigFromUI(seedToken: string): SeedSphereConfig {
+  syncSeedSphereConfigFromControls();
+  return {
+    ...cognitionUiState.seedSphere,
+    seedToken,
+    affinityThreshold: cognitionUiState.config.affinityThreshold,
+  };
+}
+
+function buildSeedEmbed(text: string): number[] {
+  const base = text.toLowerCase().split('');
+  const dims = 12;
+  const vec: number[] = [];
+  for (let i = 0; i < dims; i += 1) {
+    const charCode = base[i % Math.max(1, base.length)]?.charCodeAt(0) ?? 97 + i;
+    vec.push(((charCode % 31) + 1) / 32);
+  }
+  const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0)) || 1;
+  return vec.map((v) => v / norm);
+}
+
+async function triggerSeedSphereRun(seedToken: string): Promise<void> {
+  const cfg = resolveSeedSphereConfigFromUI(seedToken);
+  clearCognitionOutputs();
+  cognitionUiState.answerReady = false;
+  setThoughtLoopStatus('Thinking…');
+  renderCognitionTelemetry();
+  setCognitionStatus('Building single-token sphere…');
+
+  const llm = new StubLLMClient();
+  const embedder = { embed: async (text: string) => buildSeedEmbed(text) };
+  const thoughtDetector = new ThoughtDetector({
+    structuralThreshold: 0.35,
+    spectralThreshold: 0.35,
+    semanticThreshold: 0.35,
+    thoughtScoreThreshold: 0.45,
+    minClusterSize: 2,
+    minPersistenceFrames: 1,
+    minNovelty: 0.25,
+    enableSpark: true,
+  });
+  const accumulatorEngine = new ResponseAccumulatorEngine({
+    articulationScoreThreshold: 0.55,
+    minRelevantThoughts: 1,
+    minTimeSinceLastResponseMs: 0,
+  });
+  const queryEmbedding = buildSeedEmbed(seedToken);
+  const accumulator = accumulatorEngine.initAccumulator(queryEmbedding, Date.now());
+
+  const deps = {
+    llm: {
+      seedAdjacency: (token: string) => llm.seedAdjacency(token),
+      expandAdjacency: (token: string) => llm.expandAdjacencyToken(token),
+      articulateResponse: (articulation, userQuestion, context) =>
+        llm.articulateResponse(articulation, userQuestion, context),
+      modelName: 'stub-hlsf',
+    },
+    embedder,
+    shouldAbort: () => Boolean(currentAbortController?.signal?.aborted),
+    thoughtDetector,
+    accumulatorEngine,
+    accumulator,
+    queryEmbedding,
+    affinityThreshold: cfg.affinityThreshold,
+    onThought: (ev: ThoughtEvent) => {
+      ingestThoughtRuns([buildThoughtRunFromEvent(ev, seedToken)]);
+    },
+  };
+
+  try {
+    hlsfReasonerActive = true;
+    const result = await buildSeedSphere(cfg, deps);
+    if (result.response && elements.llmResponse) {
+      elements.llmResponse.textContent = result.response;
+    }
+    cognitionUiState.answerReady = true;
+    setThoughtLoopStatus('Answer ready');
+    setCognitionStatus('Seed sphere complete.');
+    if (result.thoughts.length && !result.response && deps.llm.articulateResponse) {
+      const articulation =
+        result.articulation ??
+        accumulatorEngine.maybeArticulate(
+          accumulator,
+          new Map(Array.from(result.graph.nodes.entries()).map(([id, node]) => [id, node.embedding])),
+          Date.now(),
+        );
+      if (articulation && elements.llmResponse) {
+        elements.llmResponse.textContent = await deps.llm.articulateResponse(articulation, seedToken, {
+          tokens: result.thoughts[result.thoughts.length - 1]?.cluster.nodeIds ?? [],
+          summary: seedToken,
+        });
+      }
+    }
+  } finally {
+    hlsfReasonerActive = false;
+    renderCognitionTelemetry();
+  }
+}
+
 function triggerCognitionCycle(prompt: string): void {
+  if (cognitionUiState.mode === 'seedToken') {
+    void triggerSeedSphereRun(prompt);
+    return;
+  }
   clearCognitionOutputs();
   cognitionUiState.answerReady = false;
   setThoughtLoopStatus('Thinking…');
@@ -21759,6 +21924,11 @@ async function processPrompt(prompt) {
       );
     }
 
+    if (cognitionUiState.mode === 'seedToken') {
+      await triggerSeedSphereRun(normalizedPrompt);
+      promptSucceeded = true;
+      return;
+    }
     triggerCognitionCycle(normalizedPrompt);
 
     const tokens = tokenize(normalizedPrompt);
