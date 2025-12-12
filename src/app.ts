@@ -6860,7 +6860,7 @@ const defaultSeedSphereConfig: SeedSphereConfig = {
   affinityThreshold: 0.35,
   maxNodes: 320,
   maxEdges: 960,
-  hiddenDepth: 1,
+  hiddenDepth: 2,
   concurrency: 2,
   salienceTopK: 4,
   collapseRadius: 2,
@@ -6928,9 +6928,9 @@ const elements = {
   seedTokenInput: document.getElementById('seed-token'),
   seedDimension: document.getElementById('seed-dimension'),
   seedLevel: document.getElementById('seed-level'),
-  seedHiddenDepth: document.getElementById('seed-hiddenDepth'),
   seedSalienceTopK: document.getElementById('seed-salienceTopK'),
   seedCollapseRadius: document.getElementById('seed-collapseRadius'),
+  seedRunButton: document.getElementById('seed-run-btn'),
   thoughtDetailTitle: document.getElementById('thought-detail-title'),
   thoughtDetailMetrics: document.getElementById('thought-detail-metrics'),
   thoughtDetailTokens: document.getElementById('thought-detail-tokens'),
@@ -6983,7 +6983,6 @@ const seedInputs: Array<[HTMLElement | null, keyof SeedSphereConfig]> = [
   [elements.seedTokenInput, 'seedToken'],
   [elements.seedDimension, 'dimension'],
   [elements.seedLevel, 'level'],
-  [elements.seedHiddenDepth, 'hiddenDepth'],
   [elements.seedSalienceTopK, 'salienceTopK'],
   [elements.seedCollapseRadius, 'collapseRadius'],
 ];
@@ -6992,6 +6991,20 @@ seedInputs.forEach(([el]) => {
     el.addEventListener('change', () => syncSeedSphereConfigFromControls());
   }
 });
+
+const seedRunButton = elements.seedRunButton as HTMLButtonElement | null;
+if (seedRunButton) {
+  seedRunButton.addEventListener('click', async () => {
+    syncSeedSphereConfigFromControls();
+    const seedTokenEl = elements.seedTokenInput as HTMLInputElement | null;
+    cognitionUiState.seedSphere.seedToken = (seedTokenEl?.value ?? '').trim();
+    if (!cognitionUiState.seedSphere.seedToken) {
+      alert('Please enter a seed token.');
+      return;
+    }
+    await runSeedSphere();
+  });
+}
 
 // ============================================
 // UTILITIES
@@ -7082,12 +7095,14 @@ function syncSeedSphereConfigFromControls(): void {
     if (!(el instanceof HTMLInputElement)) return fallback;
     return el.value || fallback;
   };
+  const level = Math.max(1, Math.round(readNumber(elements.seedLevel, cognitionUiState.seedSphere.level)));
+  const dimension = Math.max(1, Math.round(readNumber(elements.seedDimension, cognitionUiState.seedSphere.dimension)));
   cognitionUiState.seedSphere = {
     ...cognitionUiState.seedSphere,
     seedToken: readText(elements.seedTokenInput, cognitionUiState.seedSphere.seedToken).trim(),
-    dimension: Math.max(1, Math.round(readNumber(elements.seedDimension, cognitionUiState.seedSphere.dimension))),
-    level: Math.max(1, Math.round(readNumber(elements.seedLevel, cognitionUiState.seedSphere.level))),
-    hiddenDepth: Math.max(0, Math.round(readNumber(elements.seedHiddenDepth, cognitionUiState.seedSphere.hiddenDepth))),
+    dimension,
+    level,
+    hiddenDepth: level,
     salienceTopK: Math.max(1, Math.round(readNumber(elements.seedSalienceTopK, cognitionUiState.seedSphere.salienceTopK))),
     collapseRadius: Math.max(1, Math.round(readNumber(elements.seedCollapseRadius, cognitionUiState.seedSphere.collapseRadius))),
   };
@@ -7657,6 +7672,7 @@ function resolveSeedSphereConfigFromUI(seedToken?: string): SeedSphereConfig {
   return {
     ...cognitionUiState.seedSphere,
     seedToken: resolvedToken,
+    hiddenDepth: cognitionUiState.seedSphere.level,
     affinityThreshold: cognitionUiState.config.affinityThreshold,
   };
 }
