@@ -288,15 +288,11 @@
             </label>
             <label>
               Dimension:
-              <input id="seed-dimension" type="number" value="3" min="1" max="6">
+              <input id="seed-dimension" type="number" value="3" min="1">
             </label>
             <label>
-              Level:
+              Depth:
               <input id="seed-level" type="number" value="2" min="1" max="10">
-            </label>
-            <label>
-              Hidden Depth:
-              <input id="seed-hiddenDepth" type="number" value="1" min="0" max="5">
             </label>
             <label>
               Salience Top-K:
@@ -306,6 +302,9 @@
               Collapse Radius:
               <input id="seed-collapseRadius" type="number" value="2" min="1" max="10">
             </label>
+            <button id="seed-run-btn" class="btn btn-primary" type="button">
+              Build sphere
+            </button>
           </div>
           <div class="cognition-panel__status-grid" aria-live="polite">
             <div class="cognition-panel__status-row">
