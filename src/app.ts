@@ -58,6 +58,7 @@ import { MEMBERSHIP_LEVELS, type MembershipLevel } from './state/membership';
 import { sessionState as state } from './state/sessionState';
 import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
 import { ensureKBReady } from './state/kbStore';
+import { normalizeToVisualizerGraph } from './engine/graphNormalize';
 import {
   clearEncryptedApiKey,
   hasEncryptedApiKey,
@@ -2370,7 +2371,8 @@ function computeLayout(graph, index, options = {}) {
 
 function prepareBuffers(graph, layout, options = {}) {
   const glyphOnly = options?.glyphOnly === true;
-  window.HLSF.currentGraph = graph;
+  const normalizedGraph = normalizeToVisualizerGraph(graph);
+  window.HLSF.currentGraph = normalizedGraph as any;
   window.HLSF.currentGlyphOnly = glyphOnly;
   window.HLSF.currentLayoutSnapshot = layout;
   requestAutoFit();
@@ -3470,8 +3472,8 @@ function drawComposite(graph, opts = {}) {
   }
 
   const activeGraph = graph || window.HLSF.currentGraph || window.HLSF.lastRenderedGraph;
-  if (!activeGraph) return;
-  graph = activeGraph;
+  const normalizedGraph = activeGraph ? normalizeToVisualizerGraph(activeGraph) : null;
+  graph = normalizedGraph || activeGraph;
 
   const cfg = window.HLSF.config;
   const canvas =
@@ -3501,6 +3503,28 @@ function drawComposite(graph, opts = {}) {
   const nodeScale = clampNodeSize(cfg.nodeSize);
   const showGlow = cfg.showNodeGlow === true;
 
+  window.HLSF.view = window.HLSF.view || { x: 0, y: 0, scale: 1 };
+  const viewState = window.HLSF.view;
+  viewState.scale = Math.min(6, Math.max(0.05, Number.isFinite(viewState.scale) ? viewState.scale : 1));
+  syncViewToConfig();
+
+  if (normalizedGraph) {
+    window.HLSF.currentGraph = normalizedGraph as any;
+  }
+
+  const edgeList = Array.isArray(graph?.links)
+    ? graph.links
+    : Array.isArray(graph?.edges)
+      ? graph.edges
+      : [];
+  const nodeCount =
+    graph?.nodes instanceof Map
+      ? graph.nodes.size
+      : Array.isArray(graph?.nodes)
+        ? graph.nodes.length
+        : 0;
+  const edgeCount = edgeList.length;
+
   ensureViewportCentered(width, height);
   syncViewToConfig();
 
@@ -3511,6 +3535,45 @@ function drawComposite(graph, opts = {}) {
   ctx.fillStyle = theme.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(10, 10, 240, 64);
+  ctx.fillStyle = '#8CFFB3';
+  ctx.font = "12px ui-monospace, Menlo, Consolas, monospace";
+  ctx.fillText(`nodes: ${nodeCount ?? -1}`, 18, 30);
+  ctx.fillText(`edges: ${edgeCount ?? -1}`, 18, 48);
+  ctx.restore();
+
+  const drawAxesOnly = (message?: string) => {
+    ctx.save();
+    ctx.strokeStyle = theme.hint;
+    ctx.lineWidth = Math.max(1.2, edgeWidth * 1.5) * dpr;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(width, height);
+    ctx.moveTo(width, 0);
+    ctx.lineTo(0, height);
+    ctx.stroke();
+    if (message) {
+      ctx.fillStyle = theme.fg;
+      ctx.font = "14px 'Fira Code', monospace";
+      ctx.fillText(message, 18, height - 24);
+    }
+    ctx.restore();
+  };
+
+  if (!graph) {
+    drawAxesOnly('No graph to render');
+    return;
+  }
+  if (!(graph.nodes instanceof Map) || graph.nodes.size === 0) {
+    logStatus(
+      `[viz] empty graph: nodes=${graph?.nodes?.size ?? graph?.nodes?.length ?? 'n/a'} edges=${edgeCount}`,
+    );
+    drawAxesOnly('No nodes to render');
+    return;
+  }
 
   const layoutScale = 1;
   const layoutMode = normalizeLayout(window.HLSF.config.layout);
@@ -4159,9 +4222,10 @@ function animateComposite(graph, glyphOnly = false) {
     cancelAnimationFrame(_anim);
     _anim = null;
   }
-  window.HLSF.currentGraph = graph;
+  const preparedGraph = normalizeToVisualizerGraph(graph);
+  window.HLSF.currentGraph = preparedGraph as any;
   window.HLSF.currentGlyphOnly = glyphOnly === true;
-  const drawFrame = () => drawComposite(graph, { glyphOnly });
+  const drawFrame = () => drawComposite(preparedGraph, { glyphOnly });
   drawFrame();
   startHlsfAnimation((dt) => {
     stepRotation(dt);
@@ -4182,9 +4246,10 @@ function animateHLSF(graph, glyphOnly = false) {
     cancelAnimationFrame(_anim);
     _anim = null;
   }
-  window.HLSF.currentGraph = graph;
+  const preparedGraph = normalizeToVisualizerGraph(graph);
+  window.HLSF.currentGraph = preparedGraph as any;
   window.HLSF.currentGlyphOnly = glyphOnly === true;
-  const drawFrame = () => drawHLSFMatrix(graph, { glyphOnly });
+  const drawFrame = () => drawHLSFMatrix(preparedGraph, { glyphOnly });
   drawFrame();
   startHlsfAnimation((dt) => {
     stepRotation(dt);
@@ -7803,41 +7868,23 @@ function buildSeedEmbed(text: string): number[] {
 }
 
 function sphereGraphToHlsfGraph(graph: any): HLSFGraph {
-  const nodes = new Map<string, any>();
-  graph?.nodes?.forEach((node: any, id: string) => {
-    const degree = 0;
-    nodes.set(id, {
-      id,
-      label: node?.label || id,
-      layer: Number(node?.meta?.layer ?? 0),
-      cluster: Number(node?.meta?.cluster ?? 0),
-      weight: Number(node?.meta?.weight ?? node?.appearanceFrequency ?? 1),
-      degree,
-      synthetic: node?.meta?.synthetic === true,
-    });
-  });
+  const normalized = normalizeToVisualizerGraph(graph);
 
-  const edges = (graph?.edges || [])
-    .map((edge: any) => {
-      const from = edge?.from ?? edge?.src;
-      const to = edge?.to ?? edge?.dst;
-      if (!from || !to) return null;
-      const weight = Number.isFinite(edge?.weight) ? edge.weight : edge?.w ?? 0.5;
-      return { from, to, src: from, dst: to, w: weight, rtype: edge?.role || edge?.rtype || 'relation' };
-    })
-    .filter(Boolean) as Array<{ from: string; to: string; src: string; dst: string; w: number; rtype: string }>;
+  const edges = Array.isArray(normalized.edges) ? normalized.edges : [];
 
   edges.forEach((edge) => {
-    const fromNode = nodes.get(edge.from);
-    const toNode = nodes.get(edge.to);
+    const from = edge.from || edge.src || edge.source;
+    const to = edge.to || edge.dst || edge.target;
+    if (!from || !to) return;
+    const fromNode = normalized.nodes.get(from);
+    const toNode = normalized.nodes.get(to);
     if (fromNode) fromNode.degree = (fromNode.degree || 0) + 1;
     if (toNode) toNode.degree = (toNode.degree || 0) + 1;
   });
 
   return {
-    nodes,
-    edges,
-    metadata: { source: 'seedSphere', ...(graph?.meta || {}) },
+    ...normalized,
+    metadata: { source: 'seedSphere', ...(normalized.metadata || {}), ...(graph?.meta || {}) },
   } as unknown as HLSFGraph;
 }
 
@@ -13238,10 +13285,12 @@ function rebuildLiveGraph(options = {}) {
     if (state.liveGraphMode) {
       window.HLSF.config.layout = 'layered';
     }
-    window.HLSF.currentGraph = graph;
+    const preparedGraph = normalizeToVisualizerGraph(graph);
+    window.HLSF.currentGraph = preparedGraph as any;
+    state.liveGraph = preparedGraph as any;
     requestAutoFit();
     showVisualizer();
-    animateHLSF(graph, false);
+    animateHLSF(preparedGraph, false);
   } else if (!getDb()) {
     stopHLSFAnimation();
     hideVisualizer();
