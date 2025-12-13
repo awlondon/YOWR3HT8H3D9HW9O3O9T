@@ -79,7 +79,8 @@ import {
 } from './engine/cognitionCycle';
 import { runHlsfReasoning } from './engine/hlsfReasoner';
 import type { ThoughtEvent } from './engine/cognitionTypes';
-import { buildSeedSphere } from './engine/seedSphereBuilder.js';
+import type { AdjacencyResult } from './engine/adjacencyProvider.js';
+import { applySphereAdjacencyDelta, buildSeedSphere } from './engine/seedSphereBuilder.js';
 import { StubLLMClient } from './engine/llmClient.js';
 import { ResponseAccumulatorEngine } from './engine/responseAccumulator.js';
 import { collapseGraph, computeTokenSalience, topSalienceTokens } from './engine/salience.js';
@@ -7898,23 +7899,77 @@ function sphereGraphToHlsfGraph(graph: any): HLSFGraph {
   } as unknown as HLSFGraph;
 }
 
-function pushGraphToVisualizer(graph: any, opts?: { glyphOnly?: boolean }): void {
+function commitGraphForVisualizer(graph: HLSFGraph, opts?: { glyphOnly?: boolean }): void {
   if (typeof window === 'undefined' || !graph) return;
   (window as any).HLSF = (window as any).HLSF || {};
-  const prepared = sphereGraphToHlsfGraph(graph);
-  (window as any).HLSF.currentGraph = prepared as any;
+  (window as any).HLSF.currentGraph = graph as any;
   (window as any).HLSF.currentGlyphOnly = opts?.glyphOnly === true;
   try {
     showVisualizer();
-    animateHLSF(prepared as any, opts?.glyphOnly === true);
+    drawComposite(graph as any, { glyphOnly: opts?.glyphOnly === true });
+    animateHLSF(graph as any, opts?.glyphOnly === true);
   } catch (error) {
     console.warn('Seed sphere visualization failed to render', error);
   }
 }
 
+function pushGraphToVisualizer(graph: any, opts?: { glyphOnly?: boolean }): void {
+  const prepared = sphereGraphToHlsfGraph(graph);
+  commitGraphForVisualizer(prepared, opts);
+}
+
+function normalizeSeedTokenInput(seedToken: string): string {
+  const raw = typeof seedToken === 'string' ? seedToken : '';
+  const tokens = tokenizeWithSymbols(raw);
+  const firstWord = tokens.find((t) => t?.kind === 'word' && typeof t.t === 'string');
+  if (firstWord?.t) return firstWord.t.trim().toLowerCase();
+  return raw.trim().toLowerCase();
+}
+
+async function promptAdjacencyForSeed(seedToken: string): Promise<AdjacencyResult> {
+  const normalizedEntries = normalizeAdjacencyInputs([seedToken]);
+  const target = normalizedEntries[0];
+  const token = target?.token || seedToken?.toLowerCase?.() || '';
+  if (!token) throw new Error('Seed token is required for adjacency expansion');
+
+  const results = await batchFetchAdjacencies(normalizedEntries, `Seed adjacency for ${token}`, 'Seed adjacency expansion');
+  const entry = results.get(token) || results.get(target?.token || '') || Array.from(results.values())[0];
+  if (!entry || !entry.relationships) {
+    throw new Error(`No adjacency available for token ${token}`);
+  }
+
+  const neighbors: { token: string; rel: string; weight: number }[] = [];
+  Object.entries(entry.relationships || {}).forEach(([rel, edges]) => {
+    if (!Array.isArray(edges)) return;
+    edges.forEach((edge: any) => {
+      const neighbor = typeof edge?.token === 'string' ? edge.token.trim() : '';
+      if (!neighbor) return;
+      const weight = Number.isFinite(edge?.weight)
+        ? Number(edge.weight)
+        : Number.isFinite(edge?.w)
+          ? Number(edge.w)
+          : 0.1;
+      neighbors.push({ token: neighbor, rel, weight });
+    });
+  });
+
+  if (!neighbors.length) {
+    throw new Error(`No adjacency neighbors resolved for ${token}`);
+  }
+
+  const definition = typeof entry.definition === 'string' ? entry.definition : undefined;
+  const source: 'kb' | 'llm' | 'synthetic' = entry.offline ? 'kb' : entry.cache_hit === false ? 'llm' : 'kb';
+  return { token, neighbors, definition, source };
+}
+
 async function runSeedSphere(seedToken?: string): Promise<void> {
   const cfgFromUi = resolveSeedSphereConfigFromUI(seedToken);
-  const cfg = { ...cfgFromUi, allowSyntheticFallback: cfgFromUi.allowSyntheticFallback ?? shouldInstallLlmStub };
+  const normalizedSeed = normalizeSeedTokenInput(cfgFromUi.seedToken);
+  const cfg = {
+    ...cfgFromUi,
+    seedToken: normalizedSeed,
+    allowSyntheticFallback: cfgFromUi.allowSyntheticFallback ?? shouldInstallLlmStub,
+  };
   if (!cfg.seedToken) {
     logError('Seed token is required for seed sphere mode.');
     return;
@@ -7946,22 +8001,17 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
 
   const onGraphUpdate = (graphSnapshot: any) => {
     latestGraph = graphSnapshot;
-    state.liveGraph = graphSnapshot as any;
-    pushGraphToVisualizer(graphSnapshot);
+    const prepared = sphereGraphToHlsfGraph(graphSnapshot);
+    state.liveGraph = prepared as any;
+    commitGraphForVisualizer(prepared);
   };
 
   try {
     hlsfReasonerActive = true;
     const result = await buildSeedSphere(cfg, {
-      llm: {
-        seedAdjacency: (token: string) => llm.seedAdjacency(token),
-        expandAdjacency: (token: string) => llm.expandAdjacencyToken(token),
-        expandAdjacencyTyped: (token: string) => llm.expandAdjacencyTyped(token),
-        articulateResponse: (articulation, userQuestion, salientContext) =>
-          llm.articulateResponse(articulation, userQuestion, salientContext),
-        modelName: llm.modelName,
-      },
+      getAdjacency: promptAdjacencyForSeed,
       embedder,
+      applyAdjacencyDelta: (graph, delta, layer) => applySphereAdjacencyDelta(graph, delta, layer),
       onGraphUpdate,
       accumulatorEngine,
       accumulator,
@@ -7972,6 +8022,12 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
       onStatus: (status: string) => {
         setCognitionStatus(status);
       },
+      log: (msg: string) => {
+        logStatus(msg);
+      },
+      articulateResponse: (articulation, userQuestion, salientContext) =>
+        llm.articulateResponse(articulation, userQuestion, salientContext),
+      modelName: llm.modelName,
       shouldAbort: () => cognitionUiState.mode !== 'seedToken' || Boolean(currentAbortController?.signal?.aborted),
     });
 
@@ -8072,6 +8128,9 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
     cognitionUiState.answerReady = true;
     setThoughtLoopStatus('Answer ready');
     setCognitionStatus('Seed sphere complete — visualizer updated.');
+  } catch (error: any) {
+    logError(`Seed sphere failed: ${error?.message || error}`);
+    setCognitionStatus('Seed sphere failed.');
   } finally {
     hlsfReasonerActive = false;
     renderCognitionTelemetry();
