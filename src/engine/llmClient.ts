@@ -25,6 +25,8 @@ export interface LLMClient {
 }
 
 export class StubLLMClient implements LLMClient {
+  modelName = 'stub-llm';
+
   async expandAdjacency(_ev: ThoughtEvent, depth = 0, maxDepth = 1): Promise<AdjacencyDelta> {
     void _ev;
     // TODO: Wire into actual LLM call with prompt:
@@ -44,9 +46,9 @@ export class StubLLMClient implements LLMClient {
     const baseId = norm.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'seed';
     return {
       nodes: [
-        { id: `${baseId}-meaning`, label: `${norm} meaning`, hintEmbedding: [] },
-        { id: `${baseId}-related`, label: `${norm} related`, hintEmbedding: [] },
-        { id: `${baseId}-context`, label: `${norm} context`, hintEmbedding: [] },
+        { id: `${baseId}-meaning`, label: `${norm} meaning`, hintEmbedding: [], meta: { synthetic: true } },
+        { id: `${baseId}-related`, label: `${norm} related`, hintEmbedding: [], meta: { synthetic: true } },
+        { id: `${baseId}-context`, label: `${norm} context`, hintEmbedding: [], meta: { synthetic: true } },
       ],
       edges: [
         { src: baseId, dst: `${baseId}-meaning`, weight: 0.9, role: 'instance' },
@@ -62,8 +64,8 @@ export class StubLLMClient implements LLMClient {
     const baseId = norm.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'token';
     return {
       nodes: [
-        { id: `${baseId}-a`, label: `${norm} a`, hintEmbedding: [] },
-        { id: `${baseId}-b`, label: `${norm} b`, hintEmbedding: [] },
+        { id: `${baseId}-a`, label: `${norm} a`, hintEmbedding: [], meta: { synthetic: true } },
+        { id: `${baseId}-b`, label: `${norm} b`, hintEmbedding: [], meta: { synthetic: true } },
       ],
       edges: [
         { src: baseId, dst: `${baseId}-a`, weight: 0.6, role: 'contrast' },

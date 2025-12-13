@@ -70,6 +70,40 @@ interface FrontierEntry {
 
 const adjacencyCache = new Map<string, AdjacencyDelta>();
 
+function buildSyntheticAdjacency(token: string, kind: 'seed' | 'expand'): AdjacencyDelta {
+  const norm = token.trim() || 'seed';
+  const baseId = slugify(norm || 'seed');
+  const variants = [
+    { id: `${baseId}-core`, label: `${norm} core`, weight: 0.82 },
+    { id: `${baseId}-context`, label: `${norm} context`, weight: 0.64 },
+    { id: `${baseId}-analogy`, label: `${norm} analogy`, weight: 0.58 },
+    { id: `${baseId}-role`, label: `${norm} role`, weight: 0.52 },
+  ];
+  const edges = variants.map((variant, index) => ({
+    src: baseId,
+    dst: variant.id,
+    weight: variant.weight ?? 0.5 - index * 0.05,
+    role: index === 0 ? 'core' : index === 1 ? 'context' : 'analogy',
+  }));
+  return {
+    nodes: variants.map((variant) => ({
+      id: variant.id,
+      label: variant.label,
+      hintEmbedding: [],
+      meta: { synthetic: true },
+    })),
+    edges,
+    notes: `${kind} synthetic adjacency for ${norm}`,
+  };
+}
+
+function prioritizeTokensBySynthetic(tokens: string[], graph: SphereGraph): string[] {
+  const realTokens = tokens.filter((id) => graph.nodes.get(id)?.meta?.synthetic !== true);
+  const syntheticTokens = tokens.filter((id) => graph.nodes.get(id)?.meta?.synthetic === true);
+  if (realTokens.length) return [...realTokens, ...syntheticTokens];
+  return tokens;
+}
+
 const slugify = (value: string): string =>
   value
     .toLowerCase()
@@ -92,7 +126,7 @@ function defaultApplyDelta(
         id: node.id,
         label: node.label ?? node.id,
         embedding: node.hintEmbedding ?? [],
-        meta: { layer },
+        meta: { ...(node.meta || {}), layer },
       });
       added.add(node.id);
     });
@@ -237,6 +271,7 @@ async function getAdjacency(
   token: string,
   deps: BuildDeps,
   kind: 'seed' | 'expand',
+  cfg: SeedSphereConfig,
 ): Promise<AdjacencyDelta> {
   const lower = token.toLowerCase();
   const cacheKey = `${deps.llm.modelName || 'default'}:${lower}:${kind}`;
@@ -253,9 +288,16 @@ async function getAdjacency(
       }
     }
   }
-  const delta = kind === 'seed'
-    ? await deps.llm.seedAdjacency(token)
-    : await deps.llm.expandAdjacency(token);
+  let delta: AdjacencyDelta;
+  try {
+    delta = kind === 'seed'
+      ? await deps.llm.seedAdjacency(token)
+      : await deps.llm.expandAdjacency(token);
+  } catch (error) {
+    if (cfg.allowSyntheticFallback === false) throw error;
+    console.warn('Adjacency expansion failed, using synthetic fallback', error);
+    delta = buildSyntheticAdjacency(token, kind);
+  }
   adjacencyCache.set(cacheKey, delta);
   if (typeof localStorage !== 'undefined') {
     try {
@@ -285,7 +327,7 @@ async function expandFrontier(
       if (deps.shouldAbort?.()) return;
       const next = queue.shift();
       if (!next) return;
-      const delta = await getAdjacency(next.id, deps, 'expand');
+      const delta = await getAdjacency(next.id, deps, 'expand', cfg);
       const apply = deps.applyDelta ?? defaultApplyDelta;
       const newNodes = apply(graph, delta, layer);
       newNodes.forEach((id) => {
@@ -310,7 +352,11 @@ async function expandFrontier(
   return added;
 }
 
-export async function buildSeedSphere(cfg: SeedSphereConfig, deps: BuildDeps): Promise<BuildResult> {
+export async function buildSeedSphere(cfgInput: SeedSphereConfig, deps: BuildDeps): Promise<BuildResult> {
+  const cfg: SeedSphereConfig = {
+    allowSyntheticFallback: cfgInput.allowSyntheticFallback !== false,
+    ...cfgInput,
+  };
   const graph: SphereGraph = { nodes: new Map(), edges: [] };
   const apply = deps.applyDelta ?? defaultApplyDelta;
   const tokenFreq = new Map<string, number>();
@@ -325,7 +371,7 @@ export async function buildSeedSphere(cfg: SeedSphereConfig, deps: BuildDeps): P
   });
   tokenFreq.set(cfg.seedToken.toLowerCase(), 1);
 
-  const seedDelta = await getAdjacency(cfg.seedToken, deps, 'seed');
+  const seedDelta = await getAdjacency(cfg.seedToken, deps, 'seed', cfg);
   apply(graph, seedDelta, 'visible');
   await embedNewNodes(graph, deps.embedder);
   deps.onGraphUpdate?.(graph);
@@ -349,14 +395,14 @@ export async function buildSeedSphere(cfg: SeedSphereConfig, deps: BuildDeps): P
   for (let depth = 0; depth < cfg.hiddenDepth; depth += 1) {
     if (deps.shouldAbort?.()) break;
     const salience = computeTokenSalience(graph as any);
-    const centers = topSalienceTokens(salience, cfg.salienceTopK);
+    const centers = prioritizeTokensBySynthetic(topSalienceTokens(salience, cfg.salienceTopK), graph);
     const hiddenFrontier = centers.map((id) => ({ id, weight: salience.get(id) || 0 }));
     await expandFrontier(hiddenFrontier, cfg, deps, graph, 'hidden', thoughts, tokenFreq);
     deps.onGraphUpdate?.(graph);
   }
 
   const salienceMap = computeTokenSalience(graph as any);
-  const centers = topSalienceTokens(salienceMap, cfg.salienceTopK);
+  const centers = prioritizeTokensBySynthetic(topSalienceTokens(salienceMap, cfg.salienceTopK), graph);
   const collapsedGraph = collapseGraph(graph as any, centers, cfg.collapseRadius) as SphereGraph;
   deps.onGraphUpdate?.(collapsedGraph);
   const embeddingMap = new Map(Array.from(graph.nodes.entries()).map(([id, node]) => [id, node.embedding]));

@@ -11,4 +11,5 @@ export interface SeedSphereConfig {
   concurrency: number;
   salienceTopK: number;
   collapseRadius: number;
+  allowSyntheticFallback?: boolean;
 }
