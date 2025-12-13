@@ -4530,42 +4530,48 @@ function ensureHLSFCanvas() {
         <pre id="hlsf-log-stream"></pre>
         <button id="hlsf-log-download">Download log</button>
       </details>
-      <div id="hlsf-loading-panel" class="hlsf-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
-        <div class="processing-indicator">
-          <div class="spinner"></div>
-          <span id="hlsf-loading-label">Preparing HLSF visualization…</span>
+      <div class="hlsf-header-row">
+        <div class="hlsf-overlay" id="hlsf-overlay">
+          <button
+            id="hlsf-overlay-toggle"
+            class="hlsf-overlay-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="hlsf-overlay-panel"
+            title="Show affinity cognition details"
+          >
+            State
+          </button>
         </div>
-        <div class="hlsf-loading-bar">
-          <div id="hlsf-loading-progress" class="hlsf-loading-progress"></div>
-        </div>
-        <div id="hlsf-loading-detail" class="hlsf-loading-detail">This can take a few seconds for large datasets.</div>
       </div>
-      <canvas id="hlsf-canvas"></canvas>
-      <div class="hlsf-overlay" id="hlsf-overlay">
-        <button
-          id="hlsf-overlay-toggle"
-          class="hlsf-overlay-toggle"
-          type="button"
-          aria-expanded="false"
-          aria-controls="hlsf-overlay-panel"
-          title="Show affinity cognition details"
-        >
-          State
-        </button>
-        <div id="hlsf-overlay-panel" class="hlsf-overlay-panel" hidden>
-          <div class="hlsf-overlay-row">
-            <span class="hlsf-overlay-label">Mental state</span>
-            <span id="hlsf-overlay-mental-name" class="hlsf-overlay-value">Focused yet flexible attention</span>
+      <div id="hlsf-overlay-panel" class="hlsf-overlay-panel" hidden>
+        <div class="hlsf-overlay-row">
+          <span class="hlsf-overlay-label">Mental state</span>
+          <span id="hlsf-overlay-mental-name" class="hlsf-overlay-value">Focused yet flexible attention</span>
+        </div>
+        <div class="hlsf-overlay-divider"></div>
+        <div class="hlsf-overlay-row">
+          <span class="hlsf-overlay-label">Affinity threshold</span>
+          <span id="hlsf-overlay-threshold" class="hlsf-overlay-value">0.35</span>
+        </div>
+        <div class="hlsf-overlay-row">
+          <span class="hlsf-overlay-label">Affinity iterations</span>
+          <span id="hlsf-overlay-iterations" class="hlsf-overlay-value">8</span>
+        </div>
+      </div>
+      <div class="hlsf-canvas-row">
+        <div class="hlsf-canvas-frame">
+          <div id="hlsf-loading-panel" class="hlsf-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
+            <div class="processing-indicator">
+              <div class="spinner"></div>
+              <span id="hlsf-loading-label">Preparing HLSF visualization…</span>
+            </div>
+            <div class="hlsf-loading-bar">
+              <div id="hlsf-loading-progress" class="hlsf-loading-progress"></div>
+            </div>
+            <div id="hlsf-loading-detail" class="hlsf-loading-detail">This can take a few seconds for large datasets.</div>
           </div>
-          <div class="hlsf-overlay-divider"></div>
-          <div class="hlsf-overlay-row">
-            <span class="hlsf-overlay-label">Affinity threshold</span>
-            <span id="hlsf-overlay-threshold" class="hlsf-overlay-value">0.35</span>
-          </div>
-          <div class="hlsf-overlay-row">
-            <span class="hlsf-overlay-label">Affinity iterations</span>
-            <span id="hlsf-overlay-iterations" class="hlsf-overlay-value">8</span>
-          </div>
+          <canvas id="hlsf-canvas"></canvas>
         </div>
       </div>
       <div class="hlsf-controls">
@@ -4725,6 +4731,26 @@ function ensureHLSFCanvas() {
   return canvas;
 }
 
+function setHlsfControlsOpen(open: boolean, wrapper: ParentNode | null) {
+  hlsfControlsOpen = open;
+  if (!wrapper) return;
+  const overlayToggle = wrapper.querySelector<HTMLElement>('#hlsf-overlay-toggle');
+  const overlayPanel = wrapper.querySelector<HTMLElement>('#hlsf-overlay-panel');
+  const overlay = wrapper.querySelector<HTMLElement>('#hlsf-overlay');
+
+  overlayToggle?.setAttribute('aria-expanded', String(open));
+  overlayToggle?.classList.toggle('is-active', open);
+
+  if (overlayPanel) {
+    overlayPanel.hidden = !open;
+    overlayPanel.classList.toggle('is-open', open);
+  }
+  overlay?.classList.toggle('open', open);
+
+  const container = wrapper instanceof HTMLElement ? wrapper : null;
+  container?.classList.toggle('hlsf-controls-open', open);
+}
+
 function bindHlsfControls(wrapper) {
   if (!wrapper || wrapper.dataset.controlsBound === 'true') return;
 
@@ -4734,20 +4760,16 @@ function bindHlsfControls(wrapper) {
     window.HLSF.ctx = canvas.getContext('2d');
   }
 
-  const overlay = wrapper.querySelector('#hlsf-overlay');
   const overlayToggle = wrapper.querySelector('#hlsf-overlay-toggle');
   const overlayPanel = wrapper.querySelector('#hlsf-overlay-panel');
   if (overlayToggle && overlayPanel) {
     overlayToggle.addEventListener('click', () => {
       const expanded = overlayToggle.getAttribute('aria-expanded') === 'true';
       const next = !expanded;
-      overlayToggle.setAttribute('aria-expanded', String(next));
-      overlayPanel.hidden = !next;
-      overlayToggle.classList.toggle('is-active', next);
-      if (overlay) overlay.classList.toggle('open', next);
-      wrapper.classList.toggle('hlsf-overlay-open', next);
+      setHlsfControlsOpen(next, wrapper);
       renderCognitionTelemetry();
     });
+    setHlsfControlsOpen(hlsfControlsOpen, wrapper);
   }
 
   const scopeSelect = wrapper.querySelector('#hlsf-scope');
@@ -5176,6 +5198,8 @@ function bindHlsfControls(wrapper) {
 
 function syncHlsfControls(wrapper) {
   if (!wrapper) return;
+
+  setHlsfControlsOpen(hlsfControlsOpen, wrapper);
 
   syncViewToConfig();
   const config = window.HLSF.config || {};
@@ -6851,6 +6875,7 @@ const thoughtLogState: ThoughtLogState = {
 };
 
 let hlsfReasonerActive = false;
+let hlsfControlsOpen = false;
 
 const defaultSeedSphereConfig: SeedSphereConfig = {
   seedToken: '',
