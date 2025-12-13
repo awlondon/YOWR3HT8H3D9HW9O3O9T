@@ -3512,6 +3512,12 @@ function drawComposite(graph, opts = {}) {
     window.HLSF.currentGraph = normalizedGraph as any;
   }
 
+  if (graph && !(graph as any).nodes?.forEach && Array.isArray((graph as any).nodes)) {
+    const repairedGraph = normalizeToVisualizerGraph(graph);
+    graph = repairedGraph;
+    window.HLSF.currentGraph = repairedGraph as any;
+  }
+
   const edgeList = Array.isArray(graph?.links)
     ? graph.links
     : Array.isArray(graph?.edges)
@@ -3567,10 +3573,14 @@ function drawComposite(graph, opts = {}) {
     drawAxesOnly('No graph to render');
     return;
   }
-  if (!(graph.nodes instanceof Map) || graph.nodes.size === 0) {
-    logStatus(
-      `[viz] empty graph: nodes=${graph?.nodes?.size ?? graph?.nodes?.length ?? 'n/a'} edges=${edgeCount}`,
-    );
+  if (!(graph.nodes instanceof Map)) {
+    const repairedGraph = normalizeToVisualizerGraph(graph);
+    graph = repairedGraph;
+    window.HLSF.currentGraph = repairedGraph as any;
+  }
+  const normalizedNodeCount = graph.nodes instanceof Map ? graph.nodes.size : 0;
+  if (normalizedNodeCount === 0) {
+    logStatus(`[viz] empty graph: nodes=${nodeCount ?? 'n/a'} edges=${edgeCount}`);
     drawAxesOnly('No nodes to render');
     return;
   }
@@ -5718,7 +5728,7 @@ function applyAutoFitIfNeeded(
   const widthScale = viewportWidth / spanX;
   const heightScale = viewportHeight / spanY;
   const scaleCandidate = AUTO_FIT_MARGIN * Math.min(widthScale, heightScale);
-  const scale = Math.min(48, Math.max(0.1, scaleCandidate));
+  const scale = Math.min(6, Math.max(0.05, scaleCandidate));
   const offsetX = (viewportWidth - spanX * scale) / 2 - bounds.minX * scale;
   const offsetY = (viewportHeight - spanY * scale) / 2 - bounds.minY * scale;
   if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) return;
