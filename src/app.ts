@@ -80,9 +80,9 @@ import { runHlsfReasoning } from './engine/hlsfReasoner';
 import type { ThoughtEvent } from './engine/cognitionTypes';
 import { buildSeedSphere } from './engine/seedSphereBuilder.js';
 import { StubLLMClient } from './engine/llmClient.js';
-import { ThoughtDetector } from './engine/thoughtDetector.js';
 import { ResponseAccumulatorEngine } from './engine/responseAccumulator.js';
 import { collapseGraph, computeTokenSalience, topSalienceTokens } from './engine/salience.js';
+import { runBreathingLoop, type BreathingConfig } from './engine/breathingLoop.js';
 import type { SeedSphereConfig, ExpansionMode } from './engine/expansionModes.js';
 import { installLLMStub } from './server/installLLMStub';
 // ============================================
@@ -7042,11 +7042,14 @@ function computeSpectralOverlayState(): boolean {
 }
 
 function renderCognitionTelemetry(): void {
-  const { iterations, rotationSpeed, affinityThreshold, thinkingStyle } = cognitionUiState.config;
+  const { iterations, affinityThreshold, thinkingStyle } = cognitionUiState.config;
   const overlayActive = computeSpectralOverlayState();
+  const breaths = cognitionUiState.mode === 'seedToken' ? cognitionUiState.seedSphere.level : iterations;
+  const depth = cognitionUiState.mode === 'seedToken' ? cognitionUiState.seedSphere.level : iterations;
+  const dimension = cognitionUiState.seedSphere.dimension;
 
   if (elements.cognitionIterationSpeed) {
-    elements.cognitionIterationSpeed.textContent = `${iterations} × ω${rotationSpeed.toFixed(2)} | aff ≥ ${affinityThreshold.toFixed(2)}`;
+    elements.cognitionIterationSpeed.textContent = `Breaths: ${breaths} | Dim: ${dimension} | Depth: ${depth} | aff ≥ ${affinityThreshold.toFixed(2)}`;
   }
 
   if (elements.cognitionSpectralOverlay) {
@@ -7714,19 +7717,6 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
 
   const llm = new StubLLMClient();
   const embedder = { embed: async (text: string) => buildSeedEmbed(text) };
-  const thoughtDetector = new ThoughtDetector({
-    structuralThreshold: 0.25,
-    spectralThreshold: 0.25,
-    semanticThreshold: 0.25,
-    thoughtScoreThreshold: 0.4,
-    minClusterSize: 2,
-    minPersistenceFrames: 1,
-    minNovelty: 0.15,
-    enableSpark: true,
-    sparkStructuralThreshold: 0.45,
-    sparkSpectralThreshold: 0.45,
-    sparkSemanticThreshold: 0.45,
-  });
   const accumulatorEngine = new ResponseAccumulatorEngine({
     relevanceThreshold: 0.35,
     minRelevantThoughts: 1,
@@ -7739,65 +7729,46 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
   const seedEmbedding = await embedder.embed(cfg.seedToken);
   const accumulator = accumulatorEngine.initAccumulator(seedEmbedding, Date.now());
 
-  let latestGraph: any = null;
-  const applyDelta = (graph: any, delta: any, layer: string): Set<string> => {
-    const added = new Set<string>();
-    if (Array.isArray(delta?.nodes)) {
-      delta.nodes.forEach((node: any) => {
-        if (!node?.id || graph.nodes.has(node.id)) return;
-        graph.nodes.set(node.id, {
-          id: node.id,
-          label: node.label ?? node.id,
-          embedding: node.hintEmbedding ?? [],
-          meta: { layer },
-        });
-        added.add(node.id);
-      });
-    }
-    if (Array.isArray(delta?.edges)) {
-      delta.edges.forEach((edge: any) => {
-        if (!edge?.src || !edge.dst) return;
-        graph.edges.push({
-          src: edge.src,
-          dst: edge.dst,
-          weight: edge.weight ?? 0.1,
-          role: edge.role ?? 'instance',
-          layer,
-        });
-      });
-    }
-    return added;
+  const breathingCfg: BreathingConfig = {
+    dimension: cfg.dimension,
+    depth: cfg.level,
+    o10Size: Math.max(5, cfg.dimension * 3),
+    ccBranches: Math.max(3, cfg.dimension + 1),
+    collapseRadius: cfg.collapseRadius,
+    affinityThreshold: cfg.affinityThreshold,
+    maxNodes: cfg.maxNodes,
+    maxEdges: cfg.maxEdges,
+    breathCycles: Math.max(cfg.level * 2, cfg.salienceTopK + cfg.level),
+    rotationItersPerCycle: 3,
   };
 
-  const deps = {
-    llm: {
-      seedAdjacency: (token: string) => llm.seedAdjacency(token),
-      expandAdjacency: (token: string) => llm.expandAdjacencyToken(token),
-      articulateResponse: (articulation, userQuestion, context) =>
-        llm.articulateResponse(articulation, userQuestion, context),
-      modelName: 'stub-hlsf',
+  let workingGraph: any = { nodes: new Map(), edges: [] };
+  const breathingDeps = {
+    getGraph: () => workingGraph,
+    setGraph: (graph: any) => {
+      workingGraph = graph;
+      state.liveGraph = graph as any;
     },
-    embedder,
-    applyDelta,
-    shouldAbort: () => cognitionUiState.mode !== 'seedToken' || Boolean(currentAbortController?.signal?.aborted),
-    thoughtDetector,
-    accumulatorEngine,
-    accumulator,
-    affinityThreshold: cfg.affinityThreshold,
-    onGraphUpdate: (snapshot: any) => {
-      latestGraph = snapshot;
-      state.liveGraph = snapshot as any;
-    },
-    onThought: (ev: ThoughtEvent) => {
-      commitThoughtLineToUI(ev.cluster.nodeIds.join(', '), ev.cluster.persistenceFrames ?? 1);
+    expandAdjacency: (token: string) => llm.expandAdjacencyToken(token),
+    computeSalience: (graph: any) => computeTokenSalience(graph as any),
+    collapseGraph: (graph: any, centers: string[] | string, radius: number) =>
+      collapseGraph(graph as any, Array.isArray(centers) ? centers : [centers], radius) as any,
+    onThought: (tokens: string[], meta?: Record<string, unknown>) => {
+      const anchored = anchorPronouns(tokens.filter(Boolean));
+      const ev: ThoughtEvent = {
+        cluster: { nodeIds: anchored, persistenceFrames: 1 },
+        text: anchored.join(', '),
+        timestamp: Date.now(),
+        mode: 'visible',
+      } as ThoughtEvent;
+      commitThoughtLineToUI(ev.cluster.nodeIds.join(', '), (meta?.cycle as number) ?? 0);
       ingestThoughtRuns([buildThoughtRunFromEvent(ev, cfg.seedToken)]);
-      const embeddingMap = latestGraph?.nodes
-        ? new Map(Array.from(latestGraph.nodes.entries()).map(([id, node]: any) => [id, node.embedding]))
+      const embeddingMap = workingGraph?.nodes
+        ? new Map(Array.from(workingGraph.nodes.entries()).map(([id, node]: any) => [id, node.embedding]))
         : new Map();
       const articulation = accumulatorEngine.maybeArticulate(accumulator, embeddingMap, Date.now());
       if (articulation) {
         void (async () => {
-          const anchored = anchorPronouns(ev.cluster.nodeIds);
           const answer = await llm.articulateResponse(articulation, cfg.seedToken, {
             tokens: anchored,
             summary: anchored.join(', '),
@@ -7808,35 +7779,33 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
         })();
       }
     },
+    shouldAbort: () => cognitionUiState.mode !== 'seedToken' || Boolean(currentAbortController?.signal?.aborted),
   };
 
   try {
     hlsfReasonerActive = true;
-    const result = await buildSeedSphere(cfg, deps);
+    const result = await runBreathingLoop(cfg.seedToken, breathingCfg, breathingDeps);
     const salienceMap = computeTokenSalience(result.graph as any);
     const centers = topSalienceTokens(salienceMap, cfg.salienceTopK);
     const collapsedGraph = collapseGraph(result.graph as any, centers, cfg.collapseRadius);
     state.liveGraph = collapsedGraph as any;
 
     const embeddingMap = new Map(
-      Array.from(result.graph.nodes.entries()).map(([id, node]) => [id, node.embedding]),
+      Array.from(result.graph.nodes.entries()).map(([id, node]) => [id, node.embedding || []]),
     );
-    const articulation =
-      result.articulation || accumulatorEngine.maybeArticulate(accumulator, embeddingMap, Date.now());
+    const articulation = accumulatorEngine.maybeArticulate(accumulator, embeddingMap, Date.now());
 
-    if (result.response && elements.llmResponse) {
-      elements.llmResponse.textContent = result.response;
-    }
-
-    if (articulation && deps.llm.articulateResponse) {
+    if (articulation) {
       const anchored = anchorPronouns(centers);
-      const finalAnswer = await deps.llm.articulateResponse(articulation, cfg.seedToken, {
+      const finalAnswer = await llm.articulateResponse(articulation, cfg.seedToken, {
         tokens: anchored,
         summary: anchored.join(', '),
       });
       if (elements.llmResponse) {
         elements.llmResponse.textContent = finalAnswer;
       }
+    } else if (result.thoughtTraces.length && elements.llmResponse) {
+      elements.llmResponse.textContent = result.thoughtTraces[result.thoughtTraces.length - 1];
     }
 
     cognitionUiState.answerReady = true;
@@ -10312,11 +10281,37 @@ function showGlyphLedger() {
 // ============================================
 // LOGGING
 // ============================================
-function batchLogUpdates(entries) {
+const CONSOLE_HEAD = 2;
+const CONSOLE_TAIL = 14;
+const consoleBuffer: HTMLElement[] = [];
+
+function createEllipsisEntry(): HTMLElement {
+  const entry = document.createElement('div');
+  entry.className = 'log-entry log-ellipsis';
+  entry.textContent = '⋯';
+  return entry;
+}
+
+function renderConsole(): void {
+  const logElement = elements?.log;
+  if (!(logElement instanceof HTMLElement)) return;
+  logElement.innerHTML = '';
   const fragment = document.createDocumentFragment();
-  entries.forEach((entry) => fragment.appendChild(entry));
-  elements.log.appendChild(fragment);
-  elements.log.scrollTop = elements.log.scrollHeight;
+  const head = consoleBuffer.slice(0, CONSOLE_HEAD);
+  const tail = consoleBuffer.slice(-CONSOLE_TAIL);
+  const ellipsisNeeded = consoleBuffer.length > CONSOLE_HEAD + CONSOLE_TAIL;
+
+  [...head, ...(ellipsisNeeded ? [createEllipsisEntry()] : []), ...tail].forEach((entry) => {
+    fragment.appendChild(entry);
+  });
+
+  logElement.appendChild(fragment);
+  logElement.scrollTop = logElement.scrollHeight;
+}
+
+function batchLogUpdates(entries) {
+  entries.forEach((entry) => consoleBuffer.push(entry));
+  renderConsole();
 }
 
 const LOG_TTS_SECTION_TARGETS = [
@@ -16556,48 +16551,32 @@ function analyzeDatabaseMetadata() {
 }
 
 function snapshotConversationLog() {
-  const logElement = elements?.log;
-  if (!(logElement instanceof HTMLElement)) {
-    return { html: '', entries: [] };
-  }
-  const entries = Array.from(logElement.querySelectorAll('.log-entry')).map((node: Element) => ({
-    className:
-      typeof (node as HTMLElement).className === 'string' ? (node as HTMLElement).className : '',
-    html: (node as HTMLElement).innerHTML || '',
+  const entries = consoleBuffer.map((node) => ({
+    className: typeof node.className === 'string' ? node.className : 'log-entry',
+    html: node.innerHTML || '',
   }));
-  return {
-    html: logElement.innerHTML || '',
-    entries,
-  };
+  return { html: '', entries };
 }
 
 function restoreConversationLog(snapshot) {
-  const logElement = elements?.log;
-  if (!(logElement instanceof HTMLElement)) return;
-  const html = snapshot && typeof snapshot.html === 'string' ? snapshot.html : '';
-  if (html) {
-    logElement.innerHTML = html;
-  } else if (Array.isArray(snapshot?.entries) && snapshot.entries.length) {
-    logElement.innerHTML = '';
-    const fragment = document.createDocumentFragment();
-    for (const entry of snapshot.entries) {
-      if (!entry || typeof entry.html !== 'string') continue;
-      const div = document.createElement('div');
-      div.className = typeof entry.className === 'string' ? entry.className : 'log-entry';
-      div.innerHTML = entry.html;
-      fragment.appendChild(div);
-    }
-    logElement.appendChild(fragment);
-  } else {
-    logElement.innerHTML = '';
-  }
-  logElement.scrollTop = logElement.scrollHeight;
+  const entries = Array.isArray(snapshot?.entries) ? snapshot.entries : [];
+  consoleBuffer.length = 0;
+  entries.forEach((entry) => {
+    if (!entry || typeof entry.html !== 'string') return;
+    const div = document.createElement('div');
+    div.className = typeof entry.className === 'string' ? entry.className : 'log-entry';
+    div.innerHTML = entry.html;
+    enhanceLogEntry(div);
+    consoleBuffer.push(div);
+  });
+  renderConsole();
 }
 
 function clearConversationLog(options: { resetBatchLog?: boolean } = {}) {
   const { resetBatchLog = false } = options;
   try {
-    restoreConversationLog({ html: '', entries: [] });
+    consoleBuffer.length = 0;
+    renderConsole();
   } catch (err) {
     const logElement = elements?.log;
     if (logElement instanceof HTMLElement) {
