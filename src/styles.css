@@ -1843,6 +1843,9 @@
       z-index: 10;
       overflow: hidden;
       isolation: isolate;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 0.75rem;
     }
 
     .hlsf-breathing-status {
@@ -1867,7 +1870,6 @@
       isolation: isolate;
     }
 
-    #hlsf-overlay,
     #hlsf-loading-panel,
     .hlsf-cluster-zoom-box,
     .hlsf-node-info {
@@ -1895,19 +1897,11 @@
     }
 
     .hlsf-overlay {
-      position: absolute;
-      top: 0.75rem;
-      right: 0.75rem;
       display: flex;
-      flex-direction: column;
-      align-items: flex-end;
+      align-items: center;
+      justify-content: flex-end;
       gap: 0.5rem;
       z-index: 20;
-      pointer-events: none;
-    }
-
-    .hlsf-overlay > * {
-      pointer-events: auto;
     }
 
     .hlsf-overlay-toggle,
@@ -1957,6 +1951,7 @@
       font-size: 0.75rem;
       position: relative;
       z-index: 21;
+      width: 100%;
     }
 
     .hlsf-overlay.open #hlsf-overlay-panel {
@@ -2007,6 +2002,15 @@
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 1rem;
       margin-top: 1rem;
+    }
+
+    .hlsf-overlay-panel .hlsf-controls {
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 0.75rem;
+    }
+
+    .hlsf-overlay-panel.is-open {
+      display: flex;
     }
 
     .hlsf-control-group {
@@ -2570,6 +2574,46 @@
     .voice-avatar-metrics dd {
       margin: 0;
       font-size: 0.9rem;
+    }
+
+    .hlsf-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.75rem;
+    }
+
+    .hlsf-rotation-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(0, 255, 136, 0.3);
+      opacity: 0.95;
+    }
+
+    .hlsf-canvas-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hlsf-canvas-frame {
+      position: relative;
+      min-height: 460px;
+    }
+
+    @media (max-width: 1100px) {
+      .hlsf-overlay-panel .hlsf-controls {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+      }
+    }
+
+    @media (max-width: 820px) {
+      .hlsf-overlay-panel .hlsf-controls {
+        grid-template-columns: 1fr;
+      }
     }
 
     .hlsf-visual-layout {

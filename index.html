@@ -262,154 +262,160 @@
       <p class="hlsf-breathing-status" aria-live="polite">Breathing cycle: expand → rotate → collapse</p>
       <div class="hlsf-visual-layout">
         <div class="hlsf-visual-main">
-          <div id="hlsf-loading-panel" class="hlsf-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
-            <div class="processing-indicator">
-              <div class="spinner"></div>
-              <span id="hlsf-loading-label">Preparing HLSF visualization…</span>
+          <div class="hlsf-header-row">
+            <div class="hlsf-overlay" id="hlsf-overlay">
+              <button
+                id="hlsf-overlay-toggle"
+                class="hlsf-overlay-toggle"
+                type="button"
+              >
+                Controls
+              </button>
             </div>
-            <div class="hlsf-loading-bar">
-              <div id="hlsf-loading-progress" class="hlsf-loading-progress"></div>
+            <div class="hlsf-rotation-badge">
+              <span class="hlsf-overlay-label">Rotation</span>
+              <span id="hlsf-overlay-rotation" class="hlsf-overlay-value">Active</span>
             </div>
-            <div id="hlsf-loading-detail" class="hlsf-loading-detail">This can take a few seconds for large datasets.</div>
           </div>
-          <canvas id="hlsf-canvas"></canvas>
-          <div class="hlsf-overlay" id="hlsf-overlay">
-            <button
-              id="hlsf-overlay-toggle"
-              class="hlsf-overlay-toggle"
-              type="button"
-            >
-              Controls
-            </button>
-            <aside id="hlsf-overlay-panel" class="hlsf-overlay-panel" aria-live="polite">
-              <div class="hlsf-overlay-row">
-                <div>
-                  <div class="hlsf-overlay-label">Nodes</div>
-                  <div id="hlsf-overlay-nodes" class="hlsf-overlay-value">—</div>
-                </div>
-                <div>
-                  <div class="hlsf-overlay-label">Edges</div>
-                  <div id="hlsf-overlay-edges" class="hlsf-overlay-value">—</div>
-                </div>
-                <div>
-                  <div class="hlsf-overlay-label">Rotation</div>
-                  <div id="hlsf-overlay-rotation" class="hlsf-overlay-value">Active</div>
+          <aside id="hlsf-overlay-panel" class="hlsf-overlay-panel" aria-live="polite" hidden>
+            <div class="hlsf-overlay-row">
+              <div>
+                <div class="hlsf-overlay-label">Nodes</div>
+                <div id="hlsf-overlay-nodes" class="hlsf-overlay-value">—</div>
+              </div>
+              <div>
+                <div class="hlsf-overlay-label">Edges</div>
+                <div id="hlsf-overlay-edges" class="hlsf-overlay-value">—</div>
+              </div>
+            </div>
+            <div id="hlsf-overlay-controls" class="hlsf-controls">
+              <div class="hlsf-control-group">
+                <label for="hlsf-node-color-mode">Node coloring</label>
+                <select id="hlsf-node-color-mode">
+                  <option value="theme" selected>Theme</option>
+                  <option value="cluster">Cluster</option>
+                  <option value="degree">Degree</option>
+                  <option value="affinity">Affinity</option>
+                </select>
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-edge-color-mode">Edge coloring</label>
+                <select id="hlsf-edge-color-mode">
+                  <option value="theme">Theme</option>
+                  <option value="weight">Weight</option>
+                  <option value="relation" selected>Relation</option>
+                </select>
+                <details id="hlsf-relation-legend" class="hlsf-legend-container" hidden>
+                  <summary>
+                    <span>Relation edge colors</span>
+                    <span id="hlsf-relation-legend-count" class="hlsf-legend-count"></span>
+                  </summary>
+                  <div id="hlsf-relation-legend-items" class="hlsf-legend"></div>
+                </details>
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-relation-cap">Relation types <span id="hlsf-relation-cap-val">50</span></label>
+                <input id="hlsf-relation-cap" type="number" min="1" max="50" step="1" value="50">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-edges-per-type">Edges per type <span id="hlsf-edges-per-type-val">3</span></label>
+                <input id="hlsf-edges-per-type" type="number" min="1" max="10" step="1" value="3">
+              </div>
+              <div class="hlsf-control-group">
+                <label>Display options</label>
+                <div class="hlsf-button-row">
+                  <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
+                  <button id="hlsf-toggle-adjacency" class="btn btn-secondary">Adjacency: Compact</button>
+                  <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: Off</button>
+                  <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
+                  <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
                 </div>
               </div>
-              <div id="hlsf-overlay-controls" class="hlsf-controls">
-                <div class="hlsf-control-group">
-                  <label for="hlsf-node-color-mode">Node coloring</label>
-                  <select id="hlsf-node-color-mode">
-                    <option value="theme" selected>Theme</option>
-                    <option value="cluster">Cluster</option>
-                    <option value="degree">Degree</option>
-                    <option value="affinity">Affinity</option>
-                  </select>
+              <div class="hlsf-control-group">
+                <label for="hlsf-performance">Performance profile</label>
+                <select id="hlsf-performance">
+                  <option value="featherweight">Featherweight</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="research">Research</option>
+                  <option value="maximalist">Maximalist</option>
+                  <option value="chaoslab">ChaosLab</option>
+                </select>
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-max-nodes">Max nodes</label>
+                <input id="hlsf-max-nodes" type="number" min="100" step="100" value="1600">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-max-edges">Max edges</label>
+                <input id="hlsf-max-edges" type="number" min="300" step="100" value="6400">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-max-rel">Max relationships</label>
+                <input id="hlsf-max-rel" type="number" min="500" step="100" value="4200">
+              </div>
+              <div class="hlsf-limit-summary" id="hlsf-limit-summary" aria-live="polite">
+                <div class="hlsf-limit-summary__metrics">
+                  <span data-hlsf-limit-nodes>Nodes: 1,600</span>
+                  <span data-hlsf-limit-edges>Edges: 6,400</span>
+                  <span data-hlsf-limit-relationships>Relationships: 4,200</span>
                 </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-edge-color-mode">Edge coloring</label>
-                  <select id="hlsf-edge-color-mode">
-                    <option value="theme">Theme</option>
-                    <option value="weight">Weight</option>
-                    <option value="relation" selected>Relation</option>
-                  </select>
-                  <details id="hlsf-relation-legend" class="hlsf-legend-container" hidden>
-                    <summary>
-                      <span>Relation edge colors</span>
-                      <span id="hlsf-relation-legend-count" class="hlsf-legend-count"></span>
-                    </summary>
-                    <div id="hlsf-relation-legend-items" class="hlsf-legend"></div>
-                  </details>
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-relation-cap">Relation types <span id="hlsf-relation-cap-val">50</span></label>
-                  <input id="hlsf-relation-cap" type="number" min="1" max="50" step="1" value="50">
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-edges-per-type">Edges per type <span id="hlsf-edges-per-type-val">3</span></label>
-                  <input id="hlsf-edges-per-type" type="number" min="1" max="10" step="1" value="3">
-                </div>
-                <div class="hlsf-control-group">
-                  <label>Display options</label>
-                  <div class="hlsf-button-row">
-                    <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
-                    <button id="hlsf-toggle-adjacency" class="btn btn-secondary">Adjacency: Compact</button>
-                    <button id="hlsf-toggle-labels" class="btn btn-secondary">Labels: Off</button>
-                    <button id="hlsf-toggle-glow" class="btn btn-secondary">Glow: Off</button>
-                    <button id="hlsf-toggle-bg" class="btn btn-secondary">BG: Dark</button>
-                  </div>
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-performance">Performance profile</label>
-                  <select id="hlsf-performance">
-                    <option value="featherweight">Featherweight</option>
-                    <option value="balanced" selected>Balanced</option>
-                    <option value="research">Research</option>
-                    <option value="maximalist">Maximalist</option>
-                    <option value="chaoslab">ChaosLab</option>
-                  </select>
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-max-nodes">Max nodes</label>
-                  <input id="hlsf-max-nodes" type="number" min="100" step="100" value="1600">
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-max-edges">Max edges</label>
-                  <input id="hlsf-max-edges" type="number" min="300" step="100" value="6400">
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-max-rel">Max relationships</label>
-                  <input id="hlsf-max-rel" type="number" min="500" step="100" value="4200">
-                </div>
-                <div class="hlsf-limit-summary" id="hlsf-limit-summary" aria-live="polite">
-                  <div class="hlsf-limit-summary__metrics">
-                    <span data-hlsf-limit-nodes>Nodes: 1,600</span>
-                    <span data-hlsf-limit-edges>Edges: 6,400</span>
-                    <span data-hlsf-limit-relationships>Relationships: 4,200</span>
-                  </div>
-                  <div class="hlsf-limit-summary__hint">Hold Shift (or Option) and drag on the canvas to zoom into a cluster.</div>
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-prune-thresh">Pruning weight threshold <span id="hlsf-prune-thresh-val">0.18</span></label>
-                  <input id="hlsf-prune-thresh" type="range" min="0.10" max="0.30" step="0.01" value="0.18">
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-layout">Layout</label>
-                  <select id="hlsf-layout">
-                    <option value="dimension">Dimension NAM</option>
-                    <option value="affinity">Clusters × Levels</option>
-                    <option value="layered">Layered</option>
-                    <option value="legacy">Legacy</option>
-                  </select>
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-aff-thresh">Affinity threshold <span id="hlsf-aff-thresh-val">0.35</span></label>
-                  <input id="hlsf-aff-thresh" type="range" min="0.1" max="0.8" step="0.01" value="0.35">
-                </div>
-                <div class="hlsf-control-group">
-                  <label for="hlsf-aff-iters">Affinity iterations <span id="hlsf-aff-iters-val">8</span></label>
-                  <input id="hlsf-aff-iters" type="range" min="1" max="20" step="1" value="8">
-                </div>
-                <div class="hlsf-control-group full-span">
-                  <em id="hlsf-affinity-summary" class="hlsf-mental-summary">Current mental state: Focused yet flexible attention.</em>
-                </div>
-                <div class="hlsf-control-group">
-                  <label>Emergent rotation</label>
-                  <div class="hlsf-button-row">
-                    <button id="hlsf-toggle-emergent" class="btn btn-secondary">Stop Emergence</button>
-                  </div>
-                </div>
-                <div class="hlsf-control-group">
-                  <label>View</label>
-                  <div class="hlsf-button-row">
-                    <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
-                    <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
-                    <button id="hlsf-zoom-portal" class="btn btn-secondary">Portal</button>
-                    <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
-                  </div>
+                <div class="hlsf-limit-summary__hint">Hold Shift (or Option) and drag on the canvas to zoom into a cluster.</div>
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-prune-thresh">Pruning weight threshold <span id="hlsf-prune-thresh-val">0.18</span></label>
+                <input id="hlsf-prune-thresh" type="range" min="0.10" max="0.30" step="0.01" value="0.18">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-layout">Layout</label>
+                <select id="hlsf-layout">
+                  <option value="dimension">Dimension NAM</option>
+                  <option value="affinity">Clusters × Levels</option>
+                  <option value="layered">Layered</option>
+                  <option value="legacy">Legacy</option>
+                </select>
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-aff-thresh">Affinity threshold <span id="hlsf-aff-thresh-val">0.35</span></label>
+                <input id="hlsf-aff-thresh" type="range" min="0.1" max="0.8" step="0.01" value="0.35">
+              </div>
+              <div class="hlsf-control-group">
+                <label for="hlsf-aff-iters">Affinity iterations <span id="hlsf-aff-iters-val">8</span></label>
+                <input id="hlsf-aff-iters" type="range" min="1" max="20" step="1" value="8">
+              </div>
+              <div class="hlsf-control-group full-span">
+                <em id="hlsf-affinity-summary" class="hlsf-mental-summary">Current mental state: Focused yet flexible attention.</em>
+              </div>
+              <div class="hlsf-control-group">
+                <label>Emergent rotation</label>
+                <div class="hlsf-button-row">
+                  <button id="hlsf-toggle-emergent" class="btn btn-secondary">Stop Emergence</button>
                 </div>
               </div>
-            </aside>
+              <div class="hlsf-control-group">
+                <label>View</label>
+                <div class="hlsf-button-row">
+                  <button id="hlsf-zoom-in" class="btn btn-secondary">Zoom +</button>
+                  <button id="hlsf-zoom-out" class="btn btn-secondary">Zoom −</button>
+                  <button id="hlsf-zoom-portal" class="btn btn-secondary">Portal</button>
+                  <button id="hlsf-reset-view" class="btn btn-secondary">Reset</button>
+                </div>
+              </div>
+            </div>
+          </aside>
+          <div class="hlsf-canvas-row">
+            <div class="hlsf-canvas-frame">
+              <div id="hlsf-loading-panel" class="hlsf-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
+                <div class="processing-indicator">
+                  <div class="spinner"></div>
+                  <span id="hlsf-loading-label">Preparing HLSF visualization…</span>
+                </div>
+                <div class="hlsf-loading-bar">
+                  <div id="hlsf-loading-progress" class="hlsf-loading-progress"></div>
+                </div>
+                <div id="hlsf-loading-detail" class="hlsf-loading-detail">This can take a few seconds for large datasets.</div>
+              </div>
+              <canvas id="hlsf-canvas"></canvas>
+            </div>
           </div>
         </div>
         <aside class="hlsf-settings-panel" aria-label="HLSF visualization controls">
