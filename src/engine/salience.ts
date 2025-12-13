@@ -44,11 +44,29 @@ export function collapseGraph(
 ): SalienceGraph {
   const keep = new Set<string>(keepCenters);
   const adjacency = new Map<string, Set<string>>();
+  const neighborCap = Math.max(
+    3,
+    Math.min(
+      graph.nodes.size,
+      Number((graph as any).meta?.o10Size ?? (graph as any).metadata?.o10Size ?? 9),
+    ),
+  );
   graph.edges.forEach((edge) => {
     if (!adjacency.has(edge.src)) adjacency.set(edge.src, new Set());
     if (!adjacency.has(edge.dst)) adjacency.set(edge.dst, new Set());
     adjacency.get(edge.src)?.add(edge.dst);
     adjacency.get(edge.dst)?.add(edge.src);
+  });
+
+  keepCenters.forEach((center) => {
+    const weightedNeighbors = graph.edges
+      .filter((edge) => edge.src === center || edge.dst === center)
+      .sort((a, b) => (b.weight ?? b.w ?? 0) - (a.weight ?? a.w ?? 0))
+      .slice(0, neighborCap);
+    weightedNeighbors.forEach((edge) => {
+      const neighbor = edge.src === center ? edge.dst : edge.src;
+      if (neighbor) keep.add(neighbor);
+    });
   });
 
   // BFS to collect nodes within radius from centers
@@ -71,6 +89,10 @@ export function collapseGraph(
     if (keep.has(id)) nodes.set(id, node);
   });
   const edges = graph.edges.filter((edge) => keep.has(edge.src) && keep.has(edge.dst));
+
+  if (nodes.size < 2) {
+    return graph;
+  }
 
   return { nodes, edges };
 }
