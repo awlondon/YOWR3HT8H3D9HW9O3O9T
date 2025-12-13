@@ -108,9 +108,10 @@
       align-items: center;
       position: sticky;
       bottom: 0;
-      background: rgba(0, 0, 0, 0.85);
+      background: rgba(0, 0, 0, 0.92);
+      backdrop-filter: blur(6px);
       padding: 10px 12px;
-      z-index: 5;
+      z-index: 50;
       border-top: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 12px;
     }
@@ -146,6 +147,8 @@
       display: flex;
       flex-direction: column;
       gap: 1rem;
+      position: relative;
+      z-index: 1;
     }
 
     .cognition-panel__header {
@@ -1837,6 +1840,9 @@
       margin: 0.5rem 0 1rem;
       box-shadow: 0 0 30px rgba(0, 255, 136, 0.15);
       position: relative;
+      z-index: 10;
+      overflow: hidden;
+      isolation: isolate;
     }
 
     .hlsf-breathing-status {
@@ -1856,6 +1862,18 @@
       border: 1px solid rgba(255, 255, 255, 0.14);
     }
 
+    .hlsf-visual-main {
+      position: relative;
+      isolation: isolate;
+    }
+
+    #hlsf-overlay,
+    #hlsf-loading-panel,
+    .hlsf-cluster-zoom-box,
+    .hlsf-node-info {
+      position: absolute;
+    }
+
     #hlsf-canvas.hlsf-selecting,
     #hlsf-canvas.hlsf-selecting:active {
       cursor: crosshair;
@@ -1868,7 +1886,7 @@
       border-radius: 6px;
       display: none;
       pointer-events: none;
-      z-index: 4;
+      z-index: 12;
       box-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
     }
 
@@ -1878,18 +1896,23 @@
 
     .hlsf-overlay {
       position: absolute;
-      bottom: 1.25rem;
-      right: 1.25rem;
+      top: 0.75rem;
+      right: 0.75rem;
       display: flex;
       flex-direction: column;
       align-items: flex-end;
       gap: 0.5rem;
-      z-index: 3;
+      z-index: 20;
       pointer-events: none;
     }
 
     .hlsf-overlay > * {
       pointer-events: auto;
+    }
+
+    .hlsf-overlay-toggle,
+    #hlsf-overlay-panel {
+      z-index: 21;
     }
 
     .hlsf-overlay-toggle {
@@ -1932,6 +1955,8 @@
       flex-direction: column;
       gap: 0.45rem;
       font-size: 0.75rem;
+      position: relative;
+      z-index: 21;
     }
 
     .hlsf-overlay.open #hlsf-overlay-panel {
@@ -2731,7 +2756,7 @@
       border-radius: 8px;
       padding: 0.75rem;
       pointer-events: none;
-      z-index: 1000;
+      z-index: 22;
       max-width: 300px;
       font-size: 0.85rem;
       display: none;
@@ -2792,7 +2817,7 @@
       backdrop-filter: blur(8px);
       pointer-events: none;
       text-align: center;
-      z-index: 5;
+      z-index: 15;
     }
 
     .hlsf-loading-bar {
