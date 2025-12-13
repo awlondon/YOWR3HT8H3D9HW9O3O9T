@@ -7956,6 +7956,7 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
       llm: {
         seedAdjacency: (token: string) => llm.seedAdjacency(token),
         expandAdjacency: (token: string) => llm.expandAdjacencyToken(token),
+        expandAdjacencyTyped: (token: string) => llm.expandAdjacencyTyped(token),
         articulateResponse: (articulation, userQuestion, salientContext) =>
           llm.articulateResponse(articulation, userQuestion, salientContext),
         modelName: llm.modelName,
@@ -7967,6 +7968,9 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
       affinityThreshold: cfg.affinityThreshold,
       onThought: (ev: ThoughtEvent) => {
         commitThoughtLineToUI(ev.cluster.nodeIds.join(', '), ev.cycleIndex ?? 0);
+      },
+      onStatus: (status: string) => {
+        setCognitionStatus(status);
       },
       shouldAbort: () => cognitionUiState.mode !== 'seedToken' || Boolean(currentAbortController?.signal?.aborted),
     });
@@ -7989,6 +7993,12 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
       .slice(0, 3)
       .join(', ') || '—'}`;
     thoughtTraces.push(summaryLine);
+    if (result.lastAdjacencySource) {
+      const label = result.lastAdjacencySource === 'synthetic'
+        ? 'synthetic (OFFLINE)'
+        : result.lastAdjacencySource.toUpperCase();
+      setCognitionStatus(`Adjacency source: ${label}`);
+    }
 
     if (result.response && elements.llmResponse) {
       elements.llmResponse.textContent = result.response;

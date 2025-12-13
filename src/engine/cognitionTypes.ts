@@ -5,7 +5,7 @@
 
 export type NodeId = string;
 
-export type EdgeRole = 'cause' | 'contrast' | 'analogy' | 'instance' | 'meta';
+export type EdgeRole = string;
 
 export interface Node {
   id: NodeId;
@@ -87,6 +87,7 @@ export interface AdjacencyDeltaNode {
   id: NodeId;
   label: string;
   hintEmbedding?: number[];
+  meta?: Record<string, unknown>;
 }
 
 export interface AdjacencyDeltaEdge {
@@ -94,6 +95,7 @@ export interface AdjacencyDeltaEdge {
   dst: NodeId;
   weight: number;
   role: EdgeRole;
+  meta?: Record<string, unknown>;
 }
 
 export interface AdjacencyDelta {
