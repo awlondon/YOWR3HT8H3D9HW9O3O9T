@@ -17,6 +17,10 @@ export interface LLMClient {
   expandAdjacency(ev: ThoughtEvent, depth?: number, maxDepth?: number): Promise<AdjacencyDelta>;
   seedAdjacency(token: string): Promise<AdjacencyDelta>;
   expandAdjacencyToken(token: string): Promise<AdjacencyDelta>;
+  expandAdjacencyTyped?: (token: string) => Promise<{
+    definition?: string;
+    edges?: Array<{ neighbor?: string; rel?: string; weight?: number }>;
+  }>;
   articulateResponse(
     articulation: ArticulationEvent,
     userQuestion: string,
@@ -72,6 +76,17 @@ export class StubLLMClient implements LLMClient {
         { src: baseId, dst: `${baseId}-b`, weight: 0.55, role: 'meta' },
       ],
       notes: `Stub expand adjacency for ${norm}`,
+    };
+  }
+
+  async expandAdjacencyTyped(token: string): Promise<{ definition: string; edges: Array<{ neighbor: string; rel: string; weight: number }> }> {
+    const norm = token.trim() || 'token';
+    return {
+      definition: `${norm} definition unavailable (stub)`,
+      edges: [
+        { neighbor: `${norm} context`, rel: '∼', weight: 0.42 },
+        { neighbor: `${norm} analogy`, rel: '≈', weight: 0.38 },
+      ],
     };
   }
 
