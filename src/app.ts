@@ -59,6 +59,7 @@ import { sessionState as state } from './state/sessionState';
 import { commandRegistry, legacyCommands, type CommandHandler } from './commands/commandRegistry';
 import { ensureKBReady } from './state/kbStore';
 import { normalizeToVisualizerGraph } from './engine/graphNormalize';
+import { runConvergentHlsf, type ConvergentConfig, type ConvergentDeps } from './engine/convergentHlsfRunner';
 import {
   clearEncryptedApiKey,
   hasEncryptedApiKey,
@@ -79,7 +80,7 @@ import {
   type ThoughtCommitEventDetail,
 } from './engine/cognitionCycle';
 import { runHlsfReasoning } from './engine/hlsfReasoner';
-import type { ThoughtEvent } from './engine/cognitionTypes';
+import type { ThoughtEvent, AdjacencyDelta } from './engine/cognitionTypes';
 import type { AdjacencyResult } from './engine/adjacencyProvider.js';
 import { collapseGraph, computeTokenSalience, topSalienceTokens } from './engine/salience.js';
 import type { SeedSphereConfig, ExpansionMode } from './engine/expansionModes.js';
@@ -7288,7 +7289,10 @@ if (seedRunButton) {
       alert('Please enter a seed token.');
       return;
     }
-    await runSeedSphere();
+    if (currentAbortController) currentAbortController.abort();
+    currentAbortController = new AbortController();
+    await runConvergentFromUI('seed');
+    currentAbortController = null;
   });
 }
 
@@ -7425,6 +7429,14 @@ function clearCognitionOutputs() {
   }
 }
 
+function clearThoughtPanels() {
+  clearCognitionOutputs();
+  const thoughtRoot = document.getElementById('thought-iteration-log');
+  if (thoughtRoot) thoughtRoot.innerHTML = '';
+  if (elements.thoughtLog) elements.thoughtLog.innerHTML = '';
+  if (elements.thoughtLogStatus) elements.thoughtLogStatus.textContent = '';
+}
+
 function formatLlmResponseForDisplay(llm: LLMResult | null | undefined): string {
   if (!llm) return 'No response available yet.';
 
@@ -7559,6 +7571,49 @@ function renderThoughtDetail(run: CognitionRun | null) {
   }
   if (elements.llmResponse) {
     elements.llmResponse.textContent = formatLlmResponseForDisplay(run.llm);
+  }
+}
+
+function setInterpretationPane(summary: {
+  title: string;
+  responseText: string;
+  summaryLines?: string[];
+  tokens?: string[];
+}): void {
+  if (elements.thoughtDetailTitle) {
+    elements.thoughtDetailTitle.textContent = summary.title;
+  }
+  if (elements.llmResponse) {
+    elements.llmResponse.textContent = summary.responseText;
+  }
+  if (elements.cognitionSummary) {
+    const lines = Array.isArray(summary.summaryLines) ? summary.summaryLines : [];
+    elements.cognitionSummary.innerHTML = lines
+      .map((line) => `<div>${sanitize(line)}</div>`)
+      .join('');
+  }
+  if (elements.thoughtDetailTokens) {
+    elements.thoughtDetailTokens.innerHTML = '';
+    const tokens = summary.tokens ?? [];
+    if (!tokens.length) {
+      const empty = document.createElement('span');
+      empty.className = 'thought-chip is-empty';
+      empty.textContent = 'No tokens available';
+      elements.thoughtDetailTokens.appendChild(empty);
+    } else {
+      tokens.slice(0, 12).forEach((token) => {
+        const chip = document.createElement('span');
+        chip.className = 'thought-chip is-active';
+        chip.textContent = token;
+        elements.thoughtDetailTokens?.appendChild(chip);
+      });
+    }
+  }
+  if (elements.thoughtDetailIterations) {
+    const lines = Array.isArray(summary.summaryLines) ? summary.summaryLines : [];
+    elements.thoughtDetailIterations.innerHTML = lines.length
+      ? `<strong>Trace</strong><ol>${lines.map((line, idx) => `<li>${sanitize(`${idx + 1}. ${line}`)}</li>`).join('')}</ol>`
+      : '';
   }
 }
 
@@ -8105,6 +8160,53 @@ function commitGraphForVisualizer(graph: HLSFGraph, opts?: { glyphOnly?: boolean
   }
 }
 
+function applyAdjacencyDeltaToGraphInPlace(graph: HLSFGraph, delta: AdjacencyDelta): void {
+  graph.nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  graph.edges = Array.isArray(graph.edges) ? graph.edges : [];
+  const nodeIndex = new Map<string, any>(graph.nodes.map((node) => [node.id, node]));
+  delta.nodes?.forEach((node, idx) => {
+    if (nodeIndex.has(node.id)) return;
+    const newNode = {
+      id: node.id,
+      label: node.label || `node-${idx}`,
+      weight: 1,
+      layer: graph.nodes.length % 4,
+      cluster: graph.nodes.length % 5,
+      meta: node.meta,
+    } as any;
+    graph.nodes.push(newNode);
+    nodeIndex.set(node.id, newNode);
+  });
+  const nextEdgeIndexStart = graph.edges.length;
+  delta.edges?.forEach((edge, idx) => {
+    graph.edges.push({
+      id: `${edge.src}->${edge.dst}#${nextEdgeIndexStart + idx}`,
+      source: edge.src,
+      target: edge.dst,
+      weight: edge.weight,
+      role: edge.role,
+      meta: edge.meta,
+    } as any);
+  });
+}
+
+function hlsfToSalienceGraph(graph: HLSFGraph) {
+  const nodes = new Map<string, any>();
+  (graph.nodes || []).forEach((node) => nodes.set(node.id, { ...node }));
+  const edges = (graph.edges || []).map((edge: any) => ({
+    src: edge.source ?? edge.src,
+    dst: edge.target ?? edge.dst,
+    weight: edge.weight ?? edge.w ?? 0,
+    layer: edge.layer,
+  }));
+  return { nodes, edges } as any;
+}
+
+function topTokensFromGraph(graph: HLSFGraph, k = 6): string[] {
+  const salience = computeTokenSalience(hlsfToSalienceGraph(graph) as any);
+  return topSalienceTokens(salience, k).map((id) => graph.nodes.find((node: any) => node.id === id)?.label || id);
+}
+
 function pushGraphToVisualizer(graph: any, opts?: { glyphOnly?: boolean }): void {
   const prepared = sphereGraphToHlsfGraph(graph);
   commitGraphForVisualizer(prepared, opts);
@@ -8315,6 +8417,77 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
   } catch (error: any) {
     logError(`Seed sphere failed: ${error?.message || error}`);
     setCognitionStatus('Seed sphere failed.');
+  } finally {
+    hlsfReasonerActive = false;
+    renderCognitionTelemetry();
+  }
+}
+
+async function runConvergentFromUI(mode: 'prompt' | 'seed'): Promise<void> {
+  const prompt = (elements.input as HTMLInputElement | null)?.value?.trim?.() || '';
+  const seed = (elements.seedTokenInput as HTMLInputElement | null)?.value?.trim?.() || '';
+  const text = mode === 'seed' ? seed || prompt : prompt;
+  if (!text) {
+    logStatus('[error] no input');
+    return;
+  }
+
+  cognitionUiState.answerReady = false;
+  setCognitionStatus('Thinking…');
+  clearThoughtPanels();
+  logStatus(`[run] mode=${mode} text="${text}"`);
+
+  const depth = Number((elements.seedLevel as HTMLInputElement | null)?.value) || cognitionUiState.seedSphere.level;
+  const salienceTopK =
+    Number((elements.seedSalienceTopK as HTMLInputElement | null)?.value) || cognitionUiState.seedSphere.salienceTopK;
+  const collapseRadius =
+    Number((elements.seedCollapseRadius as HTMLInputElement | null)?.value) || cognitionUiState.seedSphere.collapseRadius;
+
+  const cfg: ConvergentConfig = {
+    depthMax: Math.max(1, Math.round(depth || cognitionUiState.config.iterations)),
+    convergeMinCycles: 1,
+    salienceTopK: Math.max(1, Math.round(salienceTopK || 4)),
+    collapseRadius: Math.max(1, Math.round(collapseRadius || 2)),
+    firstLevelTopN: 9,
+    recurseBranches: 5,
+    recurseDepth: 2,
+    affinityThreshold: cognitionUiState.config.affinityThreshold,
+    maxNodes: cognitionUiState.seedSphere.maxNodes ?? defaultSeedSphereConfig.maxNodes,
+    maxEdges: cognitionUiState.seedSphere.maxEdges ?? defaultSeedSphereConfig.maxEdges,
+    concurrency: 2,
+    allowSynthetic: false,
+  };
+
+  const deps: ConvergentDeps = {
+    getAdjacency: (token) => promptAdjacencyForSeed(token),
+    applyDelta: (graph, delta) => applyAdjacencyDeltaToGraphInPlace(graph, delta as AdjacencyDelta),
+    commitGraph: (graph) => {
+      const prepared = sphereGraphToHlsfGraph(graph);
+      state.liveGraph = prepared as any;
+      commitGraphForVisualizer(prepared);
+    },
+    emitThought: (line) => commitThoughtLineToUI(line),
+    log: (line) => {
+      logStatus(line);
+    },
+    shouldAbort: () => Boolean(currentAbortController?.signal?.aborted),
+    now: () => Date.now(),
+  };
+
+  try {
+    hlsfReasonerActive = true;
+    const result = await runConvergentHlsf({ mode, text }, cfg, deps);
+    setInterpretationPane({
+      title: `${mode === 'seed' ? 'Seed' : 'Prompt'} converged at: ${result.hubToken}`,
+      responseText: result.responseText,
+      summaryLines: result.trace,
+      tokens: topTokensFromGraph(result.finalGraph),
+    });
+    cognitionUiState.answerReady = true;
+    setCognitionStatus('Answer ready');
+  } catch (error: any) {
+    logError(`Convergent run failed: ${error?.message || error}`);
+    setCognitionStatus('Convergent run failed.');
   } finally {
     hlsfReasonerActive = false;
     renderCognitionTelemetry();
@@ -24365,19 +24538,33 @@ async function submitVoiceModelPrompt(input, options: { annotateLog?: boolean } 
   return submitPromptThroughEngine(input, { annotateLog: options?.annotateLog, source: 'voice' });
 }
 
-elements.sendBtn.addEventListener('click', () => {
+elements.sendBtn.addEventListener('click', async () => {
   const rawValue = elements.input.value;
   if (!rawValue || !rawValue.trim()) return;
 
-  void submitPromptThroughEngine(rawValue, { source: 'input-field' })
-    .then((result) => {
-      if (result.kind === 'command' || result.kind === 'mixed') {
-        elements.input.value = '';
-      }
-    })
-    .catch((error) => {
-      console.error('Prompt submission failed:', error);
-    });
+  if (rawValue.trim().startsWith('/')) {
+    void submitPromptThroughEngine(rawValue, { source: 'input-field' })
+      .then((result) => {
+        if (result.kind === 'command' || result.kind === 'mixed') {
+          elements.input.value = '';
+        }
+      })
+      .catch((error) => {
+        console.error('Prompt submission failed:', error);
+      });
+    return;
+  }
+
+  if (currentAbortController) currentAbortController.abort();
+  currentAbortController = new AbortController();
+  try {
+    await runConvergentFromUI(cognitionUiState.mode === 'seedToken' ? 'seed' : 'prompt');
+    elements.input.value = '';
+  } catch (error) {
+    console.error('Convergent submission failed:', error);
+  } finally {
+    currentAbortController = null;
+  }
 });
 
 elements.cancelBtn.addEventListener('click', () => {
