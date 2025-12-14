@@ -16423,7 +16423,7 @@ function initHLSFCanvas() {
         orbit.enabled = !orbit.enabled;
         orbit.dragging = false;
         if (orbit.enabled) {
-          emergentRotationWasOn = Boolean(window.HLSF?.state?.emergent?.on);
+          emergentRotationWasOn = isEmergentAnimationActive();
           setEmergentRotationEnabled(false);
           logStatus('[hlsf] User orbit enabled (MMB drag). Emergent rotation halted.');
         } else {
@@ -16481,6 +16481,12 @@ function initHLSFCanvas() {
       if (e.button === 0) {
         isDragging = false;
       }
+    });
+
+    window.addEventListener('blur', () => {
+      const orbit = ensureOrbitState();
+      orbit.dragging = false;
+      isDragging = false;
     });
 
     canvasEl.addEventListener('mousemove', (e) => {
