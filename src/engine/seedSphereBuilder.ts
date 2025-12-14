@@ -8,9 +8,18 @@ import { ThoughtDetector } from './thoughtDetector.js';
 import { ResponseAccumulatorEngine } from './responseAccumulator.js';
 import { cosine } from './vectorUtils.js';
 import { collapseGraph, computeTokenSalience, topSalienceTokens } from './salience.js';
-import type { SeedSphereConfig } from './expansionModes.js';
+import type { ConvergenceThrottleConfig, SeedSphereConfig } from './expansionModes.js';
+import { DEFAULT_CONVERGENCE_THROTTLE_CONFIG } from './expansionModes.js';
 import type { AdjacencyResult } from './adjacencyProvider.js';
 import { normalizeRelationship } from './relationshipMap.js';
+import {
+  collapseToPoint,
+  reseedFieldFromHub,
+  selectHubForConvergence,
+  shouldThrottleField,
+  updateCycles,
+  type ThrottleState,
+} from './convergenceThrottler.js';
 
 export type SphereLayer = 'visible' | 'hidden';
 
@@ -122,6 +131,15 @@ export function applySphereAdjacencyDelta(
     });
   }
   return added;
+}
+
+function neighborsFromHub(hubId: string, edges: SphereEdge[]): Set<string> {
+  const neighbors = new Set<string>();
+  edges.forEach((edge) => {
+    if (edge.src === hubId) neighbors.add(edge.dst);
+    if (edge.dst === hubId) neighbors.add(edge.src);
+  });
+  return neighbors;
 }
 
 async function embedNewNodes(graph: SphereGraph, embedder: BuildDeps['embedder']): Promise<void> {
@@ -335,11 +353,16 @@ export async function buildSeedSphere(cfgInput: SeedSphereConfig, deps: BuildDep
     ...cfgInput,
     allowSyntheticFallback: cfgInput.allowSyntheticFallback === true,
   };
+  const throttleCfg: ConvergenceThrottleConfig = { ...DEFAULT_CONVERGENCE_THROTTLE_CONFIG, ...(cfg.convergenceThrottle ?? {}) };
+  const throttleState: ThrottleState = { lastThrottleAt: 0, throttles: 0, cycles: 0 };
   const graph: SphereGraph = { nodes: new Map(), edges: [] };
   const apply = deps.applyAdjacencyDelta ?? applySphereAdjacencyDelta;
   const tokenFreq = new Map<string, number>();
   const thoughts: ThoughtEvent[] = [];
   let lastAdjacencySource: 'kb' | 'llm' | 'synthetic' = 'kb';
+
+  const emitStatus = (hubLabel: string) =>
+    deps.onStatus?.(`Breaths: ${throttleState.cycles} | Throttles: ${throttleState.throttles} | Hub: ${hubLabel}`);
 
   const seedId = slugify(cfg.seedToken || 'seed');
   graph.nodes.set(seedId, {
@@ -359,6 +382,7 @@ export async function buildSeedSphere(cfgInput: SeedSphereConfig, deps: BuildDep
   await embedNewNodes(graph, deps.embedder);
   deps.onGraphUpdate?.(graph);
   deps.log?.(`[seed] graph now nodes=${graph.nodes.size} edges=${graph.edges.length}`);
+  emitStatus(cfg.seedToken);
 
   const frontierSeed = new Set<string>();
   graph.edges.forEach((edge) => {
@@ -373,23 +397,90 @@ export async function buildSeedSphere(cfgInput: SeedSphereConfig, deps: BuildDep
   const adjacencyState = { current: lastAdjacencySource };
   for (let level = 0; level < cfg.level; level += 1) {
     if (deps.shouldAbort?.()) break;
+    updateCycles(throttleState);
     deps.log?.(`[seed] breath ${level + 1}/${cfg.level} hub=${cfg.seedToken}`);
+    emitStatus(cfg.seedToken);
     const newNodes = await expandFrontier(frontier, cfg, deps, graph, 'visible', thoughts, tokenFreq, adjacencyState);
     frontier = pickFrontier(graph, newNodes, cfg.dimension + level);
     deps.onGraphUpdate?.(graph);
     deps.log?.(`[seed] graph now nodes=${graph.nodes.size} edges=${graph.edges.length}`);
+    const decision = shouldThrottleField(graph as any, throttleCfg, throttleState, Date.now());
+    if (decision.shouldThrottle) {
+      const hub = decision.hubId || selectHubForConvergence(graph as any).hubId;
+      const hubLabel = decision.hubLabel || graph.nodes.get(hub)?.label || hub;
+      deps.log?.(
+        `[throttle] converging field at nodes=${graph.nodes.size} edges=${graph.edges.length} hub=${hubLabel}`,
+      );
+      const collapsed = collapseToPoint(graph as any, hub, throttleCfg);
+      deps.onGraphUpdate?.(collapsed.collapsedGraph as any);
+      const reseeded = await reseedFieldFromHub(hub, collapsed.collapsedGraph as any, throttleCfg, {
+        getAdjacencyDelta: async (token) => (await getAdjacencyDelta(token, deps, 'expand', cfg)).delta,
+        applyAdjacencyDelta: (target, delta, layer) => apply(target as any, delta, layer),
+        shouldAbort: deps.shouldAbort,
+        log: deps.log,
+      });
+      throttleState.lastThrottleAt = Date.now();
+      throttleState.throttles += 1;
+      await embedNewNodes(reseeded as any, deps.embedder);
+      const reseededGraph = reseeded as SphereGraph;
+      graph.nodes.clear();
+      reseededGraph.nodes.forEach((node, id) => graph.nodes.set(id, node));
+      graph.edges.length = 0;
+      reseededGraph.edges.forEach((edge) => graph.edges.push(edge));
+      deps.onStatus?.(
+        `CONVERGENCE: hub=${hubLabel} nodes=${collapsed.collapsedGraph.nodes.size} edges=${collapsed.collapsedGraph.edges.length} → reseeded new field`,
+      );
+      emitStatus(hubLabel);
+      deps.onGraphUpdate?.(graph);
+      const newFrontier = neighborsFromHub(hub, graph.edges);
+      frontier = pickFrontier(graph, newFrontier, cfg.dimension);
+      continue;
+    }
     if (graph.nodes.size >= cfg.maxNodes || graph.edges.length >= cfg.maxEdges) break;
   }
 
   // Hidden depth expansion based on salience
   for (let depth = 0; depth < cfg.hiddenDepth; depth += 1) {
     if (deps.shouldAbort?.()) break;
+    updateCycles(throttleState);
     const salience = computeTokenSalience(graph as any);
     const centers = prioritizeTokensBySynthetic(topSalienceTokens(salience, cfg.salienceTopK), graph);
     const hiddenFrontier = centers.map((id) => ({ id, weight: salience.get(id) || 0 }));
     await expandFrontier(hiddenFrontier, cfg, deps, graph, 'hidden', thoughts, tokenFreq, adjacencyState);
     deps.onGraphUpdate?.(graph);
     deps.log?.(`[seed] graph now nodes=${graph.nodes.size} edges=${graph.edges.length}`);
+    const decision = shouldThrottleField(graph as any, throttleCfg, throttleState, Date.now());
+    if (decision.shouldThrottle) {
+      const hub = decision.hubId || selectHubForConvergence(graph as any).hubId;
+      const hubLabel = decision.hubLabel || graph.nodes.get(hub)?.label || hub;
+      deps.log?.(
+        `[throttle] converging field at nodes=${graph.nodes.size} edges=${graph.edges.length} hub=${hubLabel}`,
+      );
+      const collapsed = collapseToPoint(graph as any, hub, throttleCfg);
+      deps.onGraphUpdate?.(collapsed.collapsedGraph as any);
+      const reseeded = await reseedFieldFromHub(hub, collapsed.collapsedGraph as any, throttleCfg, {
+        getAdjacencyDelta: async (token) => (await getAdjacencyDelta(token, deps, 'expand', cfg)).delta,
+        applyAdjacencyDelta: (target, delta, layer) => apply(target as any, delta, layer),
+        shouldAbort: deps.shouldAbort,
+        log: deps.log,
+      });
+      throttleState.lastThrottleAt = Date.now();
+      throttleState.throttles += 1;
+      await embedNewNodes(reseeded as any, deps.embedder);
+      const reseededGraph = reseeded as SphereGraph;
+      graph.nodes.clear();
+      reseededGraph.nodes.forEach((node, id) => graph.nodes.set(id, node));
+      graph.edges.length = 0;
+      reseededGraph.edges.forEach((edge) => graph.edges.push(edge));
+      deps.onStatus?.(
+        `CONVERGENCE: hub=${hubLabel} nodes=${collapsed.collapsedGraph.nodes.size} edges=${collapsed.collapsedGraph.edges.length} → reseeded new field`,
+      );
+      emitStatus(hubLabel);
+      deps.onGraphUpdate?.(graph);
+      const newFrontier = neighborsFromHub(hub, graph.edges);
+      frontier = pickFrontier(graph, newFrontier, cfg.dimension);
+      continue;
+    }
   }
 
   const salienceMap = computeTokenSalience(graph as any);
