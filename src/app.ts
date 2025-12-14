@@ -7579,12 +7579,37 @@ function setInterpretationPane(summary: {
   responseText: string;
   summaryLines?: string[];
   tokens?: string[];
+  contextInsight?: {
+    activeTokens: string[];
+    hubProjections: Array<{ token: string; prob: number }>;
+    intertwining: Array<{ token: string; score: number }>;
+  };
 }): void {
   if (elements.thoughtDetailTitle) {
     elements.thoughtDetailTitle.textContent = summary.title;
   }
   if (elements.llmResponse) {
-    elements.llmResponse.textContent = summary.responseText;
+    const escaped = sanitize(summary.responseText || '');
+    let html = escaped.replace(/\n/g, '<br>');
+    if (summary.contextInsight) {
+      const { activeTokens, hubProjections, intertwining } = summary.contextInsight;
+      const projectionLabel = hubProjections
+        .slice(0, 3)
+        .map((entry) => `${sanitize(entry.token)}:${entry.prob.toFixed(2)}`)
+        .join(', ');
+      const intertwiningLabel = intertwining
+        .slice(0, 3)
+        .map((entry) => `${sanitize(entry.token)}:${entry.score.toFixed(2)}`)
+        .join(', ');
+      const contextHtml = [
+        '<br><strong>Contexts</strong>',
+        `<div><small>Active: ${sanitize(activeTokens.slice(0, 8).join(', ') || '—')}</small></div>`,
+        `<div><small>Hub projection top-3: ${projectionLabel || 'n/a'}</small></div>`,
+        `<div><small>Intertwining top-3: ${intertwiningLabel || 'n/a'}</small></div>`,
+      ].join('');
+      html += contextHtml;
+    }
+    elements.llmResponse.innerHTML = html;
   }
   if (elements.cognitionSummary) {
     const lines = Array.isArray(summary.summaryLines) ? summary.summaryLines : [];
@@ -8482,6 +8507,7 @@ async function runConvergentFromUI(mode: 'prompt' | 'seed'): Promise<void> {
       responseText: result.responseText,
       summaryLines: result.trace,
       tokens: topTokensFromGraph(result.finalGraph),
+      contextInsight: result.contextInsight,
     });
     cognitionUiState.answerReady = true;
     setCognitionStatus('Answer ready');
