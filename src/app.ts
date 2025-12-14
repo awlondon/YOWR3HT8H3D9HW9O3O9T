@@ -69,6 +69,7 @@ import {
   HLSF_ROTATION_EVENT,
   HLSF_THOUGHT_COMMIT_EVENT,
   commitThoughtLineToUI,
+  callLLM,
   type LLMResult,
   type CognitionConfig,
   type CognitionRun,
@@ -80,11 +81,9 @@ import {
 import { runHlsfReasoning } from './engine/hlsfReasoner';
 import type { ThoughtEvent } from './engine/cognitionTypes';
 import type { AdjacencyResult } from './engine/adjacencyProvider.js';
-import { applySphereAdjacencyDelta, buildSeedSphere } from './engine/seedSphereBuilder.js';
-import { StubLLMClient } from './engine/llmClient.js';
-import { ResponseAccumulatorEngine } from './engine/responseAccumulator.js';
 import { collapseGraph, computeTokenSalience, topSalienceTokens } from './engine/salience.js';
 import type { SeedSphereConfig, ExpansionMode } from './engine/expansionModes.js';
+import { runConvergencePipeline } from './engine/convergenceController.js';
 import { installLLMStub } from './server/installLLMStub';
 // ============================================
 // CONFIGURATION
@@ -7133,6 +7132,7 @@ const defaultSeedSphereConfig: SeedSphereConfig = {
   seedToken: '',
   dimension: 3,
   level: 2,
+  depth: 2,
   affinityThreshold: 0.35,
   maxNodes: 320,
   maxEdges: 960,
@@ -7140,6 +7140,15 @@ const defaultSeedSphereConfig: SeedSphereConfig = {
   concurrency: 2,
   salienceTopK: 4,
   collapseRadius: 2,
+  expandDepthMax: 6,
+  convergeMinDepth: 2,
+  convergeStability: 2,
+  level1RingSize: 9,
+  level1Branches: 5,
+  recurseBudgetNodes: 250,
+  recurseBudgetEdges: 1200,
+  recurseStepsMax: 6,
+  stopwordsEnabled: true,
   allowSyntheticFallback: true,
 };
 
@@ -8027,6 +8036,7 @@ function resolveSeedSphereConfigFromUI(seedToken?: string): SeedSphereConfig {
   return {
     ...cognitionUiState.seedSphere,
     seedToken: resolvedToken,
+    depth: cognitionUiState.seedSphere.level,
     hiddenDepth: cognitionUiState.seedSphere.level,
     affinityThreshold: cognitionUiState.config.affinityThreshold,
     allowSyntheticFallback: cognitionUiState.seedSphere.allowSyntheticFallback,
@@ -8164,108 +8174,100 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
   renderCognitionTelemetry();
   setCognitionStatus('Building single-token sphere…');
 
-  const llm = new StubLLMClient();
-  const embedder = { embed: async (text: string) => buildSeedEmbed(text) };
-  const accumulatorEngine = new ResponseAccumulatorEngine({
-    relevanceThreshold: 0.35,
-    minRelevantThoughts: 1,
-    targetThoughts: 4,
-    minTimeSinceLastResponseMs: 0,
-    articulationScoreThreshold: 0.5,
-    maxSalienceTokens: cfg.salienceTopK,
-    highSalienceThreshold: 0.5,
-  });
-  const seedEmbedding = await embedder.embed(cfg.seedToken);
-  const accumulator = accumulatorEngine.initAccumulator(seedEmbedding, Date.now());
-
   const thoughtTraces: string[] = [];
-  let latestGraph: any = null;
+  const normalizeLabel = (text: string) => normalizeSeedTokenInput(text);
 
-  const onGraphUpdate = (graphSnapshot: any) => {
-    latestGraph = graphSnapshot;
-    const prepared = sphereGraphToHlsfGraph(graphSnapshot);
+  const applyAdjacency = (graph: any, adjacency: AdjacencyResult) => {
+    graph.nodes = graph.nodes || new Map();
+    graph.edges = graph.edges || [];
+    const srcId = normalizeLabel(adjacency.token) || adjacency.token;
+    if (!graph.nodes.has(srcId)) {
+      graph.nodes.set(srcId, { id: srcId, label: adjacency.token });
+    }
+    adjacency.neighbors.forEach((neighbor) => {
+      const dstId = normalizeLabel(neighbor.token) || neighbor.token;
+      if (!graph.nodes.has(dstId)) {
+        graph.nodes.set(dstId, { id: dstId, label: neighbor.token });
+      }
+      graph.edges.push({ src: srcId, dst: dstId, weight: neighbor.weight, role: neighbor.rel });
+    });
+  };
+
+  const commitGraph = (graph: HLSFGraph) => {
+    const prepared = sphereGraphToHlsfGraph(graph);
     state.liveGraph = prepared as any;
     commitGraphForVisualizer(prepared);
   };
 
+  const emitThought = (text: string) => {
+    thoughtTraces.push(text);
+    commitThoughtLineToUI(text, thoughtTraces.length);
+  };
+
   try {
     hlsfReasonerActive = true;
-    const result = await buildSeedSphere(cfg, {
+    const result = await runConvergencePipeline({ seedToken: cfg.seedToken }, cfg, {
       getAdjacency: promptAdjacencyForSeed,
-      embedder,
-      applyAdjacencyDelta: (graph, delta, layer) => applySphereAdjacencyDelta(graph, delta, layer),
-      onGraphUpdate,
-      accumulatorEngine,
-      accumulator,
-      affinityThreshold: cfg.affinityThreshold,
-      onThought: (ev: ThoughtEvent) => {
-        commitThoughtLineToUI(ev.cluster.nodeIds.join(', '), ev.cycleIndex ?? 0);
-      },
-      onStatus: (status: string) => {
-        setCognitionStatus(status);
-      },
-      log: (msg: string) => {
-        logStatus(msg);
-      },
-      articulateResponse: (articulation, userQuestion, salientContext) =>
-        llm.articulateResponse(articulation, userQuestion, salientContext),
-      modelName: llm.modelName,
+      applyAdjacencyToGraph: applyAdjacency,
+      computeSalience: (graph) => computeTokenSalience(graph as any),
+      collapseGraph: (graph, centers, radius) => collapseGraph(graph as any, centers, radius) as any,
+      commitGraph,
+      emitThought,
       shouldAbort: () => cognitionUiState.mode !== 'seedToken' || Boolean(currentAbortController?.signal?.aborted),
+      normalizeToken: normalizeLabel,
     });
 
-    const workingGraph = (latestGraph || result.graph) as any;
-    const salienceMap = computeTokenSalience(workingGraph as any);
-    const salient = topSalienceTokens(salienceMap, cfg.salienceTopK);
-    const preferredHub =
-      salient.find((id) => workingGraph?.nodes?.get(id)?.meta?.synthetic !== true) || salient[0] || cfg.seedToken;
-    const neighborEdges = (workingGraph?.edges || [])
-      .filter((edge: any) => edge.src === preferredHub || edge.dst === preferredHub)
+    const ringEdges = (result.level1Graph.edges || [])
+      .filter((edge: any) => edge.source === result.hubId || edge.target === result.hubId)
       .sort((a: any, b: any) => (b.weight ?? 0) - (a.weight ?? 0));
-    const ring = neighborEdges
-      .map((edge: any) => (edge.src === preferredHub ? edge.dst : edge.src))
-      .filter(Boolean)
-      .slice(0, Math.max(3, cfg.dimension));
-    const cc = salient.filter((id) => id !== preferredHub && !ring.includes(id)).slice(0, Math.max(3, cfg.dimension));
-    const collapsedStats = { nodes: result.collapsedGraph.nodes.size, edges: result.collapsedGraph.edges.length };
-    const summaryLine = `Hub: ${preferredHub} | ring: ${ring.slice(0, 3).join(', ') || '—'} | cc: ${cc
-      .slice(0, 3)
-      .join(', ') || '—'}`;
-    thoughtTraces.push(summaryLine);
-    if (result.lastAdjacencySource) {
-      const label = result.lastAdjacencySource === 'synthetic'
-        ? 'synthetic (OFFLINE)'
-        : result.lastAdjacencySource.toUpperCase();
-      setCognitionStatus(`Adjacency source: ${label}`);
-    }
+    const ring = ringEdges
+      .map((edge: any) => (edge.source === result.hubId ? edge.target : edge.source))
+      .slice(0, Math.max(3, cfg.level1RingSize ?? cfg.dimension));
 
-    if (result.response && elements.llmResponse) {
-      elements.llmResponse.textContent = result.response;
-    }
+    const cc = (result.level1Graph.edges || [])
+      .filter((edge: any) => ring.includes(edge.source) || ring.includes(edge.target))
+      .map((edge: any) => {
+        if (ring.includes(edge.source) && edge.target !== result.hubId) return edge.target;
+        if (ring.includes(edge.target) && edge.source !== result.hubId) return edge.source;
+        return null;
+      })
+      .filter(Boolean)
+      .slice(0, Math.max(3, cfg.level1Branches ?? cfg.dimension)) as string[];
+
+    const salienceGraph = normalizeToVisualizerGraph(result.level1Graph as any);
+    const salienceMap = computeTokenSalience({
+      nodes: salienceGraph.nodes,
+      edges: (salienceGraph.edges || []).map((edge: any) => ({
+        src: edge.source || edge.from || edge.src,
+        dst: edge.target || edge.to || edge.dst,
+        weight: edge.weight ?? edge.w ?? 0,
+      })),
+    } as any);
+    const salient = topSalienceTokens(salienceMap, cfg.salienceTopK ?? 4);
 
     pushGraphToVisualizer(result.collapsedGraph);
     state.liveGraph = result.collapsedGraph as any;
 
+    const response = await articulateFromConvergence(result, cfg, thoughtTraces, `Seed: ${cfg.seedToken}`);
+    if (elements.llmResponse) {
+      elements.llmResponse.textContent = response;
+    }
+
+    const collapsedStats = {
+      nodeCount: result.collapsedGraph.nodes.length,
+      edgeCount: result.collapsedGraph.edges.length,
+    };
+
     setInterpretationPaneForSeedRun({
       seed: cfg.seedToken,
-      hub: preferredHub,
+      hub: result.hubLabel,
       ring,
       cc,
       salient,
       collapsedStats,
-      note: result.response,
+      note: response,
       thoughts: thoughtTraces,
     });
-
-    const visibleSummary = {
-      nodeCount: collapsedStats.nodes,
-      edgeCount: collapsedStats.edges,
-      coherenceScore: 0,
-    };
-    const hiddenSummary = {
-      nodeCount: workingGraph?.nodes?.size || 0,
-      edgeCount: Array.isArray(workingGraph?.edges) ? workingGraph.edges.length : 0,
-      coherenceScore: 0,
-    };
 
     const run: CognitionRun = {
       id: `seed-${Date.now()}`,
@@ -8274,32 +8276,32 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
       mode: 'visible',
       config: {
         thinkingStyle: cognitionUiState.config.thinkingStyle,
-        iterations: cfg.level,
+        iterations: cfg.depth ?? cfg.level,
         rotationSpeed: cognitionUiState.config.rotationSpeed,
         affinityThreshold: cfg.affinityThreshold,
         maxPromptWords: CONFIG.INPUT_WORD_LIMIT,
-        maxIterations: cfg.level,
+        maxIterations: cfg.depth ?? cfg.level,
       },
       input: { userPrompt: `Seed: ${cfg.seedToken}` },
       historyContext: [],
       graphs: {
-        visibleGraphSummary: visibleSummary,
-        hiddenGraphSummary: hiddenSummary,
+        visibleGraphSummary: collapsedStats,
+        hiddenGraphSummary: { nodeCount: result.level1Graph.nodes.length, edgeCount: result.level1Graph.edges.length, coherenceScore: 0 },
       },
       thoughts: {
         perIterationTokens: [salient],
         perIterationText: thoughtTraces,
         emergentTrace: thoughtTraces.length ? { stream: thoughtTraces } : undefined,
       },
-      llm: { model: llm.modelName || 'seed-llm', temperature: 0.2, response: result.response || '' },
+      llm: { model: 'llm', temperature: 0.2, response },
       summary: {
         id: `seed-${cfg.seedToken}`,
         input: cfg.seedToken,
         intersectionTokens: salient,
         metrics: {
-          tokenCount: collapsedStats.nodes,
-          edgeCount: collapsedStats.edges,
-          integrationScore: salienceMap.get(preferredHub) ?? 0,
+          tokenCount: collapsedStats.nodeCount,
+          edgeCount: collapsedStats.edgeCount,
+          integrationScore: salienceMap.get(result.hubId) ?? 0,
         },
       },
     };
@@ -8317,6 +8319,57 @@ async function runSeedSphere(seedToken?: string): Promise<void> {
     hlsfReasonerActive = false;
     renderCognitionTelemetry();
   }
+}
+
+function summarizeLevel1Graph(level1Graph: HLSFGraph, hubLabel: string, edgeLimit = 50): string {
+  const nodes = Array.isArray(level1Graph.nodes)
+    ? level1Graph.nodes.map((node) => ({ id: (node as any).id, label: (node as any).label }))
+    : [];
+  const edges = Array.isArray(level1Graph.edges)
+    ? level1Graph.edges.slice(0, edgeLimit).map((edge) => ({
+        from: (edge as any).source || (edge as any).from || (edge as any).src,
+        to: (edge as any).target || (edge as any).to || (edge as any).dst,
+        w: Number((edge as any).weight ?? (edge as any).w ?? 0),
+        rel: (edge as any).role || (edge as any).rel || 'rel',
+      }))
+    : [];
+  return JSON.stringify({ hub: hubLabel, nodes, edges }, null, 2);
+}
+
+async function articulateFromConvergence(
+  result: { level1Graph: HLSFGraph; hubLabel: string },
+  cfg: SeedSphereConfig,
+  thoughtTraces: string[],
+  userPrompt: string,
+): Promise<string> {
+  const summary = summarizeLevel1Graph(result.level1Graph, result.hubLabel);
+  const traceBlock = thoughtTraces.length ? thoughtTraces.map((line) => `- ${line}`).join('\n') : '• No traces captured';
+  const articulationPrompt = [
+    `Hub token: ${result.hubLabel}`,
+    `Level-1 field (truncated):\n${summary}`,
+    `Thought traces:\n${traceBlock}`,
+    userPrompt ? `Original prompt: ${userPrompt}` : null,
+    'Generate a coherent answer grounded in the Level-1 HLSF field. Use the hub as the anchor concept.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  try {
+    const config = resolveCognitionConfigFromUI();
+    const llmResult = await callLLM(
+      articulationPrompt,
+      thoughtTraces,
+      { ...config, iterations: cfg.depth ?? cfg.level },
+      'visible',
+      [],
+      { rawPrompt: userPrompt, adjacencyTokens: [result.hubLabel] },
+    );
+    if (llmResult?.response) return llmResult.response;
+  } catch (error: any) {
+    console.warn('Articulation failed, falling back to trace summary', error);
+  }
+
+  return thoughtTraces.join(' ') || `Hub ${result.hubLabel}`;
 }
 
 function triggerCognitionCycle(prompt: string): void {

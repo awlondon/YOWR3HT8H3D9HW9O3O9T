@@ -4,6 +4,8 @@ export interface SeedSphereConfig {
   seedToken: string;
   dimension: number;
   level: number;
+  /** Primary depth value; supersedes hiddenDepth for new controllers. */
+  depth?: number;
   affinityThreshold: number;
   maxNodes: number;
   maxEdges: number;
@@ -11,6 +13,15 @@ export interface SeedSphereConfig {
   concurrency: number;
   salienceTopK: number;
   collapseRadius: number;
+  expandDepthMax?: number;
+  convergeMinDepth?: number;
+  convergeStability?: number;
+  level1RingSize?: number;
+  level1Branches?: number;
+  recurseBudgetNodes?: number;
+  recurseBudgetEdges?: number;
+  recurseStepsMax?: number;
+  stopwordsEnabled?: boolean;
   allowSyntheticFallback?: boolean;
   convergenceThrottle?: Partial<ConvergenceThrottleConfig>;
 }
