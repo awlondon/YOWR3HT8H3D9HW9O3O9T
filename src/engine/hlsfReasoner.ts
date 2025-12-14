@@ -12,6 +12,15 @@ import {
 import { ThoughtDetector } from './thoughtDetector.js';
 import { ResponseAccumulatorEngine } from './responseAccumulator.js';
 import { averageEmbedding, cosine } from './vectorUtils.js';
+import { DEFAULT_CONVERGENCE_THROTTLE_CONFIG, type ConvergenceThrottleConfig } from './expansionModes.js';
+import {
+  collapseToPoint,
+  reseedFieldFromHub,
+  selectHubForConvergence,
+  shouldThrottleField,
+  updateCycles,
+  type ThrottleState,
+} from './convergenceThrottler.js';
 
 interface Token {
   label: string;
@@ -33,6 +42,8 @@ interface TraverseContext {
   onArticulation?: (ev: ArticulationEvent) => void;
   prompt: string;
   trace: string[];
+  throttleCfg: ConvergenceThrottleConfig;
+  throttleState: ThrottleState;
 }
 
 interface ReasonerResult {
@@ -216,6 +227,40 @@ function applyAdjacencyDeltaToHlsf(
   return addedNodeIds;
 }
 
+function buildPseudoThought(token: string): ThoughtEvent {
+  const spectralTemplate = { energy: 0.5, centroid: 0.5, flatness: 0.5, roleBandpower: [0.5, 0.5, 0.5, 0.5, 0.5] } as const;
+  const cluster: Cluster = {
+    id: token,
+    nodeIds: [token],
+    density: 0.6,
+    persistenceFrames: 1,
+    spectral: spectralTemplate,
+    semanticCoherence: 0.55,
+    novelty: 0.5,
+  };
+  return {
+    id: `thought-${token}`,
+    type: 'cluster_thought',
+    timestamp: Date.now(),
+    cluster,
+    thoughtScore: 0.75,
+  };
+}
+
+function mapNodesFromThrottleGraph(nodes: Map<string, any>): HlsfNode[] {
+  const mapped: HlsfNode[] = [];
+  nodes.forEach((node, id) => {
+    mapped.push({
+      id,
+      label: node.label ?? id,
+      tokenType: 'noun',
+      tokens: [node.label ?? id],
+      embedding: Array.isArray(node.embedding) && node.embedding.length ? node.embedding : embedToken(node.label ?? id),
+    });
+  });
+  return mapped;
+}
+
 function synthesizeHiddenCluster(
   thought: ThoughtEvent,
   delta: AdjacencyDelta,
@@ -247,7 +292,63 @@ function synthesizeHiddenCluster(
 
 async function traverseGraph(context: TraverseContext): Promise<ArticulationEvent | null> {
   const visited = new Set<string>();
-  const { clusters, thoughtDetector, nodeEmbeddings, respEngine, accumulator, llm, trace } = context;
+  const { clusters, thoughtDetector, respEngine, accumulator, llm, trace } = context;
+
+  const maybeThrottle = async (): Promise<boolean> => {
+    updateCycles(context.throttleState);
+    const decision = shouldThrottleField(context.graph as any, context.throttleCfg, context.throttleState, Date.now());
+    if (!decision.shouldThrottle) return false;
+    const hubSelection = decision.hubId ? { hubId: decision.hubId, hubLabel: decision.hubLabel ?? context.nodeLookup.get(decision.hubId)?.label ?? decision.hubId } : selectHubForConvergence(context.graph as any);
+    const hubId = hubSelection.hubId;
+    const hubLabel = hubSelection.hubLabel ?? hubId;
+    trace.push(
+      `[throttle] converging field at nodes=${context.graph.nodes.length} edges=${context.graph.edges.length} hub=${hubLabel}`,
+    );
+    const collapsed = collapseToPoint(context.graph as any, hubId, context.throttleCfg);
+    const reseeded = await reseedFieldFromHub(hubId, collapsed.collapsedGraph as any, context.throttleCfg, {
+      getAdjacencyDelta: async (token) => llm.expandAdjacency(buildPseudoThought(token), 0, context.maxAdjacencyDepth),
+      applyAdjacencyDelta: (target, delta, layer) => {
+        const targetNodes = target.nodes instanceof Map ? target.nodes : new Map<string, any>(target.nodes ?? []);
+        const targetEdges = Array.isArray(target.edges) ? target.edges : [];
+        if (!(target.nodes instanceof Map)) {
+          target.nodes = targetNodes;
+        }
+        if (!Array.isArray(target.edges)) {
+          target.edges = targetEdges;
+        }
+        delta.nodes?.forEach((node: any) => {
+          if (!node?.id || targetNodes.has(node.id)) return;
+          targetNodes.set(node.id, { ...node, meta: { ...(node.meta ?? {}), layer } });
+        });
+        delta.edges?.forEach((edge: any) => {
+          if (!edge?.src || !edge?.dst) return;
+          targetEdges.push({ src: edge.src, dst: edge.dst, weight: edge.weight, role: edge.role });
+        });
+      },
+      shouldAbort: llm.shouldAbort?.bind(llm),
+      log: (msg) => trace.push(msg),
+    });
+    context.throttleState.lastThrottleAt = Date.now();
+    context.throttleState.throttles += 1;
+    const mappedNodes = mapNodesFromThrottleGraph(reseeded.nodes);
+    const mappedEdges = (reseeded.edges || [])
+      .map((edge: any, idx: number) => ({
+        id: `${edge.src || edge.source}->${edge.dst || edge.target}-${idx}`,
+        source: edge.src ?? edge.source,
+        target: edge.dst ?? edge.target,
+        weight: edge.weight ?? 0.1,
+        relation: edge.role ?? 'relation',
+      }))
+      .filter((edge) => edge.source && edge.target);
+    context.graph.nodes = mappedNodes;
+    context.graph.edges = mappedEdges;
+    context.nodeEmbeddings = new Map(mappedNodes.map((n) => [n.id, n.embedding]));
+    context.nodeLookup = new Map(mappedNodes.map((n) => [n.id, n]));
+    trace.push(
+      `CONVERGENCE: hub=${hubLabel} nodes=${collapsed.collapsedGraph.nodes.size} edges=${collapsed.collapsedGraph.edges.length} → reseeded new field`,
+    );
+    return true;
+  };
 
   const expandAndRecurse = async (
     thought: ThoughtEvent,
@@ -263,19 +364,21 @@ async function traverseGraph(context: TraverseContext): Promise<ArticulationEven
       );
     }
 
+    if (await maybeThrottle()) return null;
+
     if (depth >= context.maxAdjacencyDepth) return null;
 
     const hiddenCluster = synthesizeHiddenCluster(thought, delta, depth + 1, addedNodes);
     if (!hiddenCluster) return null;
 
-    const { structuralScore, spectralScore, semanticScore } = buildClusterFeatures(hiddenCluster, nodeEmbeddings);
+    const { structuralScore, spectralScore, semanticScore } = buildClusterFeatures(hiddenCluster, context.nodeEmbeddings);
     const nestedThought = thoughtDetector.evaluateCluster(
       {
         cluster: hiddenCluster,
         structuralScore,
         spectralScore,
         semanticScore,
-        nodeEmbeddings,
+        nodeEmbeddings: context.nodeEmbeddings,
       },
       Date.now(),
     );
@@ -292,7 +395,7 @@ async function traverseGraph(context: TraverseContext): Promise<ArticulationEven
     context.onThought?.(thought);
     trace.push(`Thought emitted on ${thought.cluster.id} with score ${thought.thoughtScore.toFixed(2)} at depth ${depth}.`);
 
-    const articulation = respEngine.maybeArticulate(accumulator, nodeEmbeddings, Date.now());
+    const articulation = respEngine.maybeArticulate(accumulator, context.nodeEmbeddings, Date.now());
     if (articulation) {
       context.onArticulation?.(articulation);
       return articulation;
@@ -307,14 +410,14 @@ async function traverseGraph(context: TraverseContext): Promise<ArticulationEven
     if (visited.has(cluster.id)) return null;
     visited.add(cluster.id);
 
-    const { structuralScore, spectralScore, semanticScore } = buildClusterFeatures(cluster, nodeEmbeddings);
+    const { structuralScore, spectralScore, semanticScore } = buildClusterFeatures(cluster, context.nodeEmbeddings);
     const thought = thoughtDetector.evaluateCluster(
       {
         cluster,
         structuralScore,
         spectralScore,
         semanticScore,
-        nodeEmbeddings,
+        nodeEmbeddings: context.nodeEmbeddings,
       },
       Date.now(),
     );
@@ -456,6 +559,8 @@ export async function runHlsfReasoning(
   graph.nodes.forEach(n => nodeLookup.set(n.id, n));
   const queryEmbedding = averageEmbedding([...nodeEmbeddings.values()]);
   const accumulator = respEngine.initAccumulator(queryEmbedding, Date.now());
+  const throttleCfg = DEFAULT_CONVERGENCE_THROTTLE_CONFIG;
+  const throttleState: ThrottleState = { lastThrottleAt: 0, throttles: 0, cycles: 0 };
 
   const articulation = await traverseGraph({
     graph,
@@ -471,6 +576,8 @@ export async function runHlsfReasoning(
     onArticulation: options?.onArticulation,
     prompt,
     trace,
+    throttleCfg,
+    throttleState,
   });
 
   const salientTokens = respEngine.getHighSalienceTokens(accumulator);
