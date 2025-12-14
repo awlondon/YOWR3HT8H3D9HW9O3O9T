@@ -3619,7 +3619,11 @@ function drawComposite(graph, opts = {}) {
     rotatedPositions.set(token, rotatedPos(token, base, node));
   }
 
-  applyAutoFitIfNeeded(rotatedPositions, width, height);
+  const orbitState = ensureOrbitState();
+  const projectedPositions =
+    orbitState.enabled === true ? applyOrbitProjection(rotatedPositions, graph, orbitState) : rotatedPositions;
+
+  applyAutoFitIfNeeded(projectedPositions, width, height);
 
   const view = window.HLSF.view;
   const zoom = Number.isFinite(view.scale) ? view.scale : 1;
@@ -3642,7 +3646,7 @@ function drawComposite(graph, opts = {}) {
   ctx.font = baseFont;
 
   if (layoutMode === 'affinity') {
-    drawClusterOverlays(ctx, graph, rotatedPositions);
+    drawClusterOverlays(ctx, graph, projectedPositions);
   }
 
   if (layoutMode === 'dimension' && graph.dimensionLayout) {
@@ -3654,7 +3658,7 @@ function drawComposite(graph, opts = {}) {
     const cells = Array.isArray(graph.dimensionLayout.cells) ? graph.dimensionLayout.cells : [];
     for (const cell of cells) {
       const tokens = Array.isArray(cell?.tokens) ? cell.tokens : [];
-      const pts = tokens.map((t) => rotatedPositions.get(t.token)).filter(Boolean);
+      const pts = tokens.map((t) => projectedPositions.get(t.token)).filter(Boolean);
       if (pts.length < 3) continue;
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -3691,8 +3695,8 @@ function drawComposite(graph, opts = {}) {
   if (cfg.showEdges !== false) {
     const batches = new Map();
     for (const edge of edges) {
-      const fromPos = rotatedPositions.get(edge.from) || rotatedPositions.get(edge.to);
-      const toPos = rotatedPositions.get(edge.to);
+      const fromPos = projectedPositions.get(edge.from) || projectedPositions.get(edge.to);
+      const toPos = projectedPositions.get(edge.to);
       if (!fromPos || !toPos) continue;
       const dxWorld = toPos.x - fromPos.x;
       const dyWorld = toPos.y - fromPos.y;
@@ -3765,7 +3769,7 @@ function drawComposite(graph, opts = {}) {
   }
 
   for (const [token, data] of graph.nodes.entries()) {
-    const position = rotatedPositions.get(token);
+    const position = projectedPositions.get(token);
     if (!position) continue;
     const spokes = Number.isFinite(data?.degree) ? Math.max(0, data.degree) : 0;
     const spokeScale = 1 + Math.log2(1 + spokes) * 0.3;
@@ -3825,7 +3829,7 @@ function drawComposite(graph, opts = {}) {
 
   const state = renderState || (window.HLSF.rendering = window.HLSF.rendering || {});
   state.nodeHitAreas = hitAreas;
-  state.nodePositions = rotatedPositions;
+  state.nodePositions = projectedPositions;
   window.HLSF.lastRenderedGraph = graph;
 
   ctx.restore();
@@ -4130,6 +4134,47 @@ function rotatedPos(token, basePos, node) {
   return { x: patch.cx + c * x - s * y, y: patch.cy + s * x + c * y };
 }
 
+function deriveNodeDepth(node): number {
+  const layer = Number.isFinite(node?.layer) ? node.layer : 0;
+  const cluster = Number.isFinite(node?.cluster) ? node.cluster : 0;
+  return layer * 0.12 + cluster * 0.08;
+}
+
+function applyOrbitProjection(basePositions: Map<string, { x: number; y: number }>, graph, orbit: OrbitState) {
+  const yaw = Number.isFinite(orbit?.yaw) ? orbit.yaw : 0;
+  const pitch = Number.isFinite(orbit?.pitch) ? orbit.pitch : 0;
+  const roll = Number.isFinite(orbit?.roll) ? orbit.roll : 0;
+  const cosYaw = Math.cos(yaw);
+  const sinYaw = Math.sin(yaw);
+  const cosPitch = Math.cos(pitch);
+  const sinPitch = Math.sin(pitch);
+  const cosRoll = Math.cos(roll);
+  const sinRoll = Math.sin(roll);
+
+  const projected = new Map();
+  for (const [token, base] of basePositions.entries()) {
+    const node = graph?.nodes?.get ? graph.nodes.get(token) : null;
+    const z0 = deriveNodeDepth(node);
+
+    const x0 = base.x;
+    const y0 = base.y;
+
+    const x1 = cosYaw * x0 + sinYaw * z0;
+    const z1 = -sinYaw * x0 + cosYaw * z0;
+
+    const y2 = cosPitch * y0 - sinPitch * z1;
+    const z2 = sinPitch * y0 + cosPitch * z1;
+
+    const x3 = cosRoll * x1 - sinRoll * y2;
+    const y3 = sinRoll * x1 + cosRoll * y2;
+
+    const perspective = 1 / (1 + z2 * 0.6);
+    projected.set(token, { x: x3 * perspective, y: y3 * perspective });
+  }
+
+  return projected;
+}
+
 // ---------------- O20 layout ----------------
 function buildO20Layout(width, height, margin = 32) {
   const cx = width / 2;
@@ -4179,6 +4224,32 @@ function drawHLSFMatrix(graph, opts = {}) {
 
 let _anim = null;
 const HLSF_FRAME_INTERVAL_MS = 1000 / 30;
+
+function setEmergentRotationEnabled(on: boolean): void {
+  window.HLSF = window.HLSF || {};
+  window.HLSF.state = window.HLSF.state || {};
+  const emergentState =
+    window.HLSF.state.emergent && typeof window.HLSF.state.emergent === 'object'
+      ? window.HLSF.state.emergent
+      : (window.HLSF.state.emergent = {
+          on,
+          speed: window.HLSF.config?.rotationOmega || 0,
+        });
+  emergentState.on = on;
+  if (window.HLSF.config && typeof window.HLSF.config === 'object') {
+    window.HLSF.config.emergentActive = on;
+  }
+
+  const emergentBtn = document.getElementById('hlsf-toggle-emergent');
+  if (emergentBtn) emergentBtn.textContent = on ? 'Stop Emergence' : 'Start Emergence';
+
+  if (on && window.HLSF.currentGraph) {
+    animateHLSF(window.HLSF.currentGraph, window.HLSF.currentGlyphOnly === true);
+  } else if (!on && _anim) {
+    cancelAnimationFrame(_anim);
+    _anim = null;
+  }
+}
 
 function isEmergentAnimationActive() {
   const cfg = window.HLSF?.config;
@@ -5638,6 +5709,44 @@ if (!Number.isFinite(window.HLSF.view.x)) window.HLSF.view.x = 0;
 if (!Number.isFinite(window.HLSF.view.y)) window.HLSF.view.y = 0;
 if (!Number.isFinite(window.HLSF.view.scale) || window.HLSF.view.scale <= 0)
   window.HLSF.view.scale = 1;
+
+interface OrbitState {
+  enabled: boolean;
+  yaw: number;
+  pitch: number;
+  roll: number;
+  dragging: boolean;
+  lastX: number;
+  lastY: number;
+}
+
+const defaultOrbitState: OrbitState = {
+  enabled: false,
+  yaw: 0,
+  pitch: 0,
+  roll: 0,
+  dragging: false,
+  lastX: 0,
+  lastY: 0,
+};
+
+function ensureOrbitState(): OrbitState {
+  window.HLSF = window.HLSF || {};
+  const state = Object.assign({}, defaultOrbitState, window.HLSF.orbit || {});
+  const normalized: OrbitState = {
+    enabled: state.enabled === true,
+    yaw: Number.isFinite(state.yaw) ? state.yaw : 0,
+    pitch: Number.isFinite(state.pitch) ? state.pitch : 0,
+    roll: Number.isFinite(state.roll) ? state.roll : 0,
+    dragging: state.dragging === true,
+    lastX: Number.isFinite(state.lastX) ? state.lastX : 0,
+    lastY: Number.isFinite(state.lastY) ? state.lastY : 0,
+  };
+  window.HLSF.orbit = normalized;
+  return normalized;
+}
+
+ensureOrbitState();
 
 function syncViewToConfig() {
   if (!window.HLSF?.config || !window.HLSF?.view) return;
@@ -16301,14 +16410,80 @@ function initHLSFCanvas() {
     let isDragging = false;
     let lastX = 0;
     let lastY = 0;
+    let emergentRotationWasOn = false;
 
-    window.HLSF.canvas.addEventListener('mousedown', (e) => {
-      isDragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
+    const canvasEl = window.HLSF.canvas as HTMLCanvasElement;
+
+    canvasEl.addEventListener(
+      'auxclick',
+      (e) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        const orbit = ensureOrbitState();
+        orbit.enabled = !orbit.enabled;
+        orbit.dragging = false;
+        if (orbit.enabled) {
+          emergentRotationWasOn = Boolean(window.HLSF?.state?.emergent?.on);
+          setEmergentRotationEnabled(false);
+          logStatus('[hlsf] User orbit enabled (MMB drag). Emergent rotation halted.');
+        } else {
+          setEmergentRotationEnabled(emergentRotationWasOn);
+          logStatus('[hlsf] User orbit disabled. Emergent rotation restored.');
+        }
+        requestRender();
+      },
+      { passive: false },
+    );
+
+    canvasEl.addEventListener(
+      'mousedown',
+      (e) => {
+        const orbit = ensureOrbitState();
+        if (e.button === 1) {
+          e.preventDefault();
+          if (orbit.enabled) {
+            orbit.dragging = true;
+            orbit.lastX = e.clientX;
+            orbit.lastY = e.clientY;
+          }
+          return;
+        }
+
+        if (e.button !== 0) return;
+        isDragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      },
+      { passive: false },
+    );
+
+    window.addEventListener('mousemove', (e) => {
+      const orbit = ensureOrbitState();
+      if (orbit.enabled && orbit.dragging) {
+        const dx = e.clientX - orbit.lastX;
+        const dy = e.clientY - orbit.lastY;
+        orbit.lastX = e.clientX;
+        orbit.lastY = e.clientY;
+        const s = 0.006;
+        orbit.yaw += dx * s;
+        orbit.pitch += dy * s;
+        const maxPitch = Math.PI / 2 - 0.05;
+        orbit.pitch = Math.max(-maxPitch, Math.min(maxPitch, orbit.pitch));
+        requestRender();
+      }
     });
 
-    window.HLSF.canvas.addEventListener('mousemove', (e) => {
+    window.addEventListener('mouseup', (e) => {
+      const orbit = ensureOrbitState();
+      if (orbit.enabled && e.button === 1) {
+        orbit.dragging = false;
+      }
+      if (e.button === 0) {
+        isDragging = false;
+      }
+    });
+
+    canvasEl.addEventListener('mousemove', (e) => {
       if (isDragging) {
         const dx = e.clientX - lastX;
         const dy = e.clientY - lastY;
@@ -16321,11 +16496,11 @@ function initHLSFCanvas() {
       }
     });
 
-    window.HLSF.canvas.addEventListener('mouseup', () => {
-      isDragging = false;
+    canvasEl.addEventListener('mouseup', (e) => {
+      if (e.button === 0) isDragging = false;
     });
 
-    window.HLSF.canvas.addEventListener('mouseleave', () => {
+    canvasEl.addEventListener('mouseleave', () => {
       isDragging = false;
     });
 
