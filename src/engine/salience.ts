@@ -1,4 +1,6 @@
 import type { Node as EngineNode, Edge as EngineEdge } from './cognitionTypes.js';
+import type { ContextBasis } from './contextBasis.js';
+import { projectToBasis } from './contextMeaning.js';
 
 export interface SalienceGraph {
   nodes: Map<string, EngineNode & { meta?: Record<string, unknown> }>;
@@ -27,6 +29,74 @@ export function computeTokenSalience(graph: SalienceGraph): Map<string, number> 
     salience.set(id, score);
   });
 
+  return salience;
+}
+
+function normalizeScores(map: Map<string, number>): Map<string, number> {
+  const normalized = new Map<string, number>();
+  const max = Math.max(...Array.from(map.values()), 0);
+  if (!max || !Number.isFinite(max)) return normalized;
+  map.forEach((value, key) => {
+    normalized.set(key, value / max);
+  });
+  return normalized;
+}
+
+function computeWeightedDegree(graph: SalienceGraph): Map<string, number> {
+  const degree = new Map<string, number>();
+  graph.edges.forEach((edge) => {
+    const weight = edge.weight ?? (edge as any).w ?? 0;
+    degree.set(edge.src, (degree.get(edge.src) || 0) + weight);
+    degree.set(edge.dst, (degree.get(edge.dst) || 0) + weight);
+  });
+  return degree;
+}
+
+export function computeIntertwiningIndex(contexts: ContextBasis[]): Map<string, number> {
+  const intertwined = new Map<string, number>();
+  contexts.forEach((ctx) => {
+    ctx.tokenIds.forEach((tokenId) => {
+      intertwined.set(tokenId, (intertwined.get(tokenId) || 0) + 1);
+    });
+  });
+  return intertwined;
+}
+
+export function computeProjectionPeakiness(
+  activeContext: ContextBasis | undefined,
+  embeddings: Map<string, number[]>,
+): Map<string, number> {
+  const peakiness = new Map<string, number>();
+  if (!activeContext || !activeContext.k) return peakiness;
+  activeContext.tokenIds.forEach((tokenId, index) => {
+    const vec = embeddings.get(tokenId);
+    if (!vec) return;
+    const { probs } = projectToBasis(vec, activeContext);
+    const score = probs.length ? Math.max(...probs) : 0;
+    if (Number.isFinite(score)) {
+      peakiness.set(tokenId, score);
+    }
+  });
+  return peakiness;
+}
+
+export function computeContextualSalience(
+  graph: SalienceGraph,
+  contexts: ContextBasis[],
+  activeContext: ContextBasis | undefined,
+  embeddings: Map<string, number[]>,
+): Map<string, number> {
+  const weightedDegree = normalizeScores(computeWeightedDegree(graph));
+  const intertwining = normalizeScores(computeIntertwiningIndex(contexts));
+  const projection = normalizeScores(computeProjectionPeakiness(activeContext, embeddings));
+  const salience = new Map<string, number>();
+  graph.nodes.forEach((_node, id) => {
+    const degreeScore = weightedDegree.get(id) || 0;
+    const intertwinedScore = intertwining.get(id) || 0;
+    const projectionScore = projection.get(id) || 0;
+    const score = degreeScore * 0.55 + intertwinedScore * 0.3 + projectionScore * 0.15;
+    salience.set(id, score);
+  });
   return salience;
 }
 
