@@ -5692,30 +5692,104 @@ function clearClusterZoomOverlays(): void {
 const AUTO_FIT_MARGIN = 0.9;
 
 function computeGraphBounds(
-  positions: Map<string, { x: number; y: number }>,
+  nodesOrPositions:
+    | Map<string, { x: number; y: number; position?: [number, number] }>
+    | Array<{ x?: number; y?: number; position?: [number, number] }>
+    | { nodes?: Map<string, { x?: number; y?: number; position?: [number, number] }> | any[] }
+    | null
+    | undefined,
 ): { minX: number; maxX: number; minY: number; maxY: number } | null {
-  if (!positions || positions.size === 0) return null;
+  if (!nodesOrPositions) return null;
+
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
-  for (const pos of positions.values()) {
-    if (!pos) continue;
-    const { x, y } = pos;
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+  const visit = (value: any) => {
+    if (!value) return;
+    const x = Number.isFinite(value.x)
+      ? value.x
+      : Array.isArray(value.position)
+        ? Number(value.position[0])
+        : NaN;
+    const y = Number.isFinite(value.y)
+      ? value.y
+      : Array.isArray(value.position)
+        ? Number(value.position[1])
+        : NaN;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     if (x < minX) minX = x;
     if (x > maxX) maxX = x;
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
+  };
+
+  if (nodesOrPositions instanceof Map) {
+    for (const value of nodesOrPositions.values()) visit(value);
+  } else if (Array.isArray(nodesOrPositions)) {
+    nodesOrPositions.forEach((value) => visit(value));
+  } else {
+    const maybeGraph = nodesOrPositions as any;
+    if (maybeGraph?.nodes instanceof Map || Array.isArray(maybeGraph?.nodes)) {
+      return computeGraphBounds(maybeGraph.nodes as any);
+    }
   }
+
   if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
     return null;
   }
   return { minX, maxX, minY, maxY };
 }
 
+function fitViewToBounds(bounds, canvasWidth: number, canvasHeight: number, paddingPx = 80) {
+  const bw = Math.max(1e-6, bounds.maxX - bounds.minX);
+  const bh = Math.max(1e-6, bounds.maxY - bounds.minY);
+
+  const availableW = Math.max(1, canvasWidth - paddingPx * 2);
+  const availableH = Math.max(1, canvasHeight - paddingPx * 2);
+
+  const scaleX = availableW / bw;
+  const scaleY = availableH / bh;
+  let scale = AUTO_FIT_MARGIN * Math.min(scaleX, scaleY);
+
+  scale = Math.max(0.05, Math.min(6, scale));
+
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cy = (bounds.minY + bounds.maxY) / 2;
+
+  const targetCx = canvasWidth / 2;
+  const targetCy = canvasHeight / 2;
+
+  const offsetX = targetCx - cx * scale;
+  const offsetY = targetCy - cy * scale;
+
+  return { scale, offsetX, offsetY };
+}
+
+function recenterToGraph(
+  graph: HLSFGraph | null | undefined,
+  canvas: HTMLCanvasElement | null,
+  viewState: { x: number; y: number; scale: number } | null | undefined,
+): void {
+  if (!graph || !canvas || !viewState) return;
+  const bounds = computeGraphBounds(graph.nodes);
+  if (!bounds) return;
+  const width = canvas.clientWidth || canvas.width || 0;
+  const height = canvas.clientHeight || canvas.height || 0;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+  const fit = fitViewToBounds(bounds, width, height, 80);
+  if (!fit) return;
+
+  viewState.scale = fit.scale;
+  viewState.x = fit.offsetX;
+  viewState.y = fit.offsetY;
+  window.HLSF.__centerInit = true;
+  syncViewToConfig();
+}
+
 function applyAutoFitIfNeeded(
-  positions: Map<string, { x: number; y: number }>,
+  positions: Map<string, { x: number; y: number; position?: [number, number] }>,
   viewportWidth: number,
   viewportHeight: number,
 ): void {
@@ -5724,18 +5798,11 @@ function applyAutoFitIfNeeded(
   if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
   const bounds = computeGraphBounds(positions);
   if (!bounds) return;
-  const spanX = Math.max(1e-2, bounds.maxX - bounds.minX);
-  const spanY = Math.max(1e-2, bounds.maxY - bounds.minY);
-  const widthScale = viewportWidth / spanX;
-  const heightScale = viewportHeight / spanY;
-  const scaleCandidate = AUTO_FIT_MARGIN * Math.min(widthScale, heightScale);
-  const scale = Math.min(6, Math.max(0.05, scaleCandidate));
-  const offsetX = (viewportWidth - spanX * scale) / 2 - bounds.minX * scale;
-  const offsetY = (viewportHeight - spanY * scale) / 2 - bounds.minY * scale;
-  if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) return;
-  window.HLSF.view.scale = scale;
-  window.HLSF.view.x = offsetX;
-  window.HLSF.view.y = offsetY;
+  const fit = fitViewToBounds(bounds, viewportWidth, viewportHeight, 80);
+  if (!fit) return;
+  window.HLSF.view.scale = fit.scale;
+  window.HLSF.view.x = fit.offsetX;
+  window.HLSF.view.y = fit.offsetY;
   window.HLSF.__centerInit = true;
   window.HLSF.__pendingAutoFit = false;
   syncViewToConfig();
@@ -7902,8 +7969,14 @@ function sphereGraphToHlsfGraph(graph: any): HLSFGraph {
 function commitGraphForVisualizer(graph: HLSFGraph, opts?: { glyphOnly?: boolean }): void {
   if (typeof window === 'undefined' || !graph) return;
   (window as any).HLSF = (window as any).HLSF || {};
+  (window as any).HLSF.view = (window as any).HLSF.view || { x: 0, y: 0, scale: 1 };
   (window as any).HLSF.currentGraph = graph as any;
   (window as any).HLSF.currentGlyphOnly = opts?.glyphOnly === true;
+  const canvasEl = ensureHLSFCanvas() as HTMLCanvasElement | null;
+  requestAutoFit();
+  if (canvasEl) {
+    recenterToGraph(graph, canvasEl, (window as any).HLSF.view);
+  }
   try {
     showVisualizer();
     drawComposite(graph as any, { glyphOnly: opts?.glyphOnly === true });
