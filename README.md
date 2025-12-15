@@ -148,11 +148,13 @@ flows over the core cognition experience.
 
 - Node.js 18+
 - npm 9+
+- Python 3.10+
 
 ### Install dependencies
 
 ```bash
 npm install
+pip install -e .[dev]
 ```
 
 ### Start the development server
@@ -254,22 +256,35 @@ Detailed command examples for the Python utilities live in
 
 1. Initialize the shard layout:
    ```bash
-   python hlsf_partition.py --remote-db ./remote-db --init-layout
+   hlsf-partition --remote-db ./remote-db --init-layout
    ```
-2. Dry-run a merge from a raw export:
+2. Dry-run a merge from a raw export with verbose logging:
    ```bash
-   python hlsf_partition.py \
+   hlsf-partition \
      --source /path/to/HLSF_Database.json \
      --remote-db ./remote-db \
-     --dry-run
+     --dry-run \
+     --log-level DEBUG
    ```
 3. Merge the export:
    ```bash
-   python hlsf_partition.py \
+   hlsf-partition \
      --source /path/to/HLSF_Database.json \
-     --remote-db ./remote-db
+     --remote-db ./remote-db \
+     --log-interval 5000
    ```
-   The script merges relationship weights per token and keeps the latest `cached_at` timestamp for deterministic shards.
+   The CLI merges relationship weights per token, keeps the latest `cached_at` timestamp for deterministic shards, and emits
+   progress via `tqdm` when available. `scripts/import_hlsf_database.py` is deprecated; use the console entry point instead.
+
+### Generate chunked exports
+
+Chunked exports used by the browser can be produced via:
+
+```bash
+hlsf-chunker --source ./HLSF_Database.json --output-dir ./remote-db --log-level INFO
+```
+
+This writes `chunks/*.json`, `metadata.json`, and `token-index.json` using the shared symbol list consumed by TypeScript.
 
 ### Remote database sync
 

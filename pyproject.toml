@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hlsf_db_tools"
+version = "0.1.0"
+description = "Partition and chunk HLSF database exports"
+authors = [{ name = "HLSF", email = "dev@example.com" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "tqdm>=4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "pytest>=7.4",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+hlsf-partition = "hlsf_db_tools.partition:main"
+hlsf-chunker = "hlsf_db_tools.chunker:main"
+
+[tool.setuptools.packages.find]
+include = ["hlsf_db_tools"]
+
+[tool.setuptools.package-data]
+hlsf_db_tools = ["data/*.json"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

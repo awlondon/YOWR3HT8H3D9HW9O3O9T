@@ -7,6 +7,7 @@ Thank you for considering contributing to the HLSF Cognition Engine! This docume
 1. **Install dependencies**
    ```bash
    npm install
+   pip install -e .[dev]
    ```
 
 2. **Start the development server**
@@ -19,6 +20,8 @@ Thank you for considering contributing to the HLSF Cognition Engine! This docume
    ```bash
    npm run lint
    npm run format
+   ruff check .
+   mypy hlsf_db_tools
    ```
 
 4. **Build for production**
@@ -29,6 +32,8 @@ Thank you for considering contributing to the HLSF Cognition Engine! This docume
 ## Coding standards
 
 - TypeScript is used across the front-end. Prefer explicit types when adding new modules.
+- Python follows [PEP 8](https://peps.python.org/pep-0008/) and must type-check cleanly under `mypy`.
+- Use `ruff` for linting new Python modules and keep docstrings current.
 - Follow the ESLint and Prettier rules configured in the repository.
 - Co-locate module-specific styles when practical, and import them from `src/main.ts` or feature modules.
 
@@ -43,7 +48,8 @@ Thank you for considering contributing to the HLSF Cognition Engine! This docume
 
 - [ ] Run `npm run lint` to ensure TypeScript code follows the style guide.
 - [ ] Run `npm test` to execute the Node-based test suite.
-- [ ] If you touched `hlsf_partition.py` or the scripts directory, run `pytest` from the repo root.
+- [ ] Run `ruff check .` and `mypy hlsf_db_tools` for Python changes.
+- [ ] Execute `pytest` for Python utilities and ensure CLI entry points behave as expected.
 - [ ] Add or update tests that cover any new behaviour.
 - [ ] Ensure non-trivial functions include a short comment or docstring describing their purpose.
 

@@ -17,7 +17,19 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
-      - name: Install dependencies
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Node dependencies
         run: npm ci
-      - name: Run lint/typecheck/tests
+      - name: Install Python dependencies
+        run: pip install -e .[dev]
+      - name: Run Node lint/typecheck/tests
         run: npm run check
+      - name: Run Python linters
+        run: ruff check .
+      - name: Run mypy
+        run: mypy hlsf_db_tools
+      - name: Run pytest
+        run: pytest
