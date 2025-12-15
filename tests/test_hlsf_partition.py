@@ -3,11 +3,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from hlsf_partition import import_source_into_remote
+from hlsf_db_tools.partition import BIGRAMS, bigram_bucket, import_source_into_remote
 
 
 def _write_sample_source(tmp_path: Path) -> Path:
@@ -43,6 +45,18 @@ def _write_sample_source(tmp_path: Path) -> Path:
     return source
 
 
+@pytest.mark.parametrize(
+    "token, expected",
+    [
+        ("Alpha", ("A", "AL")),
+        ("beta", ("B", "BE")),
+        ("?hello", ("Z", "ZH")),
+    ],
+)
+def test_bigram_bucket_handles_unicode_and_symbols(token: str, expected: tuple[str, str]) -> None:
+    assert bigram_bucket(token) == expected
+
+
 def test_import_source_into_remote_creates_expected_shards(tmp_path: Path) -> None:
     source = _write_sample_source(tmp_path)
     remote_root = tmp_path / "remote"
@@ -75,12 +89,15 @@ def test_cli_dry_run_reports_token_totals(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            "hlsf_partition.py",
+            "-m",
+            "hlsf_db_tools.partition",
             "--dry-run",
             "--source",
             str(source),
             "--remote-db",
             str(remote_root),
+            "--log-level",
+            "INFO",
         ],
         check=True,
         text=True,
@@ -88,5 +105,20 @@ def test_cli_dry_run_reports_token_totals(tmp_path: Path) -> None:
     )
 
     stdout = result.stdout.strip()
-    assert "tokens=2" in stdout
-    assert "populated_shards=" in stdout
+    combined = "\n".join([stdout, result.stderr.strip()])
+    assert "tokens=2" in combined
+    assert "populated_shards=" in combined
+
+
+def test_cli_init_layout_creates_all_shards(tmp_path: Path) -> None:
+    remote_root = tmp_path / "remote"
+
+    subprocess.run(
+        [sys.executable, "-m", "hlsf_db_tools.partition", "--init-layout", "--remote-db", str(remote_root)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    expected = {remote_root / bg[0] / f"{bg}.json" for bg in BIGRAMS}
+    assert all(path.exists() for path in expected)

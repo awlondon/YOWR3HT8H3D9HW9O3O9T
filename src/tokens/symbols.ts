@@ -1,17 +1,8 @@
-export const SYMBOLS = {
-  emph: new Set(['!', '¡']),
-  query: new Set(['?', '¿']),
-  stop: new Set(['.', '…']),
-  comma: new Set([',']),
-  sep: new Set([':', ';', '—', '-', '–']),
-  quote: new Set(["\"", '“', '”', '‘', '’', "'"]),
-  parenOpen: new Set(['(', '[', '{']),
-  parenClose: new Set([')', ']', '}']),
-  math: new Set(['+', '−', '-', '×', '*', '÷', '/', '=', '%', '^']),
-  path: new Set(['/', '\\', '|']),
-  at: new Set(['@', '#', '$']),
-  other: new Set(['<', '>', '~', '_', '&']),
-} as const;
+import symbolCategories from '../../hlsf_db_tools/data/symbols.json';
+
+export const SYMBOLS = Object.fromEntries(
+  Object.entries(symbolCategories).map(([key, symbols]) => [key, new Set(symbols)])
+) as Record<string, Set<string>>;
 
 type SymbolCategoryKey = keyof typeof SYMBOLS;
 
