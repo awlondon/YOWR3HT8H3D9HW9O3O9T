@@ -157,6 +157,17 @@ npm install
 pip install -e .[dev]
 ```
 
+The Python utilities can also be installed directly for headless environments:
+
+```bash
+pip install .
+```
+
+This exposes the `hlsf-partition` and `hlsf-chunker` console entry points without
+requiring the Node toolchain. The legacy `scripts/import_hlsf_database.py` and
+`scripts/process_latest_db.py` wrappers remain for compatibility but defer to
+the same package.
+
 ### Start the development server
 
 ```bash
