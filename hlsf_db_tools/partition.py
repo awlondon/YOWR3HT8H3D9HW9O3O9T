@@ -102,7 +102,20 @@ def atomic_write(path: Path, obj: Any) -> None:
 # ---------- Merge strategy
 
 def merge_relationship_lists(dst_list: List[Dict[str, Any]], src_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Merge edge arrays by neighbor token; keep the max weight for a given neighbor."""
+    """Merge two adjacency lists keyed by neighbor token.
+
+    Parameters
+    ----------
+    dst_list, src_list:
+        Arrays of objects shaped like ``{"token": str, "weight": number}``.
+
+    Returns
+    -------
+    list[dict]
+        New list containing one entry per neighbor token, keeping the maximum
+        weight when the neighbor appears in both inputs. The output is sorted
+        by descending weight and then alphabetically by token for tie-breaking.
+    """
 
     by_tok = {edge["token"]: float(edge.get("weight", 0.0)) for edge in dst_list}
     for edge in src_list:
@@ -118,7 +131,23 @@ def merge_relationship_lists(dst_list: List[Dict[str, Any]], src_list: List[Dict
 
 
 def merge_token(dst_tok_obj: Dict[str, Any], src_tok_obj: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge token objects: union of relationship types and max weight per neighbor."""
+    """Combine two token payloads into a single record.
+
+    The function unions relationship types and resolves conflicts by choosing
+    the heaviest edge per neighbor. ``cached_at`` timestamps are preserved and
+    the latest non-null value wins.
+
+    Parameters
+    ----------
+    dst_tok_obj, src_tok_obj:
+        Token dictionaries with ``relationships`` and optional ``cached_at``
+        fields. Either value may be falsy to indicate a missing record.
+
+    Returns
+    -------
+    dict
+        Merged token object with normalized relationship lists.
+    """
 
     out: Dict[str, Any] = {"relationships": {}, "cached_at": None}
     dst_rel = (dst_tok_obj or {}).get("relationships", {}) or {}
@@ -189,23 +218,31 @@ def import_source_into_remote(
 ) -> None:
     """Merge a canonical DB export into the on-disk shard layout.
 
+    The importer walks the exported token list, assigns each normalized token to
+    a 26×26 shard bucket, and writes the merged shards atomically. When the
+    optional ``tqdm`` dependency is available, a progress bar renders during the
+    merge; otherwise the ``log_interval`` governs periodic log updates.
+
     Parameters
     ----------
     source_json:
-        Path to the exported HLSF database JSON.
+        Path to the exported HLSF database JSON file.
     remote_root:
-        Directory containing the 26×26 shard layout.
+        Directory containing the shard layout; folders will be created as
+        needed.
     fallback_letter:
-        Letter used when a token begins with a non-alphabetic character.
+        Replacement uppercase letter used when a token begins with a
+        non-alphabetic character.
     log_interval:
-        Emit progress logs every *log_interval* tokens when tqdm is unavailable.
+        Emit progress logs every N tokens when ``tqdm`` is unavailable; set to
+        0 to disable interval logging.
 
     Raises
     ------
     FileNotFoundError
-        If *source_json* does not exist.
+        If ``source_json`` does not exist.
     json.JSONDecodeError
-        If *source_json* contains invalid JSON.
+        If ``source_json`` contains invalid JSON.
     """
 
     ensure_layout(remote_root)
@@ -273,7 +310,19 @@ class HLSFShardLoader:
         return self._load_shard(bigram)
 
     def adjacency_for_token(self, token: str) -> Dict[str, Any]:
-        """Return the adjacency map for *token* from its shard."""
+        """Return the adjacency map for *token* from its shard.
+
+        Parameters
+        ----------
+        token:
+            Raw token string to fetch.
+
+        Returns
+        -------
+        dict[str, Any]
+            Token entry with ``relationships`` and ``cached_at`` keys. If the
+            token is unknown, an empty adjacency structure is returned.
+        """
 
         normalized = normalize_token(token)
         _, bigram = bigram_bucket(normalized, fallback_letter=self.fallback)
@@ -295,6 +344,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Parse source, map bigrams, but don't write.")
     parser.add_argument("--log-interval", type=int, default=0, help="Log progress every N tokens when tqdm is unavailable (0 disables interval logging).")
     parser.add_argument("--log-level", default="INFO", help="Logging level (e.g., DEBUG, INFO, WARNING).")
+    parser.add_argument("--quiet", action="store_true", help="Suppress non-error logs (overrides --log-level).")
     return parser
 
 
@@ -304,7 +354,8 @@ def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), logging.INFO), format="%(levelname)s %(message)s")
+    log_level = logging.ERROR if args.quiet else getattr(logging, str(args.log_level).upper(), logging.INFO)
+    logging.basicConfig(level=log_level, format="%(levelname)s %(message)s")
 
     remote_root = Path(args.remote_db)
     remote_root.mkdir(parents=True, exist_ok=True)

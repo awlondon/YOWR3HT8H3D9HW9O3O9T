@@ -37,6 +37,17 @@ Thank you for considering contributing to the HLSF Cognition Engine! This docume
 - Follow the ESLint and Prettier rules configured in the repository.
 - Co-locate module-specific styles when practical, and import them from `src/main.ts` or feature modules.
 
+### Python-specific guidelines
+
+- Prefer standard library `logging` over `print` for observability; wire log levels through CLI flags (`--log-level`,
+  `--quiet`).
+- Keep public functions annotated with precise input/output types and short docstrings describing behaviour and
+  edge cases.
+- When reading or writing JSON, use UTF-8 encoding and atomic writes (`os.replace`) to avoid partial files during
+  concurrency experiments.
+- Write parameterized pytest cases for unicode tokens, missing-file paths, and malformed JSON so regressions are
+  easy to spot.
+
 ## Commit and PR guidelines
 
 - Create feature branches for your work.

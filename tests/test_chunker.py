@@ -65,6 +65,20 @@ def test_load_database_raises_for_missing_or_invalid(tmp_path: Path) -> None:
         load_database(invalid)
 
 
+@pytest.mark.parametrize(
+    "token, expected_prefix",
+    [
+        ("ßeta", "_"),
+        ("Ωmega", "_"),
+        ("中文", "_"),
+        ("👍", "_"),
+    ],
+)
+def test_group_tokens_by_prefix_handles_unicode(token: str, expected_prefix: str) -> None:
+    grouped = group_tokens_by_prefix([{"token": token}])
+    assert list(grouped.keys()) == [expected_prefix]
+
+
 def test_symbol_list_flattens_without_duplicates() -> None:
     categories = symbols.load_symbol_categories()
     flattened = symbols.symbol_list(categories)

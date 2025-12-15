@@ -122,3 +122,19 @@ def test_cli_init_layout_creates_all_shards(tmp_path: Path) -> None:
 
     expected = {remote_root / bg[0] / f"{bg}.json" for bg in BIGRAMS}
     assert all(path.exists() for path in expected)
+
+
+def test_import_source_handles_missing_file(tmp_path: Path) -> None:
+    remote_root = tmp_path / "remote"
+    missing = tmp_path / "missing.json"
+    with pytest.raises(FileNotFoundError):
+        import_source_into_remote(missing, remote_root)
+
+
+def test_import_source_rejects_invalid_json(tmp_path: Path) -> None:
+    source = tmp_path / "invalid.json"
+    source.write_text("not-json", encoding="utf-8")
+    remote_root = tmp_path / "remote"
+
+    with pytest.raises(json.JSONDecodeError):
+        import_source_into_remote(source, remote_root)

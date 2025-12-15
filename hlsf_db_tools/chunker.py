@@ -4,9 +4,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence, cast
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Sequence, cast
 
 from hlsf_db_tools.symbols import SYMBOL_BUCKET, load_symbol_categories, symbol_list
 
@@ -23,7 +24,7 @@ def prefix_for_token(token: str) -> str:
     if not token:
         return "_"
     first = token[0]
-    if first.isalpha():
+    if first.isascii() and first.isalpha():
         return first.lower()
     if first.isdigit():
         return first
@@ -111,10 +112,48 @@ def write_metadata(
     (output_dir / "token-index.json").write_text(json.dumps(token_index, ensure_ascii=False, indent=2))
 
 
-def process_database(source: Path, output_dir: Path, log: bool = True) -> int:
+def _progress_iterator(sequence: Iterable[Any], total: int | None, log_interval: int) -> Iterator[Any]:
+    """Yield from *sequence* while reporting progress.
+
+    If :mod:`tqdm` is available, it is used to render a progress bar. Otherwise,
+    periodic log messages are emitted according to ``log_interval``.
+    """
+
+    try:
+        from tqdm import tqdm
+    except Exception:  # pragma: no cover - fallback path when tqdm is missing
+        tqdm = None
+
+    if tqdm:
+        yield from tqdm(sequence, total=total, unit="token")
+        return
+
+    start = time.time()
+    for index, item in enumerate(sequence, 1):
+        if log_interval and index % log_interval == 0:
+            elapsed = time.time() - start
+            logger.info("processed %s tokens (%.2fs elapsed)", index, elapsed)
+        yield item
+
+
+def process_database(source: Path, output_dir: Path, log: bool = True, *, log_interval: int = 0) -> int:
     """Load *source* and emit chunk files into *output_dir*.
 
-    Returns the number of generated chunks (prefix buckets + the symbol file).
+    Parameters
+    ----------
+    source:
+        Path to the canonical HLSF database export.
+    output_dir:
+        Target directory that will receive ``metadata.json`` and ``chunks/*.json``.
+    log:
+        Whether to emit informational log output during processing.
+    log_interval:
+        Emit progress logs every N tokens when ``tqdm`` is unavailable.
+
+    Returns
+    -------
+    int
+        Number of generated chunk files including the symbol chunk.
     """
 
     data = load_database(source)
@@ -123,7 +162,13 @@ def process_database(source: Path, output_dir: Path, log: bool = True) -> int:
     chunks_dir = output_dir / "chunks"
     remove_existing_chunks(chunks_dir)
 
-    grouped_tokens = group_tokens_by_prefix(full_token_data)
+    grouped_tokens: Dict[str, List[Mapping[str, object]]] = defaultdict(list)
+    total_tokens = len(full_token_data) if hasattr(full_token_data, "__len__") else None
+    for entry in _progress_iterator(full_token_data, total=total_tokens, log_interval=log_interval):
+        token = str(entry.get("token", ""))
+        prefix = prefix_for_token(token)
+        grouped_tokens[prefix].append(dict(entry))
+
     chunk_entries = write_chunk_files(grouped_tokens, chunks_dir)
     chunk_entries.append(write_symbol_chunk(chunks_dir))
     write_metadata(data, chunk_entries, output_dir, source.name)
@@ -140,6 +185,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source", default=str(REPO_ROOT / DEFAULT_DB_FILENAME), help="Path to the exported HLSF database JSON file.")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="Directory that will receive metadata.json, token-index.json, and chunk files.")
     parser.add_argument("--log-level", default="INFO", help="Logging level (e.g., DEBUG, INFO, WARNING).")
+    parser.add_argument("--quiet", action="store_true", help="Suppress non-error logs (overrides --log-level).")
+    parser.add_argument("--log-interval", type=int, default=0, help="Log progress every N tokens when tqdm is unavailable.")
     return parser
 
 
@@ -148,12 +195,13 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), logging.INFO), format="%(levelname)s %(message)s")
+    log_level = logging.ERROR if args.quiet else getattr(logging, str(args.log_level).upper(), logging.INFO)
+    logging.basicConfig(level=log_level, format="%(levelname)s %(message)s")
 
     source = Path(args.source)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    chunk_count = process_database(source, output_dir)
+    chunk_count = process_database(source, output_dir, log=not args.quiet, log_interval=max(0, int(args.log_interval or 0)))
     return 0 if chunk_count >= 0 else 1
 
 
