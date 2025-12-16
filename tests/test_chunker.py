@@ -1,12 +1,7 @@
 import json
-import sys
 from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from hlsf_db_tools import symbols
 from hlsf_db_tools.chunker import (
@@ -77,6 +72,19 @@ def test_load_database_raises_for_missing_or_invalid(tmp_path: Path) -> None:
 def test_group_tokens_by_prefix_handles_unicode(token: str, expected_prefix: str) -> None:
     grouped = group_tokens_by_prefix([{"token": token}])
     assert list(grouped.keys()) == [expected_prefix]
+
+
+def test_group_tokens_by_prefix_is_deterministic() -> None:
+    tokens = [
+        {"token": "beta", "value": 2},
+        {"token": "alpha", "value": 1},
+        {"token": "beta", "value": 3},
+    ]
+    first = group_tokens_by_prefix(tokens)
+    second = group_tokens_by_prefix(list(reversed(tokens)))
+    assert list(first.keys()) == list(second.keys())
+    assert [entry["token"] for entry in first["b"]] == ["beta", "beta"]
+    assert [entry["token"] for entry in second["b"]] == ["beta", "beta"]
 
 
 def test_symbol_list_flattens_without_duplicates() -> None:

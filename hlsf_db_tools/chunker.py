@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Sequence, cast
 
+from hlsf_db_tools.partition import atomic_write
 from hlsf_db_tools.symbols import SYMBOL_BUCKET, load_symbol_categories, symbol_list
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ def write_chunk_files(grouped_tokens: Mapping[str, Sequence[Mapping[str, object]
         tokens = sorted(grouped_tokens[prefix], key=lambda item: str(item.get("token", "")))
         chunk_path = chunks_dir / f"{prefix}.json"
         chunk_data = {"prefix": prefix, "token_count": len(tokens), "tokens": tokens}
-        chunk_path.write_text(json.dumps(chunk_data, ensure_ascii=False, indent=2))
+        atomic_write(chunk_path, chunk_data)
         chunk_entries.append({"prefix": prefix, "href": f"chunks/{chunk_path.name}", "token_count": len(tokens)})
     return chunk_entries
 
@@ -72,7 +73,7 @@ def write_symbol_chunk(chunks_dir: Path) -> dict:
     symbol_entries = [{"token": token, "kind": "sym"} for token in symbol_list(categories)]
     symbol_chunk_path = chunks_dir / f"{SYMBOL_BUCKET}.json"
     symbol_chunk_data = {"prefix": SYMBOL_BUCKET, "token_count": len(symbol_entries), "tokens": symbol_entries}
-    symbol_chunk_path.write_text(json.dumps(symbol_chunk_data, ensure_ascii=False, indent=2))
+    atomic_write(symbol_chunk_path, symbol_chunk_data)
     return {"prefix": SYMBOL_BUCKET, "href": f"chunks/{symbol_chunk_path.name}", "token_count": len(symbol_entries)}
 
 
@@ -105,11 +106,11 @@ def write_metadata(
         "chunks": list(chunk_entries),
         "token_index_href": "token-index.json",
     }
-    (output_dir / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
+    atomic_write(output_dir / "metadata.json", metadata)
 
     full_token_data = data.get("full_token_data", [])
     token_index = {"tokens": sorted((entry.get("token", "") for entry in full_token_data), key=str.casefold)}
-    (output_dir / "token-index.json").write_text(json.dumps(token_index, ensure_ascii=False, indent=2))
+    atomic_write(output_dir / "token-index.json", token_index)
 
 
 def _progress_iterator(sequence: Iterable[Any], total: int | None, log_interval: int) -> Iterator[Any]:

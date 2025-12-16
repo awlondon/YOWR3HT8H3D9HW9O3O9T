@@ -5,11 +5,12 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from hlsf_db_tools.partition import BIGRAMS, bigram_bucket, import_source_into_remote
+from hlsf_db_tools.partition import (
+    BIGRAMS,
+    bigram_bucket,
+    import_source_into_remote,
+    merge_relationship_lists,
+)
 
 
 def _write_sample_source(tmp_path: Path) -> Path:
@@ -51,10 +52,37 @@ def _write_sample_source(tmp_path: Path) -> Path:
         ("Alpha", ("A", "AL")),
         ("beta", ("B", "BE")),
         ("?hello", ("Z", "ZH")),
+        ("", ("Z", "ZZ")),
+        ("7zip", ("Z", "ZZ")),
+        ("al", ("A", "AL")),
     ],
 )
 def test_bigram_bucket_handles_unicode_and_symbols(token: str, expected: tuple[str, str]) -> None:
     assert bigram_bucket(token) == expected
+
+
+def test_bigram_bucket_allows_custom_fallback_letter() -> None:
+    assert bigram_bucket("?hello", fallback_letter="Q") == ("Q", "QH")
+
+
+def test_merge_relationship_lists_prefers_max_weight_and_deterministic_ordering() -> None:
+    dst = [
+        {"token": "beta", "weight": 0.5},
+        {"token": "alpha", "weight": 0.4},
+    ]
+    src = [
+        {"token": "beta", "weight": 0.9},
+        {"token": "gamma", "weight": 0.9},
+        {"token": "delta", "weight": 0.1},
+    ]
+
+    merged = merge_relationship_lists(dst, src)
+    assert merged[0]["token"] == "beta" and merged[0]["weight"] == 0.9
+    assert merged[1]["token"] == "gamma"
+    assert [edge["token"] for edge in merged] == sorted(
+        [edge["token"] for edge in merged],
+        key=lambda token: (-next(e["weight"] for e in merged if e["token"] == token), token),
+    )
 
 
 def test_import_source_into_remote_creates_expected_shards(tmp_path: Path) -> None:
