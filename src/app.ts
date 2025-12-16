@@ -169,11 +169,8 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
 };
 
 const runtimeEnv = (import.meta as any)?.env ?? {};
-const llmStubMode = String(runtimeEnv.VITE_ENABLE_LLM_STUB ?? 'auto').toLowerCase();
-const shouldInstallLlmStub =
-  llmStubMode === 'on'
-  || llmStubMode === 'true'
-  || (llmStubMode === 'auto' && Boolean(runtimeEnv.DEV));
+const llmStubMode = String(runtimeEnv.VITE_ENABLE_LLM_STUB ?? 'off').toLowerCase();
+const shouldInstallLlmStub = llmStubMode === 'on' || llmStubMode === 'true';
 
 if (shouldInstallLlmStub) {
   installLLMStub();
@@ -7448,17 +7445,11 @@ function formatLlmResponseForDisplay(llm: LLMResult | null | undefined): string 
     const lines = [
       `LLM backend failed${statusLabel}: ${llm.error}`,
       llm.endpoint ? `Endpoint: ${llm.endpoint}` : null,
+      'Retry or open settings to adjust the endpoint or API key.',
     ].filter(Boolean) as string[];
 
-    lines.push(
-      [
-        'Check your LLM endpoint or start the local server (npm run server) so /api/llm is reachable.',
-        'For offline demos, set VITE_ENABLE_LLM_STUB=on to use the built-in stub responses.',
-      ].join(' '),
-    );
-
     if (fallback) {
-      lines.push('LLM backend failed; showing HLSF fallback text instead.');
+      lines.push('Offline stub is disabled; showing rotation fallback text.');
       lines.push(fallback);
     } else {
       lines.push('No articulated response is available.');
@@ -22536,6 +22527,9 @@ function setupLandingExperience() {
     state.membership = nextMembership;
     state.networkOffline =
       level === MEMBERSHIP_LEVELS.DEMO && nextMembership.demoMode === 'offline';
+    if (state.networkOffline) {
+      installLLMStub({ enabled: true });
+    }
     applyMembershipUi();
     document.body.classList.remove('onboarding-active');
     landingRoot.setAttribute('aria-hidden', 'true');

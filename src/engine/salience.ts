@@ -131,7 +131,7 @@ export function collapseGraph(
   keepCenters.forEach((center) => {
     const weightedNeighbors = graph.edges
       .filter((edge) => edge.src === center || edge.dst === center)
-      .sort((a, b) => (b.weight ?? b.w ?? 0) - (a.weight ?? a.w ?? 0))
+      .sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0))
       .slice(0, neighborCap);
     weightedNeighbors.forEach((edge) => {
       const neighbor = edge.src === center ? edge.dst : edge.src;
