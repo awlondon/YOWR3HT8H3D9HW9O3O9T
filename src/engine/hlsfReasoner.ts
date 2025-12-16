@@ -80,7 +80,12 @@ function decomposePrompt(prompt: string): { tokens: Token[]; step: ReasoningStep
 function clusterConcepts(tokens: Token[]): { clusters: Cluster[]; nodes: Map<string, HlsfNode>; step: ReasoningStep } {
   const clusters: Cluster[] = [];
   const nodes = new Map<string, HlsfNode>();
-  const spectralTemplate = { energy: 0.65, centroid: 0.4, flatness: 0.2, roleBandpower: [0.5, 0.4, 0.3, 0.2, 0.1] };
+  const spectralTemplate = {
+    energy: 0.65,
+    centroid: 0.4,
+    flatness: 0.2,
+    roleBandpower: [0.5, 0.4, 0.3, 0.2, 0.1] as number[],
+  };
   let clusterIndex = 0;
   let cursor = 0;
 
@@ -228,7 +233,7 @@ function applyAdjacencyDeltaToHlsf(
 }
 
 function buildPseudoThought(token: string): ThoughtEvent {
-  const spectralTemplate = { energy: 0.5, centroid: 0.5, flatness: 0.5, roleBandpower: [0.5, 0.5, 0.5, 0.5, 0.5] } as const;
+  const spectralTemplate = { energy: 0.5, centroid: 0.5, flatness: 0.5, roleBandpower: [0.5, 0.5, 0.5, 0.5, 0.5] as number[] };
   const cluster: Cluster = {
     id: token,
     nodeIds: [token],
@@ -322,7 +327,7 @@ async function traverseGraph(context: TraverseContext): Promise<ArticulationEven
         });
         delta.edges?.forEach((edge: any) => {
           if (!edge?.src || !edge?.dst) return;
-          targetEdges.push({ src: edge.src, dst: edge.dst, weight: edge.weight, role: edge.role });
+          targetEdges.push({ src: edge.src, dst: edge.dst, weight: edge.weight });
         });
       },
       shouldAbort: llm.shouldAbort?.bind(llm),

@@ -1,6 +1,6 @@
 import { tokenizeWords } from '../tokens/tokenize.js';
 import { computeCosineSimilarity } from '../vector/similarity.js';
-import { installLLMStub } from '../server/installLLMStub.js';
+import { callLLM as dispatchLlmRequest, resolveEndpoint as resolveLlmEndpoint } from './llmClient.js';
 import {
   engineTick,
   onNewUserQuestion,
@@ -102,6 +102,8 @@ export interface LLMResult {
   rawError?: string;
   fallbackText?: string;
   fallbackReason?: string;
+  emergentTrace?: string[];
+  lengthStatus?: 'ok' | 'length_violation';
 }
 
 export type CognitionMode = 'visible' | 'hidden';
@@ -1434,64 +1436,8 @@ function dispatchThoughtCommitEvent(iterationIndex: number, text: string): void 
   (target as EventTarget).dispatchEvent(event);
 }
 
-function formatHistoryContext(history: CognitionHistoryEntry[]): string {
-  if (!history.length) return '';
-  const recent = history.slice(-6);
-  return recent
-    .map(entry => {
-      const label = entry.mode === 'hidden' ? 'Hidden' : 'Visible';
-      const parts = [
-        `${label} #${entry.iteration + 1} prompt: ${entry.prompt}`,
-        entry.hiddenPrompt ? `Hidden prompt issued: ${entry.hiddenPrompt}` : null,
-        `Response: ${entry.response || '(empty)'}`,
-      ].filter((part): part is string => Boolean(part));
-      return parts.join('\n');
-    })
-    .join('\n---\n');
-}
-
-function buildEmergentThoughtDirective(): string {
-  return [
-    'Adopt the HLSF Emergent Thought Process for every response.',
-    '1. Prompt decomposition – extract the key nouns, verbs, and relations. List any ambiguous terms that need assumptions.',
-    '2. Conceptual clustering – group related concepts, name each cluster, and note why the grouping matters.',
-    '3. High-Level Semantic Field (HLSF) mapping – describe the nodes (clusters) and explicit links between them to form the reasoning skeleton.',
-    '4. Interconnection reflection – explain how shifts in one cluster influence others and highlight cascading effects.',
-    '5. Iterative refinement – revisit the HLSF to add/remove nodes or links for clarity; capture adjustments explicitly.',
-    '6. Emergent thought trace – document concise reflections for each step without exposing raw chain-of-thought.',
-    '7. Structured response – answer using the HLSF order, state assumptions, integrate critique/context, and close with actionable next steps.',
-    'Label the output sections (e.g., "Emergent Thought Trace", "Structured Response") so the user can follow the process.',
-  ].join('\n');
-}
-
 const runtimeEnv = (import.meta as any)?.env ?? {};
-const llmStubMode = String(runtimeEnv.VITE_ENABLE_LLM_STUB ?? 'auto').toLowerCase();
-const isDevEnv = Boolean(runtimeEnv.DEV);
-const DEFAULT_LLM_ENDPOINT = '/api/llm';
-
-function resolveLlmEndpoint(): string {
-  const fromEnv = typeof runtimeEnv.VITE_LLM_ENDPOINT === 'string'
-    ? runtimeEnv.VITE_LLM_ENDPOINT.trim()
-    : '';
-  if (fromEnv) return fromEnv;
-
-  if (typeof window !== 'undefined') {
-    const fromWindow = (window as any).__HLSF_LLM_ENDPOINT__;
-    if (typeof fromWindow === 'string' && fromWindow.trim()) {
-      return fromWindow.trim();
-    }
-  }
-
-  return DEFAULT_LLM_ENDPOINT;
-}
-
-function normalizeLlmUrl(endpoint: string): string {
-  if (/^https?:\/\//i.test(endpoint)) return endpoint;
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return new URL(endpoint, window.location.origin).toString();
-  }
-  return new URL(endpoint, 'http://localhost').toString();
-}
+const llmStubMode = String(runtimeEnv.VITE_ENABLE_LLM_STUB ?? 'off').toLowerCase();
 
 function isStaticFileProtocol(): boolean {
   return typeof window !== 'undefined' && window.location?.protocol === 'file:';
@@ -1512,32 +1458,6 @@ function tidyInterpretationText(text: string | undefined | null): string {
     return tidyFallbackText(trimmed.slice(0, lastPeriod + 1));
   }
   return tidyFallbackText(trimmed);
-}
-
-function canStubRequest(requestUrl: string): boolean {
-  try {
-    const url = new URL(requestUrl);
-    return url.pathname === '/api/llm';
-  } catch {
-    return false;
-  }
-}
-
-function tryEnableLlmStub(requestUrl: string): boolean {
-  if (typeof window === 'undefined') return false;
-  if (!canStubRequest(requestUrl)) return false;
-  if (window.__HLSF_LLM_STUB_INSTALLED__) return false;
-
-  if (llmStubMode === 'off' || llmStubMode === 'false') {
-    return false;
-  }
-
-  if (llmStubMode === 'auto' && isDevEnv) {
-    return false;
-  }
-
-  installLLMStub();
-  return true;
 }
 
 function computeFallbackArticulation(thought: ThoughtNode): {
@@ -1628,153 +1548,115 @@ export async function callLLM(
   config: CognitionConfig,
   mode: CognitionMode,
   history: CognitionHistoryEntry[],
-  options: { interpretationText?: string; rawPrompt?: string; adjacencyTokens?: string[] } = {},
+  options: { interpretationText?: string; rawPrompt?: string; adjacencyTokens?: string[]; offline?: boolean } = {},
 ): Promise<LLMResult> {
-  const systemStyle = thinkingStyleToSystemMessage(config.thinkingStyle);
-  const emergentDirective = buildEmergentThoughtDirective();
-  const rotationSummary = collapseRotationNarrative(thoughts, 100);
-  const hiddenInstruction =
-    mode === 'hidden'
-      ? 'You are handling a hidden reflection prompt triggered by /hidden or /expand. Describe your chain of thought by rotating through the horizontal, longitudinal, and sagittal axes of the HLSF. At each axis, report the intersection-based insights that emerge, but keep this reasoning private.'
-      : null;
-  const historyContext = formatHistoryContext(history);
-  const thoughtsBlock = thoughts.map(thought => `- ${thought}`).join('\n');
-  const userSegments = [
-    mode === 'hidden'
-      ? 'Hidden rotation reflection request (keep response aligned to the user-visible voice).'
-      : 'Visible prompt to address for the user.',
-    `Prompt:\n${prompt}`,
-    historyContext ? `Conversation history:\n${historyContext}` : null,
-    thoughts.length
-      ? `Internal thought summaries (context only, do not repeat verbatim):\n\`\`\`\n${thoughtsBlock}\n\`\`\``
-      : null,
-  ].filter((segment): segment is string => Boolean(segment));
+  const systemInstruction = [
+    'You are synthesizing an answer from a localized semantic field graph.',
+    'Use the provided HUB, NEIGHBORS, and ROTATION NOTES as context.',
+    'Do NOT output hidden reasoning.',
+    'Output two labeled sections: (A) Emergent Trace: 4–8 bullet points summarizing which context you used (no private deliberation).',
+    '(B) Structured Response: a coherent answer in 30–300 words.',
+  ].join(' ');
+
+  const rotationSummary = collapseRotationNarrative(thoughts, 120);
+  const { interpretationText, rawPrompt, adjacencyTokens = [] } = options;
+  const contextBlock = [
+    '===CONVERGED TRACE CONTEXT===',
+    `Hub: ${rawPrompt ?? prompt}`,
+    `Top neighbors: ${adjacencyTokens.slice(0, 12).join(', ') || 'n/a'}`,
+    `Active contexts: ${thoughts.slice(0, 6).join(' | ') || 'n/a'}`,
+    `Rotation notes: ${rotationSummary || 'n/a'}`,
+    `Depth/branches/nodes summary: iterations=${config.iterations}; history=${history.length}; tokens=${adjacencyTokens.length}`,
+    '===END CONTEXT===',
+  ].join('\n');
+
+  const userContent = [prompt, contextBlock].join('\n\n');
 
   const messages = [
-    { role: 'system', content: [systemStyle, emergentDirective].filter(Boolean).join('\n\n') },
-    ...(hiddenInstruction ? [{ role: 'system', content: hiddenInstruction }] : []),
-    { role: 'user', content: userSegments.join('\n\n') },
-    {
-      role: 'system',
-      content:
-        'Produce a single coherent answer for the user that integrates the internal thoughts without echoing the bullet list verbatim. Do not mention /hidden or /expand prompts, the hidden process, or expose the internal trace.',
-    },
+    { role: 'system', content: systemInstruction },
+    { role: 'system', content: thinkingStyleToSystemMessage(config.thinkingStyle) },
+    { role: 'user', content: userContent },
   ];
 
-  const endpoint = resolveLlmEndpoint();
-  const requestUrl = normalizeLlmUrl(endpoint);
-  const { interpretationText, rawPrompt, adjacencyTokens } = options;
-  const fallback = (() => {
-    const thought: ThoughtNode = {
-      interpretationText,
-      rawText: rawPrompt ?? prompt,
-      adjacencyTokens,
-      rotationSummary,
-    };
-    const computed = computeFallbackArticulation(thought);
-    return { text: computed.text, reason: computed.reason };
-  })();
+  const fallbackThought: ThoughtNode = {
+    interpretationText,
+    rawText: rawPrompt ?? prompt,
+    adjacencyTokens,
+    rotationSummary,
+  };
+  const fallback = computeFallbackArticulation(fallbackThought);
+  const stubEnabled = llmStubMode === 'on' || options.offline === true;
 
-  if (isStaticFileProtocol() && endpoint.startsWith('/')) {
+  if (isStaticFileProtocol() && resolveLlmEndpoint().startsWith('/')) {
     const message =
-      'LLM backend is not configured for file:// loads. Configure VITE_LLM_ENDPOINT or run the dev server so /api/llm is available.';
-    updateThoughtLogStatus(message);
+      'LLM endpoint must be absolute for file:// loads. Update VITE_LLM_ENDPOINT to a reachable backend.';
     return {
       model: 'local-llm',
       temperature: 0.7,
-      response: fallback?.text ?? '',
+      response: fallback.text,
       error: message,
       isFallback: true,
-      endpoint: requestUrl,
+      endpoint: resolveLlmEndpoint(),
       status: 0,
-      fallbackText: fallback?.text,
-      fallbackReason: fallback?.reason,
+      fallbackText: fallback.text,
+      fallbackReason: fallback.reason,
     };
   }
 
-  const sendRequest = async () => {
-    const response = await fetch(requestUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages,
-        interpretationText: interpretationText || fallback?.text,
-        rawText: rawPrompt ?? prompt,
-      }),
-    });
-    if (!response.ok) {
-      let errorText = '';
-      try {
-        const json = await response.json();
-        errorText = json?.details || json?.error || JSON.stringify(json);
-      } catch {
-        errorText = await response.text().catch(() => '');
-      }
-      const errorMessage = `LLM request failed (${response.status})`;
-      const detailedMessage = errorText ? `${errorMessage}: ${errorText}` : errorMessage;
-      const err = new Error(detailedMessage);
-      (err as any).status = response.status;
-      (err as any).body = errorText;
-      throw err;
-    }
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content ?? '';
+  if (stubEnabled) {
     return {
-      model: data?.model ?? 'local-llm',
-      temperature: data?.temperature ?? 0.7,
-      response: content,
-      usage: data?.usage,
-      endpoint: requestUrl,
-    };
-  };
-
-  let lastError: unknown = null;
-  try {
-    return await sendRequest();
-  } catch (error) {
-    lastError = error;
-    if (tryEnableLlmStub(requestUrl)) {
-      try {
-        return await sendRequest();
-      } catch (retryError) {
-        lastError = retryError;
-      }
-    }
-
-    const connectionRefused = isConnectionRefused(lastError);
-    const message = connectionRefused
-      ? `Cannot reach LLM backend at ${requestUrl}. Connection refused.`
-      : lastError instanceof Error
-        ? lastError.message
-        : String(lastError);
-    const status = (lastError as any)?.status as number | undefined;
-    const normalizedStatus = connectionRefused ? status ?? 503 : status;
-    const rawError = (lastError as any)?.body as string | undefined;
-    console.error('LLM request failed', {
-      endpoint: requestUrl,
-      status: normalizedStatus,
-      rawError,
-      error: lastError,
-    });
-    updateThoughtLogStatus(
-      connectionRefused
-        ? 'LLM backend unreachable. Start npm run server or update VITE_LLM_ENDPOINT.'
-        : normalizedStatus
-          ? `LLM request failed (${normalizedStatus}). Check LLM endpoint or network.`
-          : 'LLM request failed. Halting rotation.',
-    );
-    const fallbackResponse = fallback;
-    return {
-      model: 'local-llm',
+      model: 'offline-llm-stub',
       temperature: 0.7,
-      response: fallbackResponse?.text ?? '',
-      error: message,
+      response: fallback.text,
       isFallback: true,
-      endpoint: requestUrl,
-      status: normalizedStatus,
-      rawError,
-      fallbackText: fallbackResponse?.text,
-      fallbackReason: fallbackResponse?.reason,
+      endpoint: resolveLlmEndpoint(),
+      status: 200,
+      fallbackText: fallback.text,
+      fallbackReason: fallback.reason,
+    };
+  }
+
+  try {
+    const llmResponse = await dispatchLlmRequest({
+      prompt,
+      messages,
+      interpretationText: interpretationText || fallback.text,
+      rawText: rawPrompt ?? prompt,
+      contextBlock,
+    });
+
+    const emergentTrace = Array.isArray(llmResponse.emergent_trace)
+      ? llmResponse.emergent_trace
+      : llmResponse.emergent_trace
+        ? [String(llmResponse.emergent_trace)]
+        : [];
+    const structuredResponse = llmResponse.structured_response ?? fallback.text;
+
+    return {
+      model: 'remote-llm',
+      temperature: 0.2,
+      response: structuredResponse,
+      endpoint: llmResponse.endpoint,
+      status: llmResponse.status,
+      usage: llmResponse.provider?.usage as any,
+      emergentTrace,
+      lengthStatus: llmResponse.lengthStatus,
+    };
+  } catch (error: any) {
+    const endpoint = error?.endpoint || resolveLlmEndpoint();
+    const status = (error as any)?.status;
+    const snippet = (error as any)?.bodySnippet as string | undefined;
+    const message = status ? `LLM backend failed (HTTP ${status})` : 'LLM backend failed';
+    return {
+      model: 'remote-llm',
+      temperature: 0.2,
+      response: '',
+      error: snippet ? `${message}: ${snippet}` : message,
+      isFallback: false,
+      endpoint,
+      status,
+      rawError: snippet,
+      fallbackReason: 'llm-error',
     };
   }
 }

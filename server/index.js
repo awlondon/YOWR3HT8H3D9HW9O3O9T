@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const systemPrompt =
-  'You are an interpretation layer for an HLSF cognition engine. Turn adjacency graphs and latent tokens into clear, grammatical English.';
+  'You are synthesizing an answer from a localized semantic field graph. Provide an emergent trace and a structured response.';
 
 let port = Number(process.env.PORT) || 3001;
 let model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -53,29 +53,25 @@ function sendJson(res, statusCode, payload) {
 async function handleLlmRequest(req, res) {
   try {
     const payload = (await readJsonBody(req)) || {};
-    const prompt =
-      (payload?.interpretationText && payload.interpretationText.toString().trim())
-      || (payload?.rawText && payload.rawText.toString().trim())
-      || 'Summarize this cognition trace in clear English.';
+    const prompt = (payload?.prompt || payload?.rawText || '').toString().trim();
+    const context = (payload?.context || '').toString().trim();
 
-    console.log('LLM /api/llm prompt preview:', prompt.slice(0, 200));
+    if (!prompt && !context) {
+      sendJson(res, 400, { error: 'Missing prompt or context for LLM request.' });
+      return;
+    }
 
     if (!apiKey) {
-      console.error('OPENAI_API_KEY is missing');
       sendJson(res, 500, { error: 'Missing OPENAI_API_KEY' });
       return;
     }
 
-    const messages = [
-      {
-        role: 'system',
-        content: systemPrompt,
-      },
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ];
+    const messages = Array.isArray(payload?.messages) && payload.messages.length
+      ? payload.messages
+      : [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: [prompt, context].filter(Boolean).join('\n\n') },
+        ];
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -87,6 +83,7 @@ async function handleLlmRequest(req, res) {
         model,
         messages,
         temperature,
+        max_tokens: 900,
       }),
     });
 
@@ -94,35 +91,35 @@ async function handleLlmRequest(req, res) {
       let errorText = '';
       try {
         const errorJson = await response.json();
-        errorText = errorJson?.error || errorJson?.message || JSON.stringify(errorJson);
+        errorText = errorJson?.error?.message || errorJson?.error || JSON.stringify(errorJson);
       } catch {
         errorText = await response.text().catch(() => '');
       }
-      console.error('LLM provider returned error', {
-        status: response.status,
-        details: errorText,
-        endpoint: 'https://api.openai.com/v1/chat/completions',
-        payloadKeys: Object.keys(payload || {}),
-      });
-      sendJson(res, 500, {
-        error: 'LLM backend failed',
-        details: errorText || `HTTP ${response.status}`,
+      sendJson(res, 502, {
+        error: {
+          message: 'Upstream LLM failed',
+          upstream_status: response.status,
+          upstream_body_snippet: (errorText || '').slice(0, 240),
+        },
       });
       return;
     }
 
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content || '';
+    const emergentTraceMatch = content.match(/Emergent Trace:\s*([\s\S]*?)\n\s*Structured Response:/i);
+    const structuredMatch = content.match(/Structured Response:\s*([\s\S]*)/i);
+    const emergent_trace = emergentTraceMatch?.[1]?.trim() || payload?.emergent_trace;
+    const structured_response = structuredMatch?.[1]?.trim() || payload?.structured_response || content;
+
     sendJson(res, 200, {
-      articulatedResponse: content,
-      model: data?.model,
-      usage: data?.usage,
+      emergent_trace,
+      structured_response,
+      provider: { model: data?.model, usage: data?.usage },
     });
   } catch (error) {
-    console.error('LLM backend error:', error?.response?.data || error?.message || error);
     sendJson(res, 500, {
-      error: 'LLM backend failed',
-      details: error?.response?.data || error?.message || String(error),
+      error: { message: error?.response?.data || error?.message || String(error) },
     });
   }
 }
