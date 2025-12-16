@@ -3,12 +3,17 @@ import { parse as parseUrl } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const systemPrompt =
-  'You are synthesizing an answer from a localized semantic field graph. Provide an emergent trace and a structured response.';
+const systemPrompt = [
+  'You synthesize answers from a localized semantic field graph context.',
+  'Output TWO sections:',
+  '1) Emergent Trace: 4–8 bullet points describing which provided context you used (no hidden reasoning).',
+  '2) Structured Response: 30–300 words, coherent, relevant to the user prompt and the provided context.',
+].join(' ');
 
 let port = Number(process.env.PORT) || 3001;
 let model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -53,24 +58,41 @@ function sendJson(res, statusCode, payload) {
 async function handleLlmRequest(req, res) {
   try {
     const payload = (await readJsonBody(req)) || {};
+    const requestId = (payload?.client?.requestId || randomUUID()).toString();
     const prompt = (payload?.prompt || payload?.rawText || '').toString().trim();
-    const context = (payload?.context || '').toString().trim();
+    const context = payload?.context || {};
 
-    if (!prompt && !context) {
-      sendJson(res, 400, { error: 'Missing prompt or context for LLM request.' });
+    if (!prompt && (!context || typeof context !== 'object')) {
+      sendJson(res, 400, { error: 'Missing prompt or context for LLM request.', requestId });
       return;
     }
 
     if (!apiKey) {
-      sendJson(res, 500, { error: 'Missing OPENAI_API_KEY' });
+      sendJson(res, 500, { error: 'Missing OPENAI_API_KEY', requestId });
       return;
     }
+
+    const requirements = payload?.requirements || {
+      structuredResponseWords: { min: 30, max: 300 },
+      traceBullets: { min: 4, max: 8 },
+    };
+
+    const userContextLines = [
+      `Prompt: ${prompt}`,
+      'CONVERGED TRACE CONTEXT (authoritative):',
+      `Hub: ${(context?.hub || prompt).toString()}`,
+      `Top neighbors: ${Array.isArray(context?.neighbors) ? context.neighbors.join(', ') : 'n/a'}`,
+      `Active contexts: ${Array.isArray(context?.activeContexts) ? context.activeContexts.join(' | ') : 'n/a'}`,
+      `Rotation notes: ${(context?.rotationNotes || '').toString() || 'n/a'}`,
+      `Stats: depth=${context?.graphStats?.depth ?? 'n/a'}, nodes=${context?.graphStats?.nodes ?? 'n/a'}, branches=${context?.graphStats?.branches ?? 'n/a'}`,
+      `Constraints: emergent trace bullets ${requirements.traceBullets.min}-${requirements.traceBullets.max}; structured response ${requirements.structuredResponseWords.min}-${requirements.structuredResponseWords.max} words.`,
+    ];
 
     const messages = Array.isArray(payload?.messages) && payload.messages.length
       ? payload.messages
       : [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: [prompt, context].filter(Boolean).join('\n\n') },
+          { role: 'user', content: userContextLines.join('\n') },
         ];
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -101,6 +123,7 @@ async function handleLlmRequest(req, res) {
           upstream_status: response.status,
           upstream_body_snippet: (errorText || '').slice(0, 240),
         },
+        requestId,
       });
       return;
     }
@@ -116,6 +139,7 @@ async function handleLlmRequest(req, res) {
       emergent_trace,
       structured_response,
       provider: { model: data?.model, usage: data?.usage },
+      requestId,
     });
   } catch (error) {
     sendJson(res, 500, {

@@ -86,6 +86,9 @@ import { collapseGraph, computeTokenSalience, topSalienceTokens } from './engine
 import type { SeedSphereConfig, ExpansionMode } from './engine/expansionModes.js';
 import { runConvergencePipeline } from './engine/convergenceController.js';
 import { installLLMStub } from './server/installLLMStub';
+import { getStubMode } from './engine/llm/stubMode.js';
+import { resolveEndpoint as resolveLlmEndpoint } from './engine/llm/client.js';
+import { llmDiagnostics, updateLlmDiagnostics } from './state/llmDiagnostics';
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -168,12 +171,29 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   autoExecute: true,
 };
 
-const runtimeEnv = (import.meta as any)?.env ?? {};
-const llmStubMode = String(runtimeEnv.VITE_ENABLE_LLM_STUB ?? 'off').toLowerCase();
-const shouldInstallLlmStub = llmStubMode === 'on' || llmStubMode === 'true';
+const resolvedStubMode = getStubMode();
+let resolvedLlmEndpoint = '';
+try {
+  resolvedLlmEndpoint = resolveLlmEndpoint();
+} catch (error) {
+  resolvedLlmEndpoint = (error as Error)?.message || 'unresolved-endpoint';
+}
+updateLlmDiagnostics({
+  stubEnabled: resolvedStubMode.enabled,
+  stubReason: resolvedStubMode.reason,
+  endpoint: resolvedLlmEndpoint,
+});
 
-if (shouldInstallLlmStub) {
+if (resolvedStubMode.enabled) {
   installLLMStub();
+}
+
+if ((import.meta as any)?.env?.DEV) {
+  console.debug('LLM stub diagnostics', {
+    mode: resolvedStubMode.mode,
+    reason: resolvedStubMode.reason,
+    endpoint: resolvedLlmEndpoint,
+  });
 }
 
 function mergeAgentConfig(
@@ -21461,6 +21481,21 @@ async function cmd_state(args = []) {
   const start = performance.now();
 
   try {
+    const llmDiagSnapshot = {
+      stubEnabled: llmDiagnostics.stubEnabled,
+      stubReason: llmDiagnostics.stubReason,
+      endpoint: llmDiagnostics.endpoint,
+      lastError: llmDiagnostics.lastError,
+      lastStatus: llmDiagnostics.lastStatus,
+      requestId: llmDiagnostics.requestId,
+    };
+
+    addLog(
+      `<div class="section-divider"></div><div class="section-title">🤖 LLM Diagnostics</div><pre>${sanitize(
+        JSON.stringify(llmDiagSnapshot, null, 2),
+      )}</pre>`,
+    );
+
     const manualTokens = parseStateTokens(args);
 
     const { entries } = resolveCachedAdjacencyEntries();
