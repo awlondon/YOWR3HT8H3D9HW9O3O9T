@@ -1,7 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { callLLM, resolveEndpoint } from './llmClient.js';
+import { callLLM, resolveEndpoint } from './llm/client.js';
+
+const baseContext = {
+  hub: 'hub',
+  neighbors: ['a', 'b'],
+  activeContexts: ['x'],
+  rotationNotes: 'notes',
+  graphStats: { depth: 1, nodes: 2, branches: 1 },
+};
+
+function makeRequest(overrides: Partial<Parameters<typeof callLLM>[0]> = {}) {
+  return {
+    prompt: 'test prompt',
+    context: baseContext,
+    ...overrides,
+  } as any;
+}
 
 test('resolveEndpoint enforces absolute URL on file protocol', () => {
   const original = globalThis.window;
@@ -20,10 +36,9 @@ test('callLLM retries once on transient errors', async () => {
     if (callCount === 1) {
       return new Response('error', { status: 502, headers: { 'Content-Type': 'text/plain' } });
     }
-    const body = init?.body ? JSON.parse(init.body as string) : {};
     const responsePayload = {
       emergent_trace: ['used neighbors'],
-      structured_response: 'Structured Response: ok',
+      structured_response: 'Structured Response: ' + Array.from({ length: 50 }).map(() => 'ok').join(' '),
     };
     return new Response(JSON.stringify(responsePayload), {
       status: 200,
@@ -31,13 +46,7 @@ test('callLLM retries once on transient errors', async () => {
     });
   };
 
-  const result = await callLLM(
-    {
-      prompt: 'test prompt',
-      messages: [{ role: 'user', content: 'Hello' }],
-    },
-    { fetchImpl },
-  );
+  const result = await callLLM(makeRequest(), { fetchImpl });
 
   assert.equal(callCount, 2);
   assert.equal(result.structured_response?.includes('Structured Response'), true);
@@ -52,7 +61,7 @@ test('callLLM enforces timeout and surfaces abort errors', async () => {
     });
 
   await (assert as any).rejects(
-    () => callLLM({ prompt: 'timeout', messages: [{ role: 'user', content: 'hi' }] }, { fetchImpl, timeoutMs: 10 }),
+    () => callLLM(makeRequest(), { fetchImpl, timeoutMs: 10 }),
     /timeout/i,
   );
 });
@@ -62,11 +71,14 @@ test('callLLM flags length violations and attempts compression/expansion', async
   const fetchImpl: typeof fetch = async (_url, init) => {
     callCount += 1;
     const body = init?.body ? JSON.parse(init.body as string) : {};
-    const shouldCompress = typeof body?.prompt === 'string' && /Compress the structured response/i.test(body.prompt);
+    const shouldCompress = typeof body?.mode === 'string' && body.mode === 'compress';
+    const shouldExpand = typeof body?.mode === 'string' && body.mode === 'expand';
     const word = 'word';
     const responseText = shouldCompress
       ? 'Structured Response: ' + Array.from({ length: 40 }).map(() => word).join(' ')
-      : 'Structured Response: ' + Array.from({ length: 320 }).map(() => word).join(' ');
+      : shouldExpand
+        ? 'Structured Response: ' + Array.from({ length: 60 }).map(() => word).join(' ')
+        : 'Structured Response: ' + Array.from({ length: 320 }).map(() => word).join(' ');
     const payload = { structured_response: responseText, emergent_trace: 'trace' };
     return new Response(JSON.stringify(payload), {
       status: 200,
@@ -74,14 +86,11 @@ test('callLLM flags length violations and attempts compression/expansion', async
     });
   };
 
-  const result = await callLLM(
-    { prompt: 'lengthy', messages: [{ role: 'user', content: 'hi' }] },
-    { fetchImpl },
-  );
+  const result = await callLLM(makeRequest(), { fetchImpl });
 
   assert.equal(callCount >= 2, true);
   const wordCount = result.structured_response?.split(/\s+/).filter(Boolean).length ?? 0;
-  assert.equal(wordCount <= 300, true);
+  assert.equal(wordCount <= 300 && wordCount >= 30, true);
   assert.equal(result.lengthStatus === 'length_violation' || result.lengthStatus === 'ok', true);
 });
 
@@ -90,7 +99,7 @@ test('rejects unexpected non-JSON/plain text responses', async () => {
     new Response('<html></html>', { status: 200, headers: { 'Content-Type': 'text/html' } });
 
   await (assert as any).rejects(
-    () => callLLM({ prompt: 'bad format', messages: [{ role: 'user', content: 'ok' }] }, { fetchImpl }),
+    () => callLLM(makeRequest(), { fetchImpl }),
     /Unexpected response format/i,
   );
 });

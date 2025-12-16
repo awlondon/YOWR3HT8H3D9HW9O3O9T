@@ -1,6 +1,8 @@
 import { tokenizeWords } from '../tokens/tokenize.js';
 import { computeCosineSimilarity } from '../vector/similarity.js';
-import { callLLM as dispatchLlmRequest, resolveEndpoint as resolveLlmEndpoint } from './llmClient.js';
+import { DEFAULT_REQUIREMENTS, callLLM as dispatchLlmRequest, resolveEndpoint as resolveLlmEndpoint } from './llm/client.js';
+import { getStubMode } from './llm/stubMode.js';
+import { updateLlmDiagnostics } from '../state/llmDiagnostics.js';
 import {
   engineTick,
   onNewUserQuestion,
@@ -1436,9 +1438,6 @@ function dispatchThoughtCommitEvent(iterationIndex: number, text: string): void 
   (target as EventTarget).dispatchEvent(event);
 }
 
-const runtimeEnv = (import.meta as any)?.env ?? {};
-const llmStubMode = String(runtimeEnv.VITE_ENABLE_LLM_STUB ?? 'off').toLowerCase();
-
 function isStaticFileProtocol(): boolean {
   return typeof window !== 'undefined' && window.location?.protocol === 'file:';
 }
@@ -1560,22 +1559,34 @@ export async function callLLM(
 
   const rotationSummary = collapseRotationNarrative(thoughts, 120);
   const { interpretationText, rawPrompt, adjacencyTokens = [] } = options;
-  const contextBlock = [
-    '===CONVERGED TRACE CONTEXT===',
-    `Hub: ${rawPrompt ?? prompt}`,
-    `Top neighbors: ${adjacencyTokens.slice(0, 12).join(', ') || 'n/a'}`,
-    `Active contexts: ${thoughts.slice(0, 6).join(' | ') || 'n/a'}`,
-    `Rotation notes: ${rotationSummary || 'n/a'}`,
-    `Depth/branches/nodes summary: iterations=${config.iterations}; history=${history.length}; tokens=${adjacencyTokens.length}`,
-    '===END CONTEXT===',
-  ].join('\n');
+  const graphStats = {
+    depth: config.iterations ?? 0,
+    nodes: adjacencyTokens.length,
+    branches: Math.max(1, history.length || 1),
+  };
+  const structuredContext = {
+    hub: rawPrompt ?? prompt,
+    neighbors: adjacencyTokens.slice(0, 12),
+    activeContexts: thoughts.slice(0, 6),
+    rotationNotes: rotationSummary || 'n/a',
+    graphStats,
+  };
 
-  const userContent = [prompt, contextBlock].join('\n\n');
+  const userContext = [
+    `Prompt: ${prompt}`,
+    '',
+    'CONVERGED TRACE CONTEXT (authoritative):',
+    `Hub: ${structuredContext.hub}`,
+    `Top neighbors: ${structuredContext.neighbors.join(', ') || 'n/a'}`,
+    `Active contexts: ${structuredContext.activeContexts.join(' | ') || 'n/a'}`,
+    `Rotation notes: ${structuredContext.rotationNotes}`,
+    `Stats: depth=${graphStats.depth}, nodes=${graphStats.nodes}, branches=${graphStats.branches}`,
+  ].join('\n');
 
   const messages = [
     { role: 'system', content: systemInstruction },
     { role: 'system', content: thinkingStyleToSystemMessage(config.thinkingStyle) },
-    { role: 'user', content: userContent },
+    { role: 'user', content: userContext },
   ];
 
   const fallbackThought: ThoughtNode = {
@@ -1585,9 +1596,20 @@ export async function callLLM(
     rotationSummary,
   };
   const fallback = computeFallbackArticulation(fallbackThought);
-  const stubEnabled = llmStubMode === 'on' || options.offline === true;
+  const stubInfo = getStubMode();
+  const endpoint = resolveLlmEndpoint();
+  const stubEnabled = options.offline === true || stubInfo.enabled;
+  const stubReason = options.offline === true ? 'offline-request' : stubInfo.reason;
 
-  if (isStaticFileProtocol() && resolveLlmEndpoint().startsWith('/')) {
+  updateLlmDiagnostics({
+    stubEnabled,
+    stubReason,
+    endpoint,
+    lastError: null,
+    lastStatus: null,
+  });
+
+  if (isStaticFileProtocol() && endpoint.startsWith('/')) {
     const message =
       'LLM endpoint must be absolute for file:// loads. Update VITE_LLM_ENDPOINT to a reachable backend.';
     return {
@@ -1596,7 +1618,7 @@ export async function callLLM(
       response: fallback.text,
       error: message,
       isFallback: true,
-      endpoint: resolveLlmEndpoint(),
+      endpoint,
       status: 0,
       fallbackText: fallback.text,
       fallbackReason: fallback.reason,
@@ -1604,15 +1626,18 @@ export async function callLLM(
   }
 
   if (stubEnabled) {
+    const remediation = `Stub mode is ON (reason: ${stubReason}). Set VITE_ENABLE_LLM_STUB=off and restart.`;
+    updateLlmDiagnostics({ lastError: remediation, lastStatus: null, stubEnabled, stubReason, endpoint });
     return {
       model: 'offline-llm-stub',
       temperature: 0.7,
-      response: fallback.text,
+      response: `${fallback.text}\n${remediation} Endpoint: ${endpoint}.`,
+      error: remediation,
       isFallback: true,
-      endpoint: resolveLlmEndpoint(),
+      endpoint,
       status: 200,
       fallbackText: fallback.text,
-      fallbackReason: fallback.reason,
+      fallbackReason: 'stub-mode',
     };
   }
 
@@ -1622,7 +1647,8 @@ export async function callLLM(
       messages,
       interpretationText: interpretationText || fallback.text,
       rawText: rawPrompt ?? prompt,
-      contextBlock,
+      context: structuredContext,
+      requirements: DEFAULT_REQUIREMENTS,
     });
 
     const emergentTrace = Array.isArray(llmResponse.emergent_trace)

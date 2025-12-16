@@ -1,4 +1,4 @@
-import symbolCategories from '../../hlsf_db_tools/data/symbols.json';
+import symbolCategories from '../../hlsf_db_tools/data/symbols.json' with { type: 'json' };
 
 export const SYMBOLS = Object.fromEntries(
   Object.entries(symbolCategories).map(([key, symbols]) => [key, new Set(symbols)])
