@@ -2,6 +2,7 @@ import { computeCosineSimilarity } from '../vector/similarity.js';
 import type { CacheStore } from '../lib/storage/cacheStore.js';
 import { resolveAdjacencySettings } from '../settings.js';
 import type { PipelineGraph } from './pipeline.js';
+import { classifyRelation } from '../types/adjacencyFamilies.js';
 
 const TOKEN_CACHE_PREFIX = 'hlsf_token_';
 
@@ -303,7 +304,9 @@ export function syntheticBranchingExpansion(
     if (acc.edges.length >= limits.maxEdges) return;
     edgeKeys.add(key);
     const safeWeight = Number.isFinite(weight) ? weight : 0;
-    acc.edges.push({ source, target, type, w: safeWeight, meta });
+    const relationKey = typeof meta?.relation === 'string' ? (meta.relation as string) : type;
+    const family = classifyRelation(relationKey || type);
+    acc.edges.push({ source, target, type, w: safeWeight, family, meta });
   };
 
   const effectiveRng = rng ?? Math.random;

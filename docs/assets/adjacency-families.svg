@@ -1,0 +1,53 @@
+<svg width="640" height="480" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .ring { fill: none; stroke: #444; stroke-width: 2; }
+      .label { fill: #111; font-family: 'Inter', sans-serif; font-size: 12px; text-anchor: middle; }
+    </style>
+  </defs>
+  <circle class="ring" cx="320" cy="240" r="70" />
+  <circle class="ring" cx="320" cy="240" r="130" />
+  <circle class="ring" cx="320" cy="240" r="190" />
+  <text class="label" x="320" y="240" dy="4" font-size="16">Cognition</text>
+  <text class="label" x="320" y="180" dy="4" font-size="16">Narrative</text>
+  <text class="label" x="320" y="120" dy="4" font-size="16">AI Function</text>
+  <!-- spokes -->
+  <g>
+    <!-- generate 15 spokes -->
+    <!-- spoke labels -->
+    <g id="spokes">
+      <line x1="320" y1="240" x2="320" y2="60" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="437" y2="82" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="518" y2="122" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="580" y2="186" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="610" y2="270" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="600" y2="350" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="555" y2="410" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="480" y2="440" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="360" y2="450" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="245" y2="450" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="165" y2="425" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="95" y2="370" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="50" y2="295" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="40" y2="210" stroke="#888" stroke-width="1" />
+      <line x1="320" y1="240" x2="80" y2="140" stroke="#888" stroke-width="1" />
+    </g>
+    <g id="labels">
+      <text class="label" x="320" y="48">Spatial</text>
+      <text class="label" x="450" y="70">Temporal</text>
+      <text class="label" x="530" y="108">Causal</text>
+      <text class="label" x="600" y="175">Hierarchical</text>
+      <text class="label" x="620" y="270">Analogical</text>
+      <text class="label" x="590" y="360">Constraint</text>
+      <text class="label" x="550" y="422">Value</text>
+      <text class="label" x="470" y="452">Communicative</text>
+      <text class="label" x="360" y="468">Social</text>
+      <text class="label" x="245" y="468">Modal</text>
+      <text class="label" x="150" y="438">Evidential</text>
+      <text class="label" x="85" y="385">Counterfactual</text>
+      <text class="label" x="40" y="310">Operational</text>
+      <text class="label" x="30" y="220">Measurement</text>
+      <text class="label" x="75" y="135">Aesthetic / Semantic</text>
+    </g>
+  </g>
+</svg>

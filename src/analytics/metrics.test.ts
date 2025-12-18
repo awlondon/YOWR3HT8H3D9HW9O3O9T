@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adjustedWeight, nodeScore, rankNodes } from './metrics.js';
+import { AdjacencyFamily } from '../types/adjacencyFamilies.js';
+import { adjustedWeight, edgeFamilyHistogram, nodeScore, rankNodes } from './metrics.js';
 import { SETTINGS } from '../settings.js';
 
 test('adjustedWeight scales modifier edges and leaves others unchanged', () => {
@@ -47,4 +48,13 @@ test('rankNodes respects includeSymbolInSummaries flag', () => {
   } finally {
     SETTINGS.includeSymbolInSummaries = originalInclude;
   }
+});
+
+test('edgeFamilyHistogram classifies missing families as aesthetic', () => {
+  const hist = edgeFamilyHistogram([
+    { type: 'adjacency:base' },
+    { type: 'unknown-relation' },
+  ] as any);
+  assert.equal(hist[AdjacencyFamily.Spatial], 1);
+  assert.equal(hist[AdjacencyFamily.Aesthetic], 1);
 });

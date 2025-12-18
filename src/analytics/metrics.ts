@@ -1,8 +1,10 @@
 import { SETTINGS } from '../settings.js';
+import { AdjacencyFamily, classifyRelation } from '../types/adjacencyFamilies.js';
 
 export interface GraphEdge {
   type: string;
   w?: number;
+  family?: AdjacencyFamily;
 }
 
 export interface GraphNode {
@@ -42,6 +44,33 @@ export function edgeWeightHistogram(edges: GraphEdge[]): Record<string, number> 
     const key = (Math.round(w * 100) / 100).toFixed(2);
     hist[key] = (hist[key] || 0) + 1;
   }
+  return hist;
+}
+
+export function edgeFamilyHistogram(edges: GraphEdge[]): Record<AdjacencyFamily, number> {
+  const hist: Record<AdjacencyFamily, number> = {
+    [AdjacencyFamily.Spatial]: 0,
+    [AdjacencyFamily.Temporal]: 0,
+    [AdjacencyFamily.Causal]: 0,
+    [AdjacencyFamily.Hierarchical]: 0,
+    [AdjacencyFamily.Analogical]: 0,
+    [AdjacencyFamily.Constraint]: 0,
+    [AdjacencyFamily.Value]: 0,
+    [AdjacencyFamily.Communicative]: 0,
+    [AdjacencyFamily.Social]: 0,
+    [AdjacencyFamily.Modal]: 0,
+    [AdjacencyFamily.Evidential]: 0,
+    [AdjacencyFamily.Counterfactual]: 0,
+    [AdjacencyFamily.Operational]: 0,
+    [AdjacencyFamily.Measurement]: 0,
+    [AdjacencyFamily.Aesthetic]: 0,
+  };
+
+  for (const edge of edges || []) {
+    const family = edge.family ?? classifyRelation(edge.type);
+    hist[family] += 1;
+  }
+
   return hist;
 }
 

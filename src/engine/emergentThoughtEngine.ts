@@ -11,6 +11,17 @@ import {
   type SpectralFeatures,
   type StepResult,
 } from './emergentThoughtTypes.js';
+import { AdjacencyFamily } from '../types/adjacencyFamilies.js';
+
+// Ordering matters for prompt phrasing and downstream scaffolds; keep evidence-first to ground causal/temporal passes.
+const REASONING_PASS_ORDER: AdjacencyFamily[] = [
+  AdjacencyFamily.Evidential,
+  AdjacencyFamily.Causal,
+  AdjacencyFamily.Temporal,
+  AdjacencyFamily.Operational,
+  AdjacencyFamily.Value,
+  AdjacencyFamily.Communicative,
+];
 
 /**
  * Lightweight orchestration of the seven steps described in
@@ -30,7 +41,9 @@ export async function runEmergentThoughtProcess(
   if (!config.skipRefinement) {
     hlsf = refineHLSF(hlsf, reflection);
   }
+  const orderedPassNote = `Reasoning pass order: ${REASONING_PASS_ORDER.join(' → ')}`;
   const steps: StepResult[] = [
+    { step: 0, summary: orderedPassNote },
     { step: 1, summary: `Decomposed ${decomposition.tokens.length} tokens` },
     { step: 2, summary: `Identified ${clusters.clusters.length} clusters` },
     { step: 3, summary: `Built HLSF with ${hlsf.nodes.length} nodes` },
