@@ -1,5 +1,6 @@
 import type { Token } from '../../tokens/tokenize.js';
 import { computeCosineSimilarityFromTokens } from '../../vector/similarity.js';
+import { AdjacencyFamily, classifyRelation } from '../../types/adjacencyFamilies.js';
 
 export interface LayeredAdjacencyEdge {
   sourceIndex: number;
@@ -10,6 +11,7 @@ export interface LayeredAdjacencyEdge {
   similarity?: number;
   viaIndex?: number | null;
   pathLength?: number;
+  family?: AdjacencyFamily;
   meta: Record<string, unknown>;
 }
 
@@ -215,6 +217,7 @@ export function buildLayeredAdjacency(
       type,
       weight,
       level,
+      family: classifyRelation(type),
       similarity: typeof similarity === 'number' ? similarity : undefined,
       viaIndex: viaIndex >= 0 ? viaIndex : null,
       pathLength,

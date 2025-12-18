@@ -1,5 +1,6 @@
 import type { Token, WordNeighborIndex } from '../../tokens/tokenize.js';
 import { computeWordNeighborMap } from '../../tokens/tokenize.js';
+import { AdjacencyFamily, classifyRelation } from '../../types/adjacencyFamilies.js';
 
 export const LEFT_BIND = new Set(['!', '?', '.', ',', ':', ';']);
 export const RIGHT_BIND = new Set(['(', '[', '{', '“', '‘']);
@@ -9,6 +10,7 @@ export interface EdgeMeta {
   type: string;
   w?: number;
   meta?: Record<string, unknown>;
+  family?: AdjacencyFamily;
 }
 
 export type AddEdge = (source: Token, target: Token, meta: EdgeMeta) => void;
@@ -38,9 +40,15 @@ export function emitSymbolEdges(
 
     const ch = tok.t;
     const type = modifierTypeForSymbol(ch);
+    const family = classifyRelation(type);
 
     if (mode === 'standalone' || mode === 'both') {
-      addEdge(tok, tok, { type: 'self:symbol', w: 0.01, meta: { ch } });
+      addEdge(tok, tok, {
+        type: 'self:symbol',
+        family: classifyRelation('self:symbol'),
+        w: 0.01,
+        meta: { ch },
+      });
     }
 
     if (mode === 'paired' || mode === 'both') {
@@ -49,15 +57,15 @@ export function emitSymbolEdges(
       const right = neighbor?.rightWordIndex ?? len;
 
       if (LEFT_BIND.has(ch) && left >= 0) {
-        addEdge(tokens[left], tok, { type, w: weightScale, meta: { ch } });
+        addEdge(tokens[left], tok, { type, family, w: weightScale, meta: { ch } });
       } else if (RIGHT_BIND.has(ch) && right < len) {
-        addEdge(tok, tokens[right], { type, w: weightScale, meta: { ch } });
+        addEdge(tok, tokens[right], { type, family, w: weightScale, meta: { ch } });
       } else if (CLOSE_BIND.has(ch) && left >= 0) {
-        addEdge(tok, tokens[left], { type, w: weightScale * 0.9, meta: { ch } });
+        addEdge(tok, tokens[left], { type, family, w: weightScale * 0.9, meta: { ch } });
       } else {
         const target = left >= 0 ? tokens[left] : right < len ? tokens[right] : null;
         if (target) {
-          addEdge(target, tok, { type, w: weightScale * 0.8, meta: { ch } });
+          addEdge(target, tok, { type, family, w: weightScale * 0.8, meta: { ch } });
         }
       }
     }

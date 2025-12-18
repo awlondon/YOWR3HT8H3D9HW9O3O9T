@@ -15,6 +15,7 @@ import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 import type { PipelineStage, TelemetryHook } from '../types/pipeline-messages.js';
 import { buildConsciousnessState, type ConsciousnessState } from './consciousness.js';
+import { AdjacencyFamily, classifyRelation } from '../types/adjacencyFamilies.js';
 import {
   type CacheStore,
   CompositeCacheStore,
@@ -82,6 +83,7 @@ export interface PipelineGraph {
     target: string;
     type: string;
     w: number;
+    family?: AdjacencyFamily;
     meta?: Record<string, unknown>;
   }>;
 }
@@ -121,6 +123,7 @@ interface EdgeProps {
   type: string;
   w?: number;
   meta?: Record<string, unknown>;
+  family?: AdjacencyFamily;
 }
 
 function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
@@ -136,11 +139,13 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
     if (isModifierEdge && symbolEdgeCount >= symbolEdgeLimit) return;
 
     const weight = typeof props.w === 'number' ? props.w : 0;
+    const family = props.family ?? classifyRelation(props.type);
     const entry = {
       source: source.t,
       target: target.t,
       type: props.type,
       w: weight,
+      family,
       meta: props.meta,
     };
 
@@ -316,6 +321,7 @@ export function runPipeline(
     accumulator.addEdgeByIndices(edge.sourceIndex, edge.targetIndex, {
       type: edge.type,
       w: edge.weight,
+      family: edge.family,
       meta: edge.meta,
     });
   }

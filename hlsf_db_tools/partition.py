@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from hlsf_db_tools.adjacency_families import classify_relation
+
 from hlsf_db_tools.symbols import SYMBOL_BUCKET
 
 logger = logging.getLogger(__name__)
@@ -101,7 +103,9 @@ def atomic_write(path: Path, obj: Any) -> None:
 
 # ---------- Merge strategy
 
-def merge_relationship_lists(dst_list: List[Dict[str, Any]], src_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def merge_relationship_lists(
+    rel_type: str, dst_list: List[Dict[str, Any]], src_list: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     """Merge two adjacency lists keyed by neighbor token.
 
     Parameters
@@ -117,17 +121,29 @@ def merge_relationship_lists(dst_list: List[Dict[str, Any]], src_list: List[Dict
         by descending weight and then alphabetically by token for tie-breaking.
     """
 
-    by_tok = {edge["token"]: float(edge.get("weight", 0.0)) for edge in dst_list}
-    for edge in src_list:
+    family = classify_relation(rel_type)
+    merged: Dict[str, Dict[str, Any]] = {}
+
+    for edge in [*(dst_list or []), *(src_list or [])]:
         token = edge.get("token")
         if not token:
             continue
-        weight = float(edge.get("weight", 0.0))
-        if token in by_tok:
-            by_tok[token] = max(by_tok[token], weight)
-        else:
-            by_tok[token] = weight
-    return [{"token": key, "weight": value} for key, value in sorted(by_tok.items(), key=lambda item: (-item[1], item[0]))]
+        weight = float(edge.get("weight", edge.get("w", 0.0)) or 0.0)
+        existing = merged.get(token)
+        if existing is None or weight > float(existing.get("weight", 0.0)):
+            merged[token] = {**edge, "token": token, "weight": weight}
+        merged[token]["family"] = edge.get("family") or family.value
+
+    return [
+        merged[key]
+        for key in sorted(
+            merged.keys(),
+            key=lambda k: (
+                -float(merged[k].get("weight", 0.0) or 0.0),
+                k,
+            ),
+        )
+    ]
 
 
 def merge_token(dst_tok_obj: Dict[str, Any], src_tok_obj: Dict[str, Any]) -> Dict[str, Any]:
@@ -154,7 +170,9 @@ def merge_token(dst_tok_obj: Dict[str, Any], src_tok_obj: Dict[str, Any]) -> Dic
     src_rel = (src_tok_obj or {}).get("relationships", {}) or {}
     all_types = set(dst_rel.keys()) | set(src_rel.keys())
     for rel_type in all_types:
-        out["relationships"][rel_type] = merge_relationship_lists(dst_rel.get(rel_type, []), src_rel.get(rel_type, []))
+        out["relationships"][rel_type] = merge_relationship_lists(
+            rel_type, dst_rel.get(rel_type, []), src_rel.get(rel_type, [])
+        )
     cached_values: List[str] = [
         ts
         for ts in [dst_tok_obj.get("cached_at") if dst_tok_obj else None, src_tok_obj.get("cached_at") if src_tok_obj else None]

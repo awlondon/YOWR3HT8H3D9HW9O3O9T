@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Sequence, cast
 
+from hlsf_db_tools.adjacency_families import classify_relation
 from hlsf_db_tools.partition import atomic_write
 from hlsf_db_tools.symbols import SYMBOL_BUCKET, load_symbol_categories, symbol_list
 
@@ -168,7 +169,16 @@ def process_database(source: Path, output_dir: Path, log: bool = True, *, log_in
     for entry in _progress_iterator(full_token_data, total=total_tokens, log_interval=log_interval):
         token = str(entry.get("token", ""))
         prefix = prefix_for_token(token)
-        grouped_tokens[prefix].append(dict(entry))
+        normalized_entry = dict(entry)
+        relationships = normalized_entry.get("relationships") or {}
+        if isinstance(relationships, dict):
+            for rel_type, rel_edges in relationships.items():
+                if not isinstance(rel_edges, list):
+                    continue
+                for edge in rel_edges:
+                    if isinstance(edge, dict) and "family" not in edge:
+                        edge["family"] = classify_relation(rel_type).value
+        grouped_tokens[prefix].append(normalized_entry)
 
     chunk_entries = write_chunk_files(grouped_tokens, chunks_dir)
     chunk_entries.append(write_symbol_chunk(chunks_dir))

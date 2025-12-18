@@ -76,13 +76,14 @@ def test_merge_relationship_lists_prefers_max_weight_and_deterministic_ordering(
         {"token": "delta", "weight": 0.1},
     ]
 
-    merged = merge_relationship_lists(dst, src)
+    merged = merge_relationship_lists("rel1", dst, src)
     assert merged[0]["token"] == "beta" and merged[0]["weight"] == 0.9
     assert merged[1]["token"] == "gamma"
     assert [edge["token"] for edge in merged] == sorted(
         [edge["token"] for edge in merged],
         key=lambda token: (-next(e["weight"] for e in merged if e["token"] == token), token),
     )
+    assert all(edge.get("family") == "aesthetic" for edge in merged)
 
 
 def test_import_source_into_remote_creates_expected_shards(tmp_path: Path) -> None:
@@ -105,6 +106,7 @@ def test_import_source_into_remote_creates_expected_shards(tmp_path: Path) -> No
 
     rel1 = alpha_payload["tokens"]["alpha"]["relationships"]["rel1"]
     assert [edge["token"] for edge in rel1] == ["beta", "gamma"], "weights should sort descending"
+    assert all(edge.get("family") for edge in rel1)
 
     rel2 = alpha_payload["tokens"]["alpha"]["relationships"]["rel2"]
     assert rel2[0]["token"] == "eta", "ties should fall back to alphabetical token ordering"

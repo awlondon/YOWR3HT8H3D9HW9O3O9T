@@ -131,6 +131,11 @@ test('runPipeline builds bounded recursive adjacency graph', () => {
 
   assert.equal(metadataLevels.has(0), true, 'base edges should expose level metadata');
   assert.equal(metadataLevels.size >= 2, true, 'expanded edges should include higher-level metadata');
+  assert.equal(
+    adjacencyEdges.every(edge => edge.family),
+    true,
+    'adjacency edges should carry adjacency family classification',
+  );
 });
 
 test('single token prompt seeds cached highest-weight adjacencies', () => {
