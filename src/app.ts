@@ -8624,11 +8624,21 @@ function triggerCognitionCycle(prompt: string): void {
     .then((result) => {
       const finalRun = thoughts.length ? buildThoughtRunFromEvent(thoughts[thoughts.length - 1], prompt, result.trace) : null;
       if (finalRun) {
+        finalRun.llm.response = result.response;
+        finalRun.llm.model = finalRun.llm.model || 'hlsf-llm';
         ingestThoughtRuns([finalRun]);
       }
       if (elements.llmResponse) {
         elements.llmResponse.textContent = result.response;
       }
+      logKernelArticulatedResponse({
+        source: 'hlsf-llm',
+        wordCount: countWords(result.response),
+        hub: finalRun?.summary?.intersectionTokens?.[0] || prompt,
+        neighbors: finalRun?.summary?.intersectionTokens,
+        depth: config.iterations ?? config.maxIterations ?? 0,
+        text: result.response,
+      });
       setCognitionStatus('HLSF reasoning complete.');
       cognitionUiState.answerReady = true;
       setThoughtLoopStatus('Answer ready');
