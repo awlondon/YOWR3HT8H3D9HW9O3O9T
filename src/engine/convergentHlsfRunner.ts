@@ -310,7 +310,13 @@ async function articulate(
   input: { mode: 'prompt' | 'seed'; text: string },
   cfg: ConvergentConfig,
   state: RunState,
-): Promise<{ response: string; llm?: LLMResult }>
+): Promise<{
+  response: string;
+  llm?: LLMResult;
+  wordCount: number;
+  source: 'llm' | 'offline';
+  lengthStrategy?: 'compress' | 'expand' | 'none';
+}>
 // eslint-disable-next-line brace-style
 {
   const summary = summarizeGraph(graph, hubToken, trace);
@@ -336,27 +342,98 @@ async function articulate(
     maxIterations: cfg.depthMax,
   } as any;
 
+  const enforceWordBounds = (
+    text: string,
+    neighbors: string[],
+    traceLines: string[],
+    minWords = 10,
+    maxWords = 300,
+  ): { text: string; wordCount: number; strategy: 'compress' | 'expand' | 'none' } => {
+    const normalized = (text || '').replace(/\s+/g, ' ').trim();
+    const words = normalized ? normalized.split(/\s+/) : [];
+    if (words.length === 0) {
+      const filler = neighbors.length ? `Offline synthesis added neighbor context: ${neighbors.slice(0, 4).join(', ')}.` : '';
+      const scaffold = traceLines.length
+        ? `Offline synthesis summary: ${traceLines.slice(0, 2).join(' ')} ${filler}`
+        : `Offline synthesis summary.${filler ? ` ${filler}` : ''}`;
+      const paddedWords = scaffold.trim().split(/\s+/).slice(0, maxWords);
+      return { text: paddedWords.join(' '), wordCount: paddedWords.length, strategy: 'expand' };
+    }
+
+    if (words.length > maxWords) {
+      const trimmed = words.slice(0, maxWords).join(' ');
+      return { text: `${trimmed}…`, wordCount: maxWords, strategy: 'compress' };
+    }
+
+    if (words.length < minWords) {
+      const nextStep =
+        neighbors.length || traceLines.length
+          ? `Next step: revisit ${neighbors.slice(0, 3).join(', ') || 'the hub'} using trace cues ${traceLines
+              .slice(0, 2)
+              .join(' · ') || 'from the rotation'}.`
+          : 'Next step: expand with the top neighbors and rotation summary.';
+      const expanded = `${normalized}${normalized.endsWith('.') ? '' : '.'} ${nextStep}`;
+      const expandedWords = expanded.trim().split(/\s+/).filter(Boolean).slice(0, maxWords);
+      return {
+        text: expandedWords.join(' '),
+        wordCount: expandedWords.length,
+        strategy: 'expand',
+      };
+    }
+
+    return { text: normalized, wordCount: words.length, strategy: 'none' };
+  };
+
+  const synthesizeOffline = (neighbors: string[]): { text: string; wordCount: number; strategy: 'compress' | 'expand' | 'none' } => {
+    const coreLines = [
+      'Offline synthesis — LLM unavailable.',
+      `Hub ${hubToken} anchors the field with neighbors ${neighbors.slice(0, 6).join(', ') || 'n/a'}.`,
+      summary.edges.length ? `Key relations: ${summary.edges.slice(0, 3).join(' | ')}` : '',
+      trace.length ? `Trace highlights: ${trace.slice(0, 3).join(' · ')}` : '',
+      input.text ? `Prompt focus: ${input.text}` : '',
+    ].filter(Boolean);
+    const offlineText = coreLines.join(' ');
+    return enforceWordBounds(offlineText, neighbors, trace);
+  };
+
   try {
     const llm = await callLLM(prompt, trace, config, 'visible', [], {
       rawPrompt: input.text,
       adjacencyTokens: summary.topTokens,
     });
-    if (llm?.response) return { response: llm.response, llm };
+    if (llm?.response) {
+      const bounded = enforceWordBounds(llm.response, summary.topTokens, trace);
+      const decoratedLlm = { ...llm, response: bounded.text } as LLMResult;
+      return {
+        response: bounded.text,
+        llm: decoratedLlm,
+        wordCount: bounded.wordCount,
+        source: 'llm',
+        lengthStrategy: bounded.strategy,
+      };
+    }
   } catch (error) {
     // fall through to deterministic fallback
     console.warn('LLM articulation failed, using fallback', error);
   }
 
-  const fallback = [
-    `Hub: ${hubToken}`,
-    `Top tokens: ${summary.topTokens.slice(0, 6).join(', ') || '—'}`,
-    `Key relations:`,
-    ...summary.edges.slice(0, 6),
-    ...(contextInsight.lines.length ? ['Contexts:', ...contextInsight.lines.slice(0, 4)] : []),
-    '',
-    trace.length ? `Trace: ${trace.join(' | ')}` : 'Trace unavailable',
-  ];
-  return { response: fallback.join('\n') };
+  const offline = synthesizeOffline(summary.topTokens);
+  const offlineLlm: LLMResult = {
+    model: 'offline-synthesizer',
+    temperature: 0,
+    response: offline.text,
+    isFallback: true,
+    fallbackText: offline.text,
+    fallbackReason: 'offline-synthesis',
+  };
+
+  return {
+    response: offline.text,
+    llm: offlineLlm,
+    wordCount: offline.wordCount,
+    source: 'offline',
+    lengthStrategy: offline.strategy,
+  };
 }
 
 async function expandFrontier(
@@ -483,6 +560,7 @@ export async function runConvergentHlsf(
   trace: string[];
   responseText: string;
   contextInsight: ContextInsight;
+  articulation: { source: 'llm' | 'offline'; wordCount: number; lengthStrategy?: 'compress' | 'expand' | 'none' };
 }>
 // eslint-disable-next-line brace-style
 {
@@ -570,5 +648,10 @@ export async function runConvergentHlsf(
     trace: state.trace,
     responseText: articulation.response,
     contextInsight,
+    articulation: {
+      source: articulation.source,
+      wordCount: articulation.wordCount,
+      lengthStrategy: articulation.lengthStrategy,
+    },
   };
 }

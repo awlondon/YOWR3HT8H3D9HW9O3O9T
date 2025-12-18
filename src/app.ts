@@ -8520,6 +8520,14 @@ async function runConvergentFromUI(mode: 'prompt' | 'seed'): Promise<void> {
       tokens: topTokensFromGraph(result.finalGraph),
       contextInsight: result.contextInsight,
     });
+    logKernelArticulatedResponse({
+      source: result.articulation?.source || 'llm',
+      wordCount: result.articulation?.wordCount ?? countWords(result.responseText),
+      hub: result.hubToken,
+      neighbors: result.contextInsight?.activeTokens || topTokensFromGraph(result.finalGraph),
+      depth: cfg.depthMax,
+      text: result.responseText,
+    });
     cognitionUiState.answerReady = true;
     setCognitionStatus('Answer ready');
   } catch (error: any) {
@@ -11271,6 +11279,34 @@ function agentLog(message: string, type: 'info' | 'success' | 'warning' | 'error
 
 function agentLogError(message: string) {
   agentLog(message, 'error');
+}
+
+type KernelArticulatedResponse = {
+  source: 'llm' | 'offline';
+  wordCount: number;
+  hub?: string;
+  neighbors?: string[];
+  depth?: number;
+  text: string;
+};
+
+function logKernelArticulatedResponse(event: KernelArticulatedResponse): void {
+  const neighbors = Array.isArray(event.neighbors)
+    ? event.neighbors.filter((token) => typeof token === 'string' && token.trim().length)
+    : [];
+  const metaParts = [
+    'type=ARTICULATED_RESPONSE',
+    `source=${event.source}`,
+    `words=${event.wordCount}`,
+    event.hub ? `hub=${sanitize(event.hub)}` : null,
+    neighbors.length ? `neighbors=${sanitize(neighbors.slice(0, 6).join(', '))}` : null,
+    typeof event.depth === 'number' ? `depth=${event.depth}` : null,
+  ].filter(Boolean);
+  const metaLine = metaParts.join(' · ');
+  const textHtml = sanitize(event.text || '').replace(/\n/g, '<br>');
+  addLog(
+    `KERNEL ▸ <div class="kernel-response"><div class="kernel-response__meta">${metaLine}</div><div class="kernel-response__text">${textHtml}</div></div>`,
+  );
 }
 
 function logStatus(msg) {
