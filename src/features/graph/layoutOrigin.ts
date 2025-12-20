@@ -63,6 +63,39 @@ export function getInwardWedgeAngles(
   return { start: thetaCenter - half, end: thetaCenter + half };
 }
 
+export function maxRadiusToBounds(
+  pivot: { x: number; y: number },
+  theta: number,
+  width: number,
+  height: number,
+  padding = 0,
+): number {
+  const pad = Math.max(0, padding);
+  const bounds = {
+    minX: pad,
+    maxX: width - pad,
+    minY: pad,
+    maxY: height - pad,
+  };
+
+  const dx = Math.cos(theta);
+  const dy = Math.sin(theta);
+  let maxR = Infinity;
+
+  if (Math.abs(dx) > 1e-9) {
+    const xLimit = dx > 0 ? (bounds.maxX - pivot.x) / dx : (bounds.minX - pivot.x) / dx;
+    if (xLimit > 0) maxR = Math.min(maxR, xLimit);
+  }
+
+  if (Math.abs(dy) > 1e-9) {
+    const yLimit = dy > 0 ? (bounds.maxY - pivot.y) / dy : (bounds.minY - pivot.y) / dy;
+    if (yLimit > 0) maxR = Math.min(maxR, yLimit);
+  }
+
+  if (!Number.isFinite(maxR)) return 0;
+  return Math.max(0, maxR);
+}
+
 export function distributeAngles(count: number, wedge: WedgeAngles): number[] {
   const safeCount = Math.max(0, Math.floor(count));
   if (safeCount === 0) return [];
