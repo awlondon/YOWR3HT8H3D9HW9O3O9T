@@ -43,6 +43,7 @@ import {
   estimateNodePadding,
   getCornerPivot,
   getInwardWedgeAngles,
+  maxRadiusToBounds,
   normalizeOriginCorner,
   normalizeOriginMode,
   resolveOriginPadding,
@@ -3256,8 +3257,10 @@ function legacyPositions(graph, width, height, scale, centerX, centerY) {
 
   anchorList.forEach((token, idx) => {
     const angle = anchorAngles[idx] ?? rotation;
-    const x = anchorPivot.x + Rc * Math.cos(angle);
-    const y = anchorPivot.y + Rc * Math.sin(angle);
+    const maxR = maxRadiusToBounds(anchorPivot, angle, width, height, origin.padding);
+    const r = maxR > 0 ? Math.min(Rc, 0.9 * maxR) : 0;
+    const x = anchorPivot.x + r * Math.cos(angle);
+    const y = anchorPivot.y + r * Math.sin(angle);
     pos.set(token, { x, y });
   });
 
@@ -3280,16 +3283,20 @@ function legacyPositions(graph, width, height, scale, centerX, centerY) {
       const thetaList = distributeAngles(sorted.length, origin.wedge);
       sorted.forEach((edge, i) => {
         const theta = thetaList[i] ?? origin.wedge.start;
-        const x = base.x + R * Math.cos(theta);
-        const y = base.y + R * Math.sin(theta);
+        const maxR = maxRadiusToBounds(base, theta, width, height, origin.padding);
+        const r = maxR > 0 ? Math.min(R, 0.9 * maxR) : 0;
+        const x = base.x + r * Math.cos(theta);
+        const y = base.y + r * Math.sin(theta);
         if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
       });
     } else {
       const denom = Math.max(1, sorted.length - 1);
       sorted.forEach((edge, i) => {
         const theta = Math.PI * (i / denom);
-        const x = base.x + R * Math.cos(theta);
-        const y = base.y - R * Math.sin(theta);
+        const maxR = maxRadiusToBounds(base, theta, width, height, origin.padding);
+        const r = maxR > 0 ? Math.min(R, 0.9 * maxR) : 0;
+        const x = base.x + r * Math.cos(theta);
+        const y = base.y - r * Math.sin(theta);
         if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
       });
     }
@@ -3529,6 +3536,153 @@ function renderNodeLabelOverlay(
   }
 }
 
+function summarizePositionDiagnostics(
+  positions: Map<string, { x: number; y: number }>,
+  width: number,
+  height: number,
+  padding = 0,
+) {
+  const pad = Math.max(0, padding);
+  const bounds = { minX: -pad, maxX: width + pad, minY: -pad, maxY: height + pad };
+  let finiteCount = 0;
+  let nanCount = 0;
+  let offscreenCount = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  const invalidSamples: Array<{ token: string; x: number; y: number }> = [];
+  const offscreenSamples: Array<{ token: string; x: number; y: number }> = [];
+
+  for (const [token, pos] of positions.entries()) {
+    const x = Number(pos?.x);
+    const y = Number(pos?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      nanCount++;
+      if (invalidSamples.length < 3) invalidSamples.push({ token, x, y });
+      continue;
+    }
+
+    finiteCount++;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+
+    if (x < bounds.minX || x > bounds.maxX || y < bounds.minY || y > bounds.maxY) {
+      offscreenCount++;
+      if (offscreenSamples.length < 3) offscreenSamples.push({ token, x, y });
+    }
+  }
+
+  return {
+    finiteCount,
+    nanCount,
+    offscreenCount,
+    minX,
+    maxX,
+    minY,
+    maxY,
+    invalidSamples,
+    offscreenSamples,
+  };
+}
+
+function drawOriginDebugOverlay(
+  ctx: CanvasRenderingContext2D,
+  originGuide,
+  width: number,
+  height: number,
+) {
+  if (!originGuide || originGuide.mode !== 'corner') return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.strokeStyle = 'rgba(255, 102, 196, 0.85)';
+  ctx.fillStyle = 'rgba(255, 102, 196, 0.35)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(originGuide.pivot.x, originGuide.pivot.y, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  const guideLength = 120;
+  ctx.beginPath();
+  ctx.moveTo(originGuide.pivot.x, originGuide.pivot.y);
+  ctx.lineTo(
+    originGuide.pivot.x + guideLength * Math.cos(originGuide.wedge.start),
+    originGuide.pivot.y + guideLength * Math.sin(originGuide.wedge.start),
+  );
+  ctx.moveTo(originGuide.pivot.x, originGuide.pivot.y);
+  ctx.lineTo(
+    originGuide.pivot.x + guideLength * Math.cos(originGuide.wedge.end),
+    originGuide.pivot.y + guideLength * Math.sin(originGuide.wedge.end),
+  );
+  ctx.stroke();
+
+  const thetaCenter = Math.atan2(height / 2 - originGuide.pivot.y, width / 2 - originGuide.pivot.x);
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.lineWidth = 1.5;
+  ctx.moveTo(originGuide.pivot.x, originGuide.pivot.y);
+  ctx.lineTo(
+    originGuide.pivot.x + guideLength * Math.cos(thetaCenter),
+    originGuide.pivot.y + guideLength * Math.sin(thetaCenter),
+  );
+  ctx.stroke();
+
+  ctx.font = "12px 'Fira Code', monospace";
+  ctx.fillStyle = '#fff';
+  ctx.fillText('pivot', originGuide.pivot.x + 10, originGuide.pivot.y - 10);
+  ctx.restore();
+}
+
+function drawHudPanel(
+  ctx: CanvasRenderingContext2D,
+  {
+    nodeCount,
+    edgeCount,
+    diagnostics,
+    theme,
+  }: {
+    nodeCount: number;
+    edgeCount: number;
+    diagnostics: ReturnType<typeof summarizePositionDiagnostics> | null;
+    theme: { bg: string; fg: string; hint: string };
+  },
+) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const panelHeight = 124;
+  ctx.fillStyle = theme.bg === '#fff' ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.55)';
+  ctx.fillRect(10, 10, 280, panelHeight);
+  ctx.fillStyle = '#8CFFB3';
+  ctx.font = "12px ui-monospace, Menlo, Consolas, monospace";
+  ctx.fillText(`nodes: ${nodeCount ?? -1}`, 18, 30);
+  ctx.fillText(`edges: ${edgeCount ?? -1}`, 18, 48);
+
+  if (!diagnostics) {
+    ctx.restore();
+    return;
+  }
+
+  const fmt = (value: number) => (Number.isFinite(value) ? Math.round(value) : '—');
+  const bboxText = `bbox: x[${fmt(diagnostics.minX)}..${fmt(diagnostics.maxX)}] y[${fmt(
+    diagnostics.minY,
+  )}..${fmt(diagnostics.maxY)}]`;
+  ctx.fillStyle = '#8CFFB3';
+  ctx.fillText(
+    `finite: ${diagnostics.finiteCount} | NaN: ${diagnostics.nanCount} | offscreen: ${diagnostics.offscreenCount}`,
+    18,
+    66,
+  );
+  ctx.fillText(bboxText, 18, 84);
+  if (diagnostics.finiteCount === 0) {
+    ctx.fillStyle = '#ff4d6d';
+    ctx.font = "14px 'Fira Code', monospace";
+    ctx.fillText('NO FINITE NODE POSITIONS', 18, 108);
+  }
+  ctx.restore();
+}
+
 function drawComposite(graph, opts = {}) {
   if (!window.HLSF || typeof window.HLSF !== 'object') window.HLSF = {};
   if (!window.HLSF.state || typeof window.HLSF.state !== 'object') {
@@ -3613,42 +3767,6 @@ function drawComposite(graph, opts = {}) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  if (originGuide.mode === 'corner') {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255, 102, 196, 0.85)';
-    ctx.fillStyle = 'rgba(255, 102, 196, 0.35)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(originGuide.pivot.x, originGuide.pivot.y, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    const guideLength = 120;
-    ctx.beginPath();
-    ctx.moveTo(originGuide.pivot.x, originGuide.pivot.y);
-    ctx.lineTo(
-      originGuide.pivot.x + guideLength * Math.cos(originGuide.wedge.start),
-      originGuide.pivot.y + guideLength * Math.sin(originGuide.wedge.start),
-    );
-    ctx.moveTo(originGuide.pivot.x, originGuide.pivot.y);
-    ctx.lineTo(
-      originGuide.pivot.x + guideLength * Math.cos(originGuide.wedge.end),
-      originGuide.pivot.y + guideLength * Math.sin(originGuide.wedge.end),
-    );
-    ctx.stroke();
-    ctx.font = "12px 'Fira Code', monospace";
-    ctx.fillText('pivot', originGuide.pivot.x + 10, originGuide.pivot.y - 10);
-    ctx.restore();
-  }
-
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(10, 10, 240, 64);
-  ctx.fillStyle = '#8CFFB3';
-  ctx.font = "12px ui-monospace, Menlo, Consolas, monospace";
-  ctx.fillText(`nodes: ${nodeCount ?? -1}`, 18, 30);
-  ctx.fillText(`edges: ${edgeCount ?? -1}`, 18, 48);
-  ctx.restore();
-
   const drawAxesOnly = (message?: string) => {
     ctx.save();
     ctx.strokeStyle = theme.hint;
@@ -3721,6 +3839,18 @@ function drawComposite(graph, opts = {}) {
     orbitState.enabled === true ? applyOrbitProjection(rotatedPositions, graph, orbitState) : rotatedPositions;
 
   applyAutoFitIfNeeded(projectedPositions, width, height);
+
+  const diagnostics = summarizePositionDiagnostics(projectedPositions, width, height, originGuide.padding);
+  if (diagnostics && normalizedNodeCount > 0 && diagnostics.finiteCount < normalizedNodeCount * 0.8) {
+    console.warn('[viz] sparse finite node positions', {
+      finite: diagnostics.finiteCount,
+      total: normalizedNodeCount,
+      nan: diagnostics.nanCount,
+      offscreen: diagnostics.offscreenCount,
+      invalidSamples: diagnostics.invalidSamples,
+      offscreenSamples: diagnostics.offscreenSamples,
+    });
+  }
 
   const view = window.HLSF.view;
   const zoom = Number.isFinite(view.scale) ? view.scale : 1;
@@ -3975,6 +4105,14 @@ function drawComposite(graph, opts = {}) {
   window.HLSF.lastRenderedGraph = graph;
 
   ctx.restore();
+
+  drawOriginDebugOverlay(ctx, originGuide, width, height);
+  drawHudPanel(ctx, {
+    nodeCount: normalizedNodeCount,
+    edgeCount,
+    diagnostics,
+    theme,
+  });
 }
 
 function getNodeHitAreas() {
