@@ -3709,6 +3709,51 @@ function drawComposite(graph, opts = {}) {
       ? graph.edges
       : [];
   updateRelationLegend(graph, edges, edgeColorMode);
+  if (cfg.showSeedTriangles !== false) {
+    const triangleSets = new Map();
+    for (const edge of edges) {
+      const triangleId = edge?.meta?.triangleId;
+      if (!triangleId) continue;
+      if (!triangleSets.has(triangleId)) triangleSets.set(triangleId, new Set());
+      const set = triangleSets.get(triangleId);
+      if (edge.from) set.add(edge.from);
+      if (edge.to) set.add(edge.to);
+    }
+
+    ctx.save();
+    ctx.lineWidth = Math.max(0.01, edgeWidthValue * zoomAttenuation) * dpr;
+    triangleSets.forEach((vertexIds, triangleId) => {
+      if (!vertexIds || vertexIds.size < 3) return;
+      const vertices = [...vertexIds]
+        .map((id) => ({ id, pos: projectedPositions.get(id) }))
+        .filter((entry) => entry.pos);
+      if (vertices.length < 3) return;
+      const centroid = vertices.reduce(
+        (acc, v) => ({ x: acc.x + v.pos.x, y: acc.y + v.pos.y }),
+        { x: 0, y: 0 },
+      );
+      centroid.x /= vertices.length;
+      centroid.y /= vertices.length;
+      vertices.sort((a, b) => {
+        const aTheta = Math.atan2(a.pos.y - centroid.y, a.pos.x - centroid.x);
+        const bTheta = Math.atan2(b.pos.y - centroid.y, b.pos.x - centroid.x);
+        return aTheta - bTheta;
+      });
+      const stroke = paletteColor(triangleId);
+      ctx.beginPath();
+      ctx.moveTo(vertices[0].pos.x, vertices[0].pos.y);
+      for (let i = 1; i < vertices.length; i++) {
+        ctx.lineTo(vertices[i].pos.x, vertices[i].pos.y);
+      }
+      ctx.closePath();
+      ctx.globalAlpha = Math.min(0.4, baseAlpha() * 0.8);
+      ctx.fillStyle = colorWithAlpha(stroke, 0.16);
+      ctx.strokeStyle = colorWithAlpha(stroke, Math.min(0.85, baseAlpha() + 0.1));
+      ctx.fill();
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
   const renderState =
     window.HLSF.rendering && typeof window.HLSF.rendering === 'object'
       ? window.HLSF.rendering
@@ -4462,6 +4507,7 @@ function normalizeEdgeColorMode(value) {
   switch (value) {
     case 'weight':
     case 'relation':
+    case 'family':
       return value;
     default:
       return 'theme';
@@ -4770,6 +4816,7 @@ function ensureHLSFCanvas() {
             <option value="theme">Theme</option>
             <option value="weight">Weight</option>
             <option value="relation" selected>Relation</option>
+            <option value="family">Family</option>
           </select>
         </div>
         <div class="hlsf-control-group hlsf-control-legend">
@@ -5640,6 +5687,7 @@ window.HLSF.config = Object.assign(
     ty: 0,
     emergentActive: false,
     showEdges: true,
+    showSeedTriangles: existingConfig.showSeedTriangles !== false,
     showLabels: true,
     fillFaces: false,
     whiteBg: false,
@@ -6137,6 +6185,13 @@ function weightToColor(value) {
   return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
 }
 
+function edgeColorKey(edge, mode) {
+  if (mode === 'family') return edge.family || edge.rtype || `${edge.from}->${edge.to}`;
+  if (mode === 'relation') return edge.rtype || `${edge.from}->${edge.to}`;
+  if (mode === 'weight') return `${edge.from}->${edge.to}`;
+  return `${edge.from}->${edge.to}`;
+}
+
 function nodeEdgeStrokeColor(node, index, mode) {
   if (mode === 'relation') {
     return paletteColor(`${node.token}-${index}`);
@@ -6148,9 +6203,7 @@ function nodeEdgeStrokeColor(node, index, mode) {
 }
 
 function compositeEdgeStrokeColor(edge, mode) {
-  if (mode === 'relation') {
-    return paletteColor(edge.rtype || `${edge.from}->${edge.to}`);
-  }
+  if (mode === 'relation' || mode === 'family') return paletteColor(edgeColorKey(edge, mode));
   if (mode === 'weight') {
     return weightToColor(edge.w ?? 0);
   }
@@ -6181,7 +6234,7 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
   }
   const state = window.HLSF.rendering;
 
-  if (edgeColorMode !== 'relation') {
+  if (edgeColorMode !== 'relation' && edgeColorMode !== 'family') {
     list.innerHTML = '';
     container.hidden = true;
     container.setAttribute('aria-hidden', 'true');
@@ -6234,11 +6287,15 @@ function updateRelationLegend(graph, edges, edgeColorMode) {
 
   const unique = new Map();
   for (const edge of edgeList) {
-    const rel = typeof edge?.rtype === 'string' ? edge.rtype : null;
+    const rel = edgeColorKey(edge, edgeColorMode);
     if (!rel || unique.has(rel)) continue;
+    const label =
+      edgeColorMode === 'family'
+        ? `Family: ${edge.family || rel}`
+        : relDisplay(rel);
     unique.set(rel, {
       color: paletteColor(rel),
-      label: relDisplay(rel),
+      label,
     });
   }
 

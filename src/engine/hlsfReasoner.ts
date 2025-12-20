@@ -13,6 +13,7 @@ import { ThoughtDetector } from './thoughtDetector.js';
 import { ResponseAccumulatorEngine } from './responseAccumulator.js';
 import { averageEmbedding, cosine } from './vectorUtils.js';
 import { DEFAULT_CONVERGENCE_THROTTLE_CONFIG, type ConvergenceThrottleConfig } from './expansionModes.js';
+import { expandSeed } from '../features/graph/seedExpansion.js';
 import {
   collapseToPoint,
   reseedFieldFromHub,
@@ -44,6 +45,12 @@ interface TraverseContext {
   trace: string[];
   throttleCfg: ConvergenceThrottleConfig;
   throttleState: ThrottleState;
+  seedExpansionLevel: number;
+  maxSeedExpansionLevels: number;
+  seedDimension: number;
+  expandedSeedIds: Set<string>;
+  seedTrace: string[];
+  edgeKeys: Set<string>;
 }
 
 interface ReasonerResult {
@@ -227,9 +234,63 @@ function applyAdjacencyDeltaToHlsf(
         weight: e.weight,
         relation: e.role,
       });
+      context.edgeKeys.add(seedEdgeKey(e.src, e.dst, e.role));
     });
   }
   return addedNodeIds;
+}
+
+function seedEdgeKey(src: string, dst: string, relation?: string | null): string {
+  return `${src}->${dst}:${relation ?? ''}`;
+}
+
+function applySeedExpansionForBase(
+  context: TraverseContext,
+  baseId: string,
+  level: number,
+  reason: string,
+): void {
+  if (context.expandedSeedIds.has(`${baseId}:${level}`)) return;
+  const baseNode = context.nodeLookup.get(baseId);
+  if (!baseNode) return;
+  const expansion = expandSeed(baseId, context.seedDimension, baseNode.label, level);
+  if (!expansion.edges.length && !expansion.nodes.length) return;
+
+  expansion.nodes.forEach(node => {
+    if (context.nodeLookup.has(node.id)) return;
+    const embedding = node.hintEmbedding ?? embedToken(node.label);
+    const newNode: HlsfNode = {
+      id: node.id,
+      label: node.label,
+      tokenType: 'noun',
+      tokens: [node.label],
+      embedding,
+    };
+    context.graph.nodes.push(newNode);
+    context.nodeLookup.set(node.id, newNode);
+    context.nodeEmbeddings.set(node.id, embedding);
+  });
+
+  expansion.edges.forEach(edge => {
+    const key = seedEdgeKey(edge.source, edge.target, edge.type);
+    if (context.edgeKeys.has(key)) return;
+    context.edgeKeys.add(key);
+    context.graph.edges.push({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      weight: edge.weight,
+      relation: edge.type,
+      family: edge.family,
+      meta: edge.meta,
+    });
+  });
+
+  const summary = `${baseNode.label}: +${expansion.nodes.length} nodes, +${expansion.edges.length} edges (${expansion.triangles.length} triangles)`;
+  context.seedTrace.push(summary);
+  context.trace.push(`[seed-expansion] level ${level} (${reason}) ${summary}`);
+  context.expandedSeedIds.add(`${baseId}:${level}`);
+  context.seedExpansionLevel = Math.max(context.seedExpansionLevel, level);
 }
 
 function buildPseudoThought(token: string): ThoughtEvent {
@@ -349,6 +410,15 @@ async function traverseGraph(context: TraverseContext): Promise<ArticulationEven
     context.graph.edges = mappedEdges;
     context.nodeEmbeddings = new Map(mappedNodes.map((n) => [n.id, n.embedding]));
     context.nodeLookup = new Map(mappedNodes.map((n) => [n.id, n]));
+    context.edgeKeys = new Set(mappedEdges.map(e => seedEdgeKey(e.source, e.target, e.relation)));
+    if (context.seedExpansionLevel < context.maxSeedExpansionLevels) {
+      applySeedExpansionForBase(
+        context,
+        hubId,
+        context.seedExpansionLevel + 1,
+        'convergence reseed',
+      );
+    }
     trace.push(
       `CONVERGENCE: hub=${hubLabel} nodes=${collapsed.collapsedGraph.nodes.size} edges=${collapsed.collapsedGraph.edges.length} → reseeded new field`,
     );
@@ -566,8 +636,12 @@ export async function runHlsfReasoning(
   const accumulator = respEngine.initAccumulator(queryEmbedding, Date.now());
   const throttleCfg = DEFAULT_CONVERGENCE_THROTTLE_CONFIG;
   const throttleState: ThrottleState = { lastThrottleAt: 0, throttles: 0, cycles: 0 };
+  const seedDimension = 8;
+  const seedTrace: string[] = [];
+  const expandedSeedIds = new Set<string>();
+  const edgeKeys = new Set<string>(graph.edges.map(e => seedEdgeKey(e.source, e.target, e.relation)));
 
-  const articulation = await traverseGraph({
+  const context: TraverseContext = {
     graph,
     nodeEmbeddings,
     nodeLookup,
@@ -583,7 +657,17 @@ export async function runHlsfReasoning(
     trace,
     throttleCfg,
     throttleState,
-  });
+    seedExpansionLevel: 0,
+    maxSeedExpansionLevels: 2,
+    seedDimension,
+    expandedSeedIds,
+    seedTrace,
+    edgeKeys,
+  };
+
+  graph.nodes.forEach(node => applySeedExpansionForBase(context, node.id, 1, 'level-1 bootstrap'));
+
+  const articulation = await traverseGraph(context);
 
   const salientTokens = respEngine.getHighSalienceTokens(accumulator);
   const collapsed = collapseGraphToSalient(graph, refined, salientTokens);
@@ -609,12 +693,19 @@ export async function runHlsfReasoning(
   }
 
   const salientSummary = summarizeSalientContext(salientTokens, collapsed.graph, collapsed.clusters);
+  const seedSummary =
+    context.seedTrace.length > 0
+      ? `Seed expansions: ${context.seedTrace.join(' | ')}`
+      : 'Seed expansions: none';
+  const augmentedPrompt = `${prompt}\n${seedSummary}`;
+  trace.push(seedSummary);
 
-  const llmResponse = await llm.articulateResponse(finalArticulation, prompt, {
+  const llmResponse = await llm.articulateResponse(finalArticulation, augmentedPrompt, {
     tokens: salientTokens,
     summary: salientSummary,
+    seedTrace: context.seedTrace,
   });
-  const response = craftResponse(prompt, trace, finalArticulation) + `\nLLM: ${llmResponse}`;
+  const response = craftResponse(augmentedPrompt, trace, finalArticulation) + `\nLLM: ${llmResponse}`;
   trace.push('Generated emergent thought trace and articulated response.');
 
   return { trace, response };

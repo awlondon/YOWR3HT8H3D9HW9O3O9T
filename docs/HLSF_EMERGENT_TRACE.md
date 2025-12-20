@@ -19,3 +19,10 @@ This workflow formalises how the cognition engine decomposes prompts and guides 
 - Thought evaluation and articulation are managed in `src/engine/thoughtDetector.ts` and `src/engine/articulationManager.ts`, returning plain data for the UI to render.
 - The UI should read the `EmergentResult` from `runEmergentThoughtProcess` and render separate panels for “Emergent Thought Trace” and “Structured Response.”
 - Additional tools can reuse this document as a checklist when auditing cognition runs or designing new prompt templates.
+
+## Seed node expansion and geometric intuition
+
+- `src/features/graph/seedExpansion.ts` grows a triangular K_n scaffold around a base concept token. For the default dimension (n = 8) it produces three triangles that share boundary nodes, yielding a compact K8-style lattice anchored on the seed.
+- `src/engine/hlsfReasoner.ts` invokes the seed expansion immediately after the initial graph build and again after convergence throttling selects a new hub. Operational edges from this stage are tagged with the `seed-expansion` relation so the ordered emergent pass can handle them after causal/temporal cues.
+- The emergent trace now includes explicit seed-expansion notes, and the LLM prompt carries a seed summary alongside the user request so downstream articulation is aware of the induced triangles and adjacency intents.
+- The graph visualizer (see `src/app.ts`) can color edges by family and optionally renders translucent triangles for any edges carrying a `triangleId` in their metadata, making the K8 lattice visible in the canvas view.
