@@ -3588,6 +3588,26 @@ function summarizePositionDiagnostics(
   };
 }
 
+function drawCrosshair(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+  size = 7,
+) {
+  const r = Math.max(2, size);
+  ctx.save();
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.moveTo(x - r, y);
+  ctx.lineTo(x + r, y);
+  ctx.moveTo(x, y - r);
+  ctx.lineTo(x, y + r);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawOriginDebugOverlay(
   ctx: CanvasRenderingContext2D,
   originGuide,
@@ -3596,6 +3616,8 @@ function drawOriginDebugOverlay(
 ) {
   if (!originGuide || originGuide.mode !== 'corner') return;
   ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.strokeStyle = 'rgba(255, 102, 196, 0.85)';
   ctx.fillStyle = 'rgba(255, 102, 196, 0.35)';
@@ -3650,6 +3672,8 @@ function drawHudPanel(
   },
 ) {
   ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const panelHeight = 124;
   ctx.fillStyle = theme.bg === '#fff' ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.55)';
@@ -3763,6 +3787,7 @@ function drawComposite(graph, opts = {}) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1.0;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = theme.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
@@ -3860,7 +3885,59 @@ function drawComposite(graph, opts = {}) {
   const zoomAttenuation = Math.max(0.2, Math.min(5, 1 / Math.sqrt(safeZoom)));
   const fontScale = Math.max(0.35, Math.min(3, zoomAttenuation));
 
+  const samplePositionEntry = (() => {
+    for (const [token, pos] of projectedPositions.entries()) {
+      if (Number.isFinite(pos?.x) && Number.isFinite(pos?.y)) {
+        return { token, pos };
+      }
+    }
+    return null;
+  })();
+
+  const drawRenderProbe = () => {
+    if (!samplePositionEntry) return;
+    const { pos, token } = samplePositionEntry;
+    const screenPos = {
+      x: (view.x + pos.x * zoom) * dpr,
+      y: (view.y + pos.y * zoom) * dpr,
+    };
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    drawCrosshair(ctx, pos.x, pos.y, 'cyan');
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.scale(dpr, dpr);
+    ctx.translate(view.x, view.y);
+    ctx.scale(zoom, zoom);
+    drawCrosshair(ctx, pos.x, pos.y, 'yellow');
+    ctx.restore();
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'yellow';
+    ctx.font = "12px 'Fira Code', monospace";
+    const baseX = (originGuide?.pivot?.x ?? 12) + 12;
+    const baseY = (originGuide?.pivot?.y ?? 12) + 12;
+    ctx.fillText(
+      `${token || '•'} raw: (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})`,
+      baseX,
+      baseY,
+    );
+    ctx.fillText(`xfm: (${screenPos.x.toFixed(1)}, ${screenPos.y.toFixed(1)})`, baseX, baseY + 16);
+    ctx.restore();
+  };
+
   ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
   ctx.scale(dpr, dpr);
   ctx.translate(view.x, view.y);
   ctx.scale(zoom, zoom);
@@ -3895,6 +3972,8 @@ function drawComposite(graph, opts = {}) {
     }
     ctx.restore();
   }
+
+  drawRenderProbe();
 
   const glyphOnly = opts.glyphOnly === true;
   const focusSet =
