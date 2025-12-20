@@ -38,6 +38,15 @@ import {
   signalVoiceCloneTokensChanged,
 } from './features/voice/voiceClone';
 import { initializeVoiceModelDock } from './features/voice/voiceModel';
+import {
+  distributeAngles,
+  estimateNodePadding,
+  getCornerPivot,
+  getInwardWedgeAngles,
+  normalizeOriginCorner,
+  normalizeOriginMode,
+  resolveOriginPadding,
+} from './features/graph/layoutOrigin';
 import { initializeUserAvatarStore } from './userAvatar';
 import { initializeSaasPlatform, registerSaasCommands } from './features/saas/platform';
 import { demoGoogleSignIn } from './auth/google';
@@ -3208,6 +3217,22 @@ function edgeLabel(rtype) {
   return withoutGlyph || cleaned;
 }
 
+function resolveLayoutOrigin(width, height, wedgeRadians = Math.PI / 2) {
+  const cfg = window?.HLSF?.config || {};
+  const mode = normalizeOriginMode(cfg.originMode);
+  const corner = normalizeOriginCorner(cfg.originCorner);
+  const padding = resolveOriginPadding(cfg.originPaddingPx, estimateNodePadding(cfg.nodeSize));
+  const pivot =
+    mode === 'corner'
+      ? getCornerPivot(width, height, corner, padding)
+      : { x: width / 2, y: height / 2 };
+  const wedge =
+    mode === 'corner'
+      ? getInwardWedgeAngles(pivot, width, height, wedgeRadians)
+      : { start: 0, end: Math.PI * 2 };
+  return { mode, corner, pivot, wedge, padding } as const;
+}
+
 function legacyPositions(graph, width, height, scale, centerX, centerY) {
   const anchorList =
     Array.isArray(graph?.anchors) && graph.anchors.length
@@ -3218,13 +3243,21 @@ function legacyPositions(graph, width, height, scale, centerX, centerY) {
   const pos = new Map();
   const rotation = 0;
   const Rc = Math.min(width, height) * 0.35 * scale;
-  const cx = Number.isFinite(centerX) ? centerX : width / 2;
-  const cy = Number.isFinite(centerY) ? centerY : height / 2;
+  const origin = resolveLayoutOrigin(width, height);
+  const cx = Number.isFinite(centerX) ? centerX : origin.pivot.x;
+  const cy = Number.isFinite(centerY) ? centerY : origin.pivot.y;
+  const anchorPivot = origin.mode === 'corner' ? origin.pivot : { x: cx, y: cy };
+  const anchorAngles =
+    origin.mode === 'corner'
+      ? distributeAngles(anchorList.length, origin.wedge)
+      : anchorList.map(
+          (_token, idx) => (idx / Math.max(1, anchorList.length)) * Math.PI * 2 + rotation,
+        );
 
   anchorList.forEach((token, idx) => {
-    const angle = (idx / Math.max(1, anchorList.length)) * Math.PI * 2 + rotation;
-    const x = cx + Rc * Math.cos(angle);
-    const y = cy + Rc * Math.sin(angle);
+    const angle = anchorAngles[idx] ?? rotation;
+    const x = anchorPivot.x + Rc * Math.cos(angle);
+    const y = anchorPivot.y + Rc * Math.sin(angle);
     pos.set(token, { x, y });
   });
 
@@ -3240,16 +3273,26 @@ function legacyPositions(graph, width, height, scale, centerX, centerY) {
   });
 
   for (const [root, edges] of groupByRoot.entries()) {
-    const base = pos.get(root) || { x: cx, y: cy };
+    const base = pos.get(root) || anchorPivot;
     const R = Math.min(width, height) * 0.18 * scale;
     const sorted = [...edges].sort((a, b) => b.w - a.w);
-    const denom = Math.max(1, sorted.length - 1);
-    sorted.forEach((edge, i) => {
-      const theta = Math.PI * (i / denom);
-      const x = base.x + R * Math.cos(theta);
-      const y = base.y - R * Math.sin(theta);
-      if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
-    });
+    if (origin.mode === 'corner') {
+      const thetaList = distributeAngles(sorted.length, origin.wedge);
+      sorted.forEach((edge, i) => {
+        const theta = thetaList[i] ?? origin.wedge.start;
+        const x = base.x + R * Math.cos(theta);
+        const y = base.y + R * Math.sin(theta);
+        if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
+      });
+    } else {
+      const denom = Math.max(1, sorted.length - 1);
+      sorted.forEach((edge, i) => {
+        const theta = Math.PI * (i / denom);
+        const x = base.x + R * Math.cos(theta);
+        const y = base.y - R * Math.sin(theta);
+        if (!pos.has(edge.to)) pos.set(edge.to, { x, y });
+      });
+    }
   }
 
   return pos;
@@ -3524,6 +3567,7 @@ function drawComposite(graph, opts = {}) {
   const theme = cfg.whiteBg
     ? { bg: '#fff', fg: '#000', hint: '#444' }
     : { bg: '#000', fg: '#fff', hint: '#bbb' };
+  const originGuide = resolveLayoutOrigin(width, height);
   const edgeColorMode = normalizeEdgeColorMode(cfg.edgeColorMode);
   const edgeWidthControl = document.getElementById('edgew');
   const edgeWidth = clampEdgeWidth(cfg.edgeWidth);
@@ -3568,6 +3612,33 @@ function drawComposite(graph, opts = {}) {
   ctx.fillStyle = theme.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
+
+  if (originGuide.mode === 'corner') {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 102, 196, 0.85)';
+    ctx.fillStyle = 'rgba(255, 102, 196, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(originGuide.pivot.x, originGuide.pivot.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    const guideLength = 120;
+    ctx.beginPath();
+    ctx.moveTo(originGuide.pivot.x, originGuide.pivot.y);
+    ctx.lineTo(
+      originGuide.pivot.x + guideLength * Math.cos(originGuide.wedge.start),
+      originGuide.pivot.y + guideLength * Math.sin(originGuide.wedge.start),
+    );
+    ctx.moveTo(originGuide.pivot.x, originGuide.pivot.y);
+    ctx.lineTo(
+      originGuide.pivot.x + guideLength * Math.cos(originGuide.wedge.end),
+      originGuide.pivot.y + guideLength * Math.sin(originGuide.wedge.end),
+    );
+    ctx.stroke();
+    ctx.font = "12px 'Fira Code', monospace";
+    ctx.fillText('pivot', originGuide.pivot.x + 10, originGuide.pivot.y - 10);
+    ctx.restore();
+  }
 
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -5697,6 +5768,9 @@ window.HLSF.config = Object.assign(
     deferredRender: false,
     progressTick: 250,
     layout: 'dimension',
+    originMode: 'corner',
+    originCorner: 'bottom-left',
+    originPaddingPx: 48,
     hlsfScope: existingConfig.hlsfScope || 'db',
     metricScope: METRIC_SCOPE.RUN,
     relationTypeCap: DEFAULT_RELATION_TYPE_CAP,
@@ -5730,6 +5804,12 @@ window.HLSF.config.edgesPerType =
 window.HLSF.config.edgeWidth = clampEdgeWidth(window.HLSF.config.edgeWidth);
 window.HLSF.config.nodeSize = clampNodeSize(window.HLSF.config.nodeSize);
 window.HLSF.config.edgeColorMode = normalizeEdgeColorMode(window.HLSF.config.edgeColorMode);
+window.HLSF.config.originMode = normalizeOriginMode(window.HLSF.config.originMode);
+window.HLSF.config.originCorner = normalizeOriginCorner(window.HLSF.config.originCorner);
+window.HLSF.config.originPaddingPx = resolveOriginPadding(
+  window.HLSF.config.originPaddingPx,
+  estimateNodePadding(window.HLSF.config.nodeSize),
+);
 applyRecursionDepthSetting(window.HLSF.config.adjacencyRecursionDepth);
 window.HLSF.config.relationshipBudget = resolveHlsfRelationshipBudget(
   window.HLSF.config.relationshipBudget,
@@ -5835,6 +5915,7 @@ function ensureViewportCentered(width, height) {
   const safeWidth = Number.isFinite(width) ? width : 0;
   const safeHeight = Number.isFinite(height) ? height : 0;
   const view = window.HLSF.view;
+  const originMode = normalizeOriginMode(window.HLSF?.config?.originMode);
   const zeroViewport = safeWidth < 2 || safeHeight < 2;
   if (zeroViewport) {
     window.HLSF.__centerInit = false;
@@ -5850,7 +5931,16 @@ function ensureViewportCentered(width, height) {
   const marginY = Math.min(safeHeight * 0.05, 40);
   const outsideFrame =
     view.x < marginX || view.x > safeWidth - marginX || view.y < marginY || view.y > safeHeight - marginY;
-  if (!window.HLSF.__centerInit || invalidView || outsideFrame || viewportChanged) {
+  if (originMode === 'corner') {
+    if (!window.HLSF.__centerInit || invalidView || viewportChanged) {
+      view.x = 0;
+      view.y = 0;
+      window.HLSF.__centerInit = true;
+      window.HLSF.__lastViewport = { width: safeWidth, height: safeHeight };
+      syncViewToConfig();
+      return;
+    }
+  } else if (!window.HLSF.__centerInit || invalidView || outsideFrame || viewportChanged) {
     view.x = safeWidth / 2;
     view.y = safeHeight / 2;
     window.HLSF.__centerInit = true;
@@ -5977,6 +6067,7 @@ function applyAutoFitIfNeeded(
   viewportHeight: number,
 ): void {
   if (!window.HLSF?.view || window.HLSF.__pendingAutoFit !== true) return;
+  if (normalizeOriginMode(window.HLSF?.config?.originMode) === 'corner') return;
   if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return;
   if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
   const bounds = computeGraphBounds(positions);
@@ -6012,10 +6103,11 @@ function resetHlsfTransform(): void {
   const width = canvas ? canvas.clientWidth || canvas.width || 0 : 0;
   const height = canvas ? canvas.clientHeight || canvas.height || 0 : 0;
   window.HLSF.view.scale = 1;
-  window.HLSF.view.x = width / 2;
-  window.HLSF.view.y = height / 2;
+  const originMode = normalizeOriginMode(window.HLSF?.config?.originMode);
+  window.HLSF.view.x = originMode === 'corner' ? 0 : width / 2;
+  window.HLSF.view.y = originMode === 'corner' ? 0 : height / 2;
   window.HLSF.__centerInit = width > 0 && height > 0;
-  window.HLSF.__pendingAutoFit = true;
+  window.HLSF.__pendingAutoFit = originMode === 'center';
   if (!Array.isArray((window.HLSF as any).clusterZoomStack)) {
     (window.HLSF as any).clusterZoomStack = [];
   } else {
@@ -6036,7 +6128,8 @@ window.HLSF.animationFrame = window.HLSF.animationFrame || null;
 window.HLSF.geometry = window.HLSF.geometry || {};
 window.HLSF.rendering = window.HLSF.rendering || {};
 window.HLSF.__centerInit = window.HLSF.__centerInit || false;
-window.HLSF.__pendingAutoFit = window.HLSF.__pendingAutoFit !== false;
+const defaultAutoFit = normalizeOriginMode(window.HLSF?.config?.originMode) === 'center';
+window.HLSF.__pendingAutoFit = window.HLSF.__pendingAutoFit !== false && defaultAutoFit;
 window.HLSF.indexCache = window.HLSF.indexCache || null;
 window.HLSF.indexCacheSource = window.HLSF.indexCacheSource || null;
 
@@ -16601,6 +16694,23 @@ function initHLSFCanvas() {
           <button id="hlsf-toggle-bg" class="btn btn-neutral">BG: Dark</button>
         </div>
       </div>
+
+      <div class="hlsf-control-group">
+        <label>Origin</label>
+        <div class="hlsf-button-row">
+          <select id="hlsf-origin-mode" class="btn btn-neutral">
+            <option value="corner">Corner</option>
+            <option value="center">Center</option>
+          </select>
+          <select id="hlsf-origin-corner" class="btn btn-neutral">
+            <option value="top-left">Top Left</option>
+            <option value="top-right">Top Right</option>
+            <option value="bottom-left">Bottom Left</option>
+            <option value="bottom-right">Bottom Right</option>
+          </select>
+          <input id="hlsf-origin-padding" type="number" min="0" step="1" value="48" class="btn btn-neutral" style="width: 96px;" />
+        </div>
+      </div>
     </div>
     <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,255,136,0.05); border-radius: 8px; font-size: 0.85rem;">
       <strong>Controls:</strong> Drag to pan • Scroll to zoom • Each polygon = token matrix •
@@ -16781,6 +16891,48 @@ function initHLSFCanvas() {
       debouncedLegacyRender();
     });
 
+    const originModeSelect = document.getElementById('hlsf-origin-mode');
+    const originCornerSelect = document.getElementById('hlsf-origin-corner');
+    const originPaddingInput = document.getElementById('hlsf-origin-padding');
+    const syncOriginConfig = () => {
+      window.HLSF.config.originMode = normalizeOriginMode(
+        (originModeSelect as HTMLSelectElement | null)?.value || window.HLSF.config.originMode,
+      );
+      window.HLSF.config.originCorner = normalizeOriginCorner(
+        (originCornerSelect as HTMLSelectElement | null)?.value || window.HLSF.config.originCorner,
+      );
+      window.HLSF.config.originPaddingPx = resolveOriginPadding(
+        (originPaddingInput as HTMLInputElement | null)?.value,
+        estimateNodePadding(window.HLSF.config.nodeSize),
+      );
+      window.HLSF.__pendingAutoFit = normalizeOriginMode(window.HLSF.config.originMode) === 'center';
+    };
+
+    if (originModeSelect) {
+      originModeSelect.value = window.HLSF.config.originMode;
+      originModeSelect.addEventListener('change', () => {
+        syncOriginConfig();
+        resetHlsfTransform();
+        requestRender();
+      });
+    }
+
+    if (originCornerSelect) {
+      originCornerSelect.value = window.HLSF.config.originCorner;
+      originCornerSelect.addEventListener('change', () => {
+        syncOriginConfig();
+        requestRender();
+      });
+    }
+
+    if (originPaddingInput) {
+      originPaddingInput.value = `${window.HLSF.config.originPaddingPx}`;
+      originPaddingInput.addEventListener('change', () => {
+        syncOriginConfig();
+        requestRender();
+      });
+    }
+
     // Mouse interaction
     let isDragging = false;
     let lastX = 0;
@@ -16901,8 +17053,9 @@ function initHLSFCanvas() {
     if (window.HLSF.canvas) {
       const width = window.HLSF.canvas.clientWidth || window.HLSF.canvas.width;
       const height = window.HLSF.canvas.clientHeight || window.HLSF.canvas.height;
-      window.HLSF.view.x = width / 2;
-      window.HLSF.view.y = height / 2;
+      const originMode = normalizeOriginMode(window.HLSF?.config?.originMode);
+      window.HLSF.view.x = originMode === 'corner' ? 0 : width / 2;
+      window.HLSF.view.y = originMode === 'corner' ? 0 : height / 2;
     } else {
       window.HLSF.view.x = 0;
       window.HLSF.view.y = 0;

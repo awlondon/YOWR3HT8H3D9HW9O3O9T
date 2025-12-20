@@ -23,6 +23,8 @@
     "src/features/graph/recursive_adjacency.ts",
     "src/features/graph/layeredAdjacency.ts",
     "src/features/graph/recursive_adjacency.test.ts",
+    "src/features/graph/layoutOrigin.ts",
+    "src/features/graph/layoutOrigin.test.ts",
     "src/features/saas/messaging.test.ts",
     "src/features/saas/utils.ts",
     "src/utils/format.ts",
