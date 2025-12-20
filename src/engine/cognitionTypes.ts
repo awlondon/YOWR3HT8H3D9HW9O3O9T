@@ -37,6 +37,8 @@ export interface HlsfEdge {
   target: string;
   weight: number;
   relation?: string;
+  family?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface HlsfGraph {

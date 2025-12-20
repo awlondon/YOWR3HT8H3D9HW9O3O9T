@@ -24,6 +24,8 @@ export interface VisualizerEdge {
   w?: number;
   rtype?: string;
   role?: string;
+  family?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface VisualizerGraph {
@@ -90,6 +92,7 @@ function normalizeEdges(edges: any[] = []): VisualizerEdge[] {
       : Number.isFinite(edge.w)
         ? edge.w
         : 0.5;
+    const role = edge.role ?? edge.rtype ?? edge.rel ?? 'relation';
     normalized.push({
       id: edge.id ?? `${source}->${target}-${idx}`,
       from: source,
@@ -100,8 +103,10 @@ function normalizeEdges(edges: any[] = []): VisualizerEdge[] {
       target,
       weight,
       w: weight,
-      rtype: edge.role ?? edge.rtype ?? edge.rel ?? 'relation',
-      role: edge.role ?? edge.rtype ?? edge.rel ?? 'relation',
+      rtype: role,
+      role,
+      family: edge.family ?? edge.meta?.family ?? edge.rtypeFamily,
+      meta: edge.meta ?? {},
     });
   });
   return normalized;
