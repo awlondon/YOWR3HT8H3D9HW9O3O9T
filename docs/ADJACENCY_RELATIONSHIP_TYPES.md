@@ -24,7 +24,7 @@ The HLSF Cognition Engine organizes every edge into a **15-family taxonomy** so 
 | Modal | `can`, `must`, `possible`, `preferred` |
 | Evidential | `cites`, `observed`, `demonstrated-by` |
 | Counterfactual | `what-if`, `hypothetical`, `contrary-to-fact` |
-| Operational | `seed-expansion`, `adjacency:cached` source markers, workflow glue |
+| Operational | `seed-expansion`, `skg-base`, `skg-cross-level`, `adjacency:cached` source markers, workflow glue |
 | Measurement | `measures`, `estimates`, `quantifies` |
 | Aesthetic / Semantic | `self:symbol`, stylistic cues, tone alignments, unlabeled fallbacks |
 

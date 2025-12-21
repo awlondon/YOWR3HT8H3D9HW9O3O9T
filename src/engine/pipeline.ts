@@ -11,6 +11,7 @@ import {
   type LayeredAdjacencyEdge,
   type LayeredExpansionOptions,
 } from '../features/graph/layeredAdjacency.js';
+import { buildRecursiveSkgAdjacency } from '../features/graph/recursiveSkgAdjacency.js';
 import { rankNodes } from '../analytics/metrics.js';
 import { emitPipelineTelemetry } from '../analytics/telemetry.js';
 import type { PipelineStage, TelemetryHook } from '../types/pipeline-messages.js';
@@ -132,6 +133,13 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
   let symbolEdgeCount = 0;
   let weightSum = 0;
 
+  const makeVirtualToken = (label: string): Token => ({
+    t: label,
+    kind: 'word',
+    i: -1,
+    n: Math.max(1, label?.length || 1),
+  });
+
   const push = (source: Token | undefined, target: Token | undefined, props: EdgeProps) => {
     if (!source || !target) return;
 
@@ -164,6 +172,27 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
     }
   };
 
+  const recomputeStatistics = () => {
+    symbolEdgeCount = 0;
+    weightSum = 0;
+    for (const key of Object.keys(edgeHistogram)) {
+      delete edgeHistogram[key];
+    }
+    for (const edge of edges) {
+      if (!edge) continue;
+      const weight = typeof edge.w === 'number' ? edge.w : 0;
+      if (edge.type && edge.type.startsWith('modifier')) {
+        symbolEdgeCount += 1;
+      }
+      if (typeof weight === 'number' && Number.isFinite(weight)) {
+        weightSum += weight;
+      }
+      if (edge.type) {
+        edgeHistogram[edge.type] = (edgeHistogram[edge.type] || 0) + 1;
+      }
+    }
+  };
+
   return {
     edges,
     edgeHistogram,
@@ -179,6 +208,10 @@ function createEdgeAccumulator(tokens: Token[], symbolEdgeLimit: number) {
     addEdgeByIndices(sourceIndex: number, targetIndex: number, props: EdgeProps) {
       push(tokens[sourceIndex], tokens[targetIndex], props);
     },
+    addEdgeByLabels(sourceLabel: string, targetLabel: string, props: EdgeProps) {
+      push(makeVirtualToken(sourceLabel), makeVirtualToken(targetLabel), props);
+    },
+    recomputeStatistics,
   };
 }
 
@@ -324,6 +357,17 @@ export function runPipeline(
       family: edge.family,
       meta: edge.meta,
     });
+  }
+
+  if (cfg.enableRecursiveSkgAdjacency && (cfg.recursiveSkgMaxDepth ?? 0) > 0) {
+    const recursive = buildRecursiveSkgAdjacency(nodes, accumulator.edges, {
+      depth: cfg.recursiveSkgMaxDepth ?? 1,
+    });
+    nodes.length = 0;
+    nodes.push(...recursive.nodes);
+    accumulator.edges.length = 0;
+    accumulator.edges.push(...recursive.edges);
+    accumulator.recomputeStatistics();
   }
   finishStage('adjacency', { edgeCount: accumulator.edges.length });
 

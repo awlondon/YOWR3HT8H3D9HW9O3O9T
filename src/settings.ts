@@ -235,6 +235,8 @@ const DEFAULT_SETTINGS = {
   maxAdjacencyDegreePerLayer: [...DEFAULT_ADJACENCY_SETTINGS.maxAdjacencyDegreePerLayer],
   adjacencySimilarityThreshold: DEFAULT_ADJACENCY_SETTINGS.adjacencySimilarityThreshold,
   adjacencyStrongSimilarityThreshold: DEFAULT_ADJACENCY_SETTINGS.adjacencyStrongSimilarityThreshold,
+  enableRecursiveSkgAdjacency: false,
+  recursiveSkgMaxDepth: 2,
   promptAdjacencyChunkSize: 8,
   secureBillingOnly: true,
   performanceProfileId: defaultPerformanceProfile.id,

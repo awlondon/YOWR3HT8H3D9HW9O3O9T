@@ -30,6 +30,8 @@ export const RELATION_FAMILY_MAP: Record<string, AdjacencyFamily> = {
   'adjacency:layer:3': AdjacencyFamily.Spatial,
   'adjacency:layer:4': AdjacencyFamily.Spatial,
   'adjacency:layer:5': AdjacencyFamily.Spatial,
+  'skg-base': AdjacencyFamily.Operational,
+  'skg-cross-level': AdjacencyFamily.Operational,
   before: AdjacencyFamily.Temporal,
   after: AdjacencyFamily.Temporal,
   during: AdjacencyFamily.Temporal,

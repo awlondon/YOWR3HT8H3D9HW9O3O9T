@@ -6,4 +6,6 @@ test('classifyRelation maps known relations and falls back to aesthetic', () => 
   assert.equal(classifyRelation('adjacency:base'), AdjacencyFamily.Spatial);
   assert.equal(classifyRelation('modifier:emphasis'), AdjacencyFamily.Communicative);
   assert.equal(classifyRelation('unknown-rel'), AdjacencyFamily.Aesthetic);
+  assert.equal(classifyRelation('skg-base'), AdjacencyFamily.Operational);
+  assert.equal(classifyRelation('skg-cross-level'), AdjacencyFamily.Operational);
 });
