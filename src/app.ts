@@ -3885,6 +3885,39 @@ function drawComposite(graph, opts = {}) {
   const zoomAttenuation = Math.max(0.2, Math.min(5, 1 / Math.sqrt(safeZoom)));
   const fontScale = Math.max(0.35, Math.min(3, zoomAttenuation));
 
+  const applyGraphTransform = () => {
+    ctx.scale(dpr, dpr);
+    ctx.translate(view.x, view.y);
+    ctx.scale(zoom, zoom);
+  };
+
+  const firstPositionEntry = projectedPositions.entries().next();
+  if (firstPositionEntry && !firstPositionEntry.done) {
+    const [, n0] = firstPositionEntry.value;
+    if (Number.isFinite(n0?.x) && Number.isFinite(n0?.y)) {
+      // PROBE: prove graph pass is executing + prove coordinate space
+      // A) raw coords, identity transform
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgba(0,255,255,1)';
+      ctx.beginPath();
+      ctx.arc(n0.x, n0.y, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // B) normal pipeline coords (whatever you normally do)
+      ctx.save();
+      applyGraphTransform(); // your existing zoom/pan/world transform
+      ctx.fillStyle = 'rgba(255,255,0,1)';
+      ctx.beginPath();
+      ctx.arc(n0.x, n0.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   const samplePositionEntry = (() => {
     for (const [token, pos] of projectedPositions.entries()) {
       if (Number.isFinite(pos?.x) && Number.isFinite(pos?.y)) {
@@ -3938,9 +3971,7 @@ function drawComposite(graph, opts = {}) {
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
-  ctx.scale(dpr, dpr);
-  ctx.translate(view.x, view.y);
-  ctx.scale(zoom, zoom);
+  applyGraphTransform();
   ctx.strokeStyle = theme.fg;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
