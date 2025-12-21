@@ -1793,13 +1793,15 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
     }
   }
 
-  const expanded = applyRecursiveSkgExpansion(graph) || graph;
-  const finalMetrics = ensureGraphMetrics(expanded);
-  expanded._metrics = finalMetrics;
+  // Use a unique name for the expanded graph to avoid duplicate declarations.
+  const expandedGraph = applyRecursiveSkgExpansion(graph) || graph;
+  const finalMetrics = ensureGraphMetrics(expandedGraph);
+  expandedGraph._metrics = finalMetrics;
   logPhase('summary', finalMetrics);
   markRelationLegendDirty();
-  if (expanded && typeof expanded === 'object') (expanded as any).__legendDirty = true;
-  return expanded;
+  if (expandedGraph && typeof expandedGraph === 'object')
+    (expandedGraph as any).__legendDirty = true;
+  return expandedGraph;
 }
 
 function computeDbStats(index) {
@@ -3469,12 +3471,12 @@ function legacyPositions(graph, width, height, scale, centerX, centerY) {
   });
 
   const groupByRoot = new Map();
-  const edges = Array.isArray(graph.links)
+  const graphEdges = Array.isArray(graph.links)
     ? graph.links
     : Array.isArray(graph.edges)
       ? graph.edges
       : [];
-  edges.forEach((edge) => {
+  graphEdges.forEach((edge) => {
     if (!groupByRoot.has(edge.from)) groupByRoot.set(edge.from, []);
     groupByRoot.get(edge.from).push(edge);
   });
