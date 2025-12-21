@@ -92,7 +92,7 @@ function normalizeEdges(edges: any[] = []): VisualizerEdge[] {
       : Number.isFinite(edge.w)
         ? edge.w
         : 0.5;
-    const role = edge.role ?? edge.rtype ?? edge.rel ?? 'relation';
+    const role = edge.role ?? edge.rtype ?? edge.type ?? edge.rel ?? 'relation';
     normalized.push({
       id: edge.id ?? `${source}->${target}-${idx}`,
       from: source,

@@ -40,6 +40,13 @@ export interface RecursiveSkgOptions {
   };
 }
 
+function annotateLevel(nodes: TokenNode[], level: number): TokenNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    meta: { ...node.meta, level: (node.meta as any)?.level ?? level },
+  }));
+}
+
 /**
  * Default SKG expander: duplicates each edge into an intermediate node that
  * represents the relationship. Original endpoints connect to the mid-node and
@@ -117,12 +124,13 @@ export function buildRecursiveSkgAdjacency(
   }
 
   const expander = options.expander ?? defaultSkgExpander;
-  let currentNodes = dedupNodesByToken([...baseNodes]);
+  let currentNodes = dedupNodesByToken(annotateLevel([...baseNodes], 0));
   let currentEdges = [...baseEdges];
 
   for (let i = 1; i <= depth; i += 1) {
     const { newNodes, newEdges, crossEdges } = expander(currentEdges, currentNodes);
-    currentNodes = dedupNodesByToken([...currentNodes, ...newNodes]);
+    const annotated = annotateLevel(newNodes, i);
+    currentNodes = dedupNodesByToken([...currentNodes, ...annotated]);
     const edgeMap = new Map<string, AdjacencyEdge>();
     for (const edge of [...currentEdges, ...newEdges, ...crossEdges]) {
       const key = `${edge.source}->${edge.target}:${edge.type}`;

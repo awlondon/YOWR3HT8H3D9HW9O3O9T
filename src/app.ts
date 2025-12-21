@@ -48,6 +48,7 @@ import {
   normalizeOriginMode,
   resolveOriginPadding,
 } from './features/graph/layoutOrigin';
+import { buildRecursiveSkgAdjacency } from './features/graph/recursiveSkgAdjacency.js';
 import { initializeUserAvatarStore } from './userAvatar';
 import { initializeSaasPlatform, registerSaasCommands } from './features/saas/platform';
 import { demoGoogleSignIn } from './auth/google';
@@ -1792,11 +1793,13 @@ async function assembleGraphFromAnchorsLogged(anchorsInput, depthFloat, index, o
     }
   }
 
-  graph._metrics = metrics;
-  logPhase('summary', metrics);
+  const expanded = applyRecursiveSkgExpansion(graph) || graph;
+  const finalMetrics = ensureGraphMetrics(expanded);
+  expanded._metrics = finalMetrics;
+  logPhase('summary', finalMetrics);
   markRelationLegendDirty();
-  if (graph && typeof graph === 'object') graph.__legendDirty = true;
-  return graph;
+  if (expanded && typeof expanded === 'object') (expanded as any).__legendDirty = true;
+  return expanded;
 }
 
 function computeDbStats(index) {
@@ -1918,6 +1921,111 @@ function ensureGraphMetrics(graph) {
     anchors,
     edges: edgeTypes.size || links.length,
   };
+}
+
+function resolveRecursiveSkgConfig(): { enabled: boolean; depth: number } {
+  const cfg =
+    (typeof window !== 'undefined' && (window as any).HLSF?.config?.recursiveSkg) ||
+    (SETTINGS as any).recursiveSkg ||
+    {};
+  const depth = clampRecursionDepth(
+    Object.prototype.hasOwnProperty.call(cfg, 'depth')
+      ? cfg.depth
+      : (SETTINGS as any).recursiveSkgMaxDepth ?? 0,
+  );
+  const enabledFlag =
+    (cfg as any).enabled ?? (SETTINGS as any).enableRecursiveSkgAdjacency ?? false;
+  const enabled = enabledFlag === true && depth > 0;
+  if (typeof window !== 'undefined') {
+    (window as any).HLSF = (window as any).HLSF || {};
+    (window as any).HLSF.config = (window as any).HLSF.config || {};
+    (window as any).HLSF.config.recursiveSkg = { enabled, depth };
+  }
+  return { enabled, depth };
+}
+
+function applyRecursiveSkgExpansion(graph) {
+  const { enabled, depth } = resolveRecursiveSkgConfig();
+  if (!enabled || depth <= 0) return graph;
+  if (!graph || !(graph.nodes instanceof Map)) return graph;
+
+  if (graph.nodes.size === 0) return graph;
+
+  const baseNodes = Array.from(graph.nodes.values()).map((node, index) => ({
+    token: (node as any)?.token || (node as any)?.id || '',
+    kind: 'word',
+    rawScore: Number((node as any)?.f ?? (node as any)?.weight ?? 1) || 1,
+    index,
+    cat: null,
+    meta: {
+      ...(node as any)?.meta,
+      layer: (node as any)?.layer,
+      cluster: (node as any)?.cluster,
+    },
+  }));
+
+  const edgeSource = Array.isArray((graph as any).links)
+    ? (graph as any).links
+    : Array.isArray((graph as any).edges)
+      ? (graph as any).edges
+      : [];
+  const baseEdges = edgeSource
+    .map((edge: any) => {
+      const source = edge?.from ?? edge?.src ?? edge?.source ?? edge?.[0];
+      const target = edge?.to ?? edge?.dst ?? edge?.target ?? edge?.[1];
+      if (!source || !target) return null;
+      return {
+        source,
+        target,
+        type: normalizeEdgeType(edge) || 'seed-expansion',
+        w: Number.isFinite(edge?.w) ? edge.w : Number(edge?.weight) || 0,
+        family: edge?.family,
+        meta: edge?.meta,
+      };
+    })
+    .filter(Boolean);
+
+  const recursive = buildRecursiveSkgAdjacency(baseNodes as any, baseEdges as any, { depth });
+
+  const nodes = new Map();
+  recursive.nodes.forEach((node, idx) => {
+    if (!node?.token) return;
+    const meta = node.meta || {};
+    const layer = Number.isFinite((meta as any).level)
+      ? (meta as any).level
+      : Number.isFinite((node as any).layer)
+        ? (node as any).layer
+        : idx;
+    nodes.set(node.token, {
+      token: node.token,
+      f: Number(node.rawScore) || 1,
+      layer,
+      degree: 0,
+      meta,
+    });
+  });
+
+  const links = recursive.edges.map((edge) => ({
+    from: edge.source,
+    to: edge.target,
+    rtype: edge.type,
+    w: Number.isFinite(edge.w) ? edge.w : 0,
+    family: edge.family,
+    meta: edge.meta,
+  }));
+
+  links.forEach((edge) => {
+    const src = nodes.get(edge.from);
+    const dst = nodes.get(edge.to);
+    if (src) src.degree = (src.degree || 0) + 1;
+    if (dst) dst.degree = (dst.degree || 0) + 1;
+  });
+
+  graph.nodes = nodes;
+  graph.links = links;
+  graph.edges = links;
+  graph._metrics = ensureGraphMetrics(graph);
+  return graph;
 }
 
 function microtask() {
@@ -3218,6 +3326,15 @@ function edgeLabel(rtype) {
   return withoutGlyph || cleaned;
 }
 
+function normalizeEdgeType(edge: any): string {
+  if (!edge || typeof edge !== 'object') return '';
+  if (typeof (edge as any).type === 'string') return (edge as any).type;
+  if (typeof (edge as any).rtype === 'string') return (edge as any).rtype;
+  if (typeof (edge as any).role === 'string') return (edge as any).role;
+  if (typeof (edge as any).rel === 'string') return (edge as any).rel;
+  return '';
+}
+
 function resolveLayoutOrigin(width, height, wedgeRadians = Math.PI / 2) {
   const cfg = window?.HLSF?.config || {};
   const mode = normalizeOriginMode(cfg.originMode);
@@ -3234,6 +3351,79 @@ function resolveLayoutOrigin(width, height, wedgeRadians = Math.PI / 2) {
   return { mode, corner, pivot, wedge, padding } as const;
 }
 
+function skgSeedTriangleLayout(graph, edges, origin, width, height, scale) {
+  const pivot = origin.pivot;
+  const padding = origin.padding;
+  const pos = new Map();
+  const baseRadius = Math.min(width, height) * 0.12 * Math.max(0.5, scale);
+  const levelStep = Math.max(baseRadius * 0.45, padding * 0.35);
+  const angleMid = Math.atan2(height / 2 - pivot.y, width / 2 - pivot.x);
+  const wedge = Math.PI / 2;
+  const startAngle = angleMid - wedge / 2;
+
+  const baseMap = new Map();
+  edges.forEach((edge) => {
+    const type = normalizeEdgeType(edge);
+    if (type === 'seed-expansion' || type === 'skg-base') {
+      const baseId = edge.from ?? edge.source ?? edge.src;
+      const list = (baseId && baseMap.get(baseId)) || [];
+      const targetId = edge.to ?? edge.target ?? edge.dst;
+      if (targetId) list.push(targetId);
+      if (baseId) baseMap.set(baseId, list);
+    }
+  });
+
+  const seedBases = baseMap.size ? Array.from(baseMap.keys()) : Array.from(graph.nodes.keys());
+  const placeBaseNodes = () => {
+    const total = Math.max(1, seedBases.length);
+    const baseFanStep = wedge / Math.max(total + 1, 2);
+    seedBases.forEach((id, idx) => {
+      const theta = startAngle + baseFanStep * (idx + 1);
+      const r = Math.max(padding * 0.35, baseRadius * 0.35);
+      pos.set(id, {
+        x: pivot.x + r * Math.cos(theta),
+        y: pivot.y + r * Math.sin(theta),
+      });
+    });
+  };
+
+  const nodeLevel = (id) => {
+    const node = graph.nodes.get(id);
+    if (!node) return 1;
+    const metaLevel = Number((node.meta as any)?.level ?? node.layer);
+    if (Number.isFinite(metaLevel)) return Math.max(0, metaLevel);
+    return 1;
+  };
+
+  placeBaseNodes();
+
+  seedBases.forEach((baseId) => {
+    const children = baseMap.get(baseId) || [];
+    const step = wedge / Math.max(children.length + 1, 2);
+    children.forEach((child, idx) => {
+      const theta = startAngle + step * (idx + 1);
+      const depth = nodeLevel(child);
+      const r = baseRadius + levelStep * Math.max(1, depth);
+      pos.set(child, {
+        x: pivot.x + r * Math.cos(theta),
+        y: pivot.y + r * Math.sin(theta),
+      });
+    });
+  });
+
+  graph.nodes.forEach((_node, id) => {
+    if (pos.has(id)) return;
+    const theta = startAngle + wedge / 2;
+    const r = baseRadius + levelStep * 0.75;
+    pos.set(id, {
+      x: pivot.x + r * Math.cos(theta),
+      y: pivot.y + r * Math.sin(theta),
+    });
+  });
+
+  return pos;
+}
+
 function legacyPositions(graph, width, height, scale, centerX, centerY) {
   const anchorList =
     Array.isArray(graph?.anchors) && graph.anchors.length
@@ -3245,6 +3435,20 @@ function legacyPositions(graph, width, height, scale, centerX, centerY) {
   const rotation = 0;
   const Rc = Math.min(width, height) * 0.35 * scale;
   const origin = resolveLayoutOrigin(width, height);
+
+  const edges = Array.isArray(graph.links)
+    ? graph.links
+    : Array.isArray(graph.edges)
+      ? graph.edges
+      : [];
+  const hasSkgEdges = edges.some((edge) => {
+    const type = normalizeEdgeType(edge);
+    return type === 'skg-base' || type === 'skg-cross-level' || type === 'seed-expansion';
+  });
+
+  if (origin.mode === 'corner' && hasSkgEdges) {
+    return skgSeedTriangleLayout(graph, edges, origin, width, height, scale);
+  }
   const cx = Number.isFinite(centerX) ? centerX : origin.pivot.x;
   const cy = Number.isFinite(centerY) ? centerY : origin.pivot.y;
   const anchorPivot = origin.mode === 'corner' ? origin.pivot : { x: cx, y: cy };
@@ -4109,8 +4313,11 @@ function drawComposite(graph, opts = {}) {
       batches.get(strokeColor).push({ from: fromPos, to: toPos, edge, edgeFocus });
     }
     for (const [color, edges] of batches.entries()) {
-      ctx.strokeStyle = color;
       for (const { from, to, edge, edgeFocus } of edges) {
+        const edgeType = normalizeEdgeType(edge);
+        const crossLevel = edgeType === 'skg-cross-level';
+        ctx.strokeStyle = crossLevel ? 'rgba(255, 255, 255, 0.2)' : color;
+        ctx.setLineDash(crossLevel ? [4, 4] : []);
         ctx.globalAlpha = edgeFocus ? Math.min(1, baseAlpha() * 1.5) : edgeAlphaFromWeight(edge.w);
         ctx.lineWidth =
           Math.max(0.01, edgeWidthValue * zoomAttenuation * (edgeFocus ? 1.8 : 1)) * dpr;
@@ -4119,6 +4326,7 @@ function drawComposite(graph, opts = {}) {
         ctx.lineTo(to.x, to.y);
         ctx.stroke();
       }
+      ctx.setLineDash([]);
     }
     ctx.globalAlpha = 1.0;
     ctx.strokeStyle = theme.fg;
@@ -5189,6 +5397,22 @@ function ensureHLSFCanvas() {
           </button>
         </div>
         <div class="hlsf-control-group">
+          <label for="hlsf-skg-depth">SKG recursion</label>
+          <div class="hlsf-button-row">
+            <label class="hlsf-toggle">
+              <input id="hlsf-skg-enabled" type="checkbox"> Enable
+            </label>
+            <input
+              id="hlsf-skg-depth"
+              type="number"
+              min="0"
+              max="${MAX_RECURSION_DEPTH}"
+              step="1"
+              value="${(SETTINGS as any).recursiveSkgMaxDepth ?? 1}"
+            >
+          </div>
+        </div>
+        <div class="hlsf-control-group">
           <label>Display options</label>
           <div class="hlsf-button-row">
             <button id="hlsf-toggle-edges" class="btn btn-secondary">Edges: On</button>
@@ -5438,6 +5662,21 @@ function bindHlsfControls(wrapper) {
       rebuildHlsfFromLastCommand(true);
     });
   }
+
+  const skgToggle = wrapper.querySelector('#hlsf-skg-enabled');
+  const skgDepth = wrapper.querySelector('#hlsf-skg-depth');
+  const syncSkg = () => {
+    const enabled = skgToggle instanceof HTMLInputElement ? skgToggle.checked : false;
+    const depthValue = skgDepth instanceof HTMLInputElement ? skgDepth.value : undefined;
+    const depth = clampRecursionDepth(
+      depthValue ?? (SETTINGS as any).recursiveSkgMaxDepth ?? CONFIG.ADJACENCY_RECURSION_DEPTH,
+    );
+    if (skgDepth instanceof HTMLInputElement) skgDepth.value = String(depth);
+    window.HLSF.config.recursiveSkg = { enabled, depth };
+    rebuildHlsfFromLastCommand(true);
+  };
+  if (skgToggle) skgToggle.addEventListener('change', syncSkg);
+  if (skgDepth) skgDepth.addEventListener('input', syncSkg);
 
   const presetSelect = wrapper.querySelector('#hlsf-mental-preset');
   if (presetSelect && !presetSelect.dataset.populated) {
@@ -5751,6 +5990,11 @@ function syncHlsfControls(wrapper) {
   const recursionVal = wrapper.querySelector('#hlsf-recursion-depth-val');
   if (recursionInput) recursionInput.value = String(recursionDepth);
   if (recursionVal) recursionVal.textContent = String(recursionDepth);
+  const skgCfg = resolveRecursiveSkgConfig();
+  const skgToggle = wrapper.querySelector('#hlsf-skg-enabled');
+  const skgDepthInput = wrapper.querySelector('#hlsf-skg-depth');
+  if (skgToggle instanceof HTMLInputElement) skgToggle.checked = skgCfg.enabled;
+  if (skgDepthInput instanceof HTMLInputElement) skgDepthInput.value = String(skgCfg.depth);
   const showAllAdj = isAdjacencyExpansionEnabled();
   const speedSlider = wrapper.querySelector('#hlsf-rotation-speed');
   const speedVal = wrapper.querySelector('#hlsf-speed-val');
