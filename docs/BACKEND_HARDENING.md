@@ -46,6 +46,7 @@ events for observability.
 * Implement `RequestValidationError` and a dedicated middleware that serialises Zod/Joi errors into
   `{ error: { code, message, details } }` responses.
 * The global error handler logs the request ID, path, and stack trace, then responds with a safe message.
+* Validate ingestion payloads that contain adjacency data: ensure each relationship object includes a `family` drawn from the 15-type taxonomy, defaulting to `aesthetic` if the provider omits it.
 
 ## Security middleware
 

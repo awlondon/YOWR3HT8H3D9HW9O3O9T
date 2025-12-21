@@ -12,6 +12,7 @@ import type { TelemetryHook } from './types/pipeline-messages';
 import { createRemoteDbFileWriter, type RemoteDbDirectoryStats } from './engine/remoteDbWriter';
 import { tokenizeWithSymbols } from './tokens/tokenize';
 import { buildSessionExport } from './export/session';
+import { edgeFamilyHistogram } from './analytics/metrics';
 import {
   computeModelParameters,
   MODEL_PARAM_DEFAULTS,
@@ -83,6 +84,7 @@ import { runHlsfReasoning } from './engine/hlsfReasoner';
 import type { ThoughtEvent, AdjacencyDelta } from './engine/cognitionTypes';
 import type { AdjacencyResult } from './engine/adjacencyProvider.js';
 import { collapseGraph, computeTokenSalience, topSalienceTokens } from './engine/salience.js';
+import { AdjacencyFamily } from './types/adjacencyFamilies';
 import type { SeedSphereConfig, ExpansionMode } from './engine/expansionModes.js';
 import { runConvergencePipeline } from './engine/convergenceController.js';
 import { installLLMStub } from './server/installLLMStub';
@@ -744,6 +746,12 @@ const COMMAND_HELP_ENTRIES: CommandHelpEntry[] = [
   { command: '/export', description: 'Export database metadata as JSON', requiresMembership: true, category: 'system' },
   { command: '/glyph', description: 'Generate glyph mappings', requiresMembership: true, category: 'graph' },
   { command: '/ledger', description: 'Inspect glyph ledger', requiresMembership: true, category: 'graph' },
+  {
+    command: '/reltypes',
+    description: 'List adjacency families, priorities, and edge counts',
+    requiresMembership: true,
+    category: 'graph',
+  },
   { command: '/encrypt', description: 'Encode text into glyphs', requiresMembership: true, category: 'graph' },
   { command: '/decrypt', description: 'Decode glyph sequences', requiresMembership: true, category: 'graph' },
   { command: '/exportledger', description: 'Export glyph ledger', requiresMembership: true, category: 'graph' },
@@ -811,6 +819,7 @@ const DEMO_UNLOCKED_COMMANDS = new Set([
   '/database',
   '/db',
   '/self',
+  '/reltypes',
 ]);
 
 const COMMAND_RESTRICTIONS: Partial<Record<MembershipLevel, Set<string>>> = {
@@ -21723,6 +21732,8 @@ commandRegistry.register('/state', cmd_state);
 commandRegistry.register('/import', cmd_import);
 commandRegistry.register('/read', () => cmdRead());
 commandRegistry.register('/ingest', () => cmdRead());
+commandRegistry.register('/reltypes', () => cmdReltypes());
+commandRegistry.register('/adjtypes', () => cmdReltypes());
 commandRegistry.register('/perfprofile', (args) => cmdPerfProfile(args));
 commandRegistry.register('/load', cmd_load);
 commandRegistry.register('/loaddb', cmd_loaddb);
@@ -21796,6 +21807,39 @@ function symbolMetricsSummary() {
       : 'none';
   const time = new Date(last.timestamp).toLocaleTimeString();
   return `Last run ${time}: words=${last.wordCount}, symbols=${last.symbolCount} (${density}% density), edges=${last.edgeCount} (${last.symbolEdgeCount} symbol edges), Δtokens=${last.deltaTokens}. Top nodes: ${topPreview}.`;
+}
+
+function cmdReltypes() {
+  const graph = state?.symbolMetrics?.lastRunGraph as { edges?: Array<{ family?: AdjacencyFamily }> } | null;
+  const edges = Array.isArray(graph?.edges) ? graph?.edges : [];
+  if (!edges.length) {
+    addLog('No graph available. Run /hlsf or a prompt to generate edges before inspecting relation families.');
+    return;
+  }
+
+  const priority: AdjacencyFamily[] = [
+    AdjacencyFamily.Evidential,
+    AdjacencyFamily.Causal,
+    AdjacencyFamily.Temporal,
+    AdjacencyFamily.Operational,
+    AdjacencyFamily.Value,
+    AdjacencyFamily.Communicative,
+  ];
+  const histogram = edgeFamilyHistogram(edges as any);
+  const ordered = priority
+    .map((family) => `${family}: ${histogram[family] ?? 0}`)
+    .join('<br>');
+  const secondary = Object.entries(histogram)
+    .filter(([family]) => !priority.includes(family as AdjacencyFamily))
+    .map(([family, count]) => `${family}: ${count}`)
+    .join('<br>');
+
+  addLog(
+    `<div class="adjacency-insight"><strong>/reltypes</strong><br>` +
+      `${sanitize(ordered)}<br>` +
+      `${sanitize(secondary)}<br>` +
+      `<em>Priority: Evidential → Causal → Temporal → Operational → Value → Communicative</em></div>`,
+  );
 }
 
 function cmdSymbols(args = []) {

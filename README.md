@@ -127,6 +127,7 @@ flows over the core cognition experience.
 2. Graph edges emitted from adjacency recursion and symbol heuristics (`src/features/graph/recursive_adjacency.ts`, `src/features/graph/symbolEdges.ts`).
 3. Consciousness propagation iterates salience broadcasts and causal estimates (`src/engine/consciousness.ts`).
 4. Remote DB writers and exports persist updated shards and session metadata (`src/engine/remoteDbWriter.ts`, `src/export/session.ts`).
+5. Every edge now records a `family` drawn from the 15-type adjacency taxonomy, keeping UI and exporters aligned (`docs/ADJACENCY_RELATIONSHIP_TYPES.md`). Think in relationships, not rows—letting cognition, narrative, and AI function layers stay synchronized.
 
 ## Directory reference
 
@@ -141,6 +142,7 @@ flows over the core cognition experience.
 - `src/onboarding/` – Login and onboarding forms for hosted deployments.
 - `scripts/` – Python utilities for database partitioning and validation.
 - `remote-db/` – On-disk adjacency shards ready for hydration.
+- `docs/ADJACENCY_RELATIONSHIP_TYPES.md` – Legend for the adjacency taxonomy, UI affordances, and visual schema.
 
 ## Setup
 
