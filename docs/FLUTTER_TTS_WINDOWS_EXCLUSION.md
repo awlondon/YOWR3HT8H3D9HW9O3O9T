@@ -51,3 +51,18 @@ flutter run -d windows
 ## Temporary workaround (not durable)
 
 You can edit `windows/flutter/generated_plugins.cmake` and remove `flutter_tts`, but this file is regenerated and should not be the long-term fix.
+
+
+## One-command automation
+
+Use the codemod helper to apply the `pubspec.yaml` platform restriction automatically in a Flutter project:
+
+```bash
+python scripts/apply_flutter_tts_windows_fix.py --project-root /path/to/flutter_app
+```
+
+For CI/check mode:
+
+```bash
+python scripts/apply_flutter_tts_windows_fix.py --project-root /path/to/flutter_app --check
+```
